@@ -1,8 +1,30 @@
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
+export type MailSource = 'workspace' | 'inbound';
+
+export const inboundMessagePrefix = 'email:';
+
+export interface MailAttachmentSummary {
+  filename: string;
+  contentType: string;
+  size: number;
+  inline: boolean;
+}
+
+export interface InboundMessageDetail {
+  body: string;
+  attachments: MailAttachmentSummary[];
+  rawSize: number;
+}
+
+export const isInboundMessageId = (value: string) => value.startsWith(inboundMessagePrefix);
+export const toInboundMessageId = (value: string) => `${inboundMessagePrefix}${value}`;
+export const fromInboundMessageId = (value: string) =>
+  isInboundMessageId(value) ? value.slice(inboundMessagePrefix.length) : value;
 
 export interface MailMessage {
   id: string;
   folder: MailFolder;
+  source: MailSource;
   fromName: string;
   fromEmail: string;
   toName: string;
@@ -88,6 +110,7 @@ export const mockMailbox: MailboxState = {
     {
       id: 'inbox-01',
       folder: 'inbox',
+      source: 'workspace',
       fromName: 'Maya Patel',
       fromEmail: 'maya@northstar.so',
       toName: 'Evelyn Chen',
@@ -104,6 +127,7 @@ export const mockMailbox: MailboxState = {
     {
       id: 'inbox-02',
       folder: 'inbox',
+      source: 'workspace',
       fromName: 'Arthur Kim',
       fromEmail: 'arthur@latticeops.io',
       toName: 'Evelyn Chen',
@@ -120,6 +144,7 @@ export const mockMailbox: MailboxState = {
     {
       id: 'inbox-03',
       folder: 'inbox',
+      source: 'workspace',
       fromName: 'Cloudflare Routing',
       fromEmail: 'routing@notifications.cloudflare.com',
       toName: 'Evelyn Chen',
@@ -138,6 +163,7 @@ export const mockMailbox: MailboxState = {
     {
       id: 'sent-01',
       folder: 'sent',
+      source: 'workspace',
       fromName: 'Evelyn Chen',
       fromEmail: demoCredentials.email,
       toName: 'Maya Patel',
@@ -154,6 +180,7 @@ export const mockMailbox: MailboxState = {
     {
       id: 'sent-02',
       folder: 'sent',
+      source: 'workspace',
       fromName: 'Evelyn Chen',
       fromEmail: demoCredentials.email,
       toName: 'Arthur Kim',
@@ -172,6 +199,7 @@ export const mockMailbox: MailboxState = {
     {
       id: 'draft-01',
       folder: 'drafts',
+      source: 'workspace',
       fromName: 'Evelyn Chen',
       fromEmail: demoCredentials.email,
       toName: 'product',
@@ -269,6 +297,7 @@ export function createIncomingMessage(recipient: UserProfile, sequence: number):
   return {
     id: `inbox-live-${sequence}`,
     folder: 'inbox',
+    source: 'workspace',
     fromName: template.fromName,
     fromEmail: template.fromEmail,
     toName: recipient.name,
@@ -300,6 +329,7 @@ export function createDraftMessage(input: {
   return {
     id: input.id ?? `draft-live-${crypto.randomUUID()}`,
     folder: 'drafts',
+    source: 'workspace',
     fromName: input.from.name,
     fromEmail: input.from.email,
     toName: toEmail ? deriveToName(toEmail) : '待填写',
@@ -332,6 +362,7 @@ export function createSentMessage(input: {
   return {
     id: input.id ?? `sent-live-${crypto.randomUUID()}`,
     folder: 'sent',
+    source: 'workspace',
     fromName: input.from.name,
     fromEmail: input.from.email,
     toName: deriveToName(toEmail),

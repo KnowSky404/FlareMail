@@ -8,8 +8,11 @@ import {
   createSentMessage,
   createWorkspacePayload,
   demoCredentials,
+  fromInboundMessageId,
+  isInboundMessageId,
   mockMailbox,
   mockProfile,
+  toInboundMessageId,
   type ComposeInput,
   type MailFolder,
   type MailMessage,
@@ -21,8 +24,6 @@ import {
 
 export const workspaceSessionCookie = 'flaremail_workspace';
 type CookieOptions = Parameters<Cookies['set']>[2];
-
-const inboundMessagePrefix = 'email:';
 
 export interface WorkspaceSession {
   id: string;
@@ -124,13 +125,6 @@ const previewFromBody = (value: string) => value.trim().replace(/\s+/g, ' ').sli
 const deriveNameFromEmail = (email: string) =>
   email.split('@')[0].replace(/[._-]/g, ' ').trim() || email.trim();
 
-const externalInboundMessageId = (emailId: string) => `${inboundMessagePrefix}${emailId}`;
-
-const internalInboundMessageId = (messageId: string) =>
-  messageId.startsWith(inboundMessagePrefix) ? messageId.slice(inboundMessagePrefix.length) : messageId;
-
-const isInboundMessageId = (messageId: string) => messageId.startsWith(inboundMessagePrefix);
-
 const parseAddress = (value: string) => {
   const trimmed = value.trim();
   const match = trimmed.match(/^(?:"?([^"]+)"?\s*)?<([^>]+)>$/);
@@ -164,6 +158,7 @@ const mapUserRowToProfile = (row: WorkspaceUserRow): UserProfile => ({
 const mapWorkspaceMessageRow = (row: WorkspaceMessageRow): MailMessage => ({
   id: row.id,
   folder: row.folder,
+  source: 'workspace',
   fromName: row.from_name,
   fromEmail: row.from_email,
   toName: row.to_name,
@@ -195,8 +190,9 @@ const mapInboundRow = (row: WorkspaceInboundRow, profile: UserProfile): MailMess
   const snippet = row.snippet.trim() || '原始邮件已写入 R2，后续可以补充正文解析与预览。';
 
   return {
-    id: externalInboundMessageId(row.email_id),
+    id: toInboundMessageId(row.email_id),
     folder: 'inbox',
+    source: 'inbound',
     fromName: sender.name,
     fromEmail: sender.email,
     toName: recipient.name || profile.name,
@@ -1199,7 +1195,7 @@ export async function patchWorkspaceMessage(
         ).bind(
           crypto.randomUUID(),
           session.userId,
-          internalInboundMessageId(messageId),
+          fromInboundMessageId(messageId),
           (patch.read ?? currentMessage.read) ? 1 : 0,
           (patch.starred ?? currentMessage.starred) ? 1 : 0,
           timestamp,
@@ -1362,7 +1358,7 @@ export async function deleteWorkspaceMessage(
         ).bind(
           crypto.randomUUID(),
           session.userId,
-          internalInboundMessageId(messageId),
+          fromInboundMessageId(messageId),
           currentMessage.read ? 1 : 0,
           currentMessage.starred ? 1 : 0,
           timestamp,

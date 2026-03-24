@@ -10,7 +10,9 @@
   import {
     cloneMailbox,
     cloneProfile,
+    isInboundMessageId,
     type ComposeInput,
+    type InboundMessageDetail,
     type LoginInput,
     type MailFolder,
     type MailMessage,
@@ -43,6 +45,12 @@
     folder: MailFolder;
   };
 
+  type InboundDetailResponse = {
+    ok: boolean;
+    detail: InboundMessageDetail;
+    error?: string;
+  };
+
   let { data }: { data: PageData } = $props();
   const serverWorkspace = $derived(data.workspace);
 
@@ -55,6 +63,9 @@
   let selectedMessageId = $state<string | null>(null);
   let composeOpen = $state(false);
   let editingDraft = $state<MailMessage | null>(null);
+  let inboundDetails = $state<Record<string, InboundMessageDetail>>({});
+  let inboundDetailErrors = $state<Record<string, string>>({});
+  let inboundDetailPendingId = $state<string | null>(null);
   let banner = $state('当前界面使用模拟数据，先验证完整的产品交互。');
   let loginError = $state('');
   let profileStatus = $state('');
@@ -103,6 +114,33 @@
       data.lastTimestamp ??
       null
   );
+  const selectedInboundDetail = $derived(
+    selectedMessage && isInboundMessageId(selectedMessage.id)
+      ? inboundDetails[selectedMessage.id] ?? null
+      : null
+  );
+  const selectedInboundDetailError = $derived(
+    selectedMessage && isInboundMessageId(selectedMessage.id)
+      ? inboundDetailErrors[selectedMessage.id] ?? ''
+      : ''
+  );
+  const selectedInboundDownloadHref = $derived(
+    selectedMessage && isInboundMessageId(selectedMessage.id)
+      ? `/api/workspace/messages/${encodeURIComponent(selectedMessage.id)}/raw`
+      : null
+  );
+
+  $effect(() => {
+    if (
+      selectedMessage &&
+      isInboundMessageId(selectedMessage.id) &&
+      !inboundDetails[selectedMessage.id] &&
+      inboundDetailPendingId !== selectedMessage.id &&
+      !inboundDetailErrors[selectedMessage.id]
+    ) {
+      void loadInboundDetail(selectedMessage);
+    }
+  });
 
   function nextSelection(
     nextMailbox: MailboxState,
@@ -175,6 +213,44 @@
     }
 
     return payload;
+  }
+
+  async function loadInboundDetail(message: MailMessage, force = false) {
+    if (!isInboundMessageId(message.id)) {
+      return false;
+    }
+
+    if (!force && inboundDetails[message.id]) {
+      return true;
+    }
+
+    inboundDetailPendingId = message.id;
+    inboundDetailErrors = {
+      ...inboundDetailErrors,
+      [message.id]: ''
+    };
+
+    try {
+      const result = await requestJson<InboundDetailResponse>(
+        `/api/workspace/messages/${encodeURIComponent(message.id)}/detail`
+      );
+
+      inboundDetails = {
+        ...inboundDetails,
+        [message.id]: result.detail
+      };
+      return true;
+    } catch (error) {
+      inboundDetailErrors = {
+        ...inboundDetailErrors,
+        [message.id]: error instanceof Error ? error.message : '加载原始邮件失败。'
+      };
+      return false;
+    } finally {
+      if (inboundDetailPendingId === message.id) {
+        inboundDetailPendingId = null;
+      }
+    }
   }
 
   function setSection(section: AppSection) {
@@ -352,6 +428,10 @@
     if (message.folder === 'inbox' && !message.read) {
       await patchMessage(message, { read: true });
     }
+
+    if (isInboundMessageId(message.id)) {
+      await loadInboundDetail(message);
+    }
   }
 
   async function handleToggleStar(message: MailMessage) {
@@ -404,6 +484,13 @@
   function handleEditDraft(message: MailMessage) {
     openCompose(message);
     banner = '你正在继续编辑一封草稿。';
+  }
+
+  async function handleReloadInboundDetail(message: MailMessage) {
+    const ok = await loadInboundDetail(message, true);
+    banner = ok
+      ? `已重新载入《${message.subject}》的原始邮件详情。`
+      : '重新载入原始邮件失败。';
   }
 </script>
 
@@ -473,8 +560,13 @@
           />
           <MessageDetailPane
             message={selectedMessage}
+            inboundDetail={selectedInboundDetail}
+            inboundDetailError={selectedInboundDetailError}
+            inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
             {pending}
+            rawDownloadHref={selectedInboundDownloadHref}
             onEditDraft={handleEditDraft}
+            onReloadInboundDetail={handleReloadInboundDetail}
             onRemove={handleDeleteMessage}
             onToggleRead={handleToggleRead}
             onToggleStar={handleToggleStar}

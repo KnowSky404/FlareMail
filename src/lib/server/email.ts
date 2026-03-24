@@ -1,24 +1,5 @@
 import type { CloudflareEnv } from './cloudflare';
-
-const decoder = new TextDecoder();
-
-const collapseWhitespace = (value: string) => value.replace(/\s+/g, ' ').trim();
-
-const stripHtml = (value: string) =>
-  value
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ');
-
-const extractBody = (rawText: string) => {
-  const separator = rawText.search(/\r?\n\r?\n/);
-  return separator === -1 ? rawText : rawText.slice(separator).trim();
-};
-
-const createSnippet = (raw: ArrayBuffer) => {
-  const body = stripHtml(extractBody(decoder.decode(raw)));
-  return collapseWhitespace(body).slice(0, 240);
-};
+import { parseInboundEmail } from './inbound-email';
 
 const toIsoTimestamp = (value: string | null) => {
   if (!value) {
@@ -35,7 +16,7 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
     const raw = await new Response(message.raw).arrayBuffer();
     const subject = message.headers.get('subject') ?? '(no subject)';
     const timestamp = toIsoTimestamp(message.headers.get('date'));
-    const snippet = createSnippet(raw) || '(empty body)';
+    const snippet = parseInboundEmail(raw).snippet || '(empty body)';
     const messageId = message.headers.get('message-id');
     const rawKey = `emails/${timestamp.slice(0, 10)}/${id}.eml`;
 

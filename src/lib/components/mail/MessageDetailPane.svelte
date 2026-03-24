@@ -1,19 +1,29 @@
 <script lang="ts">
-  import type { MailMessage } from '$lib/mock/mailbox';
+  import type { InboundMessageDetail, MailMessage } from '$lib/mock/mailbox';
 
   let {
     message = null,
+    inboundDetail = null,
+    inboundDetailPending = false,
+    inboundDetailError = '',
     pending = false,
+    rawDownloadHref = null,
     onToggleStar,
     onToggleRead,
     onEditDraft,
+    onReloadInboundDetail,
     onRemove
   }: {
     message?: MailMessage | null;
+    inboundDetail?: InboundMessageDetail | null;
+    inboundDetailPending?: boolean;
+    inboundDetailError?: string;
     pending?: boolean;
+    rawDownloadHref?: string | null;
     onToggleStar: (message: MailMessage) => void | Promise<void>;
     onToggleRead: (message: MailMessage) => void | Promise<void>;
     onEditDraft: (message: MailMessage) => void;
+    onReloadInboundDetail: (message: MailMessage) => void | Promise<void>;
     onRemove: (message: MailMessage) => void | Promise<void>;
   } = $props();
 
@@ -24,6 +34,29 @@
       hour: '2-digit',
       minute: '2-digit'
     }).format(new Date(value));
+
+  const formatBytes = (value: number) => {
+    if (value < 1024) {
+      return `${value} B`;
+    }
+
+    if (value < 1024 * 1024) {
+      return `${(value / 1024).toFixed(1)} KB`;
+    }
+
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const visibleBody = $derived(
+    message
+      ? message.source === 'inbound'
+        ? inboundDetail?.body ??
+          (inboundDetailPending ? '正在从 R2 读取原始邮件并解析正文…' : message.body)
+        : message.body
+      : ''
+  );
+
+  const attachmentCount = $derived(inboundDetail?.attachments.length ?? 0);
 </script>
 
 <section class="rounded-[2rem] border border-night/10 bg-shell/94 p-4 shadow-[0_20px_70px_rgba(32,27,22,0.04)]">
@@ -59,6 +92,26 @@
         </div>
 
         <div class="flex flex-wrap gap-2">
+          {#if message.source === 'inbound'}
+            <button
+              class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
+              disabled={pending || inboundDetailPending}
+              onclick={() => onReloadInboundDetail(message)}
+              type="button"
+            >
+              {inboundDetailPending ? '载入中…' : '重新载入正文'}
+            </button>
+
+            {#if rawDownloadHref}
+              <a
+                class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent"
+                href={rawDownloadHref}
+              >
+                下载 .eml
+              </a>
+            {/if}
+          {/if}
+
           <button
             class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
             disabled={pending}
@@ -99,8 +152,48 @@
         </div>
       </div>
 
-      <div class="flex-1 whitespace-pre-line py-6 text-[15px] leading-8 text-ink">
-        {message.body}
+      <div class="flex-1 py-6">
+        {#if inboundDetailError}
+          <div class="rounded-[1.25rem] border border-coral/20 bg-coral/8 px-4 py-3 text-sm leading-6 text-coral">
+            {inboundDetailError}
+          </div>
+        {/if}
+
+        <div class="whitespace-pre-line pt-0 text-[15px] leading-8 text-ink">
+          {visibleBody}
+        </div>
+
+        {#if message.source === 'inbound'}
+          <div class="mt-6 rounded-[1.5rem] border border-night/10 bg-shell/70 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-mist">
+              <span>原始邮件存档</span>
+              <span>
+                {attachmentCount} 个附件
+                {#if inboundDetail}
+                  / {formatBytes(inboundDetail.rawSize)}
+                {/if}
+              </span>
+            </div>
+
+            {#if inboundDetail && inboundDetail.attachments.length}
+              <div class="mt-4 space-y-2">
+                {#each inboundDetail.attachments as attachment}
+                  <div class="flex items-center justify-between gap-3 rounded-[1rem] border border-night/8 bg-paper px-4 py-3 text-sm">
+                    <div class="min-w-0">
+                      <p class="truncate font-medium text-ink">{attachment.filename}</p>
+                      <p class="truncate text-mist">{attachment.contentType}</p>
+                    </div>
+                    <span class="shrink-0 text-mist">
+                      {formatBytes(attachment.size)}{attachment.inline ? ' / inline' : ''}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {:else if inboundDetail && !inboundDetailPending}
+              <p class="mt-4 text-sm leading-6 text-mist">这封邮件没有检测到附件。</p>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <div class="border-t border-night/8 pt-4 text-sm text-mist">
