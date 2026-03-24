@@ -3,6 +3,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import type { CloudflareEnv } from './lib/server/cloudflare';
+import type { MockWorkspaceSession } from './lib/server/workspace';
 
 declare global {
   namespace App {
@@ -12,6 +13,11 @@ declare global {
       ctx: ExecutionContext;
       context: ExecutionContext;
       caches: CacheStorage;
+    }
+
+    interface Locals {
+      workspaceSessionId?: string | null;
+      workspaceSession?: MockWorkspaceSession | null;
     }
   }
 }

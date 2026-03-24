@@ -1,5 +1,6 @@
 import type { PageServerLoad } from './$types';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { serializeWorkspace } from '$lib/server/workspace';
 
 type DashboardRow = {
   total: number;
@@ -7,15 +8,17 @@ type DashboardRow = {
   last_timestamp: string | null;
 };
 
-export const load: PageServerLoad = async ({ platform }) => {
+export const load: PageServerLoad = async ({ platform, locals }) => {
   const env = platform?.env as CloudflareEnv | undefined;
   const dbBound = Boolean(env?.DB);
   const bucketBound = Boolean(env?.BUCKET);
+  const workspace = locals.workspaceSession ? serializeWorkspace(locals.workspaceSession) : null;
 
   if (!env?.DB) {
     return {
       dbBound,
       bucketBound,
+      workspace,
       schemaReady: false,
       totalMessages: 0,
       lastSubject: null,
@@ -47,6 +50,7 @@ export const load: PageServerLoad = async ({ platform }) => {
     return {
       dbBound,
       bucketBound,
+      workspace,
       schemaReady: true,
       totalMessages: stats?.total ?? 0,
       lastSubject: stats?.last_subject ?? null,
@@ -56,6 +60,7 @@ export const load: PageServerLoad = async ({ platform }) => {
     return {
       dbBound,
       bucketBound,
+      workspace,
       schemaReady: false,
       totalMessages: 0,
       lastSubject: null,

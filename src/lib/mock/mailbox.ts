@@ -16,6 +16,18 @@ export interface MailMessage {
   starred: boolean;
 }
 
+export interface MailboxState {
+  inbox: MailMessage[];
+  sent: MailMessage[];
+}
+
+export interface WorkspaceMetrics {
+  unreadCount: number;
+  starredCount: number;
+  inboxCount: number;
+  sentCount: number;
+}
+
 export interface UserProfile {
   name: string;
   role: string;
@@ -25,6 +37,30 @@ export interface UserProfile {
   timezone: string;
   forwardingEnabled: boolean;
   signature: string;
+}
+
+export interface WorkspacePayload {
+  profile: UserProfile;
+  mailbox: MailboxState;
+  metrics: WorkspaceMetrics;
+}
+
+export interface LoginInput {
+  email: string;
+  password: string;
+  remember: boolean;
+}
+
+export interface ComposeInput {
+  toEmail: string;
+  cc?: string;
+  subject: string;
+  body: string;
+}
+
+export interface MessagePatch {
+  read?: boolean;
+  starred?: boolean;
 }
 
 export const demoCredentials = {
@@ -43,7 +79,7 @@ export const mockProfile: UserProfile = {
   signature: 'Regards,\nEvelyn\nFlareMail'
 };
 
-export const mockMailbox = {
+export const mockMailbox: MailboxState = {
   inbox: [
     {
       id: 'inbox-01',
@@ -93,7 +129,7 @@ export const mockMailbox = {
       read: true,
       starred: false
     }
-  ] satisfies MailMessage[],
+  ],
   sent: [
     {
       id: 'sent-01',
@@ -127,7 +163,7 @@ export const mockMailbox = {
       read: true,
       starred: true
     }
-  ] satisfies MailMessage[]
+  ]
 };
 
 const incomingTemplates = [
@@ -157,16 +193,42 @@ const incomingTemplates = [
   }
 ];
 
-export function cloneMailbox() {
+export function cloneMessage(message: MailMessage): MailMessage {
   return {
-    inbox: mockMailbox.inbox.map((message) => ({ ...message, labels: [...message.labels] })),
-    sent: mockMailbox.sent.map((message) => ({ ...message, labels: [...message.labels] }))
+    ...message,
+    labels: [...message.labels]
   };
 }
 
-export function cloneProfile() {
+export function cloneMailbox(mailbox: MailboxState = mockMailbox): MailboxState {
   return {
-    ...mockProfile
+    inbox: mailbox.inbox.map(cloneMessage),
+    sent: mailbox.sent.map(cloneMessage)
+  };
+}
+
+export function cloneProfile(profile: UserProfile = mockProfile): UserProfile {
+  return {
+    ...profile
+  };
+}
+
+export function getMailboxMetrics(mailbox: MailboxState): WorkspaceMetrics {
+  return {
+    unreadCount: mailbox.inbox.filter((message) => !message.read).length,
+    starredCount:
+      mailbox.inbox.filter((message) => message.starred).length +
+      mailbox.sent.filter((message) => message.starred).length,
+    inboxCount: mailbox.inbox.length,
+    sentCount: mailbox.sent.length
+  };
+}
+
+export function createWorkspacePayload(profile: UserProfile, mailbox: MailboxState): WorkspacePayload {
+  return {
+    profile: cloneProfile(profile),
+    mailbox: cloneMailbox(mailbox),
+    metrics: getMailboxMetrics(mailbox)
   };
 }
 
