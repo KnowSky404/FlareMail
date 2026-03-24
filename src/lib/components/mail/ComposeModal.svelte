@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ComposeInput, MailMessage, UserProfile } from '$lib/mock/mailbox';
+  import type { ComposeInput, ComposeMode, UserProfile } from '$lib/mock/mailbox';
 
   const defaultDraft = {
     toEmail: 'team@northstar.so',
@@ -10,14 +10,16 @@
 
   let {
     profile,
-    draft = null,
+    mode = 'new',
+    initialInput = null,
     pending = false,
     onClose,
     onSaveDraft,
     onSend
   }: {
     profile: UserProfile;
-    draft?: MailMessage | null;
+    mode?: ComposeMode;
+    initialInput?: ComposeInput | null;
     pending?: boolean;
     onClose: () => void;
     onSaveDraft: (input: ComposeInput) => void | Promise<void>;
@@ -26,14 +28,34 @@
 
   let form = $state<ComposeInput>(defaultDraft);
 
+  const title = $derived(
+    mode === 'reply'
+      ? '回复邮件'
+      : mode === 'forward'
+        ? '转发邮件'
+        : mode === 'draft'
+          ? '编辑草稿'
+          : '新建邮件'
+  );
+  const saveLabel = $derived(mode === 'draft' ? '更新草稿' : '保存草稿');
+  const sendLabel = $derived(
+    mode === 'reply'
+      ? '发送回复'
+      : mode === 'forward'
+        ? '发送转发'
+        : mode === 'draft'
+          ? '发送草稿'
+          : '发送邮件'
+  );
+
   $effect(() => {
-    form = draft
+    form = initialInput
       ? {
-          draftId: draft.id,
-          toEmail: draft.toEmail,
-          cc: draft.cc ?? '',
-          subject: draft.subject === '未命名草稿' ? '' : draft.subject,
-          body: draft.body
+          draftId: initialInput.draftId,
+          toEmail: initialInput.toEmail,
+          cc: initialInput.cc ?? '',
+          subject: initialInput.subject,
+          body: initialInput.body
         }
       : {
           ...defaultDraft
@@ -55,7 +77,7 @@
     <div class="flex items-center justify-between gap-4">
       <div>
         <p class="text-[11px] uppercase tracking-[0.28em] text-mist">写邮件</p>
-        <h2 class="mt-2 font-display text-3xl text-ink">{draft ? '编辑草稿' : '新建邮件'}</h2>
+        <h2 class="mt-2 font-display text-3xl text-ink">{title}</h2>
       </div>
       <button
         class="rounded-full border border-night/10 px-3 py-2 text-sm text-mist transition hover:text-ink"
@@ -113,14 +135,14 @@
             onclick={saveDraft}
             type="button"
           >
-            {pending ? '保存中…' : draft ? '更新草稿' : '保存草稿'}
+            {pending ? '保存中…' : saveLabel}
           </button>
           <button
             class="rounded-full bg-ink px-4 py-2 text-sm text-paper transition hover:bg-accent disabled:opacity-60"
             disabled={pending}
             type="submit"
           >
-            {pending ? '发送中…' : draft ? '发送草稿' : '发送邮件'}
+            {pending ? '发送中…' : sendLabel}
           </button>
         </div>
       </div>

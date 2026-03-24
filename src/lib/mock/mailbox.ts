@@ -1,6 +1,7 @@
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
 export type MailSource = 'workspace' | 'inbound';
 export type DeliveryStatus = 'queued' | 'sent' | 'failed';
+export type ComposeMode = 'new' | 'draft' | 'reply' | 'forward';
 
 export const inboundMessagePrefix = 'email:';
 
@@ -261,6 +262,38 @@ const normalizePreview = (value: string) => value.trim().replace(/\s+/g, ' ').sl
 
 const deriveToName = (email: string) => email.split('@')[0].replace(/[._-]/g, ' ').trim() || email.trim();
 
+const prefixedSubject = (prefix: 'Re' | 'Fwd', subject: string) => {
+  const trimmed = subject.trim() || '(no subject)';
+  const normalizedPrefix = `${prefix.toLowerCase()}:`;
+  return trimmed.toLowerCase().startsWith(normalizedPrefix) ? trimmed : `${prefix}: ${trimmed}`;
+};
+
+const quoteBody = (value: string) =>
+  value
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n');
+
+const createReplyThread = (message: MailMessage, body: string) =>
+  ['',
+    '',
+    `在 ${message.sentAt}，${message.fromName} <${message.fromEmail}> 写道：`,
+    quoteBody(body)
+  ].join('\n');
+
+const createForwardThread = (message: MailMessage, body: string) =>
+  [
+    '',
+    '',
+    '---------- 转发邮件 ----------',
+    `发件人: ${message.fromName} <${message.fromEmail}>`,
+    `收件人: ${message.toName} <${message.toEmail}>`,
+    `时间: ${message.sentAt}`,
+    `主题: ${message.subject}`,
+    '',
+    body
+  ].join('\n');
+
 export function cloneMessage(message: MailMessage): MailMessage {
   return {
     ...message,
@@ -396,5 +429,33 @@ export function createSentMessage(input: {
     deliveryAttempts: input.deliveryAttempts ?? 0,
     deliveryError: input.deliveryError ?? '',
     deliveredAt: input.deliveredAt ?? null
+  };
+}
+
+export function createComposeInputFromDraft(message: MailMessage): ComposeInput {
+  return {
+    draftId: message.folder === 'drafts' ? message.id : undefined,
+    toEmail: message.toEmail,
+    cc: message.cc ?? '',
+    subject: message.subject === '未命名草稿' ? '' : message.subject,
+    body: message.body
+  };
+}
+
+export function createReplyComposeInput(message: MailMessage, quotedBody = message.body): ComposeInput {
+  return {
+    toEmail: message.fromEmail,
+    cc: '',
+    subject: prefixedSubject('Re', message.subject),
+    body: `Hi ${message.fromName},\n\n${createReplyThread(message, quotedBody)}`
+  };
+}
+
+export function createForwardComposeInput(message: MailMessage, forwardedBody = message.body): ComposeInput {
+  return {
+    toEmail: '',
+    cc: '',
+    subject: prefixedSubject('Fwd', message.subject),
+    body: `Hi,\n\n转发给你参考。${createForwardThread(message, forwardedBody)}`
   };
 }

@@ -10,8 +10,12 @@
   import {
     cloneMailbox,
     cloneProfile,
+    createComposeInputFromDraft,
+    createForwardComposeInput,
+    createReplyComposeInput,
     isInboundMessageId,
     type ComposeInput,
+    type ComposeMode,
     type InboundMessageDetail,
     type LoginInput,
     type MailFolder,
@@ -62,7 +66,8 @@
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let composeOpen = $state(false);
-  let editingDraft = $state<MailMessage | null>(null);
+  let composeMode = $state<ComposeMode>('new');
+  let composeInitialInput = $state<ComposeInput | null>(null);
   let inboundDetails = $state<Record<string, InboundMessageDetail>>({});
   let inboundDetailErrors = $state<Record<string, string>>({});
   let inboundDetailPendingId = $state<string | null>(null);
@@ -198,7 +203,8 @@
     activeSection = 'inbox';
     selectedMessageId = initialMailbox.inbox[0]?.id ?? null;
     composeOpen = false;
-    editingDraft = null;
+    composeMode = 'new';
+    composeInitialInput = null;
     profileStatus = '';
     loginError = '';
   }
@@ -264,14 +270,16 @@
     selectedMessageId = nextSelection(mailbox, section, selectedMessageId);
   }
 
-  function openCompose(draft: MailMessage | null = null) {
-    editingDraft = draft;
+  function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
+    composeMode = mode;
+    composeInitialInput = initialInput;
     composeOpen = true;
   }
 
   function closeCompose() {
     composeOpen = false;
-    editingDraft = null;
+    composeMode = 'new';
+    composeInitialInput = null;
     banner = '已关闭写信面板。';
   }
 
@@ -369,7 +377,8 @@
         preferredMessageId: result.message.id
       });
       composeOpen = false;
-      editingDraft = null;
+      composeMode = 'new';
+      composeInitialInput = null;
       banner = input.draftId ? '草稿已更新。' : '草稿已保存到工作区。';
     } catch (error) {
       banner = error instanceof Error ? error.message : '保存草稿失败。';
@@ -392,7 +401,8 @@
         preferredMessageId: result.message.id
       });
       composeOpen = false;
-      editingDraft = null;
+      composeMode = 'new';
+      composeInitialInput = null;
       banner =
         result.message.deliveryStatus === 'queued'
           ? `邮件已进入发送队列，等待投递到 ${result.message.toEmail}。`
@@ -504,8 +514,9 @@
       applyWorkspace(result.workspace, {
         section: result.folder
       });
-      if (editingDraft?.id === message.id) {
-        editingDraft = null;
+      if (composeInitialInput?.draftId === message.id) {
+        composeMode = 'new';
+        composeInitialInput = null;
         composeOpen = false;
       }
 
@@ -521,8 +532,24 @@
   }
 
   function handleEditDraft(message: MailMessage) {
-    openCompose(message);
+    openCompose('draft', createComposeInputFromDraft(message));
     banner = '你正在继续编辑一封草稿。';
+  }
+
+  function handleReplyMessage(message: MailMessage) {
+    const quotedBody =
+      isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? message.body : message.body;
+
+    openCompose('reply', createReplyComposeInput(message, quotedBody));
+    banner = `正在回复《${message.subject}》。`;
+  }
+
+  function handleForwardMessage(message: MailMessage) {
+    const forwardedBody =
+      isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? message.body : message.body;
+
+    openCompose('forward', createForwardComposeInput(message, forwardedBody));
+    banner = `正在转发《${message.subject}》。`;
   }
 
   async function handleReloadInboundDetail(message: MailMessage) {
@@ -567,7 +594,7 @@
         totalMessages={data.totalMessages}
         unreadCount={unreadCount}
         onCompose={() => {
-          openCompose();
+          openCompose('new');
           banner = '正在写新邮件。';
         }}
         onEditProfile={() => {
@@ -607,6 +634,8 @@
             {pending}
             rawDownloadHref={selectedInboundDownloadHref}
             onEditDraft={handleEditDraft}
+            onForward={handleForwardMessage}
+            onReply={handleReplyMessage}
             onRetryDelivery={retryMessageDelivery}
             onReloadInboundDetail={handleReloadInboundDetail}
             onRemove={handleDeleteMessage}
@@ -619,7 +648,8 @@
 
     {#if composeOpen}
       <ComposeModal
-        draft={editingDraft}
+        initialInput={composeInitialInput}
+        mode={composeMode}
         {pending}
         {profile}
         onClose={closeCompose}

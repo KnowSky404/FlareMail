@@ -11,6 +11,8 @@
     onToggleStar,
     onToggleRead,
     onEditDraft,
+    onForward,
+    onReply,
     onRetryDelivery,
     onReloadInboundDetail,
     onRemove
@@ -24,6 +26,8 @@
     onToggleStar: (message: MailMessage) => void | Promise<void>;
     onToggleRead: (message: MailMessage) => void | Promise<void>;
     onEditDraft: (message: MailMessage) => void;
+    onForward: (message: MailMessage) => void;
+    onReply: (message: MailMessage) => void;
     onRetryDelivery: (message: MailMessage) => void | Promise<void>;
     onReloadInboundDetail: (message: MailMessage) => void | Promise<void>;
     onRemove: (message: MailMessage) => void | Promise<void>;
@@ -113,6 +117,28 @@
         </div>
 
         <div class="flex flex-wrap gap-2">
+          {#if message.folder === 'inbox'}
+            <button
+              class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
+              disabled={pending}
+              onclick={() => onReply(message)}
+              type="button"
+            >
+              回复
+            </button>
+          {/if}
+
+          {#if message.folder !== 'drafts'}
+            <button
+              class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
+              disabled={pending}
+              onclick={() => onForward(message)}
+              type="button"
+            >
+              转发
+            </button>
+          {/if}
+
           {#if message.folder === 'sent' && message.deliveryStatus !== 'sent'}
             <button
               class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
@@ -231,7 +257,7 @@
       <div class="border-t border-night/8 pt-4 text-sm text-mist">
         <p>
           {message.folder === 'inbox'
-            ? '这里可以继续扩展回复、转发、归档、多选批量处理等真实邮件能力。'
+            ? '收件箱现在已经支持回复与转发，下一步可以继续接归档、批量处理和线程视图。'
             : message.folder === 'sent'
               ? '已发送现在支持排队、失败和重试。后续可以把这里接到真实 provider、Webhooks 和投递回执。'
               : '草稿现在已经支持继续编辑、保存和发送，下一步可以接自动保存与收件人补全。'}

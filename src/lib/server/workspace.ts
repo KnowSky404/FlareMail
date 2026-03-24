@@ -1,6 +1,11 @@
 import type { Cookies } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import {
+  type OutboundDeliveryState,
+  resolveInitialOutboundDelivery,
+  resolveRetriedOutboundDelivery
+} from '$lib/server/outbound';
+import {
   cloneMailbox,
   cloneProfile,
   createDraftMessage,
@@ -133,74 +138,6 @@ const sortMessages = (messages: MailMessage[]) =>
 
 const deriveNameFromEmail = (email: string) =>
   email.split('@')[0].replace(/[._-]/g, ' ').trim() || email.trim();
-
-const deliveryKeyword = (message: Pick<MailMessage, 'toEmail' | 'subject'>) =>
-  `${message.toEmail} ${message.subject}`.toLowerCase();
-
-const shouldQueueDelivery = (message: Pick<MailMessage, 'toEmail' | 'subject'>) => {
-  const value = deliveryKeyword(message);
-  return value.includes('+queue@') || value.includes('[queue]') || value.includes('hold@');
-};
-
-const shouldFailDelivery = (message: Pick<MailMessage, 'toEmail' | 'subject'>) => {
-  const value = deliveryKeyword(message);
-  return value.includes('+fail@') || value.includes('[fail]') || value.includes('bounce@');
-};
-
-type OutboundDeliveryState = {
-  status: DeliveryStatus;
-  attempts: number;
-  deliveredAt: string | null;
-  lastError: string;
-  providerMessageId: string | null;
-};
-
-const createSentDeliveryState = (attempts: number): OutboundDeliveryState => ({
-  status: 'sent',
-  attempts,
-  deliveredAt: nowIso(),
-  lastError: '',
-  providerMessageId: `mock-send-${crypto.randomUUID()}`
-});
-
-const createFailedDeliveryState = (attempts: number): OutboundDeliveryState => ({
-  status: 'failed',
-  attempts,
-  deliveredAt: null,
-  lastError: '收件方服务器暂时拒绝了这次投递，请稍后重试。',
-  providerMessageId: null
-});
-
-const createQueuedDeliveryState = (): OutboundDeliveryState => ({
-  status: 'queued',
-  attempts: 0,
-  deliveredAt: null,
-  lastError: '',
-  providerMessageId: null
-});
-
-const resolveInitialDeliveryState = (message: Pick<MailMessage, 'toEmail' | 'subject'>) => {
-  if (shouldQueueDelivery(message)) {
-    return createQueuedDeliveryState();
-  }
-
-  if (shouldFailDelivery(message)) {
-    return createFailedDeliveryState(1);
-  }
-
-  return createSentDeliveryState(1);
-};
-
-const resolveRetryDeliveryState = (
-  message: Pick<MailMessage, 'toEmail' | 'subject'>,
-  currentAttempts: number
-) => {
-  if (shouldFailDelivery(message)) {
-    return createFailedDeliveryState(currentAttempts + 1);
-  }
-
-  return createSentDeliveryState(currentAttempts + 1);
-};
 
 const parseAddress = (value: string) => {
   const trimmed = value.trim();
@@ -1229,7 +1166,7 @@ export async function sendWorkspaceMessage(
   input: ComposeInput
 ) {
   const draftId = input.draftId?.trim() || undefined;
-  const initialDeliveryState = resolveInitialDeliveryState({
+  const initialDeliveryState = resolveInitialOutboundDelivery({
     toEmail: input.toEmail,
     subject: input.subject
   });
@@ -1385,7 +1322,7 @@ export async function retryWorkspaceMessageDelivery(
     return null;
   }
 
-  const nextDeliveryState = resolveRetryDeliveryState(
+  const nextDeliveryState = resolveRetriedOutboundDelivery(
     {
       toEmail: currentMessage.toEmail,
       subject: currentMessage.subject
