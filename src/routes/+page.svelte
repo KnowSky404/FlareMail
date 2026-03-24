@@ -89,6 +89,12 @@
       mailbox.sent.filter((message) => message.starred).length +
       mailbox.drafts.filter((message) => message.starred).length
   );
+  const queuedCount = $derived(
+    mailbox.sent.filter((message) => message.deliveryStatus === 'queued').length
+  );
+  const failedCount = $derived(
+    mailbox.sent.filter((message) => message.deliveryStatus === 'failed').length
+  );
   const activeMessages = $derived(
     activeSection === 'inbox'
       ? mailbox.inbox
@@ -387,11 +393,44 @@
       });
       composeOpen = false;
       editingDraft = null;
-      banner = input.draftId
-        ? `草稿已发送至 ${result.message.toEmail}。`
-        : `已向 ${result.message.toEmail} 发送一封模拟邮件。`;
+      banner =
+        result.message.deliveryStatus === 'queued'
+          ? `邮件已进入发送队列，等待投递到 ${result.message.toEmail}。`
+          : result.message.deliveryStatus === 'failed'
+            ? `邮件已写入已发送，但投递失败：${result.message.deliveryError ?? '请稍后重试。'}`
+            : input.draftId
+              ? `草稿已发送至 ${result.message.toEmail}。`
+              : `已向 ${result.message.toEmail} 发起投递。`;
     } catch (error) {
       banner = error instanceof Error ? error.message : '发送失败。';
+    } finally {
+      pending = false;
+    }
+  }
+
+  async function retryMessageDelivery(message: MailMessage) {
+    pending = true;
+
+    try {
+      const result = await requestJson<MessageResponse>(
+        `/api/workspace/messages/${encodeURIComponent(message.id)}/retry`,
+        {
+          method: 'POST'
+        }
+      );
+
+      applyWorkspace(result.workspace, {
+        section: 'sent',
+        preferredMessageId: result.message.id
+      });
+      banner =
+        result.message.deliveryStatus === 'sent'
+          ? `《${result.message.subject}》已成功投递。`
+          : result.message.deliveryStatus === 'queued'
+            ? `《${result.message.subject}》仍在发送队列中。`
+            : `《${result.message.subject}》再次投递失败：${result.message.deliveryError ?? '请稍后重试。'}`;
+    } catch (error) {
+      banner = error instanceof Error ? error.message : '重试投递失败。';
     } finally {
       pending = false;
     }
@@ -519,8 +558,10 @@
       <WorkspaceHeader
         {banner}
         draftCount={mailbox.drafts.length}
+        failedCount={failedCount}
         {pending}
         {profile}
+        queuedCount={queuedCount}
         {runtimeLabel}
         {starredCount}
         totalMessages={data.totalMessages}
@@ -566,6 +607,7 @@
             {pending}
             rawDownloadHref={selectedInboundDownloadHref}
             onEditDraft={handleEditDraft}
+            onRetryDelivery={retryMessageDelivery}
             onReloadInboundDetail={handleReloadInboundDetail}
             onRemove={handleDeleteMessage}
             onToggleRead={handleToggleRead}

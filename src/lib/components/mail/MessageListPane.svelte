@@ -37,6 +37,15 @@
       : message.folder === 'sent'
         ? message.toEmail
         : message.toEmail || '待填写收件人';
+
+  const getDeliveryLabel = (message: MailMessage) =>
+    message.deliveryStatus === 'queued'
+      ? '排队中'
+      : message.deliveryStatus === 'failed'
+        ? '失败'
+        : message.deliveryStatus === 'sent'
+          ? '已送达'
+          : '';
 </script>
 
 <section class="rounded-[2rem] border border-night/10 bg-shell/94 p-4 shadow-[0_20px_70px_rgba(32,27,22,0.04)]">
@@ -73,6 +82,21 @@
               {#if message.folder === 'drafts'}
                 <span class={`text-[11px] ${selectedMessageId === message.id ? 'text-paper/70' : 'text-mist'}`}>
                   草稿
+                </span>
+              {/if}
+              {#if message.folder === 'sent' && message.deliveryStatus}
+                <span
+                  class={`text-[11px] ${
+                    selectedMessageId === message.id
+                      ? 'text-paper/70'
+                      : message.deliveryStatus === 'failed'
+                        ? 'text-coral'
+                        : message.deliveryStatus === 'queued'
+                          ? 'text-accent'
+                          : 'text-mist'
+                  }`}
+                >
+                  {getDeliveryLabel(message)}
                 </span>
               {/if}
             </div>

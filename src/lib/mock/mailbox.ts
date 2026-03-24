@@ -1,5 +1,6 @@
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
 export type MailSource = 'workspace' | 'inbound';
+export type DeliveryStatus = 'queued' | 'sent' | 'failed';
 
 export const inboundMessagePrefix = 'email:';
 
@@ -37,6 +38,10 @@ export interface MailMessage {
   labels: string[];
   read: boolean;
   starred: boolean;
+  deliveryStatus?: DeliveryStatus | null;
+  deliveryAttempts?: number;
+  deliveryError?: string;
+  deliveredAt?: string | null;
 }
 
 export interface MailboxState {
@@ -175,7 +180,11 @@ export const mockMailbox: MailboxState = {
       sentAt: '2026-03-24T08:42:00.000Z',
       labels: ['Sent'],
       read: true,
-      starred: false
+      starred: false,
+      deliveryStatus: 'sent',
+      deliveryAttempts: 1,
+      deliveryError: '',
+      deliveredAt: '2026-03-24T08:42:14.000Z'
     },
     {
       id: 'sent-02',
@@ -192,7 +201,11 @@ export const mockMailbox: MailboxState = {
       sentAt: '2026-03-24T06:14:00.000Z',
       labels: ['Sent'],
       read: true,
-      starred: true
+      starred: true,
+      deliveryStatus: 'failed',
+      deliveryAttempts: 2,
+      deliveryError: '收件方域名暂时拒收，请稍后重试。',
+      deliveredAt: null
     }
   ],
   drafts: [
@@ -352,6 +365,10 @@ export function createSentMessage(input: {
   subject: string;
   body: string;
   cc?: string;
+  deliveryStatus?: DeliveryStatus;
+  deliveryAttempts?: number;
+  deliveryError?: string;
+  deliveredAt?: string | null;
 }): MailMessage {
   const toEmail = input.toEmail.trim();
   const signatureBlock = input.from.signature ? `\n\n${input.from.signature}` : '';
@@ -374,6 +391,10 @@ export function createSentMessage(input: {
     sentAt: new Date().toISOString(),
     labels: ['Sent'],
     read: true,
-    starred: false
+    starred: false,
+    deliveryStatus: input.deliveryStatus ?? 'queued',
+    deliveryAttempts: input.deliveryAttempts ?? 0,
+    deliveryError: input.deliveryError ?? '',
+    deliveredAt: input.deliveredAt ?? null
   };
 }

@@ -11,6 +11,7 @@
     onToggleStar,
     onToggleRead,
     onEditDraft,
+    onRetryDelivery,
     onReloadInboundDetail,
     onRemove
   }: {
@@ -23,6 +24,7 @@
     onToggleStar: (message: MailMessage) => void | Promise<void>;
     onToggleRead: (message: MailMessage) => void | Promise<void>;
     onEditDraft: (message: MailMessage) => void;
+    onRetryDelivery: (message: MailMessage) => void | Promise<void>;
     onReloadInboundDetail: (message: MailMessage) => void | Promise<void>;
     onRemove: (message: MailMessage) => void | Promise<void>;
   } = $props();
@@ -57,6 +59,15 @@
   );
 
   const attachmentCount = $derived(inboundDetail?.attachments.length ?? 0);
+  const deliveryLabel = $derived(
+    message?.deliveryStatus === 'queued'
+      ? '排队中'
+      : message?.deliveryStatus === 'failed'
+        ? '投递失败'
+        : message?.deliveryStatus === 'sent'
+          ? '已送达'
+          : ''
+  );
 </script>
 
 <section class="rounded-[2rem] border border-night/10 bg-shell/94 p-4 shadow-[0_20px_70px_rgba(32,27,22,0.04)]">
@@ -88,10 +99,31 @@
             {/if}
             <p>时间：<span class="text-ink">{formatDate(message.sentAt)}</span></p>
             <p>标签：<span class="text-ink">{message.labels.join(' / ')}</span></p>
+            {#if message.folder === 'sent' && message.deliveryStatus}
+              <p>投递状态：<span class="text-ink">{deliveryLabel}</span></p>
+              <p>尝试次数：<span class="text-ink">{message.deliveryAttempts ?? 0}</span></p>
+              {#if message.deliveredAt}
+                <p>投递时间：<span class="text-ink">{formatDate(message.deliveredAt)}</span></p>
+              {/if}
+              {#if message.deliveryError}
+                <p>失败原因：<span class="text-ink">{message.deliveryError}</span></p>
+              {/if}
+            {/if}
           </div>
         </div>
 
         <div class="flex flex-wrap gap-2">
+          {#if message.folder === 'sent' && message.deliveryStatus !== 'sent'}
+            <button
+              class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
+              disabled={pending}
+              onclick={() => onRetryDelivery(message)}
+              type="button"
+            >
+              {message.deliveryStatus === 'queued' ? '继续处理队列' : '重试投递'}
+            </button>
+          {/if}
+
           {#if message.source === 'inbound'}
             <button
               class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
@@ -201,7 +233,7 @@
           {message.folder === 'inbox'
             ? '这里可以继续扩展回复、转发、归档、多选批量处理等真实邮件能力。'
             : message.folder === 'sent'
-              ? '这里可以继续扩展撤回、再次编辑、模板发送与草稿箱。'
+              ? '已发送现在支持排队、失败和重试。后续可以把这里接到真实 provider、Webhooks 和投递回执。'
               : '草稿现在已经支持继续编辑、保存和发送，下一步可以接自动保存与收件人补全。'}
         </p>
       </div>

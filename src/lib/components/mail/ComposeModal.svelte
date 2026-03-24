@@ -91,9 +91,14 @@
       </label>
 
       <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
-        <p class="text-sm text-mist">
-          将使用 <span class="text-ink">{profile.email}</span> 与当前签名发送。
-        </p>
+        <div class="space-y-1 text-sm text-mist">
+          <p>
+            将使用 <span class="text-ink">{profile.email}</span> 与当前签名发送。
+          </p>
+          <p class="text-xs">
+            演示提示：收件人包含 `+queue@` 可进入队列，包含 `+fail@` 可模拟投递失败。
+          </p>
+        </div>
         <div class="flex gap-2">
           <button
             class="rounded-full border border-night/10 px-4 py-2 text-sm text-ink transition hover:border-night/20"

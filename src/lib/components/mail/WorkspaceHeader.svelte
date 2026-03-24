@@ -8,6 +8,8 @@
     unreadCount,
     starredCount,
     draftCount,
+    queuedCount,
+    failedCount,
     totalMessages,
     pending = false,
     onReceive,
@@ -21,6 +23,8 @@
     unreadCount: number;
     starredCount: number;
     draftCount: number;
+    queuedCount: number;
+    failedCount: number;
     totalMessages: number;
     pending?: boolean;
     onReceive: () => void | Promise<void>;
@@ -85,6 +89,8 @@
       <span class="rounded-full border border-night/10 px-3 py-1">未读 {unreadCount}</span>
       <span class="rounded-full border border-night/10 px-3 py-1">星标 {starredCount}</span>
       <span class="rounded-full border border-night/10 px-3 py-1">草稿 {draftCount}</span>
+      <span class="rounded-full border border-night/10 px-3 py-1">排队 {queuedCount}</span>
+      <span class="rounded-full border border-night/10 px-3 py-1">失败 {failedCount}</span>
       <span class="rounded-full border border-night/10 px-3 py-1">真实消息 {totalMessages}</span>
     </div>
   </div>

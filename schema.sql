@@ -100,3 +100,18 @@ CREATE TABLE IF NOT EXISTS workspace_email_states (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_updated_at
   ON workspace_email_states(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS workspace_outbound_statuses (
+  message_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'sent', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  delivered_at TEXT,
+  last_error TEXT NOT NULL DEFAULT '',
+  provider_message_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_outbound_statuses_user_status
+  ON workspace_outbound_statuses(user_id, status, updated_at DESC);

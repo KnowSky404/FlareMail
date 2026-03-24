@@ -8,6 +8,7 @@ import {
   createSentMessage,
   createWorkspacePayload,
   demoCredentials,
+  type DeliveryStatus,
   fromInboundMessageId,
   isInboundMessageId,
   mockMailbox,
@@ -39,6 +40,7 @@ export interface WorkspaceSession {
 type WorkspaceCapabilities = {
   drafts: boolean;
   inboundStates: boolean;
+  outboundStatuses: boolean;
 };
 
 type WorkspaceUserRow = {
@@ -99,6 +101,15 @@ type WorkspaceInboundRow = {
   is_starred: number;
 };
 
+type WorkspaceOutboundStatusRow = {
+  message_id: string;
+  status: DeliveryStatus;
+  attempts: number;
+  delivered_at: string | null;
+  last_error: string;
+  provider_message_id: string | null;
+};
+
 const memorySessions = new Map<string, WorkspaceSession>();
 
 const cloneMessage = (message: MailMessage): MailMessage => ({
@@ -120,10 +131,76 @@ const parseLabels = (value: string) => {
 const sortMessages = (messages: MailMessage[]) =>
   [...messages].sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id));
 
-const previewFromBody = (value: string) => value.trim().replace(/\s+/g, ' ').slice(0, 96);
-
 const deriveNameFromEmail = (email: string) =>
   email.split('@')[0].replace(/[._-]/g, ' ').trim() || email.trim();
+
+const deliveryKeyword = (message: Pick<MailMessage, 'toEmail' | 'subject'>) =>
+  `${message.toEmail} ${message.subject}`.toLowerCase();
+
+const shouldQueueDelivery = (message: Pick<MailMessage, 'toEmail' | 'subject'>) => {
+  const value = deliveryKeyword(message);
+  return value.includes('+queue@') || value.includes('[queue]') || value.includes('hold@');
+};
+
+const shouldFailDelivery = (message: Pick<MailMessage, 'toEmail' | 'subject'>) => {
+  const value = deliveryKeyword(message);
+  return value.includes('+fail@') || value.includes('[fail]') || value.includes('bounce@');
+};
+
+type OutboundDeliveryState = {
+  status: DeliveryStatus;
+  attempts: number;
+  deliveredAt: string | null;
+  lastError: string;
+  providerMessageId: string | null;
+};
+
+const createSentDeliveryState = (attempts: number): OutboundDeliveryState => ({
+  status: 'sent',
+  attempts,
+  deliveredAt: nowIso(),
+  lastError: '',
+  providerMessageId: `mock-send-${crypto.randomUUID()}`
+});
+
+const createFailedDeliveryState = (attempts: number): OutboundDeliveryState => ({
+  status: 'failed',
+  attempts,
+  deliveredAt: null,
+  lastError: '收件方服务器暂时拒绝了这次投递，请稍后重试。',
+  providerMessageId: null
+});
+
+const createQueuedDeliveryState = (): OutboundDeliveryState => ({
+  status: 'queued',
+  attempts: 0,
+  deliveredAt: null,
+  lastError: '',
+  providerMessageId: null
+});
+
+const resolveInitialDeliveryState = (message: Pick<MailMessage, 'toEmail' | 'subject'>) => {
+  if (shouldQueueDelivery(message)) {
+    return createQueuedDeliveryState();
+  }
+
+  if (shouldFailDelivery(message)) {
+    return createFailedDeliveryState(1);
+  }
+
+  return createSentDeliveryState(1);
+};
+
+const resolveRetryDeliveryState = (
+  message: Pick<MailMessage, 'toEmail' | 'subject'>,
+  currentAttempts: number
+) => {
+  if (shouldFailDelivery(message)) {
+    return createFailedDeliveryState(currentAttempts + 1);
+  }
+
+  return createSentDeliveryState(currentAttempts + 1);
+};
 
 const parseAddress = (value: string) => {
   const trimmed = value.trim();
@@ -155,7 +232,10 @@ const mapUserRowToProfile = (row: WorkspaceUserRow): UserProfile => ({
   signature: row.signature
 });
 
-const mapWorkspaceMessageRow = (row: WorkspaceMessageRow): MailMessage => ({
+const mapWorkspaceMessageRow = (
+  row: WorkspaceMessageRow,
+  outboundStatus?: WorkspaceOutboundStatusRow
+): MailMessage => ({
   id: row.id,
   folder: row.folder,
   source: 'workspace',
@@ -169,7 +249,11 @@ const mapWorkspaceMessageRow = (row: WorkspaceMessageRow): MailMessage => ({
   sentAt: row.sent_at,
   labels: parseLabels(row.labels_json),
   read: Boolean(row.is_read),
-  starred: Boolean(row.is_starred)
+  starred: Boolean(row.is_starred),
+  deliveryStatus: row.folder === 'sent' ? outboundStatus?.status ?? null : null,
+  deliveryAttempts: row.folder === 'sent' ? outboundStatus?.attempts ?? 0 : 0,
+  deliveryError: row.folder === 'sent' ? outboundStatus?.last_error ?? '' : '',
+  deliveredAt: row.folder === 'sent' ? outboundStatus?.delivered_at ?? null : null
 });
 
 const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailMessage =>
@@ -211,8 +295,10 @@ const rowsToMailbox = (
   rows: WorkspaceMessageRow[],
   draftRows: WorkspaceDraftRow[],
   inboundRows: WorkspaceInboundRow[],
+  outboundRows: WorkspaceOutboundStatusRow[],
   profile: UserProfile
 ): MailboxState => {
+  const outboundByMessageId = new Map(outboundRows.map((row) => [row.message_id, row]));
   const mailbox: MailboxState = {
     inbox: [],
     sent: [],
@@ -220,7 +306,7 @@ const rowsToMailbox = (
   };
 
   for (const row of rows) {
-    const message = mapWorkspaceMessageRow(row);
+    const message = mapWorkspaceMessageRow(row, outboundByMessageId.get(row.id));
     mailbox[message.folder].push(message);
   }
 
@@ -320,6 +406,26 @@ function serializeDraftForInsert(userId: string, input: ComposeInput, starred: b
   };
 }
 
+function serializeOutboundStatusForUpsert(
+  userId: string,
+  messageId: string,
+  state: OutboundDeliveryState
+) {
+  const timestamp = nowIso();
+
+  return {
+    messageId,
+    userId,
+    status: state.status,
+    attempts: state.attempts,
+    deliveredAt: state.deliveredAt,
+    lastError: state.lastError,
+    providerMessageId: state.providerMessageId,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
 async function hasNamedTables(db: D1Database, names: string[]) {
   const placeholders = names.map(() => '?').join(', ');
   const row = await db.prepare(
@@ -350,24 +456,28 @@ async function getWorkspaceCapabilities(env?: CloudflareEnv): Promise<WorkspaceC
   if (!env?.DB) {
     return {
       drafts: false,
-      inboundStates: false
+      inboundStates: false,
+      outboundStatuses: false
     };
   }
 
   try {
-    const [drafts, inboundStates] = await Promise.all([
+    const [drafts, inboundStates, outboundStatuses] = await Promise.all([
       hasNamedTables(env.DB, ['workspace_drafts']),
-      hasNamedTables(env.DB, ['workspace_email_states'])
+      hasNamedTables(env.DB, ['workspace_email_states']),
+      hasNamedTables(env.DB, ['workspace_outbound_statuses'])
     ]);
 
     return {
       drafts,
-      inboundStates
+      inboundStates,
+      outboundStatuses
     };
   } catch {
     return {
       drafts: false,
-      inboundStates: false
+      inboundStates: false,
+      outboundStatuses: false
     };
   }
 }
@@ -406,7 +516,7 @@ async function fetchD1Session(
   }
 
   const profile = mapUserRowToProfile(sessionRow);
-  const [messageRows, draftRows, inboundRows] = await Promise.all([
+  const [messageRows, draftRows, inboundRows, outboundRows] = await Promise.all([
     db.prepare(
       `
         SELECT
@@ -467,7 +577,22 @@ async function fetchD1Session(
             ORDER BY e."timestamp" DESC, e.created_at DESC
           `
         ).bind(sessionRow.id, sessionRow.login_email, sessionRow.email).all<WorkspaceInboundRow>()
-      : Promise.resolve({ results: [] as WorkspaceInboundRow[] })
+      : Promise.resolve({ results: [] as WorkspaceInboundRow[] }),
+    capabilities.outboundStatuses
+      ? db.prepare(
+          `
+            SELECT
+              message_id,
+              status,
+              attempts,
+              delivered_at,
+              last_error,
+              provider_message_id
+            FROM workspace_outbound_statuses
+            WHERE user_id = ?
+          `
+        ).bind(sessionRow.id).all<WorkspaceOutboundStatusRow>()
+      : Promise.resolve({ results: [] as WorkspaceOutboundStatusRow[] })
   ]);
 
   return {
@@ -478,6 +603,7 @@ async function fetchD1Session(
       messageRows.results ?? [],
       draftRows.results ?? [],
       inboundRows.results ?? [],
+      outboundRows.results ?? [],
       profile
     ),
     incomingSequence: sessionRow.incoming_sequence,
@@ -593,6 +719,59 @@ async function seedWorkspaceDraftsIfEmpty(db: D1Database, userId: string) {
   await db.batch(statements);
 }
 
+async function seedWorkspaceOutboundStatusesIfEmpty(db: D1Database, userId: string) {
+  const existing = await db.prepare(
+    `
+      SELECT COUNT(*) AS total
+      FROM workspace_outbound_statuses
+      WHERE user_id = ?
+    `
+  ).bind(userId).first<{ total: number }>();
+
+  if ((existing?.total ?? 0) > 0) {
+    return;
+  }
+
+  const statements = mockMailbox.sent.map((message) => {
+    const state = serializeOutboundStatusForUpsert(userId, message.id, {
+      status: message.deliveryStatus ?? 'sent',
+      attempts: message.deliveryAttempts ?? 1,
+      deliveredAt: message.deliveredAt ?? null,
+      lastError: message.deliveryError ?? '',
+      providerMessageId: message.deliveryStatus === 'sent' ? `seed-${message.id}` : null
+    });
+
+    return db.prepare(
+      `
+        INSERT INTO workspace_outbound_statuses (
+          message_id,
+          user_id,
+          status,
+          attempts,
+          delivered_at,
+          last_error,
+          provider_message_id,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    ).bind(
+      state.messageId,
+      state.userId,
+      state.status,
+      state.attempts,
+      state.deliveredAt,
+      state.lastError,
+      state.providerMessageId,
+      state.createdAt,
+      state.updatedAt
+    );
+  });
+
+  await db.batch(statements);
+}
+
 async function ensureDemoUser(db: D1Database, capabilities: WorkspaceCapabilities) {
   let user = await db.prepare(
     `
@@ -681,6 +860,10 @@ async function ensureDemoUser(db: D1Database, capabilities: WorkspaceCapabilitie
 
   if (capabilities.drafts) {
     await seedWorkspaceDraftsIfEmpty(db, user.id);
+  }
+
+  if (capabilities.outboundStatuses) {
+    await seedWorkspaceOutboundStatusesIfEmpty(db, user.id);
   }
 
   return user;
@@ -1046,13 +1229,21 @@ export async function sendWorkspaceMessage(
   input: ComposeInput
 ) {
   const draftId = input.draftId?.trim() || undefined;
+  const initialDeliveryState = resolveInitialDeliveryState({
+    toEmail: input.toEmail,
+    subject: input.subject
+  });
   const message = createSentMessage({
     id: draftId,
     from: session.profile,
     toEmail: input.toEmail,
     subject: input.subject,
     body: input.body,
-    cc: input.cc
+    cc: input.cc,
+    deliveryStatus: initialDeliveryState.status,
+    deliveryAttempts: initialDeliveryState.attempts,
+    deliveryError: initialDeliveryState.lastError,
+    deliveredAt: initialDeliveryState.deliveredAt
   });
 
   if (session.storage === 'd1' && (await hasWorkspaceCoreTables(env))) {
@@ -1109,6 +1300,39 @@ export async function sendWorkspaceMessage(
       ).bind(timestamp, session.id)
     ];
 
+    if (capabilities.outboundStatuses) {
+      const delivery = serializeOutboundStatusForUpsert(session.userId, message.id, initialDeliveryState);
+
+      statements.unshift(
+        env!.DB.prepare(
+          `
+            INSERT INTO workspace_outbound_statuses (
+              message_id,
+              user_id,
+              status,
+              attempts,
+              delivered_at,
+              last_error,
+              provider_message_id,
+              created_at,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+        ).bind(
+          delivery.messageId,
+          delivery.userId,
+          delivery.status,
+          delivery.attempts,
+          delivery.deliveredAt,
+          delivery.lastError,
+          delivery.providerMessageId,
+          delivery.createdAt,
+          delivery.updatedAt
+        )
+      );
+    }
+
     if (draftId && capabilities.drafts) {
       statements.unshift(
         env!.DB.prepare(
@@ -1144,6 +1368,127 @@ export async function sendWorkspaceMessage(
   };
   touchMemorySession(session);
   memorySessions.set(session.id, cloneSession(session));
+  return {
+    message,
+    workspace: serializeWorkspace(session)
+  };
+}
+
+export async function retryWorkspaceMessageDelivery(
+  env: CloudflareEnv | undefined,
+  session: WorkspaceSession,
+  messageId: string
+) {
+  const currentMessage = findMessage(session, messageId);
+
+  if (!currentMessage || currentMessage.folder !== 'sent' || currentMessage.source !== 'workspace') {
+    return null;
+  }
+
+  const nextDeliveryState = resolveRetryDeliveryState(
+    {
+      toEmail: currentMessage.toEmail,
+      subject: currentMessage.subject
+    },
+    currentMessage.deliveryAttempts ?? 0
+  );
+
+  if (session.storage === 'd1' && (await hasWorkspaceCoreTables(env))) {
+    const capabilities = await getWorkspaceCapabilities(env);
+
+    if (!capabilities.outboundStatuses) {
+      throw new Error('出站状态表尚未迁移，请先执行最新的 D1 schema。');
+    }
+
+    const delivery = serializeOutboundStatusForUpsert(session.userId, messageId, nextDeliveryState);
+
+    await env!.DB.batch([
+      env!.DB.prepare(
+        `
+          INSERT INTO workspace_outbound_statuses (
+            message_id,
+            user_id,
+            status,
+            attempts,
+            delivered_at,
+            last_error,
+            provider_message_id,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(message_id) DO UPDATE SET
+            status = excluded.status,
+            attempts = excluded.attempts,
+            delivered_at = excluded.delivered_at,
+            last_error = excluded.last_error,
+            provider_message_id = excluded.provider_message_id,
+            updated_at = excluded.updated_at
+        `
+      ).bind(
+        delivery.messageId,
+        delivery.userId,
+        delivery.status,
+        delivery.attempts,
+        delivery.deliveredAt,
+        delivery.lastError,
+        delivery.providerMessageId,
+        delivery.createdAt,
+        delivery.updatedAt
+      ),
+      env!.DB.prepare(
+        `
+          UPDATE workspace_sessions
+          SET updated_at = ?
+          WHERE id = ?
+        `
+      ).bind(nowIso(), session.id)
+    ]);
+
+    const nextSession = await refreshD1Session(env, session.id);
+
+    if (!nextSession) {
+      throw new Error('更新投递状态后无法重新加载工作区。');
+    }
+
+    const message = findMessage(nextSession, messageId);
+
+    if (!message) {
+      return null;
+    }
+
+    return {
+      message,
+      workspace: serializeWorkspace(nextSession)
+    };
+  }
+
+  session.mailbox = {
+    inbox: session.mailbox.inbox.map(cloneMessage),
+    sent: sortMessages(
+      session.mailbox.sent.map((message) =>
+        message.id === messageId
+          ? {
+              ...cloneMessage(message),
+              deliveryStatus: nextDeliveryState.status,
+              deliveryAttempts: nextDeliveryState.attempts,
+              deliveryError: nextDeliveryState.lastError,
+              deliveredAt: nextDeliveryState.deliveredAt
+            }
+          : cloneMessage(message)
+      )
+    ),
+    drafts: session.mailbox.drafts.map(cloneMessage)
+  };
+  touchMemorySession(session);
+  memorySessions.set(session.id, cloneSession(session));
+
+  const message = findMessage(session, messageId);
+
+  if (!message) {
+    return null;
+  }
+
   return {
     message,
     workspace: serializeWorkspace(session)
@@ -1381,6 +1726,18 @@ export async function deleteWorkspaceMessage(
         ).bind(session.userId, messageId)
       );
     } else {
+      if (folder === 'sent' && capabilities.outboundStatuses) {
+        statements.unshift(
+          env!.DB.prepare(
+            `
+              DELETE FROM workspace_outbound_statuses
+              WHERE user_id = ?
+                AND message_id = ?
+            `
+          ).bind(session.userId, messageId)
+        );
+      }
+
       statements.unshift(
         env!.DB.prepare(
           `
