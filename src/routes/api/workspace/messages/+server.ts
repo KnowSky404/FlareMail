@@ -1,12 +1,13 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { ComposeInput } from '$lib/mock/mailbox';
-import { requireWorkspaceSession } from '$lib/server/workspace-api';
+import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 import { sendWorkspaceMessage } from '$lib/server/workspace';
 
 export const POST: RequestHandler = async (event) => {
   const session = requireWorkspaceSession(event);
   const payload = (await event.request.json()) as ComposeInput;
+  const env = getRequestEnv(event);
 
   if (!payload.toEmail.trim() || !payload.subject.trim() || !payload.body.trim()) {
     return json(
@@ -20,6 +21,6 @@ export const POST: RequestHandler = async (event) => {
 
   return json({
     ok: true,
-    ...sendWorkspaceMessage(session, payload)
+    ...(await sendWorkspaceMessage(env, session, payload))
   });
 };

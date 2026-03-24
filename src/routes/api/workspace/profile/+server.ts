@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { UserProfile } from '$lib/mock/mailbox';
-import { requireWorkspaceSession } from '$lib/server/workspace-api';
+import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 import { serializeWorkspace, updateWorkspaceProfile } from '$lib/server/workspace';
 
 export const GET: RequestHandler = async (event) => {
@@ -17,9 +17,10 @@ export const GET: RequestHandler = async (event) => {
 export const PUT: RequestHandler = async (event) => {
   const session = requireWorkspaceSession(event);
   const payload = (await event.request.json()) as UserProfile;
+  const env = getRequestEnv(event);
 
   return json({
     ok: true,
-    workspace: updateWorkspaceProfile(session, payload)
+    workspace: await updateWorkspaceProfile(env, session, payload)
   });
 };

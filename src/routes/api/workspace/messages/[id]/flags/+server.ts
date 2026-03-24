@@ -1,13 +1,14 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { MessagePatch } from '$lib/mock/mailbox';
-import { requireWorkspaceSession } from '$lib/server/workspace-api';
+import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 import { patchWorkspaceMessage } from '$lib/server/workspace';
 
 export const PATCH: RequestHandler = async (event) => {
   const session = requireWorkspaceSession(event);
   const payload = (await event.request.json()) as MessagePatch;
-  const result = patchWorkspaceMessage(session, event.params.id, payload);
+  const env = getRequestEnv(event);
+  const result = await patchWorkspaceMessage(env, session, event.params.id, payload);
 
   if (!result) {
     return json(

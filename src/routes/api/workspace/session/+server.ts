@@ -9,6 +9,7 @@ import {
   sessionCookieOptions,
   workspaceSessionCookie
 } from '$lib/server/workspace';
+import { getRequestEnv } from '$lib/server/workspace-api';
 
 export const GET: RequestHandler = async ({ locals }) => {
   return json({
@@ -18,9 +19,10 @@ export const GET: RequestHandler = async ({ locals }) => {
   });
 };
 
-export const POST: RequestHandler = async ({ request, cookies }) => {
-  const payload = (await request.json()) as LoginInput;
-  const session = authenticateWorkspaceUser(payload.email, payload.password);
+export const POST: RequestHandler = async (event) => {
+  const payload = (await event.request.json()) as LoginInput;
+  const env = getRequestEnv(event);
+  const session = await authenticateWorkspaceUser(env, payload.email, payload.password);
 
   if (!session) {
     return json(
@@ -32,7 +34,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     );
   }
 
-  cookies.set(workspaceSessionCookie, session.id, sessionCookieOptions(payload.remember));
+  event.cookies.set(workspaceSessionCookie, session.id, sessionCookieOptions(payload.remember));
 
   return json({
     ok: true,
@@ -41,9 +43,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   });
 };
 
-export const DELETE: RequestHandler = async ({ locals, cookies }) => {
-  destroyWorkspaceSession(locals.workspaceSessionId);
-  cookies.set(workspaceSessionCookie, '', clearSessionCookieOptions());
+export const DELETE: RequestHandler = async (event) => {
+  const env = getRequestEnv(event);
+  await destroyWorkspaceSession(env, event.locals.workspaceSessionId);
+  event.cookies.set(workspaceSessionCookie, '', clearSessionCookieOptions());
 
   return json({
     ok: true,
