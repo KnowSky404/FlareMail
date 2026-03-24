@@ -70,3 +70,33 @@ CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_sent_at
 
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_starred
   ON workspace_messages(user_id, is_starred);
+
+CREATE TABLE IF NOT EXISTS workspace_drafts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  to_email TEXT NOT NULL DEFAULT '',
+  cc TEXT NOT NULL DEFAULT '',
+  subject TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  is_starred INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_updated_at
+  ON workspace_drafts(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS workspace_email_states (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  email_message_id TEXT NOT NULL,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  is_starred INTEGER NOT NULL DEFAULT 0,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE(user_id, email_message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_updated_at
+  ON workspace_email_states(user_id, updated_at DESC);

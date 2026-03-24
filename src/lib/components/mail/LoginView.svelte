@@ -65,7 +65,7 @@
         <p class="text-[11px] uppercase tracking-[0.24em] text-mist">工作台数据</p>
         <p class="mt-3 text-2xl font-semibold text-ink">模拟接口驱动</p>
         <p class="mt-3 text-sm leading-6 text-mist">
-          收件箱、已发送、资料保存、收信与发信都通过 `/api/workspace/*` 接口完成。
+          收件箱、草稿箱、已发送、资料保存、收信与发信都通过 `/api/workspace/*` 接口完成。
         </p>
       </article>
 

@@ -1,28 +1,52 @@
 <script lang="ts">
-  import type { ComposeInput, UserProfile } from '$lib/mock/mailbox';
+  import type { ComposeInput, MailMessage, UserProfile } from '$lib/mock/mailbox';
 
-  let {
-    profile,
-    pending = false,
-    onClose,
-    onSend
-  }: {
-    profile: UserProfile;
-    pending?: boolean;
-    onClose: () => void;
-    onSend: (input: ComposeInput) => void | Promise<void>;
-  } = $props();
-
-  let form = $state<ComposeInput>({
+  const defaultDraft = {
     toEmail: 'team@northstar.so',
     cc: '',
     subject: 'FlareMail UI prototype update',
     body: 'Hi,\n\nThe next pass focuses on a quieter reading view, profile editing, and a simpler send flow.\n\n'
+  };
+
+  let {
+    profile,
+    draft = null,
+    pending = false,
+    onClose,
+    onSaveDraft,
+    onSend
+  }: {
+    profile: UserProfile;
+    draft?: MailMessage | null;
+    pending?: boolean;
+    onClose: () => void;
+    onSaveDraft: (input: ComposeInput) => void | Promise<void>;
+    onSend: (input: ComposeInput) => void | Promise<void>;
+  } = $props();
+
+  let form = $state<ComposeInput>(defaultDraft);
+
+  $effect(() => {
+    form = draft
+      ? {
+          draftId: draft.id,
+          toEmail: draft.toEmail,
+          cc: draft.cc ?? '',
+          subject: draft.subject === '未命名草稿' ? '' : draft.subject,
+          body: draft.body
+        }
+      : {
+          ...defaultDraft
+        };
   });
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
     await onSend(form);
+  }
+
+  async function saveDraft() {
+    await onSaveDraft(form);
   }
 </script>
 
@@ -31,7 +55,7 @@
     <div class="flex items-center justify-between gap-4">
       <div>
         <p class="text-[11px] uppercase tracking-[0.28em] text-mist">写邮件</p>
-        <h2 class="mt-2 font-display text-3xl text-ink">新建邮件</h2>
+        <h2 class="mt-2 font-display text-3xl text-ink">{draft ? '编辑草稿' : '新建邮件'}</h2>
       </div>
       <button
         class="rounded-full border border-night/10 px-3 py-2 text-sm text-mist transition hover:text-ink"
@@ -79,11 +103,19 @@
             取消
           </button>
           <button
+            class="rounded-full border border-night/10 px-4 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
+            disabled={pending}
+            onclick={saveDraft}
+            type="button"
+          >
+            {pending ? '保存中…' : draft ? '更新草稿' : '保存草稿'}
+          </button>
+          <button
             class="rounded-full bg-ink px-4 py-2 text-sm text-paper transition hover:bg-accent disabled:opacity-60"
             disabled={pending}
             type="submit"
           >
-            {pending ? '发送中…' : '发送邮件'}
+            {pending ? '发送中…' : draft ? '发送草稿' : '发送邮件'}
           </button>
         </div>
       </div>

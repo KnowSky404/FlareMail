@@ -7,6 +7,7 @@
     runtimeLabel,
     unreadCount,
     starredCount,
+    draftCount,
     totalMessages,
     pending = false,
     onReceive,
@@ -19,6 +20,7 @@
     runtimeLabel: string;
     unreadCount: number;
     starredCount: number;
+    draftCount: number;
     totalMessages: number;
     pending?: boolean;
     onReceive: () => void | Promise<void>;
@@ -82,6 +84,7 @@
     <div class="flex flex-wrap gap-3 text-sm text-ink">
       <span class="rounded-full border border-night/10 px-3 py-1">未读 {unreadCount}</span>
       <span class="rounded-full border border-night/10 px-3 py-1">星标 {starredCount}</span>
+      <span class="rounded-full border border-night/10 px-3 py-1">草稿 {draftCount}</span>
       <span class="rounded-full border border-night/10 px-3 py-1">真实消息 {totalMessages}</span>
     </div>
   </div>

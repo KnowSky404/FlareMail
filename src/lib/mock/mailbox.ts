@@ -1,4 +1,4 @@
-export type MailFolder = 'inbox' | 'sent';
+export type MailFolder = 'inbox' | 'sent' | 'drafts';
 
 export interface MailMessage {
   id: string;
@@ -7,6 +7,7 @@ export interface MailMessage {
   fromEmail: string;
   toName: string;
   toEmail: string;
+  cc?: string;
   subject: string;
   preview: string;
   body: string;
@@ -19,6 +20,7 @@ export interface MailMessage {
 export interface MailboxState {
   inbox: MailMessage[];
   sent: MailMessage[];
+  drafts: MailMessage[];
 }
 
 export interface WorkspaceMetrics {
@@ -26,6 +28,7 @@ export interface WorkspaceMetrics {
   starredCount: number;
   inboxCount: number;
   sentCount: number;
+  draftsCount: number;
 }
 
 export interface UserProfile {
@@ -52,6 +55,7 @@ export interface LoginInput {
 }
 
 export interface ComposeInput {
+  draftId?: string;
   toEmail: string;
   cc?: string;
   subject: string;
@@ -163,6 +167,25 @@ export const mockMailbox: MailboxState = {
       read: true,
       starred: true
     }
+  ],
+  drafts: [
+    {
+      id: 'draft-01',
+      folder: 'drafts',
+      fromName: 'Evelyn Chen',
+      fromEmail: demoCredentials.email,
+      toName: 'product',
+      toEmail: 'product@flaremail.dev',
+      cc: 'ops@flaremail.dev',
+      subject: 'Weekly workspace checkpoint',
+      preview: '整理一下本周的工作区目标：先接入真实进站邮件，再把草稿和发送串起来。',
+      body:
+        '大家好，\n\n整理一下本周的工作区目标：先接入真实进站邮件，再把草稿和发送串起来。UI 继续保持极简，但所有关键操作都要有可验证的状态落点。\n\nEvelyn',
+      sentAt: '2026-03-24T09:10:00.000Z',
+      labels: ['Draft'],
+      read: true,
+      starred: false
+    }
   ]
 };
 
@@ -193,6 +216,10 @@ const incomingTemplates = [
   }
 ];
 
+const normalizePreview = (value: string) => value.trim().replace(/\s+/g, ' ').slice(0, 96);
+
+const deriveToName = (email: string) => email.split('@')[0].replace(/[._-]/g, ' ').trim() || email.trim();
+
 export function cloneMessage(message: MailMessage): MailMessage {
   return {
     ...message,
@@ -203,7 +230,8 @@ export function cloneMessage(message: MailMessage): MailMessage {
 export function cloneMailbox(mailbox: MailboxState = mockMailbox): MailboxState {
   return {
     inbox: mailbox.inbox.map(cloneMessage),
-    sent: mailbox.sent.map(cloneMessage)
+    sent: mailbox.sent.map(cloneMessage),
+    drafts: mailbox.drafts.map(cloneMessage)
   };
 }
 
@@ -218,9 +246,11 @@ export function getMailboxMetrics(mailbox: MailboxState): WorkspaceMetrics {
     unreadCount: mailbox.inbox.filter((message) => !message.read).length,
     starredCount:
       mailbox.inbox.filter((message) => message.starred).length +
-      mailbox.sent.filter((message) => message.starred).length,
+      mailbox.sent.filter((message) => message.starred).length +
+      mailbox.drafts.filter((message) => message.starred).length,
     inboxCount: mailbox.inbox.length,
-    sentCount: mailbox.sent.length
+    sentCount: mailbox.sent.length,
+    draftsCount: mailbox.drafts.length
   };
 }
 
@@ -253,27 +283,62 @@ export function createIncomingMessage(recipient: UserProfile, sequence: number):
   };
 }
 
+export function createDraftMessage(input: {
+  id?: string;
+  from: UserProfile;
+  toEmail: string;
+  cc?: string;
+  subject: string;
+  body: string;
+  starred?: boolean;
+  updatedAt?: string;
+}): MailMessage {
+  const subject = input.subject.trim() || '未命名草稿';
+  const body = input.body.trim();
+  const toEmail = input.toEmail.trim();
+
+  return {
+    id: input.id ?? `draft-live-${crypto.randomUUID()}`,
+    folder: 'drafts',
+    fromName: input.from.name,
+    fromEmail: input.from.email,
+    toName: toEmail ? deriveToName(toEmail) : '待填写',
+    toEmail,
+    cc: input.cc?.trim() ?? '',
+    subject,
+    preview: normalizePreview(body || '继续补充内容…'),
+    body,
+    sentAt: input.updatedAt ?? new Date().toISOString(),
+    labels: ['Draft'],
+    read: true,
+    starred: input.starred ?? false
+  };
+}
+
 export function createSentMessage(input: {
+  id?: string;
   from: UserProfile;
   toEmail: string;
   subject: string;
   body: string;
   cc?: string;
 }): MailMessage {
-  const toName = input.toEmail.split('@')[0].replace(/[._-]/g, ' ');
+  const toEmail = input.toEmail.trim();
   const signatureBlock = input.from.signature ? `\n\n${input.from.signature}` : '';
   const ccLine = input.cc?.trim() ? `CC: ${input.cc.trim()}\n\n` : '';
-  const messageBody = `${ccLine}${input.body.trim()}${signatureBlock}`;
+  const body = input.body.trim();
+  const messageBody = `${ccLine}${body}${signatureBlock}`;
 
   return {
-    id: `sent-live-${crypto.randomUUID()}`,
+    id: input.id ?? `sent-live-${crypto.randomUUID()}`,
     folder: 'sent',
     fromName: input.from.name,
     fromEmail: input.from.email,
-    toName,
-    toEmail: input.toEmail.trim(),
+    toName: deriveToName(toEmail),
+    toEmail,
+    cc: input.cc?.trim() ?? '',
     subject: input.subject.trim(),
-    preview: input.body.trim().replace(/\s+/g, ' ').slice(0, 96),
+    preview: normalizePreview(body),
     body: messageBody,
     sentAt: new Date().toISOString(),
     labels: ['Sent'],

@@ -8,6 +8,7 @@
     activeSection,
     unreadCount,
     sentCount,
+    draftCount,
     lastTimestamp,
     forwardingEnabled,
     onSelectSection
@@ -16,6 +17,7 @@
     activeSection: AppSection;
     unreadCount: number;
     sentCount: number;
+    draftCount: number;
     lastTimestamp: string | null;
     forwardingEnabled: boolean;
     onSelectSection: (section: AppSection) => void;
@@ -24,6 +26,7 @@
   const sections = $derived([
     { id: 'inbox', label: '收件箱', count: unreadCount, note: '新来信与待处理邮件' },
     { id: 'sent', label: '已发送', count: sentCount, note: '查看发送历史与草拟节奏' },
+    { id: 'drafts', label: '草稿箱', count: draftCount, note: '继续编辑尚未发送的邮件' },
     { id: 'profile', label: '个人信息', count: 1, note: '编辑签名、邮箱身份与偏好' }
   ] as const);
 

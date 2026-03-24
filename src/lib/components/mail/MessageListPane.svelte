@@ -22,15 +22,28 @@
       hour: '2-digit',
       minute: '2-digit'
     }).format(new Date(value));
+
+  const folderMeta = $derived(
+    activeSection === 'inbox'
+      ? { eyebrow: 'Inbox', title: '邮件列表' }
+      : activeSection === 'sent'
+        ? { eyebrow: 'Sent', title: '发送记录' }
+        : { eyebrow: 'Drafts', title: '草稿列表' }
+  );
+
+  const getCounterparty = (message: MailMessage) =>
+    message.folder === 'inbox'
+      ? message.fromName
+      : message.folder === 'sent'
+        ? message.toEmail
+        : message.toEmail || '待填写收件人';
 </script>
 
 <section class="rounded-[2rem] border border-night/10 bg-shell/94 p-4 shadow-[0_20px_70px_rgba(32,27,22,0.04)]">
   <div class="flex items-center justify-between border-b border-night/8 px-2 pb-4">
     <div>
-      <p class="text-[11px] uppercase tracking-[0.28em] text-mist">
-        {activeSection === 'inbox' ? 'Inbox' : 'Sent'}
-      </p>
-      <h2 class="mt-1 text-2xl text-ink">{activeSection === 'inbox' ? '邮件列表' : '发送记录'}</h2>
+      <p class="text-[11px] uppercase tracking-[0.28em] text-mist">{folderMeta.eyebrow}</p>
+      <h2 class="mt-1 text-2xl text-ink">{folderMeta.title}</h2>
     </div>
     <p class="text-sm text-mist">{messages.length} 封邮件</p>
   </div>
@@ -50,11 +63,16 @@
           <div class="min-w-0">
             <div class="flex items-center gap-2 text-sm">
               <span class={`font-medium ${!message.read && message.folder === 'inbox' ? 'text-coral' : ''}`}>
-                {message.folder === 'inbox' ? message.fromName : message.toEmail}
+                {getCounterparty(message)}
               </span>
               {#if message.starred}
                 <span class={`text-[11px] ${selectedMessageId === message.id ? 'text-paper/70' : 'text-accent'}`}>
                   星标
+                </span>
+              {/if}
+              {#if message.folder === 'drafts'}
+                <span class={`text-[11px] ${selectedMessageId === message.id ? 'text-paper/70' : 'text-mist'}`}>
+                  草稿
                 </span>
               {/if}
             </div>

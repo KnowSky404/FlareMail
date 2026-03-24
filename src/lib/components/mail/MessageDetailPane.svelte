@@ -6,12 +6,14 @@
     pending = false,
     onToggleStar,
     onToggleRead,
+    onEditDraft,
     onRemove
   }: {
     message?: MailMessage | null;
     pending?: boolean;
     onToggleStar: (message: MailMessage) => void | Promise<void>;
     onToggleRead: (message: MailMessage) => void | Promise<void>;
+    onEditDraft: (message: MailMessage) => void;
     onRemove: (message: MailMessage) => void | Promise<void>;
   } = $props();
 
@@ -30,7 +32,11 @@
       <div class="flex flex-wrap items-start justify-between gap-4 border-b border-night/8 pb-5">
         <div class="space-y-3">
           <p class="text-[11px] uppercase tracking-[0.28em] text-mist">
-            {message.folder === 'inbox' ? '收到的邮件' : '发送的邮件'}
+            {message.folder === 'inbox'
+              ? '收到的邮件'
+              : message.folder === 'sent'
+                ? '发送的邮件'
+                : '未发送草稿'}
           </p>
           <h2 class="max-w-3xl font-display text-3xl leading-tight text-ink">
             {message.subject}
@@ -44,6 +50,9 @@
                   : `${message.toName} <${message.toEmail}>`}
               </span>
             </p>
+            {#if message.cc}
+              <p>抄送：<span class="text-ink">{message.cc}</span></p>
+            {/if}
             <p>时间：<span class="text-ink">{formatDate(message.sentAt)}</span></p>
             <p>标签：<span class="text-ink">{message.labels.join(' / ')}</span></p>
           </div>
@@ -68,6 +77,15 @@
             >
               {message.read ? '标记未读' : '标记已读'}
             </button>
+          {:else if message.folder === 'drafts'}
+            <button
+              class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
+              disabled={pending}
+              onclick={() => onEditDraft(message)}
+              type="button"
+            >
+              继续编辑
+            </button>
           {/if}
 
           <button
@@ -76,7 +94,7 @@
             onclick={() => onRemove(message)}
             type="button"
           >
-            删除
+            {message.folder === 'drafts' ? '删除草稿' : '删除'}
           </button>
         </div>
       </div>
@@ -89,7 +107,9 @@
         <p>
           {message.folder === 'inbox'
             ? '这里可以继续扩展回复、转发、归档、多选批量处理等真实邮件能力。'
-            : '这里可以继续扩展撤回、再次编辑、模板发送与草稿箱。'}
+            : message.folder === 'sent'
+              ? '这里可以继续扩展撤回、再次编辑、模板发送与草稿箱。'
+              : '草稿现在已经支持继续编辑、保存和发送，下一步可以接自动保存与收件人补全。'}
         </p>
       </div>
     </article>

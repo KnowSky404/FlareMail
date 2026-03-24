@@ -54,6 +54,7 @@
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let composeOpen = $state(false);
+  let editingDraft = $state<MailMessage | null>(null);
   let banner = $state('当前界面使用模拟数据，先验证完整的产品交互。');
   let loginError = $state('');
   let profileStatus = $state('');
@@ -66,7 +67,7 @@
       profile = serverWorkspace.profile;
       mailbox = serverWorkspace.mailbox;
       selectedMessageId = serverWorkspace.mailbox.inbox[0]?.id ?? null;
-      banner = '已从模拟 API 加载工作台。你可以刷新页面验证会话恢复。';
+      banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
       hydratedFromServer = true;
     }
   });
@@ -74,10 +75,17 @@
   const unreadCount = $derived(mailbox.inbox.filter((message) => !message.read).length);
   const starredCount = $derived(
     mailbox.inbox.filter((message) => message.starred).length +
-      mailbox.sent.filter((message) => message.starred).length
+      mailbox.sent.filter((message) => message.starred).length +
+      mailbox.drafts.filter((message) => message.starred).length
   );
   const activeMessages = $derived(
-    activeSection === 'inbox' ? mailbox.inbox : activeSection === 'sent' ? mailbox.sent : []
+    activeSection === 'inbox'
+      ? mailbox.inbox
+      : activeSection === 'sent'
+        ? mailbox.sent
+        : activeSection === 'drafts'
+          ? mailbox.drafts
+          : []
   );
   const selectedMessage = $derived.by(() => {
     const list = activeMessages;
@@ -89,7 +97,11 @@
     return list.find((message) => message.id === selectedMessageId) ?? list[0];
   });
   const lastActivityAt = $derived(
-    mailbox.inbox[0]?.sentAt ?? mailbox.sent[0]?.sentAt ?? data.lastTimestamp ?? null
+    mailbox.inbox[0]?.sentAt ??
+      mailbox.sent[0]?.sentAt ??
+      mailbox.drafts[0]?.sentAt ??
+      data.lastTimestamp ??
+      null
   );
 
   function nextSelection(
@@ -101,7 +113,12 @@
       return selectedMessageId;
     }
 
-    const list = section === 'inbox' ? nextMailbox.inbox : nextMailbox.sent;
+    const list =
+      section === 'inbox'
+        ? nextMailbox.inbox
+        : section === 'sent'
+          ? nextMailbox.sent
+          : nextMailbox.drafts;
     return list.find((message) => message.id === preferredMessageId)?.id ?? list[0]?.id ?? null;
   }
 
@@ -137,6 +154,7 @@
     activeSection = 'inbox';
     selectedMessageId = initialMailbox.inbox[0]?.id ?? null;
     composeOpen = false;
+    editingDraft = null;
     profileStatus = '';
     loginError = '';
   }
@@ -164,6 +182,17 @@
     selectedMessageId = nextSelection(mailbox, section, selectedMessageId);
   }
 
+  function openCompose(draft: MailMessage | null = null) {
+    editingDraft = draft;
+    composeOpen = true;
+  }
+
+  function closeCompose() {
+    composeOpen = false;
+    editingDraft = null;
+    banner = '已关闭写信面板。';
+  }
+
   async function handleLogin(payload: LoginInput) {
     pending = true;
     loginError = '';
@@ -182,7 +211,7 @@
         section: 'inbox',
         preferredMessageId: result.workspace.mailbox.inbox[0]?.id ?? null
       });
-      banner = '已进入演示工作台。当前会话由 Cookie 与 SvelteKit API 驱动。';
+      banner = '已进入工作台。当前会话由 Cookie、SvelteKit API 和 D1 状态驱动。';
     } catch (error) {
       loginError = error instanceof Error ? error.message : '登录失败。';
     } finally {
@@ -217,7 +246,7 @@
       applyWorkspace(result.workspace, {
         section: 'profile'
       });
-      profileStatus = '个人资料已保存到模拟后端。';
+      profileStatus = '个人资料已保存到工作区。';
       banner = '个人信息已更新，写信时会自动使用新的身份与签名。';
     } catch (error) {
       profileStatus = error instanceof Error ? error.message : '保存失败。';
@@ -244,6 +273,29 @@
     }
   }
 
+  async function saveDraft(input: ComposeInput) {
+    pending = true;
+
+    try {
+      const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
+        method: 'POST',
+        body: JSON.stringify(input)
+      });
+
+      applyWorkspace(result.workspace, {
+        section: 'drafts',
+        preferredMessageId: result.message.id
+      });
+      composeOpen = false;
+      editingDraft = null;
+      banner = input.draftId ? '草稿已更新。' : '草稿已保存到工作区。';
+    } catch (error) {
+      banner = error instanceof Error ? error.message : '保存草稿失败。';
+    } finally {
+      pending = false;
+    }
+  }
+
   async function sendMessage(input: ComposeInput) {
     pending = true;
 
@@ -258,7 +310,10 @@
         preferredMessageId: result.message.id
       });
       composeOpen = false;
-      banner = `已向 ${result.message.toEmail} 发送一封模拟邮件。`;
+      editingDraft = null;
+      banner = input.draftId
+        ? `草稿已发送至 ${result.message.toEmail}。`
+        : `已向 ${result.message.toEmail} 发送一封模拟邮件。`;
     } catch (error) {
       banner = error instanceof Error ? error.message : '发送失败。';
     } finally {
@@ -330,10 +385,25 @@
       applyWorkspace(result.workspace, {
         section: result.folder
       });
-      banner = result.folder === 'inbox' ? '邮件已从收件箱移除。' : '该发送记录已移除。';
+      if (editingDraft?.id === message.id) {
+        editingDraft = null;
+        composeOpen = false;
+      }
+
+      banner =
+        result.folder === 'inbox'
+          ? '邮件已从收件箱移除。'
+          : result.folder === 'sent'
+            ? '该发送记录已移除。'
+            : '草稿已删除。';
     } finally {
       pending = false;
     }
+  }
+
+  function handleEditDraft(message: MailMessage) {
+    openCompose(message);
+    banner = '你正在继续编辑一封草稿。';
   }
 </script>
 
@@ -341,7 +411,7 @@
   <title>FlareMail</title>
   <meta
     name="description"
-    content="极简风格的 FlareMail 邮件工作台原型，覆盖登录、个人信息、收件箱、发件箱与写信交互。"
+    content="极简风格的 FlareMail 邮件工作台，覆盖登录、个人信息、收件箱、草稿箱、发件箱与写信交互。"
   />
 </svelte:head>
 
@@ -361,6 +431,7 @@
     <main class="mx-auto flex min-h-screen w-full max-w-[1680px] flex-col gap-5 px-4 py-4 md:px-6 md:py-6">
       <WorkspaceHeader
         {banner}
+        draftCount={mailbox.drafts.length}
         {pending}
         {profile}
         {runtimeLabel}
@@ -368,7 +439,7 @@
         totalMessages={data.totalMessages}
         unreadCount={unreadCount}
         onCompose={() => {
-          composeOpen = true;
+          openCompose();
           banner = '正在写新邮件。';
         }}
         onEditProfile={() => {
@@ -382,6 +453,7 @@
       <section class="grid flex-1 gap-4 xl:grid-cols-[260px_380px_minmax(0,1fr)]">
         <MailSidebar
           activeSection={activeSection}
+          draftCount={mailbox.drafts.length}
           forwardingEnabled={profile.forwardingEnabled}
           lastTimestamp={lastActivityAt}
           {profile}
@@ -402,6 +474,7 @@
           <MessageDetailPane
             message={selectedMessage}
             {pending}
+            onEditDraft={handleEditDraft}
             onRemove={handleDeleteMessage}
             onToggleRead={handleToggleRead}
             onToggleStar={handleToggleStar}
@@ -412,12 +485,11 @@
 
     {#if composeOpen}
       <ComposeModal
+        draft={editingDraft}
         {pending}
         {profile}
-        onClose={() => {
-          composeOpen = false;
-          banner = '已关闭写信面板。';
-        }}
+        onClose={closeCompose}
+        onSaveDraft={saveDraft}
         onSend={sendMessage}
       />
     {/if}
