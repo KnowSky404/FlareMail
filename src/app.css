@@ -1,22 +1,24 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Avenir Next", "Segoe UI", sans-serif;
-  --font-display: "Iowan Old Style", "Palatino Linotype", serif;
-  --color-night: #09101f;
-  --color-ink: #111827;
-  --color-paper: #f7efe4;
-  --color-coral: #ff7a59;
-  --color-aqua: #7ce8ea;
-  --color-amber: #ffd369;
+  --font-sans: "Suisse Intl", "Avenir Next", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", "Cormorant Garamond", serif;
+  --color-paper: #f5f1ea;
+  --color-shell: #fffdfa;
+  --color-ink: #1d1b18;
+  --color-night: #1d1b18;
+  --color-mist: #78716a;
+  --color-line: #ddd5cc;
+  --color-accent: #2d7a69;
+  --color-coral: #c56a4e;
 }
 
 :root {
-  color: var(--color-paper);
+  color: var(--color-ink);
   background:
-    radial-gradient(circle at top left, rgba(255, 122, 89, 0.24), transparent 32%),
-    radial-gradient(circle at 82% 18%, rgba(124, 232, 234, 0.18), transparent 26%),
-    linear-gradient(145deg, #050b17 0%, #0d1323 45%, #180f1c 100%);
+    radial-gradient(circle at top left, rgba(45, 122, 105, 0.08), transparent 22%),
+    radial-gradient(circle at right center, rgba(197, 106, 78, 0.07), transparent 18%),
+    linear-gradient(180deg, #fcfaf6 0%, #f4efe8 100%);
 }
 
 html,
@@ -25,9 +27,27 @@ body {
 }
 
 body {
-  color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(45, 122, 105, 0.16);
 }
 
 a {
   color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: rgba(120, 113, 106, 0.8);
 }
