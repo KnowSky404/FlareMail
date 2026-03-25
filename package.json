@@ -14,7 +14,8 @@
     "check": "XDG_CONFIG_HOME=/tmp svelte-kit sync && XDG_CONFIG_HOME=/tmp svelte-check --tsconfig ./tsconfig.json",
     "cf:typegen": "XDG_CONFIG_HOME=/tmp wrangler types --env-interface CloudflareEnv",
     "db:migrate:local": "XDG_CONFIG_HOME=/tmp wrangler d1 execute flaremail-db --local --file ./schema.sql",
-    "deploy": "bun run build && XDG_CONFIG_HOME=/tmp wrangler deploy worker/index.ts"
+    "deploy:dry-run": "bun run build && bun ./scripts/deploy.mjs dry-run",
+    "deploy": "bun run build && bun ./scripts/deploy.mjs"
   },
   "dependencies": {
     "@sveltejs/kit": "^2.55.0",

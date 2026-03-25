@@ -10,3 +10,6 @@ coverage
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+wrangler.deploy.toml
+wrangler.*.deploy.toml
+!wrangler.deploy.toml.example

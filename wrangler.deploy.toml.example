@@ -1,0 +1,34 @@
+name = "flaremail"
+main = "build/_worker.js"
+compatibility_date = "2026-03-24"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+OUTBOUND_PROVIDER = "demo"
+OUTBOUND_FROM_EMAIL = "dev@your-domain.com"
+OUTBOUND_FROM_NAME = "FlareMail"
+AUTO_REPLY_ENABLED = "true"
+AUTO_REPLY_SUBJECT_PREFIX = "Re:"
+AUTO_REPLY_TEXT = "你好，我们已经收到你的邮件，会尽快处理。\n\nThis is an automated reply from FlareMail on Cloudflare Workers."
+INBOUND_NOTIFICATION_ENABLED = "true"
+NOTIFICATION_EMAIL = "ops@example.com"
+NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
+
+[[send_email]]
+name = "OUTBOUND_EMAIL"
+allowed_destination_addresses = ["ops@example.com"]
+allowed_sender_addresses = ["dev@your-domain.com"]
+
+[assets]
+directory = "build"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "flaremail-db"
+database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "flaremail-bucket"
+preview_bucket_name = "flaremail-bucket-preview"

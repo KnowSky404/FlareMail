@@ -9,10 +9,13 @@
   cp .dev.vars.example .dev.vars
   ```
 - 按真实环境填写 `.dev.vars`
-- 将 [wrangler.toml](/root/Clouds/FlareMail/wrangler.toml) 里的占位值替换为真实值：
-  - `[[send_email]]`
-  - `[[d1_databases]].database_id`
-  - `[[r2_buckets]]`
+- 复制部署配置模板：
+  ```bash
+  cp wrangler.deploy.toml.example wrangler.deploy.toml
+  ```
+- 按真实环境填写 `wrangler.deploy.toml`
+- 仓库中的 [wrangler.toml](/root/Clouds/FlareMail/wrangler.toml) 只保留可公开提交的模板配置
+- 真正部署只使用本地私有的 `wrangler.deploy.toml`
 
 推荐本地变量至少包含：
 
@@ -36,7 +39,7 @@ bun x wrangler r2 bucket create flaremail-bucket
 bun x wrangler r2 bucket create flaremail-bucket-preview
 ```
 
-把 `wrangler d1 create` 返回的 `database_id` 写回 [wrangler.toml](/root/Clouds/FlareMail/wrangler.toml)。
+把 `wrangler d1 create` 返回的 `database_id` 写进 `wrangler.deploy.toml`。
 
 ## 3. 初始化数据库并部署
 
@@ -51,7 +54,7 @@ bun x wrangler d1 execute flaremail-db --remote --file ./schema.sql
 ```bash
 bun run check
 bun run build
-XDG_CONFIG_HOME=/tmp bun x wrangler deploy worker/index.ts --dry-run --outdir /tmp/flaremail-dry-run
+bun run deploy:dry-run
 ```
 
 正式部署：
@@ -74,7 +77,15 @@ bun run deploy
 - 入站自动回信和入站通知由 Worker 原生邮件能力处理
 - 如果要把 UI 发送切到 Cloudflare 原生外发，再把 `OUTBOUND_PROVIDER` 改成 `cloudflare`
 
-## 5. 上线后验证
+## 5. 文件分工
+
+- [wrangler.toml](/root/Clouds/FlareMail/wrangler.toml)：公开模板，可提交
+- [wrangler.deploy.toml.example](/root/Clouds/FlareMail/wrangler.deploy.toml.example)：部署模板，可提交
+- `wrangler.deploy.toml`：私有真实部署配置，不提交
+- [.dev.vars.example](/root/Clouds/FlareMail/.dev.vars.example)：本地变量模板，可提交
+- `.dev.vars`：本地真实变量，不提交
+
+## 6. 上线后验证
 
 至少验证这几项：
 
