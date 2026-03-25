@@ -51,6 +51,20 @@ export interface MailboxState {
   drafts: MailMessage[];
 }
 
+export interface MailThread {
+  id: string;
+  subject: string;
+  counterpartLabel: string;
+  latestMessage: MailMessage;
+  sectionLatestMessage: MailMessage;
+  messages: MailMessage[];
+  messageCount: number;
+  sectionMessageCount: number;
+  unreadCount: number;
+  preview: string;
+  sentAt: string;
+}
+
 export interface WorkspaceMetrics {
   unreadCount: number;
   starredCount: number;
@@ -294,6 +308,29 @@ const createForwardThread = (message: MailMessage, body: string) =>
     body
   ].join('\n');
 
+const normalizeThreadSubject = (value: string) =>
+  value
+    .trim()
+    .replace(/^(?:(?:re|fwd?)\s*:\s*)+/gi, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase() || '(no subject)';
+
+const normalizeEmail = (value: string) => value.trim().toLowerCase();
+
+const compareNewestFirst = (left: MailMessage, right: MailMessage) =>
+  right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id);
+
+const compareOldestFirst = (left: MailMessage, right: MailMessage) =>
+  left.sentAt.localeCompare(right.sentAt) || left.id.localeCompare(right.id);
+
+const getCounterpartyEmail = (message: MailMessage) =>
+  message.folder === 'inbox' ? message.fromEmail : message.toEmail;
+
+const getCounterpartyLabel = (message: MailMessage) =>
+  message.folder === 'inbox'
+    ? `${message.fromName} <${message.fromEmail}>`
+    : `${message.toName} <${message.toEmail}>`;
+
 export function cloneMessage(message: MailMessage): MailMessage {
   return {
     ...message,
@@ -313,6 +350,67 @@ export function cloneProfile(profile: UserProfile = mockProfile): UserProfile {
   return {
     ...profile
   };
+}
+
+export function getMailThreadKey(message: MailMessage): string {
+  return `${normalizeThreadSubject(message.subject)}::${normalizeEmail(getCounterpartyEmail(message))}`;
+}
+
+export function buildMailThreads(
+  mailbox: MailboxState,
+  section: Exclude<MailFolder, 'drafts'>
+): MailThread[] {
+  const grouped = new Map<string, MailMessage[]>();
+  const allMessages = [...mailbox.inbox.map(cloneMessage), ...mailbox.sent.map(cloneMessage)].sort(
+    compareNewestFirst
+  );
+
+  for (const message of allMessages) {
+    const threadKey = getMailThreadKey(message);
+    const messages = grouped.get(threadKey);
+
+    if (messages) {
+      messages.push(message);
+    } else {
+      grouped.set(threadKey, [message]);
+    }
+  }
+
+  return [...grouped.entries()]
+    .map(([id, messages]) => {
+      const sectionMessages = messages.filter((message) => message.folder === section);
+
+      if (!sectionMessages.length) {
+        return null;
+      }
+
+      const counterparties = [
+        ...messages.reduce((accumulator, message) => {
+          accumulator.set(normalizeEmail(getCounterpartyEmail(message)), getCounterpartyLabel(message));
+          return accumulator;
+        }, new Map<string, string>()).values()
+      ];
+      const latestMessage = messages[0];
+
+      return {
+        id,
+        subject: latestMessage.subject,
+        counterpartLabel:
+          counterparties.length === 1
+            ? counterparties[0]
+            : `${counterparties[0]} 等 ${counterparties.length} 位联系人`,
+        latestMessage,
+        sectionLatestMessage: sectionMessages[0],
+        messages: [...messages].sort(compareOldestFirst),
+        messageCount: messages.length,
+        sectionMessageCount: sectionMessages.length,
+        unreadCount: messages.filter((message) => message.folder === 'inbox' && !message.read).length,
+        preview: latestMessage.preview,
+        sentAt: latestMessage.sentAt
+      } satisfies MailThread;
+    })
+    .filter((thread): thread is MailThread => Boolean(thread))
+    .sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id));
 }
 
 export function getMailboxMetrics(mailbox: MailboxState): WorkspaceMetrics {

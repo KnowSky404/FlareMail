@@ -3,6 +3,7 @@
 
   let {
     message = null,
+    threadMessages = [],
     inboundDetail = null,
     inboundDetailPending = false,
     inboundDetailError = '',
@@ -15,9 +16,11 @@
     onReply,
     onRetryDelivery,
     onReloadInboundDetail,
+    onSelectThreadMessage,
     onRemove
   }: {
     message?: MailMessage | null;
+    threadMessages?: MailMessage[];
     inboundDetail?: InboundMessageDetail | null;
     inboundDetailPending?: boolean;
     inboundDetailError?: string;
@@ -30,6 +33,7 @@
     onReply: (message: MailMessage) => void;
     onRetryDelivery: (message: MailMessage) => void | Promise<void>;
     onReloadInboundDetail: (message: MailMessage) => void | Promise<void>;
+    onSelectThreadMessage: (message: MailMessage) => void | Promise<void>;
     onRemove: (message: MailMessage) => void | Promise<void>;
   } = $props();
 
@@ -72,6 +76,11 @@
           ? '已送达'
           : ''
   );
+  const threadCount = $derived(threadMessages.length);
+  const getThreadMessageLabel = (threadMessage: MailMessage) =>
+    threadMessage.folder === 'inbox'
+      ? `收到 · ${threadMessage.fromName} <${threadMessage.fromEmail}>`
+      : `发出 · ${threadMessage.toName} <${threadMessage.toEmail}>`;
 </script>
 
 <section class="rounded-[2rem] border border-night/10 bg-shell/94 p-4 shadow-[0_20px_70px_rgba(32,27,22,0.04)]">
@@ -211,6 +220,56 @@
       </div>
 
       <div class="flex-1 py-6">
+        {#if threadCount > 1}
+          <div class="mb-6 rounded-[1.5rem] border border-night/10 bg-shell/70 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-mist">
+              <span>当前对话</span>
+              <span>{threadCount} 封往来邮件</span>
+            </div>
+
+            <div class="mt-4 space-y-2">
+              {#each threadMessages as threadMessage}
+                <button
+                  class={`block w-full rounded-[1rem] border px-4 py-3 text-left transition ${
+                    threadMessage.id === message.id
+                      ? 'border-ink bg-ink text-paper'
+                      : 'border-night/8 bg-paper text-ink hover:border-night/20'
+                  }`}
+                  onclick={() => onSelectThreadMessage(threadMessage)}
+                  type="button"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <p
+                        class={`text-xs ${
+                          threadMessage.id === message.id ? 'text-paper/70' : 'text-mist'
+                        }`}
+                      >
+                        {getThreadMessageLabel(threadMessage)}
+                      </p>
+                      <p class="mt-2 line-clamp-1 text-sm font-medium">{threadMessage.subject}</p>
+                      <p
+                        class={`mt-2 line-clamp-2 text-sm leading-6 ${
+                          threadMessage.id === message.id ? 'text-paper/72' : 'text-mist'
+                        }`}
+                      >
+                        {threadMessage.preview}
+                      </p>
+                    </div>
+                    <span
+                      class={`shrink-0 text-xs ${
+                        threadMessage.id === message.id ? 'text-paper/65' : 'text-mist'
+                      }`}
+                    >
+                      {formatDate(threadMessage.sentAt)}
+                    </span>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
         {#if inboundDetailError}
           <div class="rounded-[1.25rem] border border-coral/20 bg-coral/8 px-4 py-3 text-sm leading-6 text-coral">
             {inboundDetailError}
@@ -257,9 +316,9 @@
       <div class="border-t border-night/8 pt-4 text-sm text-mist">
         <p>
           {message.folder === 'inbox'
-            ? '收件箱现在已经支持回复与转发，下一步可以继续接归档、批量处理和线程视图。'
+            ? '收件箱现在已经支持线程展开、回复与转发，下一步可以继续接归档、批量处理和搜索。'
             : message.folder === 'sent'
-              ? '已发送现在支持排队、失败和重试。后续可以把这里接到真实 provider、Webhooks 和投递回执。'
+              ? '已发送现在支持线程查看、排队、失败和重试。后续可以把这里接到真实 provider、Webhooks 和投递回执。'
               : '草稿现在已经支持继续编辑、保存和发送，下一步可以接自动保存与收件人补全。'}
         </p>
       </div>

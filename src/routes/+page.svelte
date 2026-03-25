@@ -8,6 +8,7 @@
   import ProfilePane from '$lib/components/mail/ProfilePane.svelte';
   import WorkspaceHeader from '$lib/components/mail/WorkspaceHeader.svelte';
   import {
+    buildMailThreads,
     cloneMailbox,
     cloneProfile,
     createComposeInputFromDraft,
@@ -21,6 +22,7 @@
     type MailFolder,
     type MailMessage,
     type MailboxState,
+    type MailThread,
     type MessagePatch,
     type UserProfile,
     type WorkspacePayload
@@ -101,23 +103,49 @@
     mailbox.sent.filter((message) => message.deliveryStatus === 'failed').length
   );
   const activeMessages = $derived(
-    activeSection === 'inbox'
-      ? mailbox.inbox
-      : activeSection === 'sent'
-        ? mailbox.sent
-        : activeSection === 'drafts'
-          ? mailbox.drafts
-          : []
+    activeSection === 'drafts' ? mailbox.drafts : []
   );
-  const selectedMessage = $derived.by(() => {
-    const list = activeMessages;
-
-    if (!list.length) {
+  const activeThreads = $derived(
+    activeSection === 'inbox' || activeSection === 'sent' ? buildMailThreads(mailbox, activeSection) : []
+  );
+  const selectedThread = $derived.by(() => {
+    if (activeSection === 'drafts' || activeSection === 'profile') {
       return null;
     }
 
-    return list.find((message) => message.id === selectedMessageId) ?? list[0];
+    const threads = activeThreads;
+
+    if (!threads.length) {
+      return null;
+    }
+
+    return threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId)) ?? threads[0];
   });
+  const selectedThreadId = $derived(selectedThread?.id ?? null);
+  const selectedMessage = $derived.by(() => {
+    if (activeSection === 'drafts') {
+      const list = activeMessages;
+
+      if (!list.length) {
+        return null;
+      }
+
+      return list.find((message) => message.id === selectedMessageId) ?? list[0];
+    }
+
+    const thread = selectedThread;
+
+    if (!thread) {
+      return null;
+    }
+
+    return (
+      thread.messages.find((message) => message.id === selectedMessageId) ??
+      thread.sectionLatestMessage ??
+      thread.latestMessage
+    );
+  });
+  const selectedThreadMessages = $derived(selectedThread?.messages ?? (selectedMessage ? [selectedMessage] : []));
   const lastActivityAt = $derived(
     mailbox.inbox[0]?.sentAt ??
       mailbox.sent[0]?.sentAt ??
@@ -162,13 +190,21 @@
       return selectedMessageId;
     }
 
-    const list =
-      section === 'inbox'
-        ? nextMailbox.inbox
-        : section === 'sent'
-          ? nextMailbox.sent
-          : nextMailbox.drafts;
-    return list.find((message) => message.id === preferredMessageId)?.id ?? list[0]?.id ?? null;
+    if (section === 'drafts') {
+      const list = nextMailbox.drafts;
+      return list.find((message) => message.id === preferredMessageId)?.id ?? list[0]?.id ?? null;
+    }
+
+    const threads = buildMailThreads(nextMailbox, section);
+    const preferredThread = preferredMessageId
+      ? threads.find((thread) => thread.messages.some((message) => message.id === preferredMessageId))
+      : null;
+
+    if (preferredThread && preferredMessageId) {
+      return preferredMessageId;
+    }
+
+    return threads[0]?.sectionLatestMessage.id ?? null;
   }
 
   function applyWorkspace(
@@ -267,6 +303,21 @@
 
   function setSection(section: AppSection) {
     activeSection = section;
+
+    if (section === 'inbox' || section === 'sent') {
+      const threads = buildMailThreads(mailbox, section);
+      const currentThread = selectedMessageId
+        ? threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
+        : null;
+
+      selectedMessageId = nextSelection(
+        mailbox,
+        section,
+        currentThread?.sectionLatestMessage.id ?? selectedMessageId
+      );
+      return;
+    }
+
     selectedMessageId = nextSelection(mailbox, section, selectedMessageId);
   }
 
@@ -397,7 +448,7 @@
       });
 
       applyWorkspace(result.workspace, {
-        section: 'sent',
+        section: activeSection === 'profile' ? 'sent' : activeSection,
         preferredMessageId: result.message.id
       });
       composeOpen = false;
@@ -459,7 +510,7 @@
       );
 
       applyWorkspace(result.workspace, {
-        section: message.folder,
+        section: activeSection === 'profile' ? message.folder : activeSection,
         preferredMessageId: result.message.id
       });
 
@@ -481,6 +532,10 @@
     if (isInboundMessageId(message.id)) {
       await loadInboundDetail(message);
     }
+  }
+
+  async function handleSelectThread(thread: MailThread) {
+    await handleSelectMessage(thread.sectionLatestMessage);
   }
 
   async function handleToggleStar(message: MailMessage) {
@@ -512,7 +567,7 @@
       });
 
       applyWorkspace(result.workspace, {
-        section: result.folder
+        section: activeSection === 'profile' ? result.folder : activeSection
       });
       if (composeInitialInput?.draftId === message.id) {
         composeMode = 'new';
@@ -623,8 +678,11 @@
           <MessageListPane
             activeSection={activeSection}
             messages={activeMessages}
+            selectedThreadId={selectedThreadId}
+            threads={activeThreads}
             {selectedMessageId}
             onSelect={handleSelectMessage}
+            onSelectThread={handleSelectThread}
           />
           <MessageDetailPane
             message={selectedMessage}
@@ -633,12 +691,14 @@
             inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
             {pending}
             rawDownloadHref={selectedInboundDownloadHref}
+            threadMessages={selectedThreadMessages}
             onEditDraft={handleEditDraft}
             onForward={handleForwardMessage}
             onReply={handleReplyMessage}
             onRetryDelivery={retryMessageDelivery}
             onReloadInboundDetail={handleReloadInboundDetail}
             onRemove={handleDeleteMessage}
+            onSelectThreadMessage={handleSelectMessage}
             onToggleRead={handleToggleRead}
             onToggleStar={handleToggleStar}
           />
