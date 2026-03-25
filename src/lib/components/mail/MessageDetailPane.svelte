@@ -402,9 +402,9 @@
       <div class="border-t border-night/8 pt-4 text-sm text-mist">
         <p>
           {message.folder === 'inbox'
-            ? '收件箱现在已经支持线程展开、回复与转发，下一步可以继续接归档、批量处理和搜索。'
+            ? '收件箱现在已经支持线程展开、回复与转发，Worker 侧也可以继续接自动回信、通知和搜索能力。'
             : message.folder === 'sent'
-              ? '已发送现在已经接入 provider 抽象与标准化结果，下一步可以把这里继续接到 Webhooks 和真实投递回执。'
+              ? '已发送现在已经接入 provider 抽象与标准化结果，可以先用 Cloudflare 原生通知验证，再接更完整的外发 provider。'
               : '草稿现在已经支持继续编辑、保存和发送，下一步可以接自动保存与收件人补全。'}
         </p>
       </div>

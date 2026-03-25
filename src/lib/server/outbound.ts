@@ -1,7 +1,11 @@
 import type { DeliveryResultKind, DeliveryStatus } from '$lib/mock/mailbox';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import {
+  classifyCloudflareSendFailure,
+  sendCloudflareProgrammaticEmail
+} from '$lib/server/cloudflare-email';
 
-export type OutboundProviderName = 'demo' | 'resend';
+export type OutboundProviderName = 'demo' | 'resend' | 'cloudflare';
 
 export type OutboundDeliveryState = {
   provider: OutboundProviderName;
@@ -39,7 +43,11 @@ type OutboundMessage = {
 const nowIso = () => new Date().toISOString();
 
 const normalizeProvider = (value: string | undefined | null): OutboundProviderName =>
-  value?.trim().toLowerCase() === 'resend' ? 'resend' : 'demo';
+  value?.trim().toLowerCase() === 'resend'
+    ? 'resend'
+    : value?.trim().toLowerCase() === 'cloudflare'
+      ? 'cloudflare'
+      : 'demo';
 
 const normalizeReason = (value: string) => value.trim().replace(/\s+/g, ' ');
 
@@ -258,6 +266,47 @@ async function sendWithResendProvider(
   };
 }
 
+async function sendWithCloudflareProvider(
+  env: CloudflareEnv | undefined,
+  message: OutboundMessage
+): Promise<OutboundAttemptResult> {
+  try {
+    const result = await sendCloudflareProgrammaticEmail(env, {
+      fromName: message.fromName,
+      fromEmail: message.fromEmail,
+      to: message.toEmail,
+      cc: addressList(message.cc).length ? addressList(message.cc) : undefined,
+      subject: message.subject,
+      text: message.text
+    });
+
+    return {
+      provider: 'cloudflare',
+      resultKind: 'accepted',
+      attempted: true,
+      deliveredAt: nowIso(),
+      lastError: '',
+      providerMessageId: result.messageId,
+      remoteStatus: null,
+      responsePreview: 'Cloudflare Email Workers 已接受这封邮件。'
+    };
+  } catch (error) {
+    const failure = classifyCloudflareSendFailure(error);
+    const attempted = !failure.reason.startsWith('缺少');
+
+    return {
+      provider: 'cloudflare',
+      resultKind: failure.resultKind,
+      attempted,
+      deliveredAt: null,
+      lastError: failure.reason,
+      providerMessageId: null,
+      remoteStatus: null,
+      responsePreview: failure.reason
+    };
+  }
+}
+
 export async function deliverOutboundMessage(
   env: CloudflareEnv | undefined,
   message: OutboundMessage,
@@ -267,6 +316,8 @@ export async function deliverOutboundMessage(
   const result =
     provider === 'resend'
       ? await sendWithResendProvider(env, message)
+      : provider === 'cloudflare'
+        ? await sendWithCloudflareProvider(env, message)
       : await sendWithDemoProvider(message);
 
   return toDeliveryState(result, currentAttempts);

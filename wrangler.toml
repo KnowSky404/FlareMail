@@ -7,9 +7,28 @@ compatibility_flags = ["nodejs_compat"]
 OUTBOUND_PROVIDER = "demo"
 OUTBOUND_FROM_EMAIL = "founder@flaremail.dev"
 OUTBOUND_FROM_NAME = "FlareMail Demo"
+AUTO_REPLY_ENABLED = "false"
+INBOUND_NOTIFICATION_ENABLED = "false"
 
 # 生产环境请通过 `bun x wrangler secret put RESEND_API_KEY`
 # 和 `bun x wrangler secret put RESEND_WEBHOOK_SECRET` 注入真实密钥。
+#
+# 如果要启用 Cloudflare 原生通知/发信，可追加 `send_email` 绑定：
+# send_email = [
+#   {
+#     name = "OUTBOUND_EMAIL",
+#     allowed_destination_addresses = ["ops@example.com"],
+#     allowed_sender_addresses = ["hello@flaremail.dev"]
+#   }
+# ]
+#
+# 同时补充这些变量：
+# OUTBOUND_PROVIDER = "cloudflare"
+# NOTIFICATION_EMAIL = "ops@example.com"
+# AUTO_REPLY_ENABLED = "true"
+# INBOUND_NOTIFICATION_ENABLED = "true"
+# AUTO_REPLY_SUBJECT_PREFIX = "Re: "
+# NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
 
 [assets]
 directory = "build"

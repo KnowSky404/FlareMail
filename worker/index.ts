@@ -7,7 +7,7 @@ export default {
     return app.fetch(request, env, ctx);
   },
 
-  email(message, env, _ctx) {
-    return handleInboundEmail(message, env);
+  email(message, env, ctx) {
+    return handleInboundEmail(message, env, ctx);
   }
 } satisfies ExportedHandler<CloudflareEnv>;

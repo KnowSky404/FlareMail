@@ -118,7 +118,7 @@
             将使用 <span class="text-ink">{profile.email}</span> 与当前签名发送。
           </p>
           <p class="text-xs">
-            演示提示：收件人包含 `+queue@` 可进入队列，包含 `+fail@` 可模拟投递失败。
+            演示提示：收件人包含 `+queue@` 可进入队列，包含 `+fail@` 可模拟投递失败；如果后端启用了 Cloudflare 原生发信，请优先用已验证地址做通知测试。
           </p>
         </div>
         <div class="flex gap-2">
