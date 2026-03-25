@@ -1,6 +1,7 @@
 import type { Cookies } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { deliverOutboundMessage, type OutboundDeliveryState } from '$lib/server/outbound';
+import { normalizeResendWebhookEvent } from '$lib/server/resend-webhook';
 import {
   cloneMailbox,
   cloneProfile,
@@ -9,6 +10,9 @@ import {
   createSentMessage,
   createWorkspacePayload,
   demoCredentials,
+  type DeliveryDetail,
+  type DeliveryEvent,
+  type DeliveryEventType,
   type DeliveryStatus,
   type DeliveryResultKind,
   fromInboundMessageId,
@@ -44,6 +48,7 @@ type WorkspaceCapabilities = {
   inboundStates: boolean;
   outboundStatuses: boolean;
   outboundReceipts: boolean;
+  outboundEvents: boolean;
 };
 
 type WorkspaceUserRow = {
@@ -115,6 +120,25 @@ type WorkspaceOutboundStatusRow = {
   result_kind: DeliveryResultKind | null;
   remote_status: number | null;
   response_preview: string;
+  last_event: DeliveryEventType | null;
+  last_event_at: string | null;
+};
+
+type WorkspaceOutboundReceiptRow = {
+  provider: string | null;
+  result_kind: DeliveryResultKind | null;
+  remote_status: number | null;
+  response_preview: string;
+  last_event: DeliveryEventType | null;
+  last_event_at: string | null;
+};
+
+type WorkspaceOutboundEventRow = {
+  svix_id: string;
+  event_type: DeliveryEventType;
+  event_created_at: string;
+  summary: string;
+  payload_json: string;
 };
 
 const memorySessions = new Map<string, WorkspaceSession>();
@@ -196,7 +220,9 @@ const mapWorkspaceMessageRow = (
   deliveryProvider: row.folder === 'sent' ? outboundStatus?.provider ?? null : null,
   deliveryResultKind: row.folder === 'sent' ? outboundStatus?.result_kind ?? null : null,
   deliveryRemoteStatus: row.folder === 'sent' ? outboundStatus?.remote_status ?? null : null,
-  deliveryResponsePreview: row.folder === 'sent' ? outboundStatus?.response_preview ?? '' : ''
+  deliveryResponsePreview: row.folder === 'sent' ? outboundStatus?.response_preview ?? '' : '',
+  deliveryLastEvent: row.folder === 'sent' ? outboundStatus?.last_event ?? null : null,
+  deliveryLastEventAt: row.folder === 'sent' ? outboundStatus?.last_event_at ?? null : null
 });
 
 const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailMessage =>
@@ -374,7 +400,7 @@ function serializeOutboundReceiptForUpsert(
   messageId: string,
   state: OutboundDeliveryState
 ) {
-  const timestamp = nowIso();
+  const timestamp = state.deliveredAt ?? nowIso();
 
   return {
     messageId,
@@ -387,6 +413,33 @@ function serializeOutboundReceiptForUpsert(
     lastEventAt: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp
+  };
+}
+
+function serializeOutboundEventInsert(input: {
+  svixId: string;
+  messageId: string;
+  userId: string;
+  provider: string;
+  providerMessageId?: string | null;
+  eventType: DeliveryEventType;
+  eventCreatedAt: string;
+  summary: string;
+  payloadJson: string;
+}) {
+  return {
+    ...input,
+    createdAt: nowIso()
+  };
+}
+
+function mapEventRowToDeliveryEvent(row: WorkspaceOutboundEventRow): DeliveryEvent {
+  return {
+    id: row.svix_id,
+    type: row.event_type,
+    createdAt: row.event_created_at,
+    summary: row.summary,
+    payloadPreview: row.payload_json
   };
 }
 
@@ -422,30 +475,34 @@ async function getWorkspaceCapabilities(env?: CloudflareEnv): Promise<WorkspaceC
       drafts: false,
       inboundStates: false,
       outboundStatuses: false,
-      outboundReceipts: false
+      outboundReceipts: false,
+      outboundEvents: false
     };
   }
 
   try {
-    const [drafts, inboundStates, outboundStatuses, outboundReceipts] = await Promise.all([
+    const [drafts, inboundStates, outboundStatuses, outboundReceipts, outboundEvents] = await Promise.all([
       hasNamedTables(env.DB, ['workspace_drafts']),
       hasNamedTables(env.DB, ['workspace_email_states']),
       hasNamedTables(env.DB, ['workspace_outbound_statuses']),
-      hasNamedTables(env.DB, ['workspace_outbound_receipts'])
+      hasNamedTables(env.DB, ['workspace_outbound_receipts']),
+      hasNamedTables(env.DB, ['workspace_outbound_events'])
     ]);
 
     return {
       drafts,
       inboundStates,
       outboundStatuses,
-      outboundReceipts
+      outboundReceipts,
+      outboundEvents
     };
   } catch {
     return {
       drafts: false,
       inboundStates: false,
       outboundStatuses: false,
-      outboundReceipts: false
+      outboundReceipts: false,
+      outboundEvents: false
     };
   }
 }
@@ -560,7 +617,9 @@ async function fetchD1Session(
                 r.provider,
                 r.result_kind,
                 r.remote_status,
-                r.response_preview
+                r.response_preview,
+                r.last_event,
+                r.last_event_at
               FROM workspace_outbound_statuses AS s
               LEFT JOIN workspace_outbound_receipts AS r
                 ON r.message_id = s.message_id
@@ -580,7 +639,9 @@ async function fetchD1Session(
                 NULL AS provider,
                 NULL AS result_kind,
                 NULL AS remote_status,
-                '' AS response_preview
+                '' AS response_preview,
+                NULL AS last_event,
+                NULL AS last_event_at
               FROM workspace_outbound_statuses
               WHERE user_id = ?
             `
@@ -842,6 +903,69 @@ async function seedWorkspaceOutboundReceiptsIfEmpty(db: D1Database, userId: stri
   await db.batch(statements);
 }
 
+async function seedWorkspaceOutboundEventsIfEmpty(db: D1Database, userId: string) {
+  const existing = await db.prepare(
+    `
+      SELECT COUNT(*) AS total
+      FROM workspace_outbound_events
+      WHERE user_id = ?
+    `
+  ).bind(userId).first<{ total: number }>();
+
+  if ((existing?.total ?? 0) > 0) {
+    return;
+  }
+
+  const statements = mockMailbox.sent.map((message) => {
+    const event = serializeOutboundEventInsert({
+      svixId: `local:seed:${message.id}:submission`,
+      messageId: message.id,
+      userId,
+      provider: message.deliveryProvider ?? 'demo',
+      providerMessageId: message.deliveryStatus === 'sent' ? `seed-${message.id}` : null,
+      eventType: 'submission',
+      eventCreatedAt: message.deliveryLastEventAt ?? message.deliveredAt ?? message.sentAt,
+      summary: message.deliveryResponsePreview ?? '种子邮件已创建初始投递记录。',
+      payloadJson: JSON.stringify({
+        source: 'seed',
+        resultKind: message.deliveryResultKind ?? null,
+        deliveryStatus: message.deliveryStatus ?? null
+      })
+    });
+
+    return db.prepare(
+      `
+        INSERT INTO workspace_outbound_events (
+          svix_id,
+          message_id,
+          user_id,
+          provider,
+          provider_message_id,
+          event_type,
+          event_created_at,
+          summary,
+          payload_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    ).bind(
+      event.svixId,
+      event.messageId,
+      event.userId,
+      event.provider,
+      event.providerMessageId,
+      event.eventType,
+      event.eventCreatedAt,
+      event.summary,
+      event.payloadJson,
+      event.createdAt
+    );
+  });
+
+  await db.batch(statements);
+}
+
 async function ensureDemoUser(db: D1Database, capabilities: WorkspaceCapabilities) {
   let user = await db.prepare(
     `
@@ -940,6 +1064,10 @@ async function ensureDemoUser(db: D1Database, capabilities: WorkspaceCapabilitie
     await seedWorkspaceOutboundReceiptsIfEmpty(db, user.id);
   }
 
+  if (capabilities.outboundEvents) {
+    await seedWorkspaceOutboundEventsIfEmpty(db, user.id);
+  }
+
   return user;
 }
 
@@ -952,8 +1080,371 @@ function findMessage(session: WorkspaceSession, messageId: string) {
   );
 }
 
+function buildMemoryDeliveryDetail(message: MailMessage): DeliveryDetail {
+  const eventType = message.deliveryLastEvent ?? 'submission';
+  const createdAt = message.deliveryLastEventAt ?? message.deliveredAt ?? message.sentAt;
+
+  return {
+    messageId: message.id,
+    provider: message.deliveryProvider ?? 'demo',
+    resultKind: message.deliveryResultKind ?? null,
+    lastEvent: eventType,
+    lastEventAt: createdAt,
+    events: [
+      {
+        id: `local:${message.id}:${eventType}`,
+        type: eventType,
+        createdAt,
+        summary:
+          message.deliveryResponsePreview ||
+          message.deliveryError ||
+          '这封邮件已经写入当前工作台的出站投递记录。',
+        payloadPreview: JSON.stringify({
+          provider: message.deliveryProvider ?? 'demo',
+          resultKind: message.deliveryResultKind ?? null,
+          status: message.deliveryStatus ?? null
+        })
+      }
+    ]
+  };
+}
+
+async function fetchD1DeliveryDetail(
+  db: D1Database,
+  userId: string,
+  messageId: string,
+  capabilities: WorkspaceCapabilities
+) {
+  const [receipt, eventRows] = await Promise.all([
+    capabilities.outboundReceipts
+      ? db.prepare(
+          `
+            SELECT
+              provider,
+              result_kind,
+              remote_status,
+              response_preview,
+              last_event,
+              last_event_at
+            FROM workspace_outbound_receipts
+            WHERE user_id = ?
+              AND message_id = ?
+          `
+        ).bind(userId, messageId).first<WorkspaceOutboundReceiptRow>()
+      : Promise.resolve(null),
+    capabilities.outboundEvents
+      ? db.prepare(
+          `
+            SELECT
+              svix_id,
+              event_type,
+              event_created_at,
+              summary,
+              payload_json
+            FROM workspace_outbound_events
+            WHERE user_id = ?
+              AND message_id = ?
+            ORDER BY event_created_at DESC, created_at DESC
+          `
+        ).bind(userId, messageId).all<WorkspaceOutboundEventRow>()
+      : Promise.resolve({ results: [] as WorkspaceOutboundEventRow[] })
+  ]);
+
+  const events = (eventRows.results ?? []).map(mapEventRowToDeliveryEvent);
+
+  if (!receipt && !events.length) {
+    return null;
+  }
+
+  if (!events.length && receipt) {
+    events.push({
+      id: `local:${messageId}:${receipt.last_event ?? 'submission'}`,
+      type: receipt.last_event ?? 'submission',
+      createdAt: receipt.last_event_at ?? nowIso(),
+      summary: receipt.response_preview || '这封邮件已经写入当前工作台的出站投递记录。',
+      payloadPreview: JSON.stringify({
+        provider: receipt.provider,
+        resultKind: receipt.result_kind,
+        remoteStatus: receipt.remote_status
+      })
+    });
+  }
+
+  return {
+    messageId,
+    provider: receipt?.provider ?? null,
+    resultKind: receipt?.result_kind ?? null,
+    lastEvent: receipt?.last_event ?? events[0]?.type ?? null,
+    lastEventAt: receipt?.last_event_at ?? events[0]?.createdAt ?? null,
+    events
+  } satisfies DeliveryDetail;
+}
+
 export function serializeWorkspace(session: WorkspaceSession): WorkspacePayload {
   return createWorkspacePayload(session.profile, session.mailbox);
+}
+
+export async function getWorkspaceMessageDeliveryDetail(
+  env: CloudflareEnv | undefined,
+  session: WorkspaceSession,
+  messageId: string
+) {
+  const message = findMessage(session, messageId);
+
+  if (!message || message.folder !== 'sent' || message.source !== 'workspace') {
+    return null;
+  }
+
+  if (session.storage === 'd1' && (await hasWorkspaceCoreTables(env))) {
+    const capabilities = await getWorkspaceCapabilities(env);
+    return fetchD1DeliveryDetail(env!.DB, session.userId, messageId, capabilities);
+  }
+
+  return buildMemoryDeliveryDetail(message);
+}
+
+export async function applyResendDeliveryWebhook(
+  env: CloudflareEnv | undefined,
+  svixId: string,
+  payload: unknown
+) {
+  if (!env?.DB) {
+    throw new Error('运行时缺少 D1 绑定。');
+  }
+
+  const capabilities = await getWorkspaceCapabilities(env);
+
+  if (!capabilities.outboundStatuses || !capabilities.outboundReceipts || !capabilities.outboundEvents) {
+    throw new Error('出站回执相关数据表尚未迁移，请先执行最新的 D1 schema。');
+  }
+
+  const event = normalizeResendWebhookEvent(payload as Parameters<typeof normalizeResendWebhookEvent>[0]);
+  const existingEvent = await env.DB.prepare(
+    `
+      SELECT svix_id
+      FROM workspace_outbound_events
+      WHERE svix_id = ?
+    `
+  ).bind(svixId).first<{ svix_id: string }>();
+
+  if (existingEvent) {
+    return {
+      duplicate: true,
+      ignored: false,
+      matched: true,
+      messageId: null as string | null
+    };
+  }
+
+  const outboundRow = await env.DB.prepare(
+    `
+      SELECT
+        s.message_id,
+        s.user_id,
+        s.attempts,
+        s.delivered_at,
+        r.remote_status,
+        r.last_event_at
+      FROM workspace_outbound_statuses AS s
+      LEFT JOIN workspace_outbound_receipts AS r
+        ON r.message_id = s.message_id
+       AND r.user_id = s.user_id
+      WHERE s.provider_message_id = ?
+    `
+  ).bind(event.providerMessageId).first<{
+    message_id: string;
+    user_id: string;
+    attempts: number;
+    delivered_at: string | null;
+    remote_status: number | null;
+    last_event_at: string | null;
+  }>();
+
+  const eventRecord = serializeOutboundEventInsert({
+    svixId,
+    messageId: outboundRow?.message_id ?? event.providerMessageId,
+    userId: outboundRow?.user_id ?? 'unmatched',
+    provider: event.provider,
+    providerMessageId: event.providerMessageId,
+    eventType: event.eventType,
+    eventCreatedAt: event.createdAt,
+    summary: event.summary,
+    payloadJson: event.payloadJson
+  });
+
+  if (!outboundRow) {
+    await env.DB.prepare(
+      `
+        INSERT INTO workspace_outbound_events (
+          svix_id,
+          message_id,
+          user_id,
+          provider,
+          provider_message_id,
+          event_type,
+          event_created_at,
+          summary,
+          payload_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    ).bind(
+      eventRecord.svixId,
+      eventRecord.messageId,
+      eventRecord.userId,
+      eventRecord.provider,
+      eventRecord.providerMessageId,
+      eventRecord.eventType,
+      eventRecord.eventCreatedAt,
+      eventRecord.summary,
+      eventRecord.payloadJson,
+      eventRecord.createdAt
+    ).run();
+
+    return {
+      duplicate: false,
+      ignored: true,
+      matched: false,
+      messageId: null as string | null
+    };
+  }
+
+  const shouldUpdateCurrent =
+    !outboundRow.last_event_at || event.createdAt >= outboundRow.last_event_at;
+  const nextDeliveryState: OutboundDeliveryState = {
+    provider: event.provider,
+    resultKind: event.resultKind,
+    status: event.status,
+    attempts: outboundRow.attempts,
+    deliveredAt: event.deliveredAt ?? outboundRow.delivered_at,
+    lastError: event.lastError,
+    providerMessageId: event.providerMessageId,
+    remoteStatus: outboundRow.remote_status,
+    responsePreview: event.responsePreview
+  };
+  const statements = [
+    env.DB.prepare(
+      `
+        INSERT INTO workspace_outbound_events (
+          svix_id,
+          message_id,
+          user_id,
+          provider,
+          provider_message_id,
+          event_type,
+          event_created_at,
+          summary,
+          payload_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    ).bind(
+      eventRecord.svixId,
+      eventRecord.messageId,
+      eventRecord.userId,
+      eventRecord.provider,
+      eventRecord.providerMessageId,
+      eventRecord.eventType,
+      eventRecord.eventCreatedAt,
+      eventRecord.summary,
+      eventRecord.payloadJson,
+      eventRecord.createdAt
+    )
+  ];
+
+  if (shouldUpdateCurrent) {
+    const status = serializeOutboundStatusForUpsert(outboundRow.user_id, outboundRow.message_id, nextDeliveryState);
+    const receipt = {
+      ...serializeOutboundReceiptForUpsert(outboundRow.user_id, outboundRow.message_id, nextDeliveryState),
+      lastEvent: event.eventType,
+      lastEventAt: event.createdAt,
+      remoteStatus: outboundRow.remote_status,
+      responsePreview: event.responsePreview
+    };
+
+    statements.push(
+      env.DB.prepare(
+        `
+          INSERT INTO workspace_outbound_statuses (
+            message_id,
+            user_id,
+            status,
+            attempts,
+            delivered_at,
+            last_error,
+            provider_message_id,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(message_id) DO UPDATE SET
+            status = excluded.status,
+            attempts = excluded.attempts,
+            delivered_at = excluded.delivered_at,
+            last_error = excluded.last_error,
+            provider_message_id = excluded.provider_message_id,
+            updated_at = excluded.updated_at
+        `
+      ).bind(
+        status.messageId,
+        status.userId,
+        status.status,
+        status.attempts,
+        status.deliveredAt,
+        status.lastError,
+        status.providerMessageId,
+        status.createdAt,
+        event.createdAt
+      ),
+      env.DB.prepare(
+        `
+          INSERT INTO workspace_outbound_receipts (
+            message_id,
+            user_id,
+            provider,
+            result_kind,
+            remote_status,
+            response_preview,
+            last_event,
+            last_event_at,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(message_id) DO UPDATE SET
+            provider = excluded.provider,
+            result_kind = excluded.result_kind,
+            remote_status = excluded.remote_status,
+            response_preview = excluded.response_preview,
+            last_event = excluded.last_event,
+            last_event_at = excluded.last_event_at,
+            updated_at = excluded.updated_at
+        `
+      ).bind(
+        receipt.messageId,
+        receipt.userId,
+        receipt.provider,
+        receipt.resultKind,
+        receipt.remoteStatus,
+        receipt.responsePreview,
+        receipt.lastEvent,
+        receipt.lastEventAt,
+        receipt.createdAt,
+        event.createdAt
+      )
+    );
+  }
+
+  await env.DB.batch(statements);
+
+  return {
+    duplicate: false,
+    ignored: !shouldUpdateCurrent,
+    matched: true,
+    messageId: outboundRow.message_id
+  };
 }
 
 export async function getWorkspaceSession(env: CloudflareEnv | undefined, sessionId?: string | null) {
@@ -1337,7 +1828,9 @@ export async function sendWorkspaceMessage(
     deliveryProvider: initialDeliveryState.provider,
     deliveryResultKind: initialDeliveryState.resultKind,
     deliveryRemoteStatus: initialDeliveryState.remoteStatus,
-    deliveryResponsePreview: initialDeliveryState.responsePreview
+    deliveryResponsePreview: initialDeliveryState.responsePreview,
+    deliveryLastEvent: 'submission',
+    deliveryLastEventAt: initialDeliveryState.deliveredAt ?? nowIso()
   } satisfies MailMessage;
 
   if (session.storage === 'd1' && (await hasWorkspaceCoreTables(env))) {
@@ -1465,6 +1958,56 @@ export async function sendWorkspaceMessage(
             receipt.lastEventAt,
             receipt.createdAt,
             receipt.updatedAt
+          )
+        );
+      }
+
+      if (capabilities.outboundEvents) {
+        const event = serializeOutboundEventInsert({
+          svixId: `local:${message.id}:submission:${initialDeliveryState.attempts}`,
+          messageId: message.id,
+          userId: session.userId,
+          provider: initialDeliveryState.provider,
+          providerMessageId: initialDeliveryState.providerMessageId,
+          eventType: 'submission',
+          eventCreatedAt: message.deliveryLastEventAt ?? nowIso(),
+          summary: initialDeliveryState.responsePreview || initialDeliveryState.lastError || '邮件已提交到出站 provider。',
+          payloadJson: JSON.stringify({
+            provider: initialDeliveryState.provider,
+            resultKind: initialDeliveryState.resultKind,
+            status: initialDeliveryState.status,
+            remoteStatus: initialDeliveryState.remoteStatus
+          })
+        });
+
+        statements.unshift(
+          env!.DB.prepare(
+            `
+              INSERT INTO workspace_outbound_events (
+                svix_id,
+                message_id,
+                user_id,
+                provider,
+                provider_message_id,
+                event_type,
+                event_created_at,
+                summary,
+                payload_json,
+                created_at
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `
+          ).bind(
+            event.svixId,
+            event.messageId,
+            event.userId,
+            event.provider,
+            event.providerMessageId,
+            event.eventType,
+            event.eventCreatedAt,
+            event.summary,
+            event.payloadJson,
+            event.createdAt
           )
         );
       }
@@ -1630,6 +2173,57 @@ export async function retryWorkspaceMessageDelivery(
       );
     }
 
+    if (capabilities.outboundEvents) {
+      const eventCreatedAt = nextDeliveryState.deliveredAt ?? nowIso();
+      const event = serializeOutboundEventInsert({
+        svixId: `local:${messageId}:submission:${nextDeliveryState.attempts}`,
+        messageId,
+        userId: session.userId,
+        provider: nextDeliveryState.provider,
+        providerMessageId: nextDeliveryState.providerMessageId,
+        eventType: 'submission',
+        eventCreatedAt,
+        summary: nextDeliveryState.responsePreview || nextDeliveryState.lastError || '邮件已重新提交到出站 provider。',
+        payloadJson: JSON.stringify({
+          provider: nextDeliveryState.provider,
+          resultKind: nextDeliveryState.resultKind,
+          status: nextDeliveryState.status,
+          remoteStatus: nextDeliveryState.remoteStatus
+        })
+      });
+
+      statements.unshift(
+        env!.DB.prepare(
+          `
+            INSERT INTO workspace_outbound_events (
+              svix_id,
+              message_id,
+              user_id,
+              provider,
+              provider_message_id,
+              event_type,
+              event_created_at,
+              summary,
+              payload_json,
+              created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+        ).bind(
+          event.svixId,
+          event.messageId,
+          event.userId,
+          event.provider,
+          event.providerMessageId,
+          event.eventType,
+          event.eventCreatedAt,
+          event.summary,
+          event.payloadJson,
+          event.createdAt
+        )
+      );
+    }
+
     await env!.DB.batch(statements);
 
     const nextSession = await refreshD1Session(env, session.id);
@@ -1664,7 +2258,9 @@ export async function retryWorkspaceMessageDelivery(
               deliveryProvider: nextDeliveryState.provider,
               deliveryResultKind: nextDeliveryState.resultKind,
               deliveryRemoteStatus: nextDeliveryState.remoteStatus,
-              deliveryResponsePreview: nextDeliveryState.responsePreview
+              deliveryResponsePreview: nextDeliveryState.responsePreview,
+              deliveryLastEvent: 'submission',
+              deliveryLastEventAt: nextDeliveryState.deliveredAt ?? nowIso()
             }
           : cloneMessage(message)
       )

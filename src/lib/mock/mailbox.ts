@@ -7,6 +7,16 @@ export type DeliveryResultKind =
   | 'temporary_failure'
   | 'permanent_failure'
   | 'rate_limited';
+export type DeliveryEventType =
+  | 'submission'
+  | 'email.sent'
+  | 'email.delivered'
+  | 'email.delivery_delayed'
+  | 'email.bounced'
+  | 'email.complained'
+  | 'email.failed'
+  | 'email.opened'
+  | 'email.clicked';
 export type ComposeMode = 'new' | 'draft' | 'reply' | 'forward';
 
 export const inboundMessagePrefix = 'email:';
@@ -53,6 +63,8 @@ export interface MailMessage {
   deliveryResultKind?: DeliveryResultKind | null;
   deliveryRemoteStatus?: number | null;
   deliveryResponsePreview?: string;
+  deliveryLastEvent?: DeliveryEventType | null;
+  deliveryLastEventAt?: string | null;
 }
 
 export interface MailboxState {
@@ -98,6 +110,23 @@ export interface WorkspacePayload {
   profile: UserProfile;
   mailbox: MailboxState;
   metrics: WorkspaceMetrics;
+}
+
+export interface DeliveryEvent {
+  id: string;
+  type: DeliveryEventType;
+  createdAt: string;
+  summary: string;
+  payloadPreview?: string;
+}
+
+export interface DeliveryDetail {
+  messageId: string;
+  provider: string | null;
+  resultKind: DeliveryResultKind | null;
+  lastEvent: DeliveryEventType | null;
+  lastEventAt: string | null;
+  events: DeliveryEvent[];
 }
 
 export interface LoginInput {
@@ -213,7 +242,9 @@ export const mockMailbox: MailboxState = {
       deliveryProvider: 'demo',
       deliveryResultKind: 'accepted',
       deliveryRemoteStatus: null,
-      deliveryResponsePreview: '演示 provider 已接受这封邮件。'
+      deliveryResponsePreview: '演示 provider 已接受这封邮件。',
+      deliveryLastEvent: 'submission',
+      deliveryLastEventAt: '2026-03-24T08:42:14.000Z'
     },
     {
       id: 'sent-02',
@@ -238,7 +269,9 @@ export const mockMailbox: MailboxState = {
       deliveryProvider: 'demo',
       deliveryResultKind: 'permanent_failure',
       deliveryRemoteStatus: null,
-      deliveryResponsePreview: '演示 provider 返回永久失败。'
+      deliveryResponsePreview: '演示 provider 返回永久失败。',
+      deliveryLastEvent: 'submission',
+      deliveryLastEventAt: '2026-03-24T06:14:00.000Z'
     }
   ],
   drafts: [
@@ -522,6 +555,8 @@ export function createSentMessage(input: {
   deliveryResultKind?: DeliveryResultKind | null;
   deliveryRemoteStatus?: number | null;
   deliveryResponsePreview?: string;
+  deliveryLastEvent?: DeliveryEventType | null;
+  deliveryLastEventAt?: string | null;
 }): MailMessage {
   const toEmail = input.toEmail.trim();
   const signatureBlock = input.from.signature ? `\n\n${input.from.signature}` : '';
@@ -552,7 +587,9 @@ export function createSentMessage(input: {
     deliveryProvider: input.deliveryProvider ?? null,
     deliveryResultKind: input.deliveryResultKind ?? null,
     deliveryRemoteStatus: input.deliveryRemoteStatus ?? null,
-    deliveryResponsePreview: input.deliveryResponsePreview ?? ''
+    deliveryResponsePreview: input.deliveryResponsePreview ?? '',
+    deliveryLastEvent: input.deliveryLastEvent ?? null,
+    deliveryLastEventAt: input.deliveryLastEventAt ?? null
   };
 }
 

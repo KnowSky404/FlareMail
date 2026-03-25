@@ -14,6 +14,7 @@
     createComposeInputFromDraft,
     createForwardComposeInput,
     createReplyComposeInput,
+    type DeliveryDetail,
     isInboundMessageId,
     type ComposeInput,
     type ComposeMode,
@@ -57,6 +58,12 @@
     error?: string;
   };
 
+  type DeliveryDetailResponse = {
+    ok: boolean;
+    detail: DeliveryDetail;
+    error?: string;
+  };
+
   let { data }: { data: PageData } = $props();
   const serverWorkspace = $derived(data.workspace);
 
@@ -71,8 +78,11 @@
   let composeMode = $state<ComposeMode>('new');
   let composeInitialInput = $state<ComposeInput | null>(null);
   let inboundDetails = $state<Record<string, InboundMessageDetail>>({});
+  let deliveryDetails = $state<Record<string, DeliveryDetail>>({});
   let inboundDetailErrors = $state<Record<string, string>>({});
+  let deliveryDetailErrors = $state<Record<string, string>>({});
   let inboundDetailPendingId = $state<string | null>(null);
+  let deliveryDetailPendingId = $state<string | null>(null);
   let banner = $state('当前界面使用模拟数据，先验证完整的产品交互。');
   let loginError = $state('');
   let profileStatus = $state('');
@@ -168,6 +178,16 @@
       ? `/api/workspace/messages/${encodeURIComponent(selectedMessage.id)}/raw`
       : null
   );
+  const selectedDeliveryDetail = $derived(
+    selectedMessage && selectedMessage.folder === 'sent' && selectedMessage.source === 'workspace'
+      ? deliveryDetails[selectedMessage.id] ?? null
+      : null
+  );
+  const selectedDeliveryDetailError = $derived(
+    selectedMessage && selectedMessage.folder === 'sent' && selectedMessage.source === 'workspace'
+      ? deliveryDetailErrors[selectedMessage.id] ?? ''
+      : ''
+  );
 
   const describeDeliveryState = (message: MailMessage) =>
     message.deliveryResultKind === 'accepted'
@@ -189,6 +209,19 @@
       !inboundDetailErrors[selectedMessage.id]
     ) {
       void loadInboundDetail(selectedMessage);
+    }
+  });
+
+  $effect(() => {
+    if (
+      selectedMessage &&
+      selectedMessage.folder === 'sent' &&
+      selectedMessage.source === 'workspace' &&
+      !deliveryDetails[selectedMessage.id] &&
+      deliveryDetailPendingId !== selectedMessage.id &&
+      !deliveryDetailErrors[selectedMessage.id]
+    ) {
+      void loadDeliveryDetail(selectedMessage);
     }
   });
 
@@ -252,6 +285,9 @@
     composeOpen = false;
     composeMode = 'new';
     composeInitialInput = null;
+    deliveryDetailPendingId = null;
+    deliveryDetails = {};
+    deliveryDetailErrors = {};
     profileStatus = '';
     loginError = '';
   }
@@ -308,6 +344,44 @@
     } finally {
       if (inboundDetailPendingId === message.id) {
         inboundDetailPendingId = null;
+      }
+    }
+  }
+
+  async function loadDeliveryDetail(message: MailMessage, force = false) {
+    if (message.folder !== 'sent' || message.source !== 'workspace') {
+      return false;
+    }
+
+    if (!force && deliveryDetails[message.id]) {
+      return true;
+    }
+
+    deliveryDetailPendingId = message.id;
+    deliveryDetailErrors = {
+      ...deliveryDetailErrors,
+      [message.id]: ''
+    };
+
+    try {
+      const result = await requestJson<DeliveryDetailResponse>(
+        `/api/workspace/messages/${encodeURIComponent(message.id)}/delivery`
+      );
+
+      deliveryDetails = {
+        ...deliveryDetails,
+        [message.id]: result.detail
+      };
+      return true;
+    } catch (error) {
+      deliveryDetailErrors = {
+        ...deliveryDetailErrors,
+        [message.id]: error instanceof Error ? error.message : '加载投递回执失败。'
+      };
+      return false;
+    } finally {
+      if (deliveryDetailPendingId === message.id) {
+        deliveryDetailPendingId = null;
       }
     }
   }
@@ -458,6 +532,13 @@
         body: JSON.stringify(input)
       });
 
+      deliveryDetails = Object.fromEntries(
+        Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
+      );
+      deliveryDetailErrors = Object.fromEntries(
+        Object.entries(deliveryDetailErrors).filter(([id]) => id !== result.message.id)
+      );
+
       applyWorkspace(result.workspace, {
         section: 'sent',
         preferredMessageId: result.message.id
@@ -487,6 +568,13 @@
         {
           method: 'POST'
         }
+      );
+
+      deliveryDetails = Object.fromEntries(
+        Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
+      );
+      deliveryDetailErrors = Object.fromEntries(
+        Object.entries(deliveryDetailErrors).filter(([id]) => id !== result.message.id)
       );
 
       applyWorkspace(result.workspace, {
@@ -626,6 +714,13 @@
       ? `已重新载入《${message.subject}》的原始邮件详情。`
       : '重新载入原始邮件失败。';
   }
+
+  async function handleReloadDeliveryDetail(message: MailMessage) {
+    const ok = await loadDeliveryDetail(message, true);
+    banner = ok
+      ? `已重新载入《${message.subject}》的投递回执。`
+      : '重新载入投递回执失败。';
+  }
 </script>
 
 <svelte:head>
@@ -699,6 +794,9 @@
           />
           <MessageDetailPane
             message={selectedMessage}
+            deliveryDetail={selectedDeliveryDetail}
+            deliveryDetailError={selectedDeliveryDetailError}
+            deliveryDetailPending={deliveryDetailPendingId === selectedMessage?.id}
             inboundDetail={selectedInboundDetail}
             inboundDetailError={selectedInboundDetailError}
             inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
@@ -708,6 +806,7 @@
             onEditDraft={handleEditDraft}
             onForward={handleForwardMessage}
             onReply={handleReplyMessage}
+            onReloadDeliveryDetail={handleReloadDeliveryDetail}
             onRetryDelivery={retryMessageDelivery}
             onReloadInboundDetail={handleReloadInboundDetail}
             onRemove={handleDeleteMessage}

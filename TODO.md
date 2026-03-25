@@ -2,20 +2,10 @@
 
 ## 当前优先级
 
-### P1 线程与会话视图
-- 按 `subject` / `message-id` / `in-reply-to` 组织会话线程，而不是只展示单封邮件。
-- 在收件箱和已发送之间聚合同主题往来，支持“展开整段对话”。
-- 回复后自动回填线程元数据，避免线程断裂。
-
-### P1 真实发信 Provider 适配
-- 为 `src/lib/server/outbound.ts` 增加真正的 provider 适配层，不再只用演示规则模拟 `queued` / `failed` / `sent`。
-- 预留 provider 配置，例如 API Key、发信域名、Webhook 签名校验。
-- 统一抽象发送结果，兼容成功、临时失败、永久失败、限流等状态。
-
-### P1 投递回执与状态同步
-- 接入 provider Webhook，把投递、退信、延迟、投诉等状态写回 D1。
-- 将 `workspace_outbound_statuses` 从“本地推演状态”升级成“真实回执状态”。
-- UI 上补充最近一次状态更新时间和回执详情。
+### 已完成
+- 线程与会话视图：已支持对话线程聚合、展开整段往来和线程内消息切换。
+- 真实发信 Provider 适配：已接入 `demo / resend` provider 抽象，并统一成功、失败、限流等状态。
+- 投递回执与状态同步：已支持 Resend webhook 校验、D1 回执落库和 UI 回执时间线展示。
 
 ## 第二阶段
 
@@ -48,5 +38,5 @@
 - 错误追踪与操作审计。
 
 ## 备注
-- 当前最推荐的下一步是先做“线程视图 + 真实发信 provider + 回执同步”。
-- 做 provider 接入前，建议先把环境变量和密钥管理方案定下来。
+- 当前最推荐的下一步是先做“草稿增强 + 收件箱效率功能”。
+- 如果要跑通真实回执链路，需要在运行环境中配置 `RESEND_WEBHOOK_SECRET`，并让 Resend webhook 指向 `/api/webhooks/resend`。

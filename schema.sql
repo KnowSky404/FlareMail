@@ -136,3 +136,22 @@ CREATE TABLE IF NOT EXISTS workspace_outbound_receipts (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_outbound_receipts_user_provider
   ON workspace_outbound_receipts(user_id, provider, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS workspace_outbound_events (
+  svix_id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_message_id TEXT,
+  event_type TEXT NOT NULL,
+  event_created_at TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_outbound_events_message_id
+  ON workspace_outbound_events(message_id, event_created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_outbound_events_provider_message_id
+  ON workspace_outbound_events(provider_message_id, event_created_at DESC);

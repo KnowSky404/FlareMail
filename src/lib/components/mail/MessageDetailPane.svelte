@@ -1,9 +1,12 @@
 <script lang="ts">
-  import type { InboundMessageDetail, MailMessage } from '$lib/mock/mailbox';
+  import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/mock/mailbox';
 
   let {
     message = null,
     threadMessages = [],
+    deliveryDetail = null,
+    deliveryDetailPending = false,
+    deliveryDetailError = '',
     inboundDetail = null,
     inboundDetailPending = false,
     inboundDetailError = '',
@@ -14,6 +17,7 @@
     onEditDraft,
     onForward,
     onReply,
+    onReloadDeliveryDetail,
     onRetryDelivery,
     onReloadInboundDetail,
     onSelectThreadMessage,
@@ -21,6 +25,9 @@
   }: {
     message?: MailMessage | null;
     threadMessages?: MailMessage[];
+    deliveryDetail?: DeliveryDetail | null;
+    deliveryDetailPending?: boolean;
+    deliveryDetailError?: string;
     inboundDetail?: InboundMessageDetail | null;
     inboundDetailPending?: boolean;
     inboundDetailError?: string;
@@ -31,6 +38,7 @@
     onEditDraft: (message: MailMessage) => void;
     onForward: (message: MailMessage) => void;
     onReply: (message: MailMessage) => void;
+    onReloadDeliveryDetail: (message: MailMessage) => void | Promise<void>;
     onRetryDelivery: (message: MailMessage) => void | Promise<void>;
     onReloadInboundDetail: (message: MailMessage) => void | Promise<void>;
     onSelectThreadMessage: (message: MailMessage) => void | Promise<void>;
@@ -87,6 +95,7 @@
                     : ''
   );
   const threadCount = $derived(threadMessages.length);
+  const deliveryEventCount = $derived(deliveryDetail?.events.length ?? 0);
   const getThreadMessageLabel = (threadMessage: MailMessage) =>
     threadMessage.folder === 'inbox'
       ? `收到 · ${threadMessage.fromName} <${threadMessage.fromEmail}>`
@@ -187,6 +196,17 @@
             </button>
           {/if}
 
+          {#if message.folder === 'sent'}
+            <button
+              class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
+              disabled={pending || deliveryDetailPending}
+              onclick={() => onReloadDeliveryDetail(message)}
+              type="button"
+            >
+              {deliveryDetailPending ? '刷新中…' : '刷新回执'}
+            </button>
+          {/if}
+
           {#if message.source === 'inbound'}
             <button
               class="rounded-full border border-night/10 px-3 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
@@ -248,6 +268,12 @@
       </div>
 
       <div class="flex-1 py-6">
+        {#if deliveryDetailError}
+          <div class="mb-6 rounded-[1.25rem] border border-coral/20 bg-coral/8 px-4 py-3 text-sm leading-6 text-coral">
+            {deliveryDetailError}
+          </div>
+        {/if}
+
         {#if threadCount > 1}
           <div class="mb-6 rounded-[1.5rem] border border-night/10 bg-shell/70 p-4">
             <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-mist">
@@ -295,6 +321,38 @@
                 </button>
               {/each}
             </div>
+          </div>
+        {/if}
+
+        {#if message.folder === 'sent' && deliveryDetail}
+          <div class="mb-6 rounded-[1.5rem] border border-night/10 bg-shell/70 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 text-sm text-mist">
+              <span>投递回执时间线</span>
+              <span>
+                {deliveryDetail.lastEvent ?? 'submission'}
+                {#if deliveryDetail.lastEventAt}
+                  / {formatDate(deliveryDetail.lastEventAt)}
+                {/if}
+              </span>
+            </div>
+
+            {#if deliveryEventCount}
+              <div class="mt-4 space-y-2">
+                {#each deliveryDetail.events as event}
+                  <div class="rounded-[1rem] border border-night/8 bg-paper px-4 py-3">
+                    <div class="flex flex-wrap items-center justify-between gap-3 text-sm">
+                      <span class="font-medium text-ink">{event.type}</span>
+                      <span class="text-mist">{formatDate(event.createdAt)}</span>
+                    </div>
+                    <p class="mt-2 text-sm leading-6 text-ink">{event.summary}</p>
+                  </div>
+                {/each}
+              </div>
+            {:else if deliveryDetailPending}
+              <p class="mt-4 text-sm leading-6 text-mist">正在载入 provider 回执时间线…</p>
+            {:else}
+              <p class="mt-4 text-sm leading-6 text-mist">这封邮件还没有更多的 provider 回执事件。</p>
+            {/if}
           </div>
         {/if}
 
