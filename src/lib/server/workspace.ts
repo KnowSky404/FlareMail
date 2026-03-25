@@ -291,7 +291,10 @@ async function cleanupLegacyWorkspaceSeedData(
       `
         DELETE FROM workspace_messages
         WHERE user_id = ?
-          AND id IN (?, ?, ?, ?, ?)
+          AND (
+            id IN (?, ?, ?, ?, ?)
+            OR id LIKE 'inbox-live-%'
+          )
       `
     ).bind(userId, ...legacySeedMessageIds)
   ];
