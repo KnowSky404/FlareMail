@@ -150,13 +150,13 @@ const shouldSkipAutoReply = (message: ForwardableEmailMessage) => {
 
 const buildAutoReplySubject = (env: CloudflareEnv | undefined, originalSubject: string) => {
   const baseSubject = originalSubject.trim() || '(no subject)';
-  const prefix = env?.AUTO_REPLY_SUBJECT_PREFIX?.trim() || 'Re: ';
+  const prefix = (env?.AUTO_REPLY_SUBJECT_PREFIX ?? 'Re:').trim();
 
   if (prefix && baseSubject.toLowerCase().startsWith(prefix.toLowerCase())) {
     return baseSubject;
   }
 
-  return `${prefix}${baseSubject}`;
+  return prefix ? `${prefix} ${baseSubject}` : baseSubject;
 };
 
 const buildAutoReplyBody = (message: ForwardableEmailMessage, env: CloudflareEnv | undefined) => {

@@ -13,22 +13,18 @@ INBOUND_NOTIFICATION_ENABLED = "false"
 # 生产环境请通过 `bun x wrangler secret put RESEND_API_KEY`
 # 和 `bun x wrangler secret put RESEND_WEBHOOK_SECRET` 注入真实密钥。
 #
-# 如果要启用 Cloudflare 原生通知/发信，可追加 `send_email` 绑定：
-# send_email = [
-#   {
-#     name = "OUTBOUND_EMAIL",
-#     allowed_destination_addresses = ["ops@example.com"],
-#     allowed_sender_addresses = ["hello@flaremail.dev"]
-#   }
-# ]
-#
-# 同时补充这些变量：
+# 如果要启用 Cloudflare 原生通知/发信，请通过 `.dev.vars` 或生产环境变量覆盖这些值：
 # OUTBOUND_PROVIDER = "cloudflare"
 # NOTIFICATION_EMAIL = "ops@example.com"
 # AUTO_REPLY_ENABLED = "true"
 # INBOUND_NOTIFICATION_ENABLED = "true"
 # AUTO_REPLY_SUBJECT_PREFIX = "Re: "
 # NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
+
+[[send_email]]
+name = "OUTBOUND_EMAIL"
+allowed_destination_addresses = ["littlecontrol@icloud.com"]
+allowed_sender_addresses = ["dev@ziteng.li"]
 
 [assets]
 directory = "build"
