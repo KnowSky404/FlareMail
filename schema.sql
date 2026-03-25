@@ -115,3 +115,24 @@ CREATE TABLE IF NOT EXISTS workspace_outbound_statuses (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_outbound_statuses_user_status
   ON workspace_outbound_statuses(user_id, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_outbound_statuses_provider_message_id
+  ON workspace_outbound_statuses(provider_message_id);
+
+CREATE TABLE IF NOT EXISTS workspace_outbound_receipts (
+  message_id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  result_kind TEXT NOT NULL CHECK (
+    result_kind IN ('accepted', 'queued', 'temporary_failure', 'permanent_failure', 'rate_limited')
+  ),
+  remote_status INTEGER,
+  response_preview TEXT NOT NULL DEFAULT '',
+  last_event TEXT NOT NULL DEFAULT 'submission',
+  last_event_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_outbound_receipts_user_provider
+  ON workspace_outbound_receipts(user_id, provider, updated_at DESC);

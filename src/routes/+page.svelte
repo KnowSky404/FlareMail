@@ -169,6 +169,17 @@
       : null
   );
 
+  const describeDeliveryState = (message: MailMessage) =>
+    message.deliveryResultKind === 'accepted'
+      ? `邮件已提交到 ${message.deliveryProvider ?? 'provider'}。`
+      : message.deliveryResultKind === 'queued'
+        ? `邮件已进入发送队列，等待投递到 ${message.toEmail}。`
+        : message.deliveryResultKind === 'temporary_failure'
+          ? `Provider 暂时不可用，已保留重试入口：${message.deliveryError ?? '请稍后重试。'}`
+          : message.deliveryResultKind === 'rate_limited'
+            ? `Provider 触发限流，这封邮件暂时未发出：${message.deliveryError ?? '请稍后重试。'}`
+            : `邮件已写入已发送，但投递失败：${message.deliveryError ?? '请稍后重试。'}`;
+
   $effect(() => {
     if (
       selectedMessage &&
@@ -448,20 +459,18 @@
       });
 
       applyWorkspace(result.workspace, {
-        section: activeSection === 'profile' ? 'sent' : activeSection,
+        section: 'sent',
         preferredMessageId: result.message.id
       });
       composeOpen = false;
       composeMode = 'new';
       composeInitialInput = null;
       banner =
-        result.message.deliveryStatus === 'queued'
-          ? `邮件已进入发送队列，等待投递到 ${result.message.toEmail}。`
-          : result.message.deliveryStatus === 'failed'
-            ? `邮件已写入已发送，但投递失败：${result.message.deliveryError ?? '请稍后重试。'}`
-            : input.draftId
-              ? `草稿已发送至 ${result.message.toEmail}。`
-              : `已向 ${result.message.toEmail} 发起投递。`;
+        result.message.deliveryResultKind === 'accepted' && input.draftId
+          ? `草稿已提交到 ${result.message.deliveryProvider ?? 'provider'}，目标 ${result.message.toEmail}。`
+          : result.message.deliveryResultKind === 'accepted'
+            ? `已向 ${result.message.toEmail} 发起投递，并提交到 ${result.message.deliveryProvider ?? 'provider'}。`
+            : describeDeliveryState(result.message);
     } catch (error) {
       banner = error instanceof Error ? error.message : '发送失败。';
     } finally {
@@ -485,11 +494,15 @@
         preferredMessageId: result.message.id
       });
       banner =
-        result.message.deliveryStatus === 'sent'
-          ? `《${result.message.subject}》已成功投递。`
-          : result.message.deliveryStatus === 'queued'
+        result.message.deliveryResultKind === 'accepted'
+          ? `《${result.message.subject}》已重新提交到 ${result.message.deliveryProvider ?? 'provider'}。`
+          : result.message.deliveryResultKind === 'queued'
             ? `《${result.message.subject}》仍在发送队列中。`
-            : `《${result.message.subject}》再次投递失败：${result.message.deliveryError ?? '请稍后重试。'}`;
+            : result.message.deliveryResultKind === 'temporary_failure'
+              ? `《${result.message.subject}》重试后仍需等待：${result.message.deliveryError ?? '请稍后重试。'}`
+              : result.message.deliveryResultKind === 'rate_limited'
+                ? `《${result.message.subject}》被 provider 限流，请稍后再试。`
+                : `《${result.message.subject}》再次投递失败：${result.message.deliveryError ?? '请稍后重试。'}`;
     } catch (error) {
       banner = error instanceof Error ? error.message : '重试投递失败。';
     } finally {

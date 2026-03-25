@@ -45,13 +45,30 @@
         : message.toEmail || '待填写收件人';
 
   const getDeliveryLabel = (message: MailMessage) =>
-    message.deliveryStatus === 'queued'
-      ? '排队中'
-      : message.deliveryStatus === 'failed'
-        ? '失败'
-        : message.deliveryStatus === 'sent'
-          ? '已送达'
-          : '';
+    message.deliveryResultKind === 'accepted'
+      ? '已提交'
+      : message.deliveryResultKind === 'temporary_failure'
+        ? '待重试'
+        : message.deliveryResultKind === 'rate_limited'
+          ? '限流中'
+          : message.deliveryResultKind === 'permanent_failure'
+            ? '失败'
+            : message.deliveryStatus === 'queued'
+              ? '排队中'
+              : message.deliveryStatus === 'failed'
+                ? '失败'
+                : message.deliveryStatus === 'sent'
+                  ? '已送达'
+                  : '';
+
+  const getDeliveryTone = (message: MailMessage) =>
+    message.deliveryResultKind === 'permanent_failure' || message.deliveryStatus === 'failed'
+      ? 'text-coral'
+      : message.deliveryResultKind === 'temporary_failure' ||
+          message.deliveryResultKind === 'rate_limited' ||
+          message.deliveryStatus === 'queued'
+        ? 'text-accent'
+        : 'text-mist';
 
   const getThreadStateLabel = (thread: MailThread) => {
     if (thread.unreadCount > 0) {
@@ -143,11 +160,7 @@
                       ? 'text-paper/70'
                       : thread.unreadCount > 0
                         ? 'text-coral'
-                        : thread.latestMessage.deliveryStatus === 'failed'
-                          ? 'text-coral'
-                          : thread.latestMessage.deliveryStatus === 'queued'
-                            ? 'text-accent'
-                            : 'text-mist'
+                        : getDeliveryTone(thread.latestMessage)
                   }`}
                 >
                   {getThreadStateLabel(thread)}

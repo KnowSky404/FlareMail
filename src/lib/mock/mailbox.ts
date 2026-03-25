@@ -1,6 +1,12 @@
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
 export type MailSource = 'workspace' | 'inbound';
 export type DeliveryStatus = 'queued' | 'sent' | 'failed';
+export type DeliveryResultKind =
+  | 'accepted'
+  | 'queued'
+  | 'temporary_failure'
+  | 'permanent_failure'
+  | 'rate_limited';
 export type ComposeMode = 'new' | 'draft' | 'reply' | 'forward';
 
 export const inboundMessagePrefix = 'email:';
@@ -43,6 +49,10 @@ export interface MailMessage {
   deliveryAttempts?: number;
   deliveryError?: string;
   deliveredAt?: string | null;
+  deliveryProvider?: string | null;
+  deliveryResultKind?: DeliveryResultKind | null;
+  deliveryRemoteStatus?: number | null;
+  deliveryResponsePreview?: string;
 }
 
 export interface MailboxState {
@@ -199,7 +209,11 @@ export const mockMailbox: MailboxState = {
       deliveryStatus: 'sent',
       deliveryAttempts: 1,
       deliveryError: '',
-      deliveredAt: '2026-03-24T08:42:14.000Z'
+      deliveredAt: '2026-03-24T08:42:14.000Z',
+      deliveryProvider: 'demo',
+      deliveryResultKind: 'accepted',
+      deliveryRemoteStatus: null,
+      deliveryResponsePreview: '演示 provider 已接受这封邮件。'
     },
     {
       id: 'sent-02',
@@ -220,7 +234,11 @@ export const mockMailbox: MailboxState = {
       deliveryStatus: 'failed',
       deliveryAttempts: 2,
       deliveryError: '收件方域名暂时拒收，请稍后重试。',
-      deliveredAt: null
+      deliveredAt: null,
+      deliveryProvider: 'demo',
+      deliveryResultKind: 'permanent_failure',
+      deliveryRemoteStatus: null,
+      deliveryResponsePreview: '演示 provider 返回永久失败。'
     }
   ],
   drafts: [
@@ -500,6 +518,10 @@ export function createSentMessage(input: {
   deliveryAttempts?: number;
   deliveryError?: string;
   deliveredAt?: string | null;
+  deliveryProvider?: string | null;
+  deliveryResultKind?: DeliveryResultKind | null;
+  deliveryRemoteStatus?: number | null;
+  deliveryResponsePreview?: string;
 }): MailMessage {
   const toEmail = input.toEmail.trim();
   const signatureBlock = input.from.signature ? `\n\n${input.from.signature}` : '';
@@ -526,7 +548,11 @@ export function createSentMessage(input: {
     deliveryStatus: input.deliveryStatus ?? 'queued',
     deliveryAttempts: input.deliveryAttempts ?? 0,
     deliveryError: input.deliveryError ?? '',
-    deliveredAt: input.deliveredAt ?? null
+    deliveredAt: input.deliveredAt ?? null,
+    deliveryProvider: input.deliveryProvider ?? null,
+    deliveryResultKind: input.deliveryResultKind ?? null,
+    deliveryRemoteStatus: input.deliveryRemoteStatus ?? null,
+    deliveryResponsePreview: input.deliveryResponsePreview ?? ''
   };
 }
 

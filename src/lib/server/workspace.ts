@@ -1,10 +1,6 @@
 import type { Cookies } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import {
-  type OutboundDeliveryState,
-  resolveInitialOutboundDelivery,
-  resolveRetriedOutboundDelivery
-} from '$lib/server/outbound';
+import { deliverOutboundMessage, type OutboundDeliveryState } from '$lib/server/outbound';
 import {
   cloneMailbox,
   cloneProfile,
@@ -14,6 +10,7 @@ import {
   createWorkspacePayload,
   demoCredentials,
   type DeliveryStatus,
+  type DeliveryResultKind,
   fromInboundMessageId,
   isInboundMessageId,
   mockMailbox,
@@ -46,6 +43,7 @@ type WorkspaceCapabilities = {
   drafts: boolean;
   inboundStates: boolean;
   outboundStatuses: boolean;
+  outboundReceipts: boolean;
 };
 
 type WorkspaceUserRow = {
@@ -113,6 +111,10 @@ type WorkspaceOutboundStatusRow = {
   delivered_at: string | null;
   last_error: string;
   provider_message_id: string | null;
+  provider: string | null;
+  result_kind: DeliveryResultKind | null;
+  remote_status: number | null;
+  response_preview: string;
 };
 
 const memorySessions = new Map<string, WorkspaceSession>();
@@ -190,7 +192,11 @@ const mapWorkspaceMessageRow = (
   deliveryStatus: row.folder === 'sent' ? outboundStatus?.status ?? null : null,
   deliveryAttempts: row.folder === 'sent' ? outboundStatus?.attempts ?? 0 : 0,
   deliveryError: row.folder === 'sent' ? outboundStatus?.last_error ?? '' : '',
-  deliveredAt: row.folder === 'sent' ? outboundStatus?.delivered_at ?? null : null
+  deliveredAt: row.folder === 'sent' ? outboundStatus?.delivered_at ?? null : null,
+  deliveryProvider: row.folder === 'sent' ? outboundStatus?.provider ?? null : null,
+  deliveryResultKind: row.folder === 'sent' ? outboundStatus?.result_kind ?? null : null,
+  deliveryRemoteStatus: row.folder === 'sent' ? outboundStatus?.remote_status ?? null : null,
+  deliveryResponsePreview: row.folder === 'sent' ? outboundStatus?.response_preview ?? '' : ''
 });
 
 const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailMessage =>
@@ -363,6 +369,27 @@ function serializeOutboundStatusForUpsert(
   };
 }
 
+function serializeOutboundReceiptForUpsert(
+  userId: string,
+  messageId: string,
+  state: OutboundDeliveryState
+) {
+  const timestamp = nowIso();
+
+  return {
+    messageId,
+    userId,
+    provider: state.provider,
+    resultKind: state.resultKind,
+    remoteStatus: state.remoteStatus,
+    responsePreview: state.responsePreview,
+    lastEvent: 'submission',
+    lastEventAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
 async function hasNamedTables(db: D1Database, names: string[]) {
   const placeholders = names.map(() => '?').join(', ');
   const row = await db.prepare(
@@ -394,27 +421,31 @@ async function getWorkspaceCapabilities(env?: CloudflareEnv): Promise<WorkspaceC
     return {
       drafts: false,
       inboundStates: false,
-      outboundStatuses: false
+      outboundStatuses: false,
+      outboundReceipts: false
     };
   }
 
   try {
-    const [drafts, inboundStates, outboundStatuses] = await Promise.all([
+    const [drafts, inboundStates, outboundStatuses, outboundReceipts] = await Promise.all([
       hasNamedTables(env.DB, ['workspace_drafts']),
       hasNamedTables(env.DB, ['workspace_email_states']),
-      hasNamedTables(env.DB, ['workspace_outbound_statuses'])
+      hasNamedTables(env.DB, ['workspace_outbound_statuses']),
+      hasNamedTables(env.DB, ['workspace_outbound_receipts'])
     ]);
 
     return {
       drafts,
       inboundStates,
-      outboundStatuses
+      outboundStatuses,
+      outboundReceipts
     };
   } catch {
     return {
       drafts: false,
       inboundStates: false,
-      outboundStatuses: false
+      outboundStatuses: false,
+      outboundReceipts: false
     };
   }
 }
@@ -516,19 +547,44 @@ async function fetchD1Session(
         ).bind(sessionRow.id, sessionRow.login_email, sessionRow.email).all<WorkspaceInboundRow>()
       : Promise.resolve({ results: [] as WorkspaceInboundRow[] }),
     capabilities.outboundStatuses
-      ? db.prepare(
-          `
-            SELECT
-              message_id,
-              status,
-              attempts,
-              delivered_at,
-              last_error,
-              provider_message_id
-            FROM workspace_outbound_statuses
-            WHERE user_id = ?
-          `
-        ).bind(sessionRow.id).all<WorkspaceOutboundStatusRow>()
+      ? capabilities.outboundReceipts
+        ? db.prepare(
+            `
+              SELECT
+                s.message_id,
+                s.status,
+                s.attempts,
+                s.delivered_at,
+                s.last_error,
+                s.provider_message_id,
+                r.provider,
+                r.result_kind,
+                r.remote_status,
+                r.response_preview
+              FROM workspace_outbound_statuses AS s
+              LEFT JOIN workspace_outbound_receipts AS r
+                ON r.message_id = s.message_id
+               AND r.user_id = s.user_id
+              WHERE s.user_id = ?
+            `
+          ).bind(sessionRow.id).all<WorkspaceOutboundStatusRow>()
+        : db.prepare(
+            `
+              SELECT
+                message_id,
+                status,
+                attempts,
+                delivered_at,
+                last_error,
+                provider_message_id,
+                NULL AS provider,
+                NULL AS result_kind,
+                NULL AS remote_status,
+                '' AS response_preview
+              FROM workspace_outbound_statuses
+              WHERE user_id = ?
+            `
+          ).bind(sessionRow.id).all<WorkspaceOutboundStatusRow>()
       : Promise.resolve({ results: [] as WorkspaceOutboundStatusRow[] })
   ]);
 
@@ -671,11 +727,20 @@ async function seedWorkspaceOutboundStatusesIfEmpty(db: D1Database, userId: stri
 
   const statements = mockMailbox.sent.map((message) => {
     const state = serializeOutboundStatusForUpsert(userId, message.id, {
+      provider: (message.deliveryProvider as 'demo' | 'resend' | null) ?? 'demo',
+      resultKind:
+        message.deliveryResultKind ?? (message.deliveryStatus === 'sent' ? 'accepted' : 'permanent_failure'),
       status: message.deliveryStatus ?? 'sent',
       attempts: message.deliveryAttempts ?? 1,
       deliveredAt: message.deliveredAt ?? null,
       lastError: message.deliveryError ?? '',
-      providerMessageId: message.deliveryStatus === 'sent' ? `seed-${message.id}` : null
+      providerMessageId: message.deliveryStatus === 'sent' ? `seed-${message.id}` : null,
+      remoteStatus: message.deliveryRemoteStatus ?? null,
+      responsePreview:
+        message.deliveryResponsePreview ??
+        (message.deliveryStatus === 'sent'
+          ? '种子邮件已被默认 provider 接受。'
+          : '种子邮件保留了失败状态。')
     });
 
     return db.prepare(
@@ -703,6 +768,74 @@ async function seedWorkspaceOutboundStatusesIfEmpty(db: D1Database, userId: stri
       state.providerMessageId,
       state.createdAt,
       state.updatedAt
+    );
+  });
+
+  await db.batch(statements);
+}
+
+async function seedWorkspaceOutboundReceiptsIfEmpty(db: D1Database, userId: string) {
+  const existing = await db.prepare(
+    `
+      SELECT COUNT(*) AS total
+      FROM workspace_outbound_receipts
+      WHERE user_id = ?
+    `
+  ).bind(userId).first<{ total: number }>();
+
+  if ((existing?.total ?? 0) > 0) {
+    return;
+  }
+
+  const statements = mockMailbox.sent.map((message) => {
+    const receipt = serializeOutboundReceiptForUpsert(userId, message.id, {
+      provider: (message.deliveryProvider as 'demo' | 'resend' | null) ?? 'demo',
+      resultKind: message.deliveryResultKind ?? (message.deliveryStatus === 'sent' ? 'accepted' : 'permanent_failure'),
+      status: message.deliveryStatus ?? 'sent',
+      attempts: message.deliveryAttempts ?? 1,
+      deliveredAt: message.deliveredAt ?? null,
+      lastError: message.deliveryError ?? '',
+      providerMessageId:
+        message.deliveryProvider === 'resend' && message.deliveryStatus === 'sent'
+          ? `seed-resend-${message.id}`
+          : message.deliveryStatus === 'sent'
+            ? `seed-${message.id}`
+            : null,
+      remoteStatus: message.deliveryRemoteStatus ?? null,
+      responsePreview:
+        message.deliveryResponsePreview ??
+        (message.deliveryStatus === 'sent'
+          ? '种子邮件已被默认 provider 接受。'
+          : '种子邮件保留了失败状态。')
+    });
+
+    return db.prepare(
+      `
+        INSERT INTO workspace_outbound_receipts (
+          message_id,
+          user_id,
+          provider,
+          result_kind,
+          remote_status,
+          response_preview,
+          last_event,
+          last_event_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    ).bind(
+      receipt.messageId,
+      receipt.userId,
+      receipt.provider,
+      receipt.resultKind,
+      receipt.remoteStatus,
+      receipt.responsePreview,
+      receipt.lastEvent,
+      receipt.lastEventAt,
+      receipt.createdAt,
+      receipt.updatedAt
     );
   });
 
@@ -801,6 +934,10 @@ async function ensureDemoUser(db: D1Database, capabilities: WorkspaceCapabilitie
 
   if (capabilities.outboundStatuses) {
     await seedWorkspaceOutboundStatusesIfEmpty(db, user.id);
+  }
+
+  if (capabilities.outboundReceipts) {
+    await seedWorkspaceOutboundReceiptsIfEmpty(db, user.id);
   }
 
   return user;
@@ -1166,22 +1303,42 @@ export async function sendWorkspaceMessage(
   input: ComposeInput
 ) {
   const draftId = input.draftId?.trim() || undefined;
-  const initialDeliveryState = resolveInitialOutboundDelivery({
-    toEmail: input.toEmail,
-    subject: input.subject
-  });
-  const message = createSentMessage({
+  const initialMessage = createSentMessage({
     id: draftId,
     from: session.profile,
     toEmail: input.toEmail,
     subject: input.subject,
     body: input.body,
     cc: input.cc,
+    deliveryStatus: 'queued',
+    deliveryAttempts: 0,
+    deliveryError: '',
+    deliveredAt: null
+  });
+  const initialDeliveryState = await deliverOutboundMessage(
+    env,
+    {
+      messageId: initialMessage.id,
+      fromName: initialMessage.fromName,
+      fromEmail: initialMessage.fromEmail,
+      toEmail: initialMessage.toEmail,
+      cc: initialMessage.cc,
+      subject: initialMessage.subject,
+      text: initialMessage.body
+    },
+    0
+  );
+  const message = {
+    ...initialMessage,
     deliveryStatus: initialDeliveryState.status,
     deliveryAttempts: initialDeliveryState.attempts,
     deliveryError: initialDeliveryState.lastError,
-    deliveredAt: initialDeliveryState.deliveredAt
-  });
+    deliveredAt: initialDeliveryState.deliveredAt,
+    deliveryProvider: initialDeliveryState.provider,
+    deliveryResultKind: initialDeliveryState.resultKind,
+    deliveryRemoteStatus: initialDeliveryState.remoteStatus,
+    deliveryResponsePreview: initialDeliveryState.responsePreview
+  } satisfies MailMessage;
 
   if (session.storage === 'd1' && (await hasWorkspaceCoreTables(env))) {
     const capabilities = await getWorkspaceCapabilities(env);
@@ -1268,6 +1425,49 @@ export async function sendWorkspaceMessage(
           delivery.updatedAt
         )
       );
+
+      if (capabilities.outboundReceipts) {
+        const receipt = serializeOutboundReceiptForUpsert(session.userId, message.id, initialDeliveryState);
+
+        statements.unshift(
+          env!.DB.prepare(
+            `
+              INSERT INTO workspace_outbound_receipts (
+                message_id,
+                user_id,
+                provider,
+                result_kind,
+                remote_status,
+                response_preview,
+                last_event,
+                last_event_at,
+                created_at,
+                updated_at
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(message_id) DO UPDATE SET
+                provider = excluded.provider,
+                result_kind = excluded.result_kind,
+                remote_status = excluded.remote_status,
+                response_preview = excluded.response_preview,
+                last_event = excluded.last_event,
+                last_event_at = excluded.last_event_at,
+                updated_at = excluded.updated_at
+            `
+          ).bind(
+            receipt.messageId,
+            receipt.userId,
+            receipt.provider,
+            receipt.resultKind,
+            receipt.remoteStatus,
+            receipt.responsePreview,
+            receipt.lastEvent,
+            receipt.lastEventAt,
+            receipt.createdAt,
+            receipt.updatedAt
+          )
+        );
+      }
     }
 
     if (draftId && capabilities.drafts) {
@@ -1322,10 +1522,16 @@ export async function retryWorkspaceMessageDelivery(
     return null;
   }
 
-  const nextDeliveryState = resolveRetriedOutboundDelivery(
+  const nextDeliveryState = await deliverOutboundMessage(
+    env,
     {
+      messageId: currentMessage.id,
+      fromName: currentMessage.fromName,
+      fromEmail: currentMessage.fromEmail,
       toEmail: currentMessage.toEmail,
-      subject: currentMessage.subject
+      cc: currentMessage.cc,
+      subject: currentMessage.subject,
+      text: currentMessage.body
     },
     currentMessage.deliveryAttempts ?? 0
   );
@@ -1338,8 +1544,7 @@ export async function retryWorkspaceMessageDelivery(
     }
 
     const delivery = serializeOutboundStatusForUpsert(session.userId, messageId, nextDeliveryState);
-
-    await env!.DB.batch([
+    const statements = [
       env!.DB.prepare(
         `
           INSERT INTO workspace_outbound_statuses (
@@ -1380,7 +1585,52 @@ export async function retryWorkspaceMessageDelivery(
           WHERE id = ?
         `
       ).bind(nowIso(), session.id)
-    ]);
+    ];
+
+    if (capabilities.outboundReceipts) {
+      const receipt = serializeOutboundReceiptForUpsert(session.userId, messageId, nextDeliveryState);
+
+      statements.unshift(
+        env!.DB.prepare(
+          `
+            INSERT INTO workspace_outbound_receipts (
+              message_id,
+              user_id,
+              provider,
+              result_kind,
+              remote_status,
+              response_preview,
+              last_event,
+              last_event_at,
+              created_at,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id) DO UPDATE SET
+              provider = excluded.provider,
+              result_kind = excluded.result_kind,
+              remote_status = excluded.remote_status,
+              response_preview = excluded.response_preview,
+              last_event = excluded.last_event,
+              last_event_at = excluded.last_event_at,
+              updated_at = excluded.updated_at
+          `
+        ).bind(
+          receipt.messageId,
+          receipt.userId,
+          receipt.provider,
+          receipt.resultKind,
+          receipt.remoteStatus,
+          receipt.responsePreview,
+          receipt.lastEvent,
+          receipt.lastEventAt,
+          receipt.createdAt,
+          receipt.updatedAt
+        )
+      );
+    }
+
+    await env!.DB.batch(statements);
 
     const nextSession = await refreshD1Session(env, session.id);
 
@@ -1410,7 +1660,11 @@ export async function retryWorkspaceMessageDelivery(
               deliveryStatus: nextDeliveryState.status,
               deliveryAttempts: nextDeliveryState.attempts,
               deliveryError: nextDeliveryState.lastError,
-              deliveredAt: nextDeliveryState.deliveredAt
+              deliveredAt: nextDeliveryState.deliveredAt,
+              deliveryProvider: nextDeliveryState.provider,
+              deliveryResultKind: nextDeliveryState.resultKind,
+              deliveryRemoteStatus: nextDeliveryState.remoteStatus,
+              deliveryResponsePreview: nextDeliveryState.responsePreview
             }
           : cloneMessage(message)
       )

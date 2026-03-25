@@ -68,13 +68,23 @@
 
   const attachmentCount = $derived(inboundDetail?.attachments.length ?? 0);
   const deliveryLabel = $derived(
-    message?.deliveryStatus === 'queued'
-      ? '排队中'
-      : message?.deliveryStatus === 'failed'
-        ? '投递失败'
-        : message?.deliveryStatus === 'sent'
-          ? '已送达'
-          : ''
+    message?.deliveryResultKind === 'accepted'
+      ? 'Provider 已接受'
+      : message?.deliveryResultKind === 'queued'
+        ? '排队中'
+        : message?.deliveryResultKind === 'temporary_failure'
+          ? '待重试'
+          : message?.deliveryResultKind === 'rate_limited'
+            ? '限流中'
+            : message?.deliveryResultKind === 'permanent_failure'
+              ? '投递失败'
+              : message?.deliveryStatus === 'queued'
+                ? '排队中'
+                : message?.deliveryStatus === 'failed'
+                  ? '投递失败'
+                  : message?.deliveryStatus === 'sent'
+                    ? '已送达'
+                    : ''
   );
   const threadCount = $derived(threadMessages.length);
   const getThreadMessageLabel = (threadMessage: MailMessage) =>
@@ -114,12 +124,24 @@
             <p>标签：<span class="text-ink">{message.labels.join(' / ')}</span></p>
             {#if message.folder === 'sent' && message.deliveryStatus}
               <p>投递状态：<span class="text-ink">{deliveryLabel}</span></p>
+              {#if message.deliveryProvider}
+                <p>发送 provider：<span class="text-ink">{message.deliveryProvider}</span></p>
+              {/if}
               <p>尝试次数：<span class="text-ink">{message.deliveryAttempts ?? 0}</span></p>
+              {#if message.deliveryRemoteStatus !== null && message.deliveryRemoteStatus !== undefined}
+                <p>远端状态码：<span class="text-ink">{message.deliveryRemoteStatus}</span></p>
+              {/if}
               {#if message.deliveredAt}
-                <p>投递时间：<span class="text-ink">{formatDate(message.deliveredAt)}</span></p>
+                <p>
+                  {message.deliveryResultKind === 'accepted' ? '提交时间' : '投递时间'}：
+                  <span class="text-ink">{formatDate(message.deliveredAt)}</span>
+                </p>
               {/if}
               {#if message.deliveryError}
                 <p>失败原因：<span class="text-ink">{message.deliveryError}</span></p>
+              {/if}
+              {#if message.deliveryResponsePreview}
+                <p>Provider 回应：<span class="text-ink">{message.deliveryResponsePreview}</span></p>
               {/if}
             {/if}
           </div>
@@ -155,7 +177,13 @@
               onclick={() => onRetryDelivery(message)}
               type="button"
             >
-              {message.deliveryStatus === 'queued' ? '继续处理队列' : '重试投递'}
+              {message.deliveryResultKind === 'rate_limited'
+                ? '限流后重试'
+                : message.deliveryResultKind === 'temporary_failure'
+                  ? '立即重试'
+                  : message.deliveryStatus === 'queued'
+                    ? '继续处理队列'
+                    : '重试投递'}
             </button>
           {/if}
 
@@ -318,7 +346,7 @@
           {message.folder === 'inbox'
             ? '收件箱现在已经支持线程展开、回复与转发，下一步可以继续接归档、批量处理和搜索。'
             : message.folder === 'sent'
-              ? '已发送现在支持线程查看、排队、失败和重试。后续可以把这里接到真实 provider、Webhooks 和投递回执。'
+              ? '已发送现在已经接入 provider 抽象与标准化结果，下一步可以把这里继续接到 Webhooks 和真实投递回执。'
               : '草稿现在已经支持继续编辑、保存和发送，下一步可以接自动保存与收件人补全。'}
         </p>
       </div>

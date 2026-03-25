@@ -3,6 +3,14 @@ main = "build/_worker.js"
 compatibility_date = "2026-03-24"
 compatibility_flags = ["nodejs_compat"]
 
+[vars]
+OUTBOUND_PROVIDER = "demo"
+OUTBOUND_FROM_EMAIL = "founder@flaremail.dev"
+OUTBOUND_FROM_NAME = "FlareMail Demo"
+
+# 生产环境请通过 `bun x wrangler secret put RESEND_API_KEY`
+# 和 `bun x wrangler secret put RESEND_WEBHOOK_SECRET` 注入真实密钥。
+
 [assets]
 directory = "build"
 binding = "ASSETS"
