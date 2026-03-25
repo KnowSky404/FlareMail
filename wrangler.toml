@@ -5,28 +5,28 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 OUTBOUND_PROVIDER = "demo"
-OUTBOUND_FROM_EMAIL = "dev@ziteng.li"
+OUTBOUND_FROM_EMAIL = "dev@example.com"
 OUTBOUND_FROM_NAME = "FlareMail"
-AUTO_REPLY_ENABLED = "true"
+AUTO_REPLY_ENABLED = "false"
 AUTO_REPLY_SUBJECT_PREFIX = "Re:"
 AUTO_REPLY_TEXT = "你好，我们已经收到你的邮件，会尽快处理。\n\nThis is an automated reply from FlareMail on Cloudflare Workers."
-INBOUND_NOTIFICATION_ENABLED = "true"
-NOTIFICATION_EMAIL = "littlecontrol@icloud.com"
+INBOUND_NOTIFICATION_ENABLED = "false"
+NOTIFICATION_EMAIL = "ops@example.com"
 NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
 
 # 生产环境请通过 `bun x wrangler secret put RESEND_API_KEY`
 # 和 `bun x wrangler secret put RESEND_WEBHOOK_SECRET` 注入真实密钥。
 #
-# 当前默认配置会在生产环境启用：
-# - Cloudflare 原生自动回信
-# - Cloudflare 原生入站通知
-# 但工作台 UI 的“发送邮件”仍保留 `demo` provider，避免被 `send_email` 白名单限制。
-# 真要让 UI 发送切换到 Cloudflare 原生外发时，再把 `OUTBOUND_PROVIDER` 改成 `cloudflare`。
+# 请不要把真实邮箱、资源 ID 或生产配置直接提交到仓库。
+# 推荐做法：
+# - 本地开发：使用 `.dev.vars`（可参考 `.dev.vars.example`）
+# - 生产部署：在 Cloudflare Dashboard 或 CI/CD 中覆盖这些变量
+# - 如果要让工作台 UI 发送切换到 Cloudflare 原生外发，再把 `OUTBOUND_PROVIDER` 改成 `cloudflare`
 
 [[send_email]]
 name = "OUTBOUND_EMAIL"
-allowed_destination_addresses = ["littlecontrol@icloud.com"]
-allowed_sender_addresses = ["dev@ziteng.li"]
+allowed_destination_addresses = ["ops@example.com"]
+allowed_sender_addresses = ["dev@example.com"]
 
 [assets]
 directory = "build"
@@ -35,7 +35,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "flaremail-db"
-database_id = "f1929868-8e35-4b64-95af-e3ebb917c435"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[r2_buckets]]
 binding = "BUCKET"
