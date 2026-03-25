@@ -411,7 +411,7 @@
     </article>
   {:else}
     <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-night/14 bg-paper p-8 text-center text-sm leading-7 text-mist">
-      当前列表为空，可以点击“模拟收信”或“写邮件”继续演示。
+      当前列表为空，可以等待真实来信或新建邮件。
     </div>
   {/if}
 </section>

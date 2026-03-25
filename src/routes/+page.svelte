@@ -83,7 +83,7 @@
   let deliveryDetailErrors = $state<Record<string, string>>({});
   let inboundDetailPendingId = $state<string | null>(null);
   let deliveryDetailPendingId = $state<string | null>(null);
-  let banner = $state('当前界面使用模拟数据，先验证完整的产品交互。');
+  let banner = $state('工作台已准备就绪，当前列表只展示真实写入或当前会话产生的数据。');
   let loginError = $state('');
   let profileStatus = $state('');
   let pending = $state(false);
@@ -453,7 +453,7 @@
         method: 'DELETE'
       });
       resetWorkspace();
-      banner = '你已退出演示工作台。';
+      banner = '你已退出工作台。';
     } finally {
       pending = false;
     }
@@ -476,24 +476,6 @@
       banner = '个人信息已更新，写信时会自动使用新的身份与签名。';
     } catch (error) {
       profileStatus = error instanceof Error ? error.message : '保存失败。';
-    } finally {
-      pending = false;
-    }
-  }
-
-  async function receiveDemoMail() {
-    pending = true;
-
-    try {
-      const result = await requestJson<MessageResponse>('/api/workspace/mailbox/receive-demo', {
-        method: 'POST'
-      });
-
-      applyWorkspace(result.workspace, {
-        section: 'inbox',
-        preferredMessageId: result.message.id
-      });
-      banner = `已模拟接收来自 ${result.message.fromName} 的新邮件。`;
     } finally {
       pending = false;
     }
@@ -765,7 +747,6 @@
           banner = '你正在编辑个人资料。';
         }}
         onLogout={handleLogout}
-        onReceive={receiveDemoMail}
       />
 
       <section class="grid flex-1 gap-4 xl:grid-cols-[260px_380px_minmax(0,1fr)]">

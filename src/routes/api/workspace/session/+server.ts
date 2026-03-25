@@ -28,7 +28,7 @@ export const POST: RequestHandler = async (event) => {
     return json(
       {
         ok: false,
-        error: '演示账号或密码错误。'
+        error: '账号或密码错误。'
       },
       { status: 401 }
     );

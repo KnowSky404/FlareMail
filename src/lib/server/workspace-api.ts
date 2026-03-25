@@ -10,7 +10,7 @@ export function requireWorkspaceSession(event: RequestEvent) {
   const session = event.locals.workspaceSession;
 
   if (!session) {
-    throw error(401, '请先登录演示工作台。');
+    throw error(401, '请先登录工作台。');
   }
 
   return session;

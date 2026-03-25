@@ -48,7 +48,7 @@
         极简邮件工作台，先把收发与身份管理的体验打磨清楚。
       </h1>
       <p class="max-w-2xl text-base leading-7 text-mist md:text-lg">
-        当前原型已接入模拟登录态、个人资料接口和邮件操作接口。你可以刷新页面验证会话、编辑资料、收发邮件并查看工作区状态。
+        当前工作台已接入固定登录账号、个人资料接口和邮件操作接口。你可以刷新页面验证会话、编辑资料、收发邮件并查看工作区状态。
       </p>
     </div>
 
@@ -63,7 +63,7 @@
 
       <article class="rounded-[1.75rem] border border-night/10 bg-paper p-5">
         <p class="text-[11px] uppercase tracking-[0.24em] text-mist">工作台数据</p>
-        <p class="mt-3 text-2xl font-semibold text-ink">模拟接口驱动</p>
+        <p class="mt-3 text-2xl font-semibold text-ink">工作区接口驱动</p>
         <p class="mt-3 text-sm leading-6 text-mist">
           收件箱、草稿箱、已发送、资料保存、收信与发信都通过 `/api/workspace/*` 接口完成。
         </p>
@@ -83,10 +83,10 @@
 
   <section class="rounded-[2rem] border border-night/10 bg-shell/95 p-7 shadow-[0_24px_80px_rgba(32,27,22,0.08)] md:p-8">
     <div class="space-y-3">
-      <p class="text-[11px] uppercase tracking-[0.28em] text-mist">登录演示</p>
+      <p class="text-[11px] uppercase tracking-[0.28em] text-mist">登录入口</p>
       <h2 class="font-display text-4xl leading-none text-ink">进入 FlareMail</h2>
       <p class="text-sm leading-6 text-mist">
-        先用固定演示账号体验交互，后续再接真实鉴权、用户表和邮件持久化。
+        当前先用固定账号进入工作台，后续再接真实鉴权、用户表和邮件持久化。
       </p>
     </div>
 
@@ -130,7 +130,7 @@
     </form>
 
     <div class="mt-6 rounded-[1.75rem] border border-night/10 bg-paper p-5 text-sm leading-6 text-mist">
-      <p class="font-medium text-ink">演示账号</p>
+      <p class="font-medium text-ink">测试账号</p>
       <p class="mt-2 font-mono text-xs text-ink">{demoCredentials.email}</p>
       <p class="font-mono text-xs text-ink">{demoCredentials.password}</p>
     </div>

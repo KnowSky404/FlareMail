@@ -2,10 +2,10 @@
   import type { ComposeInput, ComposeMode, UserProfile } from '$lib/mock/mailbox';
 
   const defaultDraft = {
-    toEmail: 'team@northstar.so',
+    toEmail: '',
     cc: '',
-    subject: 'FlareMail UI prototype update',
-    body: 'Hi,\n\nThe next pass focuses on a quieter reading view, profile editing, and a simpler send flow.\n\n'
+    subject: '',
+    body: ''
   };
 
   let {

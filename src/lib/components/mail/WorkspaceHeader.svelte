@@ -12,7 +12,6 @@
     failedCount,
     totalMessages,
     pending = false,
-    onReceive,
     onEditProfile,
     onCompose,
     onLogout
@@ -27,7 +26,6 @@
     failedCount: number;
     totalMessages: number;
     pending?: boolean;
-    onReceive: () => void | Promise<void>;
     onEditProfile: () => void;
     onCompose: () => void;
     onLogout: () => void | Promise<void>;
@@ -48,14 +46,6 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-3">
-      <button
-        class="rounded-full border border-night/10 px-4 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
-        disabled={pending}
-        onclick={onReceive}
-        type="button"
-      >
-        模拟收信
-      </button>
       <button
         class="rounded-full border border-night/10 px-4 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
         disabled={pending}

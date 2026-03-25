@@ -154,174 +154,21 @@ export const demoCredentials = {
 };
 
 export const mockProfile: UserProfile = {
-  name: 'Evelyn Chen',
-  role: 'Founder, FlareMail',
+  name: 'FlareMail User',
+  role: 'Workspace Owner',
   email: demoCredentials.email,
-  company: 'FlareMail Labs',
-  location: 'Shanghai',
+  company: 'FlareMail',
+  location: '',
   timezone: 'Asia/Shanghai',
-  forwardingEnabled: true,
-  signature: 'Regards,\nEvelyn\nFlareMail'
+  forwardingEnabled: false,
+  signature: ''
 };
 
 export const mockMailbox: MailboxState = {
-  inbox: [
-    {
-      id: 'inbox-01',
-      folder: 'inbox',
-      source: 'workspace',
-      fromName: 'Maya Patel',
-      fromEmail: 'maya@northstar.so',
-      toName: 'Evelyn Chen',
-      toEmail: demoCredentials.email,
-      subject: 'Pilot feedback from the first support queue',
-      preview: 'Customers are replying faster when the thread preview is visible in one screen.',
-      body:
-        'Hi Evelyn,\n\nWe just finished the first support pilot. The biggest win is speed: agents are replying faster when the thread preview, sender profile, and mailbox labels sit in the same view. The next thing we want is a clean personal settings panel so operators can update their signature without leaving the app.\n\nIf you want, I can send the condensed notes before Friday.\n\nMaya',
-      sentAt: '2026-03-24T08:20:00.000Z',
-      labels: ['Feedback', 'Pilot'],
-      read: false,
-      starred: true
-    },
-    {
-      id: 'inbox-02',
-      folder: 'inbox',
-      source: 'workspace',
-      fromName: 'Arthur Kim',
-      fromEmail: 'arthur@latticeops.io',
-      toName: 'Evelyn Chen',
-      toEmail: demoCredentials.email,
-      subject: 'Can we get a calmer mailbox layout?',
-      preview: 'Our ops team wants a UI that feels more editorial and less dashboard-heavy.',
-      body:
-        'Hello,\n\nThe product direction looks strong, but our ops team keeps asking for a calmer mailbox layout. They want fewer panels, more whitespace, and a stronger sense of reading focus. If the next pass can make the compose and detail views feel quieter, that would help adoption a lot.\n\nArthur',
-      sentAt: '2026-03-24T05:05:00.000Z',
-      labels: ['Design'],
-      read: true,
-      starred: false
-    },
-    {
-      id: 'inbox-03',
-      folder: 'inbox',
-      source: 'workspace',
-      fromName: 'Cloudflare Routing',
-      fromEmail: 'routing@notifications.cloudflare.com',
-      toName: 'Evelyn Chen',
-      toEmail: demoCredentials.email,
-      subject: 'Email Routing rule activated',
-      preview: 'Your inbound route for hello@flaremail.dev is now pointing at the Worker.',
-      body:
-        'This is a generated confirmation.\n\nYour inbound route for hello@flaremail.dev is now attached to the selected Worker. New deliveries will trigger the Worker email handler and can be persisted into D1 and R2 according to your application logic.\n\nCloudflare',
-      sentAt: '2026-03-23T23:10:00.000Z',
-      labels: ['System'],
-      read: true,
-      starred: false
-    }
-  ],
-  sent: [
-    {
-      id: 'sent-01',
-      folder: 'sent',
-      source: 'workspace',
-      fromName: 'Evelyn Chen',
-      fromEmail: demoCredentials.email,
-      toName: 'Maya Patel',
-      toEmail: 'maya@northstar.so',
-      subject: 'Re: Pilot feedback from the first support queue',
-      preview: 'Thanks, send the condensed notes and we will fold them into the next UI pass.',
-      body:
-        'Hi Maya,\n\nThanks. Send the condensed notes and we will fold them into the next UI pass. I am especially interested in how operators switch between reading mail and editing account details.\n\nRegards,\nEvelyn',
-      sentAt: '2026-03-24T08:42:00.000Z',
-      labels: ['Sent'],
-      read: true,
-      starred: false,
-      deliveryStatus: 'sent',
-      deliveryAttempts: 1,
-      deliveryError: '',
-      deliveredAt: '2026-03-24T08:42:14.000Z',
-      deliveryProvider: 'demo',
-      deliveryResultKind: 'accepted',
-      deliveryRemoteStatus: null,
-      deliveryResponsePreview: '演示 provider 已接受这封邮件。',
-      deliveryLastEvent: 'submission',
-      deliveryLastEventAt: '2026-03-24T08:42:14.000Z'
-    },
-    {
-      id: 'sent-02',
-      folder: 'sent',
-      source: 'workspace',
-      fromName: 'Evelyn Chen',
-      fromEmail: demoCredentials.email,
-      toName: 'Arthur Kim',
-      toEmail: 'arthur@latticeops.io',
-      subject: 'Re: Can we get a calmer mailbox layout?',
-      preview: 'Agreed. The next prototype will reduce chrome and let the content breathe.',
-      body:
-        'Arthur,\n\nAgreed. The next prototype will reduce chrome, simplify the navigation, and let message content breathe. We are aiming for a minimal interaction model with clear compose, inbox, and profile flows.\n\nRegards,\nEvelyn',
-      sentAt: '2026-03-24T06:14:00.000Z',
-      labels: ['Sent'],
-      read: true,
-      starred: true,
-      deliveryStatus: 'failed',
-      deliveryAttempts: 2,
-      deliveryError: '收件方域名暂时拒收，请稍后重试。',
-      deliveredAt: null,
-      deliveryProvider: 'demo',
-      deliveryResultKind: 'permanent_failure',
-      deliveryRemoteStatus: null,
-      deliveryResponsePreview: '演示 provider 返回永久失败。',
-      deliveryLastEvent: 'submission',
-      deliveryLastEventAt: '2026-03-24T06:14:00.000Z'
-    }
-  ],
-  drafts: [
-    {
-      id: 'draft-01',
-      folder: 'drafts',
-      source: 'workspace',
-      fromName: 'Evelyn Chen',
-      fromEmail: demoCredentials.email,
-      toName: 'product',
-      toEmail: 'product@flaremail.dev',
-      cc: 'ops@flaremail.dev',
-      subject: 'Weekly workspace checkpoint',
-      preview: '整理一下本周的工作区目标：先接入真实进站邮件，再把草稿和发送串起来。',
-      body:
-        '大家好，\n\n整理一下本周的工作区目标：先接入真实进站邮件，再把草稿和发送串起来。UI 继续保持极简，但所有关键操作都要有可验证的状态落点。\n\nEvelyn',
-      sentAt: '2026-03-24T09:10:00.000Z',
-      labels: ['Draft'],
-      read: true,
-      starred: false
-    }
-  ]
+  inbox: [],
+  sent: [],
+  drafts: []
 };
-
-const incomingTemplates = [
-  {
-    fromName: 'Nina Park',
-    fromEmail: 'nina@orbitstudio.io',
-    subject: 'New brand draft attached',
-    body:
-      'Hi,\n\nI uploaded a lighter brand direction with more whitespace and smaller navigation controls. It should fit the minimal mail client direction better.\n\nNina',
-    labels: ['Design', 'New']
-  },
-  {
-    fromName: 'Daniel Ross',
-    fromEmail: 'daniel@shoreline.cx',
-    subject: 'Support queue anomaly this morning',
-    body:
-      'Morning,\n\nA few support messages arrived without agent assignment. Nothing is broken, but the new mail triage flow should probably surface unassigned messages more clearly.\n\nDaniel',
-    labels: ['Ops', 'Alert']
-  },
-  {
-    fromName: 'Iris Lee',
-    fromEmail: 'iris@founders.club',
-    subject: 'Investor update draft review',
-    body:
-      'Evelyn,\n\nI read the draft. The product narrative is strong. If you want, I can tighten the section that explains why the Worker-based monolith keeps the system lean.\n\nIris',
-    labels: ['Review']
-  }
-];
 
 const normalizePreview = (value: string) => value.trim().replace(/\s+/g, ' ').slice(0, 96);
 
@@ -482,28 +329,6 @@ export function createWorkspacePayload(profile: UserProfile, mailbox: MailboxSta
     profile: cloneProfile(profile),
     mailbox: cloneMailbox(mailbox),
     metrics: getMailboxMetrics(mailbox)
-  };
-}
-
-export function createIncomingMessage(recipient: UserProfile, sequence: number): MailMessage {
-  const template = incomingTemplates[sequence % incomingTemplates.length];
-  const sentAt = new Date(Date.now() + sequence * 60_000).toISOString();
-
-  return {
-    id: `inbox-live-${sequence}`,
-    folder: 'inbox',
-    source: 'workspace',
-    fromName: template.fromName,
-    fromEmail: template.fromEmail,
-    toName: recipient.name,
-    toEmail: recipient.email,
-    subject: template.subject,
-    preview: template.body.split('\n').filter(Boolean).slice(1, 2).join(' ').slice(0, 96),
-    body: template.body,
-    sentAt,
-    labels: [...template.labels],
-    read: false,
-    starred: false
   };
 }
 

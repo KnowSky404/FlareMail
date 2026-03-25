@@ -6,7 +6,6 @@ import {
   cloneMailbox,
   cloneProfile,
   createDraftMessage,
-  createIncomingMessage,
   createSentMessage,
   createWorkspacePayload,
   demoCredentials,
@@ -17,7 +16,6 @@ import {
   type DeliveryResultKind,
   fromInboundMessageId,
   isInboundMessageId,
-  mockMailbox,
   mockProfile,
   toInboundMessageId,
   type ComposeInput,
@@ -142,6 +140,19 @@ type WorkspaceOutboundEventRow = {
 };
 
 const memorySessions = new Map<string, WorkspaceSession>();
+const legacySeedMessageIds = ['inbox-01', 'inbox-02', 'inbox-03', 'sent-01', 'sent-02'] as const;
+const legacySeedSentIds = ['sent-01', 'sent-02'] as const;
+const legacySeedDraftIds = ['draft-01'] as const;
+const legacyProfileMatch = {
+  name: 'Evelyn Chen',
+  role: 'Founder, FlareMail',
+  email: demoCredentials.email,
+  company: 'FlareMail Labs',
+  location: 'Shanghai',
+  timezone: 'Asia/Shanghai',
+  forwardingEnabled: true,
+  signature: 'Regards,\nEvelyn\nFlareMail'
+} as const;
 
 const cloneMessage = (message: MailMessage): MailMessage => ({
   ...message,
@@ -259,6 +270,131 @@ const mapInboundRow = (row: WorkspaceInboundRow, profile: UserProfile): MailMess
     starred: Boolean(row.is_starred)
   };
 };
+
+const isLegacySeedProfile = (row: WorkspaceUserRow) =>
+  row.name === legacyProfileMatch.name &&
+  row.role === legacyProfileMatch.role &&
+  row.email === legacyProfileMatch.email &&
+  row.company === legacyProfileMatch.company &&
+  row.location === legacyProfileMatch.location &&
+  row.timezone === legacyProfileMatch.timezone &&
+  Boolean(row.forwarding_enabled) === legacyProfileMatch.forwardingEnabled &&
+  row.signature === legacyProfileMatch.signature;
+
+async function cleanupLegacyWorkspaceSeedData(
+  db: D1Database,
+  userId: string,
+  capabilities: WorkspaceCapabilities
+) {
+  const statements = [
+    db.prepare(
+      `
+        DELETE FROM workspace_messages
+        WHERE user_id = ?
+          AND id IN (?, ?, ?, ?, ?)
+      `
+    ).bind(userId, ...legacySeedMessageIds)
+  ];
+
+  if (capabilities.drafts) {
+    statements.push(
+      db.prepare(
+        `
+          DELETE FROM workspace_drafts
+          WHERE user_id = ?
+            AND id = ?
+        `
+      ).bind(userId, ...legacySeedDraftIds)
+    );
+  }
+
+  if (capabilities.outboundStatuses) {
+    statements.push(
+      db.prepare(
+        `
+          DELETE FROM workspace_outbound_statuses
+          WHERE user_id = ?
+            AND message_id IN (?, ?)
+        `
+      ).bind(userId, ...legacySeedSentIds)
+    );
+  }
+
+  if (capabilities.outboundReceipts) {
+    statements.push(
+      db.prepare(
+        `
+          DELETE FROM workspace_outbound_receipts
+          WHERE user_id = ?
+            AND message_id IN (?, ?)
+        `
+      ).bind(userId, ...legacySeedSentIds)
+    );
+  }
+
+  if (capabilities.outboundEvents) {
+    statements.push(
+      db.prepare(
+        `
+          DELETE FROM workspace_outbound_events
+          WHERE user_id = ?
+            AND message_id IN (?, ?)
+        `
+      ).bind(userId, ...legacySeedSentIds)
+    );
+  }
+
+  await db.batch(statements);
+}
+
+async function normalizeLegacyDemoUserProfile(db: D1Database, user: WorkspaceUserRow) {
+  if (!isLegacySeedProfile(user)) {
+    return user;
+  }
+
+  const profile = mockProfile;
+  const updatedAt = nowIso();
+
+  await db.prepare(
+    `
+      UPDATE workspace_users
+      SET
+        name = ?,
+        role = ?,
+        email = ?,
+        company = ?,
+        location = ?,
+        timezone = ?,
+        forwarding_enabled = ?,
+        signature = ?,
+        updated_at = ?
+      WHERE id = ?
+    `
+  ).bind(
+    profile.name,
+    profile.role,
+    profile.email,
+    profile.company,
+    profile.location,
+    profile.timezone,
+    profile.forwardingEnabled ? 1 : 0,
+    profile.signature,
+    updatedAt,
+    user.id
+  ).run();
+
+  return {
+    ...user,
+    name: profile.name,
+    role: profile.role,
+    email: profile.email,
+    company: profile.company,
+    location: profile.location,
+    timezone: profile.timezone,
+    forwarding_enabled: profile.forwardingEnabled ? 1 : 0,
+    signature: profile.signature
+  };
+}
 
 const rowsToMailbox = (
   rows: WorkspaceMessageRow[],
@@ -667,305 +803,6 @@ async function fetchD1Session(
   };
 }
 
-async function seedWorkspaceMailboxIfEmpty(db: D1Database, userId: string) {
-  const existing = await db.prepare(
-    `
-      SELECT COUNT(*) AS total
-      FROM workspace_messages
-      WHERE user_id = ?
-    `
-  ).bind(userId).first<{ total: number }>();
-
-  if ((existing?.total ?? 0) > 0) {
-    return;
-  }
-
-  const statements = [...mockMailbox.inbox, ...mockMailbox.sent].map((message) => {
-    const payload = serializeMessageForInsert(userId, message);
-
-    return db.prepare(
-      `
-        INSERT INTO workspace_messages (
-          user_id,
-          id,
-          folder,
-          from_name,
-          from_email,
-          to_name,
-          to_email,
-          subject,
-          preview,
-          body,
-          sent_at,
-          labels_json,
-          is_read,
-          is_starred,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    ).bind(
-      payload.userId,
-      payload.id,
-      payload.folder,
-      payload.fromName,
-      payload.fromEmail,
-      payload.toName,
-      payload.toEmail,
-      payload.subject,
-      payload.preview,
-      payload.body,
-      payload.sentAt,
-      payload.labelsJson,
-      payload.isRead,
-      payload.isStarred,
-      payload.createdAt,
-      payload.updatedAt
-    );
-  });
-
-  await db.batch(statements);
-}
-
-async function seedWorkspaceDraftsIfEmpty(db: D1Database, userId: string) {
-  const existing = await db.prepare(
-    `
-      SELECT COUNT(*) AS total
-      FROM workspace_drafts
-      WHERE user_id = ?
-    `
-  ).bind(userId).first<{ total: number }>();
-
-  if ((existing?.total ?? 0) > 0) {
-    return;
-  }
-
-  const statements = mockMailbox.drafts.map((draft) =>
-    db.prepare(
-      `
-        INSERT INTO workspace_drafts (
-          id,
-          user_id,
-          to_email,
-          cc,
-          subject,
-          body,
-          is_starred,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    ).bind(
-      draft.id,
-      userId,
-      draft.toEmail,
-      draft.cc ?? '',
-      draft.subject,
-      draft.body,
-      draft.starred ? 1 : 0,
-      draft.sentAt,
-      draft.sentAt
-    )
-  );
-
-  await db.batch(statements);
-}
-
-async function seedWorkspaceOutboundStatusesIfEmpty(db: D1Database, userId: string) {
-  const existing = await db.prepare(
-    `
-      SELECT COUNT(*) AS total
-      FROM workspace_outbound_statuses
-      WHERE user_id = ?
-    `
-  ).bind(userId).first<{ total: number }>();
-
-  if ((existing?.total ?? 0) > 0) {
-    return;
-  }
-
-  const statements = mockMailbox.sent.map((message) => {
-    const state = serializeOutboundStatusForUpsert(userId, message.id, {
-      provider: (message.deliveryProvider as 'demo' | 'resend' | null) ?? 'demo',
-      resultKind:
-        message.deliveryResultKind ?? (message.deliveryStatus === 'sent' ? 'accepted' : 'permanent_failure'),
-      status: message.deliveryStatus ?? 'sent',
-      attempts: message.deliveryAttempts ?? 1,
-      deliveredAt: message.deliveredAt ?? null,
-      lastError: message.deliveryError ?? '',
-      providerMessageId: message.deliveryStatus === 'sent' ? `seed-${message.id}` : null,
-      remoteStatus: message.deliveryRemoteStatus ?? null,
-      responsePreview:
-        message.deliveryResponsePreview ??
-        (message.deliveryStatus === 'sent'
-          ? '种子邮件已被默认 provider 接受。'
-          : '种子邮件保留了失败状态。')
-    });
-
-    return db.prepare(
-      `
-        INSERT INTO workspace_outbound_statuses (
-          message_id,
-          user_id,
-          status,
-          attempts,
-          delivered_at,
-          last_error,
-          provider_message_id,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    ).bind(
-      state.messageId,
-      state.userId,
-      state.status,
-      state.attempts,
-      state.deliveredAt,
-      state.lastError,
-      state.providerMessageId,
-      state.createdAt,
-      state.updatedAt
-    );
-  });
-
-  await db.batch(statements);
-}
-
-async function seedWorkspaceOutboundReceiptsIfEmpty(db: D1Database, userId: string) {
-  const existing = await db.prepare(
-    `
-      SELECT COUNT(*) AS total
-      FROM workspace_outbound_receipts
-      WHERE user_id = ?
-    `
-  ).bind(userId).first<{ total: number }>();
-
-  if ((existing?.total ?? 0) > 0) {
-    return;
-  }
-
-  const statements = mockMailbox.sent.map((message) => {
-    const receipt = serializeOutboundReceiptForUpsert(userId, message.id, {
-      provider: (message.deliveryProvider as 'demo' | 'resend' | null) ?? 'demo',
-      resultKind: message.deliveryResultKind ?? (message.deliveryStatus === 'sent' ? 'accepted' : 'permanent_failure'),
-      status: message.deliveryStatus ?? 'sent',
-      attempts: message.deliveryAttempts ?? 1,
-      deliveredAt: message.deliveredAt ?? null,
-      lastError: message.deliveryError ?? '',
-      providerMessageId:
-        message.deliveryProvider === 'resend' && message.deliveryStatus === 'sent'
-          ? `seed-resend-${message.id}`
-          : message.deliveryStatus === 'sent'
-            ? `seed-${message.id}`
-            : null,
-      remoteStatus: message.deliveryRemoteStatus ?? null,
-      responsePreview:
-        message.deliveryResponsePreview ??
-        (message.deliveryStatus === 'sent'
-          ? '种子邮件已被默认 provider 接受。'
-          : '种子邮件保留了失败状态。')
-    });
-
-    return db.prepare(
-      `
-        INSERT INTO workspace_outbound_receipts (
-          message_id,
-          user_id,
-          provider,
-          result_kind,
-          remote_status,
-          response_preview,
-          last_event,
-          last_event_at,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    ).bind(
-      receipt.messageId,
-      receipt.userId,
-      receipt.provider,
-      receipt.resultKind,
-      receipt.remoteStatus,
-      receipt.responsePreview,
-      receipt.lastEvent,
-      receipt.lastEventAt,
-      receipt.createdAt,
-      receipt.updatedAt
-    );
-  });
-
-  await db.batch(statements);
-}
-
-async function seedWorkspaceOutboundEventsIfEmpty(db: D1Database, userId: string) {
-  const existing = await db.prepare(
-    `
-      SELECT COUNT(*) AS total
-      FROM workspace_outbound_events
-      WHERE user_id = ?
-    `
-  ).bind(userId).first<{ total: number }>();
-
-  if ((existing?.total ?? 0) > 0) {
-    return;
-  }
-
-  const statements = mockMailbox.sent.map((message) => {
-    const event = serializeOutboundEventInsert({
-      svixId: `local:seed:${message.id}:submission`,
-      messageId: message.id,
-      userId,
-      provider: message.deliveryProvider ?? 'demo',
-      providerMessageId: message.deliveryStatus === 'sent' ? `seed-${message.id}` : null,
-      eventType: 'submission',
-      eventCreatedAt: message.deliveryLastEventAt ?? message.deliveredAt ?? message.sentAt,
-      summary: message.deliveryResponsePreview ?? '种子邮件已创建初始投递记录。',
-      payloadJson: JSON.stringify({
-        source: 'seed',
-        resultKind: message.deliveryResultKind ?? null,
-        deliveryStatus: message.deliveryStatus ?? null
-      })
-    });
-
-    return db.prepare(
-      `
-        INSERT INTO workspace_outbound_events (
-          svix_id,
-          message_id,
-          user_id,
-          provider,
-          provider_message_id,
-          event_type,
-          event_created_at,
-          summary,
-          payload_json,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    ).bind(
-      event.svixId,
-      event.messageId,
-      event.userId,
-      event.provider,
-      event.providerMessageId,
-      event.eventType,
-      event.eventCreatedAt,
-      event.summary,
-      event.payloadJson,
-      event.createdAt
-    );
-  });
-
-  await db.batch(statements);
-}
-
 async function ensureDemoUser(db: D1Database, capabilities: WorkspaceCapabilities) {
   let user = await db.prepare(
     `
@@ -1050,23 +887,8 @@ async function ensureDemoUser(db: D1Database, capabilities: WorkspaceCapabilitie
     throw new Error('无法初始化演示用户。');
   }
 
-  await seedWorkspaceMailboxIfEmpty(db, user.id);
-
-  if (capabilities.drafts) {
-    await seedWorkspaceDraftsIfEmpty(db, user.id);
-  }
-
-  if (capabilities.outboundStatuses) {
-    await seedWorkspaceOutboundStatusesIfEmpty(db, user.id);
-  }
-
-  if (capabilities.outboundReceipts) {
-    await seedWorkspaceOutboundReceiptsIfEmpty(db, user.id);
-  }
-
-  if (capabilities.outboundEvents) {
-    await seedWorkspaceOutboundEventsIfEmpty(db, user.id);
-  }
+  user = await normalizeLegacyDemoUserProfile(db, user);
+  await cleanupLegacyWorkspaceSeedData(db, user.id, capabilities);
 
   return user;
 }
@@ -1592,98 +1414,6 @@ export async function updateWorkspaceProfile(
   touchMemorySession(session);
   memorySessions.set(session.id, cloneSession(session));
   return serializeWorkspace(session);
-}
-
-export async function receiveDemoMessage(env: CloudflareEnv | undefined, session: WorkspaceSession) {
-  if (session.storage === 'd1' && (await hasWorkspaceCoreTables(env))) {
-    const nextSequence = session.incomingSequence + 1;
-    const message = createIncomingMessage(session.profile, nextSequence);
-    const payload = serializeMessageForInsert(session.userId, message);
-    const timestamp = nowIso();
-
-    await env!.DB.batch([
-      env!.DB.prepare(
-        `
-          UPDATE workspace_users
-          SET
-            incoming_sequence = ?,
-            updated_at = ?
-          WHERE id = ?
-        `
-      ).bind(nextSequence, timestamp, session.userId),
-      env!.DB.prepare(
-        `
-          INSERT INTO workspace_messages (
-            user_id,
-            id,
-            folder,
-            from_name,
-            from_email,
-            to_name,
-            to_email,
-            subject,
-            preview,
-            body,
-            sent_at,
-            labels_json,
-            is_read,
-            is_starred,
-            created_at,
-            updated_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `
-      ).bind(
-        payload.userId,
-        payload.id,
-        payload.folder,
-        payload.fromName,
-        payload.fromEmail,
-        payload.toName,
-        payload.toEmail,
-        payload.subject,
-        payload.preview,
-        payload.body,
-        payload.sentAt,
-        payload.labelsJson,
-        payload.isRead,
-        payload.isStarred,
-        payload.createdAt,
-        payload.updatedAt
-      ),
-      env!.DB.prepare(
-        `
-          UPDATE workspace_sessions
-          SET updated_at = ?
-          WHERE id = ?
-        `
-      ).bind(timestamp, session.id)
-    ]);
-
-    const nextSession = await refreshD1Session(env, session.id);
-
-    if (!nextSession) {
-      throw new Error('新邮件写入后无法重新加载工作区。');
-    }
-
-    return {
-      message,
-      workspace: serializeWorkspace(nextSession)
-    };
-  }
-
-  session.incomingSequence += 1;
-  const message = createIncomingMessage(session.profile, session.incomingSequence);
-  session.mailbox = {
-    ...session.mailbox,
-    inbox: [message, ...session.mailbox.inbox.map(cloneMessage)]
-  };
-  touchMemorySession(session);
-  memorySessions.set(session.id, cloneSession(session));
-  return {
-    message,
-    workspace: serializeWorkspace(session)
-  };
 }
 
 export async function saveWorkspaceDraft(
