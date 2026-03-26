@@ -2,7 +2,8 @@
 
 @theme {
   --font-sans: "Inter", "SF Pro Display", "Helvetica Neue", sans-serif;
-  
+  --font-display: "Iowan Old Style", "Cormorant Garamond", "Times New Roman", serif;
+
   --color-bg: #ffffff;
   --color-surface: #fcfcfc;
   --color-border: #e4e4e7;
@@ -11,6 +12,13 @@
   --color-accent: #18181b;
   --color-highlight: #3b82f6;
   --color-danger: #ef4444;
+  --color-ink: #18181b;
+  --color-paper: #ffffff;
+  --color-shell: #fafaf9;
+  --color-mist: #71717a;
+  --color-line: #e4e4e7;
+  --color-gold: #a16207;
+  --color-coral: #dc2626;
 }
 
 :root {
@@ -57,4 +65,17 @@ body {
 /* 布局辅助 */
 @utility app-border {
   border: 1px solid var(--color-border);
+}
+
+@utility paper-card {
+  @apply border border-line bg-white shadow-[0_24px_80px_rgba(24,24,27,0.06)];
+}
+
+@utility editorial-heading {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+}
+
+@utility meta-text {
+  @apply text-[10px] font-bold uppercase tracking-[0.24em] text-mist;
 }

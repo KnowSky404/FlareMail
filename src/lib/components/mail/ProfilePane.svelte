@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { UserProfile } from '$lib/mock/mailbox';
 
+  const createProfileDraft = (profile: UserProfile): UserProfile => ({ ...profile });
+
   let {
     profile,
     status = '',
@@ -13,7 +15,22 @@
     onSave: (next: UserProfile) => void | Promise<void>;
   } = $props();
 
-  let nextProfile = $state({ ...profile });
+  let nextProfile = $state<UserProfile>(
+    createProfileDraft({
+      name: '',
+      role: '',
+      email: '',
+      company: '',
+      location: '',
+      timezone: '',
+      forwardingEnabled: false,
+      signature: ''
+    })
+  );
+
+  $effect(() => {
+    nextProfile = createProfileDraft(profile);
+  });
 
   function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -32,6 +49,14 @@
       <div class="space-y-6">
         <p class="meta-text">Basic Information</p>
         <div class="grid gap-6 md:grid-cols-2">
+          <label class="block space-y-2">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">邮箱地址</span>
+            <input
+              bind:value={nextProfile.email}
+              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
+              type="email"
+            />
+          </label>
           <label class="block space-y-2">
             <span class="text-[10px] font-bold uppercase tracking-wider text-mist">显示姓名</span>
             <input
@@ -60,6 +85,14 @@
             <span class="text-[10px] font-bold uppercase tracking-wider text-mist">所在时区</span>
             <input
               bind:value={nextProfile.timezone}
+              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
+              type="text"
+            />
+          </label>
+          <label class="block space-y-2">
+            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">所在地区</span>
+            <input
+              bind:value={nextProfile.location}
               class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
               type="text"
             />

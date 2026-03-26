@@ -6,6 +6,22 @@
   } from '$lib/mock/mailbox';
   import { onMount } from 'svelte';
 
+  const createComposeState = (value: ComposeInput | null): ComposeInput =>
+    value
+      ? {
+          draftId: value.draftId,
+          toEmail: value.toEmail,
+          cc: value.cc ?? '',
+          subject: value.subject,
+          body: value.body
+        }
+      : {
+          toEmail: '',
+          cc: '',
+          subject: '',
+          body: ''
+        };
+
   let {
     initialInput = null,
     mode = 'new',
@@ -24,11 +40,10 @@
     onSend: (input: ComposeInput) => void | Promise<void>;
   } = $props();
 
-  let input = $state<ComposeInput>(initialInput ?? {
-    toEmail: '',
-    cc: '',
-    subject: '',
-    body: ''
+  let input = $state<ComposeInput>(createComposeState(null));
+
+  $effect(() => {
+    input = createComposeState(initialInput);
   });
 
   onMount(() => {
@@ -55,7 +70,12 @@
         <span class="h-1 w-1 rounded-full bg-line"></span>
         <span class="meta-text">{profile.email}</span>
       </div>
-      <button class="text-mist transition-colors hover:text-coral" onclick={onClose}>
+      <button
+        aria-label="Close compose dialog"
+        class="text-mist transition-colors hover:text-coral"
+        onclick={onClose}
+        type="button"
+      >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
         </svg>
