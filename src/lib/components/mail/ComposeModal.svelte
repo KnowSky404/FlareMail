@@ -24,18 +24,26 @@
 
   let {
     initialInput = null,
+    draftId = undefined,
     mode = 'new',
     profile,
     pending = false,
+    autosaveStatus = 'idle',
+    autosaveMessage = '自动保存会在停顿后触发。',
     onClose,
+    onInputChange,
     onSaveDraft,
     onSend
   }: {
     initialInput?: ComposeInput | null;
+    draftId?: string | undefined;
     mode?: ComposeMode;
     profile: UserProfile;
     pending?: boolean;
+    autosaveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+    autosaveMessage?: string;
     onClose: () => void;
+    onInputChange?: (input: ComposeInput) => void;
     onSaveDraft: (input: ComposeInput) => void | Promise<void>;
     onSend: (input: ComposeInput) => void | Promise<void>;
   } = $props();
@@ -44,6 +52,15 @@
 
   $effect(() => {
     input = createComposeState(initialInput);
+  });
+
+  $effect(() => {
+    if (draftId && draftId !== input.draftId) {
+      input = {
+        ...input,
+        draftId
+      };
+    }
   });
 
   onMount(() => {
@@ -57,6 +74,26 @@
   const title = $derived(
     mode === 'new' ? '新邮件' : mode === 'reply' ? '回复邮件' : mode === 'forward' ? '转发邮件' : '编辑草稿'
   );
+
+  const autosaveTone = $derived(
+    autosaveStatus === 'error'
+      ? 'text-coral'
+      : autosaveStatus === 'saved'
+        ? 'text-accent'
+        : autosaveStatus === 'saving'
+          ? 'text-gold'
+          : 'text-mist'
+  );
+
+  function updateInput<K extends keyof ComposeInput>(key: K, value: ComposeInput[K]) {
+    const next = {
+      ...input,
+      [key]: value
+    };
+
+    input = next;
+    onInputChange?.(next);
+  }
 </script>
 
 <!-- Backdrop -->
@@ -89,39 +126,43 @@
           <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
             <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">收件人</span>
             <input
-              bind:value={input.toEmail}
               class="w-full bg-transparent text-sm font-semibold text-ink outline-none"
               placeholder="someone@example.com"
               type="email"
+              value={input.toEmail}
+              oninput={(event) => updateInput('toEmail', event.currentTarget.value)}
             />
           </div>
 
           <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
             <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">抄送</span>
             <input
-              bind:value={input.cc}
               class="w-full bg-transparent text-sm text-ink outline-none"
               placeholder="optional@example.com"
               type="text"
+              value={input.cc ?? ''}
+              oninput={(event) => updateInput('cc', event.currentTarget.value)}
             />
           </div>
 
           <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
             <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">主题</span>
             <input
-              bind:value={input.subject}
               class="editorial-heading w-full bg-transparent text-2xl text-ink outline-none"
               placeholder="输入邮件主题"
               type="text"
+              value={input.subject}
+              oninput={(event) => updateInput('subject', event.currentTarget.value)}
             />
           </div>
         </div>
 
         <div class="relative mt-12">
           <textarea
-            bind:value={input.body}
             class="min-h-[400px] w-full resize-none bg-transparent text-[16px] leading-[1.8] text-ink/90 outline-none placeholder:text-mist/30"
             placeholder="在这里撰写正文..."
+            value={input.body}
+            oninput={(event) => updateInput('body', event.currentTarget.value)}
           ></textarea>
         </div>
       </div>
@@ -139,8 +180,8 @@
           保存草稿
         </button>
         <span class="h-4 w-px bg-line"></span>
-        <p class="text-[10px] text-mist italic">
-          当前未启用自动保存。
+        <p class={`text-[10px] italic ${autosaveTone}`}>
+          {autosaveMessage}
         </p>
       </div>
 

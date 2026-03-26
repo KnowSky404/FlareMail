@@ -64,6 +64,8 @@
     error?: string;
   };
 
+  type ComposeAutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+
   let { data }: { data: PageData } = $props();
   const serverWorkspace = $derived(data.workspace);
 
@@ -77,6 +79,13 @@
   let composeOpen = $state(false);
   let composeMode = $state<ComposeMode>('new');
   let composeInitialInput = $state<ComposeInput | null>(null);
+  let composeDraftId = $state<string | undefined>(undefined);
+  let composeLiveInput = $state<ComposeInput | null>(null);
+  let composeTouched = $state(false);
+  let composeAutosavePending = $state(false);
+  let composeAutosaveStatus = $state<ComposeAutosaveStatus>('idle');
+  let composeAutosaveMessage = $state('自动保存会在停顿后触发。');
+  let composeLastSavedSignature = $state('');
   let inboundDetails = $state<Record<string, InboundMessageDetail>>({});
   let deliveryDetails = $state<Record<string, DeliveryDetail>>({});
   let inboundDetailErrors = $state<Record<string, string>>({});
@@ -88,6 +97,7 @@
   let profileStatus = $state('');
   let pending = $state(false);
   let hydratedFromServer = $state(false);
+  let composeAutosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
     if (!hydratedFromServer && serverWorkspace) {
@@ -183,6 +193,85 @@
       ? deliveryDetailErrors[selectedMessage.id] ?? ''
       : ''
   );
+  const composeBusy = $derived(pending || composeAutosavePending);
+
+  const createEmptyComposeInput = (): ComposeInput => ({
+    toEmail: '',
+    cc: '',
+    subject: '',
+    body: ''
+  });
+
+  const serializeComposeInput = (input: ComposeInput | null) => {
+    if (!input) {
+      return '';
+    }
+
+    return JSON.stringify({
+      draftId: input.draftId?.trim() || null,
+      toEmail: input.toEmail.trim(),
+      cc: (input.cc ?? '').trim(),
+      subject: input.subject,
+      body: input.body
+    });
+  };
+
+  const withComposeDraftId = (input: ComposeInput) => ({
+    ...input,
+    draftId: composeDraftId ?? input.draftId
+  });
+
+  const hasComposeContent = (input: ComposeInput | null) =>
+    Boolean(
+      input &&
+        (input.toEmail.trim() || (input.cc ?? '').trim() || input.subject.trim() || input.body.trim())
+    );
+
+  const formatComposeSavedAt = (value: string) =>
+    new Intl.DateTimeFormat('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(new Date(value));
+
+  const clearComposeAutosaveTimer = () => {
+    if (composeAutosaveTimer) {
+      clearTimeout(composeAutosaveTimer);
+      composeAutosaveTimer = null;
+    }
+  };
+
+  const resetComposeState = () => {
+    clearComposeAutosaveTimer();
+    composeOpen = false;
+    composeMode = 'new';
+    composeInitialInput = null;
+    composeDraftId = undefined;
+    composeLiveInput = null;
+    composeTouched = false;
+    composeAutosavePending = false;
+    composeAutosaveStatus = 'idle';
+    composeAutosaveMessage = '自动保存会在停顿后触发。';
+    composeLastSavedSignature = '';
+  };
+
+  const syncComposeDraftState = (message: MailMessage, statusMessage: string) => {
+    const nextInput = {
+      draftId: message.id,
+      toEmail: message.toEmail,
+      cc: message.cc ?? '',
+      subject: message.subject === '未命名草稿' ? '' : message.subject,
+      body: message.body
+    } satisfies ComposeInput;
+
+    composeDraftId = message.id;
+    composeLiveInput = nextInput;
+    composeTouched = false;
+    composeAutosaveStatus = 'saved';
+    composeAutosaveMessage = statusMessage;
+    composeLastSavedSignature = serializeComposeInput(nextInput);
+  };
 
   const describeDeliveryState = (message: MailMessage) =>
     message.deliveryResultKind === 'accepted'
@@ -205,6 +294,33 @@
     ) {
       void loadInboundDetail(selectedMessage);
     }
+  });
+
+  $effect(() => {
+    clearComposeAutosaveTimer();
+
+    const input = composeLiveInput;
+    const signature = serializeComposeInput(input ? withComposeDraftId(input) : null);
+
+    if (
+      !composeOpen ||
+      !composeTouched ||
+      !input ||
+      pending ||
+      composeAutosavePending ||
+      !hasComposeContent(input) ||
+      signature === composeLastSavedSignature
+    ) {
+      return;
+    }
+
+    composeAutosaveTimer = setTimeout(() => {
+      void autosaveDraft();
+    }, 1500);
+
+    return () => {
+      clearComposeAutosaveTimer();
+    };
   });
 
   $effect(() => {
@@ -277,9 +393,7 @@
     mailbox = initialMailbox;
     activeSection = 'inbox';
     selectedMessageId = initialMailbox.inbox[0]?.id ?? null;
-    composeOpen = false;
-    composeMode = 'new';
-    composeInitialInput = null;
+    resetComposeState();
     deliveryDetailPendingId = null;
     deliveryDetails = {};
     deliveryDetailErrors = {};
@@ -402,16 +516,64 @@
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
+    clearComposeAutosaveTimer();
     composeMode = mode;
     composeInitialInput = initialInput;
+    composeDraftId = initialInput?.draftId;
+    composeLiveInput = initialInput ? { ...initialInput } : createEmptyComposeInput();
+    composeTouched = false;
+    composeAutosavePending = false;
+    composeAutosaveStatus = initialInput?.draftId ? 'saved' : 'idle';
+    composeAutosaveMessage = initialInput?.draftId
+      ? '草稿内容已载入，继续编辑后会自动保存。'
+      : '自动保存会在停顿后触发。';
+    composeLastSavedSignature = initialInput?.draftId ? serializeComposeInput(initialInput) : '';
     composeOpen = true;
   }
 
-  function closeCompose() {
-    composeOpen = false;
-    composeMode = 'new';
-    composeInitialInput = null;
-    banner = '已关闭写信面板。';
+  async function closeCompose() {
+    clearComposeAutosaveTimer();
+    let savedBeforeClose = false;
+
+    const input = composeLiveInput ? withComposeDraftId(composeLiveInput) : null;
+    const signature = serializeComposeInput(input);
+
+    if (
+      input &&
+      hasComposeContent(input) &&
+      signature !== composeLastSavedSignature &&
+      !pending &&
+      !composeAutosavePending
+    ) {
+      composeAutosavePending = true;
+      composeAutosaveStatus = 'saving';
+      composeAutosaveMessage = '正在关闭前保存草稿...';
+
+      try {
+        const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
+          method: 'POST',
+          body: JSON.stringify(input)
+        });
+
+        applyWorkspace(result.workspace);
+        syncComposeDraftState(
+          result.message,
+          `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`
+        );
+        savedBeforeClose = true;
+      } catch (error) {
+        composeAutosaveStatus = 'error';
+        composeAutosaveMessage = error instanceof Error ? error.message : '关闭前自动保存失败。';
+        banner = composeAutosaveMessage;
+        composeAutosavePending = false;
+        return;
+      } finally {
+        composeAutosavePending = false;
+      }
+    }
+
+    resetComposeState();
+    banner = savedBeforeClose ? '未完成内容已保存为草稿。' : '已关闭写信面板。';
   }
 
   async function handleLogin(payload: LoginInput) {
@@ -477,22 +639,21 @@
   }
 
   async function saveDraft(input: ComposeInput) {
+    clearComposeAutosaveTimer();
     pending = true;
 
     try {
       const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
         method: 'POST',
-        body: JSON.stringify(input)
+        body: JSON.stringify(withComposeDraftId(input))
       });
 
       applyWorkspace(result.workspace, {
         section: 'drafts',
         preferredMessageId: result.message.id
       });
-      composeOpen = false;
-      composeMode = 'new';
-      composeInitialInput = null;
-      banner = input.draftId ? '草稿已更新。' : '草稿已保存到工作区。';
+      resetComposeState();
+      banner = (input.draftId ?? composeDraftId) ? '草稿已更新。' : '草稿已保存到工作区。';
     } catch (error) {
       banner = error instanceof Error ? error.message : '保存草稿失败。';
     } finally {
@@ -500,13 +661,51 @@
     }
   }
 
+  async function autosaveDraft() {
+    const liveInput = composeLiveInput;
+
+    if (!liveInput || !composeOpen) {
+      return;
+    }
+
+    const input = withComposeDraftId(liveInput);
+    const signature = serializeComposeInput(input);
+
+    if (!hasComposeContent(input) || signature === composeLastSavedSignature) {
+      return;
+    }
+
+    composeAutosavePending = true;
+    composeAutosaveStatus = 'saving';
+    composeAutosaveMessage = '正在自动保存草稿...';
+
+    try {
+      const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
+        method: 'POST',
+        body: JSON.stringify(input)
+      });
+
+      applyWorkspace(result.workspace);
+      syncComposeDraftState(
+        result.message,
+        `已自动保存于 ${formatComposeSavedAt(result.message.sentAt)}。`
+      );
+    } catch (error) {
+      composeAutosaveStatus = 'error';
+      composeAutosaveMessage = error instanceof Error ? error.message : '自动保存失败。';
+    } finally {
+      composeAutosavePending = false;
+    }
+  }
+
   async function sendMessage(input: ComposeInput) {
+    clearComposeAutosaveTimer();
     pending = true;
 
     try {
       const result = await requestJson<MessageResponse>('/api/workspace/messages', {
         method: 'POST',
-        body: JSON.stringify(input)
+        body: JSON.stringify(withComposeDraftId(input))
       });
 
       deliveryDetails = Object.fromEntries(
@@ -520,14 +719,12 @@
         section: 'sent',
         preferredMessageId: result.message.id
       });
-      composeOpen = false;
-      composeMode = 'new';
-      composeInitialInput = null;
+      resetComposeState();
       banner =
-        result.message.deliveryResultKind === 'accepted' && input.draftId
-          ? `草稿已提交到 ${result.message.deliveryProvider ?? 'provider'}，目标 ${result.message.toEmail}。`
+        result.message.deliveryResultKind === 'accepted' && (input.draftId ?? composeDraftId)
+          ? `草稿已提交到 ${result.message.deliveryProvider ?? '投递服务'}，目标 ${result.message.toEmail}。`
           : result.message.deliveryResultKind === 'accepted'
-            ? `已向 ${result.message.toEmail} 发起投递，并提交到 ${result.message.deliveryProvider ?? 'provider'}。`
+            ? `已向 ${result.message.toEmail} 发起投递，并提交到 ${result.message.deliveryProvider ?? '投递服务'}。`
             : describeDeliveryState(result.message);
     } catch (error) {
       banner = error instanceof Error ? error.message : '发送失败。';
@@ -560,13 +757,13 @@
       });
       banner =
         result.message.deliveryResultKind === 'accepted'
-          ? `《${result.message.subject}》已重新提交到 ${result.message.deliveryProvider ?? 'provider'}。`
+          ? `《${result.message.subject}》已重新提交到 ${result.message.deliveryProvider ?? '投递服务'}。`
           : result.message.deliveryResultKind === 'queued'
             ? `《${result.message.subject}》仍在发送队列中。`
             : result.message.deliveryResultKind === 'temporary_failure'
               ? `《${result.message.subject}》重试后仍需等待：${result.message.deliveryError ?? '请稍后重试。'}`
               : result.message.deliveryResultKind === 'rate_limited'
-                ? `《${result.message.subject}》被 provider 限流，请稍后再试。`
+                ? `《${result.message.subject}》被投递服务限流，请稍后再试。`
                 : `《${result.message.subject}》再次投递失败：${result.message.deliveryError ?? '请稍后重试。'}`;
     } catch (error) {
       banner = error instanceof Error ? error.message : '重试投递失败。';
@@ -648,9 +845,7 @@
         section: activeSection === 'profile' ? result.folder : activeSection
       });
       if (composeInitialInput?.draftId === message.id) {
-        composeMode = 'new';
-        composeInitialInput = null;
-        composeOpen = false;
+        resetComposeState();
       }
 
       banner =
@@ -802,11 +997,35 @@
 
     {#if composeOpen}
       <ComposeModal
+        autosaveMessage={composeAutosaveMessage}
+        autosaveStatus={composeAutosaveStatus}
+        draftId={composeDraftId}
         initialInput={composeInitialInput}
         mode={composeMode}
-        {pending}
+        pending={composeBusy}
         {profile}
         onClose={closeCompose}
+        onInputChange={(input) => {
+          const nextInput = withComposeDraftId(input);
+          const nextSignature = serializeComposeInput(nextInput);
+
+          composeLiveInput = nextInput;
+          composeTouched = true;
+
+          if (!hasComposeContent(nextInput)) {
+            composeAutosaveStatus = 'idle';
+            composeAutosaveMessage = '自动保存会在停顿后触发。';
+            return;
+          }
+
+          if (nextSignature === composeLastSavedSignature) {
+            composeAutosaveStatus = 'saved';
+            return;
+          }
+
+          composeAutosaveStatus = 'dirty';
+          composeAutosaveMessage = '检测到未保存改动，正在等待自动保存。';
+        }}
         onSaveDraft={saveDraft}
         onSend={sendMessage}
       />
