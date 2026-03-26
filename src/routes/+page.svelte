@@ -726,7 +726,7 @@
       onLogin={handleLogin}
     />
   {:else}
-    <main class="mx-auto flex min-h-screen w-full max-w-[1680px] flex-col gap-5 px-4 py-4 md:px-6 md:py-6">
+    <div class="flex h-screen w-full flex-col overflow-hidden bg-bg">
       <WorkspaceHeader
         {banner}
         draftCount={mailbox.drafts.length}
@@ -744,12 +744,12 @@
         }}
         onEditProfile={() => {
           setSection('profile');
-          banner = '你正在编辑个人资料。';
+          banner = '个人资料设置。';
         }}
         onLogout={handleLogout}
       />
 
-      <section class="grid flex-1 gap-4 xl:grid-cols-[260px_380px_minmax(0,1fr)]">
+      <div class="flex flex-1 overflow-hidden">
         <MailSidebar
           activeSection={activeSection}
           draftCount={mailbox.drafts.length}
@@ -761,43 +761,53 @@
           onSelectSection={setSection}
         />
 
-        {#if activeSection === 'profile'}
-          <ProfilePane {pending} {profile} status={profileStatus} onSave={saveProfile} />
-        {:else}
-          <MessageListPane
-            activeSection={activeSection}
-            messages={activeMessages}
-            selectedThreadId={selectedThreadId}
-            threads={activeThreads}
-            {selectedMessageId}
-            onSelect={handleSelectMessage}
-            onSelectThread={handleSelectThread}
-          />
-          <MessageDetailPane
-            message={selectedMessage}
-            deliveryDetail={selectedDeliveryDetail}
-            deliveryDetailError={selectedDeliveryDetailError}
-            deliveryDetailPending={deliveryDetailPendingId === selectedMessage?.id}
-            inboundDetail={selectedInboundDetail}
-            inboundDetailError={selectedInboundDetailError}
-            inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
-            {pending}
-            rawDownloadHref={selectedInboundDownloadHref}
-            threadMessages={selectedThreadMessages}
-            onEditDraft={handleEditDraft}
-            onForward={handleForwardMessage}
-            onReply={handleReplyMessage}
-            onReloadDeliveryDetail={handleReloadDeliveryDetail}
-            onRetryDelivery={retryMessageDelivery}
-            onReloadInboundDetail={handleReloadInboundDetail}
-            onRemove={handleDeleteMessage}
-            onSelectThreadMessage={handleSelectMessage}
-            onToggleRead={handleToggleRead}
-            onToggleStar={handleToggleStar}
-          />
-        {/if}
-      </section>
-    </main>
+        <div class="flex flex-1 min-w-0">
+          {#if activeSection === 'profile'}
+            <div class="flex-1 overflow-y-auto bg-surface p-8 lg:p-12">
+              <ProfilePane {pending} {profile} status={profileStatus} onSave={saveProfile} />
+            </div>
+          {:else}
+            <!-- Message List column: fixed width -->
+            <div class="w-[360px] flex-none border-r border-zinc-200">
+              <MessageListPane
+                activeSection={activeSection}
+                messages={activeMessages}
+                selectedThreadId={selectedThreadId}
+                threads={activeThreads}
+                {selectedMessageId}
+                onSelect={handleSelectMessage}
+                onSelectThread={handleSelectThread}
+              />
+            </div>
+            <!-- Detail Pane: fills remaining space -->
+            <div class="flex-1 min-w-0 bg-white">
+              <MessageDetailPane
+                message={selectedMessage}
+                deliveryDetail={selectedDeliveryDetail}
+                deliveryDetailError={selectedDeliveryDetailError}
+                deliveryDetailPending={deliveryDetailPendingId === selectedMessage?.id}
+                inboundDetail={selectedInboundDetail}
+                inboundDetailError={selectedInboundDetailError}
+                inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
+                {pending}
+                rawDownloadHref={selectedInboundDownloadHref}
+                threadMessages={selectedThreadMessages}
+                onEditDraft={handleEditDraft}
+                onForward={handleForwardMessage}
+                onReply={handleReplyMessage}
+                onReloadDeliveryDetail={handleReloadDeliveryDetail}
+                onRetryDelivery={retryMessageDelivery}
+                onReloadInboundDetail={handleReloadInboundDetail}
+                onRemove={handleDeleteMessage}
+                onSelectThreadMessage={handleSelectMessage}
+                onToggleRead={handleToggleRead}
+                onToggleStar={handleToggleStar}
+              />
+            </div>
+          {/if}
+        </div>
+      </div>
+    </div>
 
     {#if composeOpen}
       <ComposeModal

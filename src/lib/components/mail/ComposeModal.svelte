@@ -1,151 +1,146 @@
 <script lang="ts">
-  import type { ComposeInput, ComposeMode, UserProfile } from '$lib/mock/mailbox';
-
-  const defaultDraft = {
-    toEmail: '',
-    cc: '',
-    subject: '',
-    body: ''
-  };
+  import {
+    type ComposeInput,
+    type ComposeMode,
+    type UserProfile
+  } from '$lib/mock/mailbox';
+  import { onMount } from 'svelte';
 
   let {
-    profile,
-    mode = 'new',
     initialInput = null,
+    mode = 'new',
+    profile,
     pending = false,
     onClose,
     onSaveDraft,
     onSend
   }: {
-    profile: UserProfile;
-    mode?: ComposeMode;
     initialInput?: ComposeInput | null;
+    mode?: ComposeMode;
+    profile: UserProfile;
     pending?: boolean;
     onClose: () => void;
     onSaveDraft: (input: ComposeInput) => void | Promise<void>;
     onSend: (input: ComposeInput) => void | Promise<void>;
   } = $props();
 
-  let form = $state<ComposeInput>(defaultDraft);
-
-  const title = $derived(
-    mode === 'reply'
-      ? '回复邮件'
-      : mode === 'forward'
-        ? '转发邮件'
-        : mode === 'draft'
-          ? '编辑草稿'
-          : '新建邮件'
-  );
-  const saveLabel = $derived(mode === 'draft' ? '更新草稿' : '保存草稿');
-  const sendLabel = $derived(
-    mode === 'reply'
-      ? '发送回复'
-      : mode === 'forward'
-        ? '发送转发'
-        : mode === 'draft'
-          ? '发送草稿'
-          : '发送邮件'
-  );
-
-  $effect(() => {
-    form = initialInput
-      ? {
-          draftId: initialInput.draftId,
-          toEmail: initialInput.toEmail,
-          cc: initialInput.cc ?? '',
-          subject: initialInput.subject,
-          body: initialInput.body
-        }
-      : {
-          ...defaultDraft
-        };
+  let input = $state<ComposeInput>(initialInput ?? {
+    toEmail: '',
+    cc: '',
+    subject: '',
+    body: ''
   });
 
-  async function submit(event: SubmitEvent) {
-    event.preventDefault();
-    await onSend(form);
-  }
+  onMount(() => {
+    const handleKeydown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
+  });
 
-  async function saveDraft() {
-    await onSaveDraft(form);
-  }
+  const title = $derived(
+    mode === 'new' ? 'New Correspondence' : mode === 'reply' ? 'Reply' : mode === 'forward' ? 'Forward' : 'Draft'
+  );
 </script>
 
-<div class="fixed inset-0 z-40 flex items-end justify-center bg-ink/16 p-3 backdrop-blur-sm md:items-center">
-  <div class="w-full max-w-2xl rounded-[2rem] border border-night/10 bg-shell p-5 shadow-[0_30px_100px_rgba(32,27,22,0.12)] md:p-6">
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <p class="text-[11px] uppercase tracking-[0.28em] text-mist">写邮件</p>
-        <h2 class="mt-2 font-display text-3xl text-ink">{title}</h2>
+<!-- Backdrop -->
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/20 backdrop-blur-sm p-4">
+  <!-- Modal Content -->
+  <div class="paper-card flex h-full max-h-[850px] w-full max-w-4xl flex-col overflow-hidden rounded-2xl shadow-2xl">
+    <!-- Header -->
+    <header class="flex items-center justify-between border-b border-line bg-shell/50 px-6 py-4">
+      <div class="flex items-center gap-3">
+        <span class="meta-text text-gold">{title}</span>
+        <span class="h-1 w-1 rounded-full bg-line"></span>
+        <span class="meta-text">{profile.email}</span>
       </div>
-      <button
-        class="rounded-full border border-night/10 px-3 py-2 text-sm text-mist transition hover:text-ink"
-        onclick={onClose}
-        type="button"
-      >
-        关闭
+      <button class="text-mist transition-colors hover:text-coral" onclick={onClose}>
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
       </button>
+    </header>
+
+    <!-- Form -->
+    <div class="flex-1 overflow-y-auto bg-shell/30 p-8 lg:p-12">
+      <div class="mx-auto max-w-3xl space-y-8">
+        <div class="space-y-4">
+          <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
+            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">Recipient</span>
+            <input
+              bind:value={input.toEmail}
+              class="w-full bg-transparent text-sm font-semibold text-ink outline-none"
+              placeholder="recipient@example.com"
+              type="email"
+            />
+          </div>
+
+          <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
+            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">Cc</span>
+            <input
+              bind:value={input.cc}
+              class="w-full bg-transparent text-sm text-ink outline-none"
+              placeholder="optional@example.com"
+              type="text"
+            />
+          </div>
+
+          <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
+            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">Subject</span>
+            <input
+              bind:value={input.subject}
+              class="editorial-heading w-full bg-transparent text-2xl text-ink outline-none"
+              placeholder="Title of your message"
+              type="text"
+            />
+          </div>
+        </div>
+
+        <div class="relative mt-12">
+          <textarea
+            bind:value={input.body}
+            class="min-h-[400px] w-full resize-none bg-transparent text-[16px] leading-[1.8] text-ink/90 outline-none placeholder:text-mist/30"
+            placeholder="Compose your message here..."
+          ></textarea>
+        </div>
+      </div>
     </div>
 
-    <form class="mt-6 space-y-4" onsubmit={submit}>
-      <label class="block space-y-2">
-        <span class="text-sm text-mist">收件人</span>
-        <input bind:value={form.toEmail} class="w-full rounded-2xl border border-night/10 bg-paper px-4 py-3 text-ink outline-none transition focus:border-accent" type="email" />
-      </label>
-
-      <label class="block space-y-2">
-        <span class="text-sm text-mist">抄送</span>
-        <input bind:value={form.cc} class="w-full rounded-2xl border border-night/10 bg-paper px-4 py-3 text-ink outline-none transition focus:border-accent" type="text" />
-      </label>
-
-      <label class="block space-y-2">
-        <span class="text-sm text-mist">主题</span>
-        <input bind:value={form.subject} class="w-full rounded-2xl border border-night/10 bg-paper px-4 py-3 text-ink outline-none transition focus:border-accent" type="text" />
-      </label>
-
-      <label class="block space-y-2">
-        <span class="text-sm text-mist">正文</span>
-        <textarea
-          bind:value={form.body}
-          class="min-h-56 w-full rounded-[1.5rem] border border-night/10 bg-paper px-4 py-3 text-sm leading-7 text-ink outline-none transition focus:border-accent"
-        ></textarea>
-      </label>
-
-      <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
-        <div class="space-y-1 text-sm text-mist">
-          <p>
-            将使用 <span class="text-ink">{profile.email}</span> 与当前签名发送。
-          </p>
-          <p class="text-xs">
-            演示提示：收件人包含 `+queue@` 可进入队列，包含 `+fail@` 可模拟投递失败；如果后端启用了 Cloudflare 原生发信，请优先用已验证地址做通知测试。
-          </p>
-        </div>
-        <div class="flex gap-2">
-          <button
-            class="rounded-full border border-night/10 px-4 py-2 text-sm text-ink transition hover:border-night/20"
-            onclick={onClose}
-            type="button"
-          >
-            取消
-          </button>
-          <button
-            class="rounded-full border border-night/10 px-4 py-2 text-sm text-ink transition hover:border-accent hover:text-accent disabled:opacity-60"
-            disabled={pending}
-            onclick={saveDraft}
-            type="button"
-          >
-            {pending ? '保存中…' : saveLabel}
-          </button>
-          <button
-            class="rounded-full bg-ink px-4 py-2 text-sm text-paper transition hover:bg-accent disabled:opacity-60"
-            disabled={pending}
-            type="submit"
-          >
-            {pending ? '发送中…' : sendLabel}
-          </button>
-        </div>
+    <!-- Footer Actions -->
+    <footer class="flex items-center justify-between border-t border-line bg-shell/50 px-8 py-6">
+      <div class="flex items-center gap-6">
+        <button
+          class="meta-text transition-colors hover:text-gold disabled:opacity-50"
+          disabled={pending}
+          onclick={() => onSaveDraft(input)}
+          type="button"
+        >
+          Save as Draft
+        </button>
+        <span class="h-4 w-px bg-line"></span>
+        <p class="text-[10px] text-mist italic">
+          Auto-saving is currently disabled.
+        </p>
       </div>
-    </form>
+
+      <div class="flex items-center gap-4">
+        <button
+          class="border border-line px-8 py-3 text-[10px] font-bold uppercase tracking-widest text-ink transition-all hover:bg-paper"
+          onclick={onClose}
+          type="button"
+        >
+          Cancel
+        </button>
+        <button
+          class="bg-ink px-10 py-3 text-[10px] font-bold uppercase tracking-widest text-paper transition-all hover:bg-accent disabled:opacity-50"
+          disabled={pending}
+          onclick={() => onSend(input)}
+          type="button"
+        >
+          {pending ? 'Dispatching...' : 'Send Message'}
+        </button>
+      </div>
+    </footer>
   </div>
 </div>

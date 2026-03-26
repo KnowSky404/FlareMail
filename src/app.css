@@ -1,53 +1,60 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Suisse Intl", "Avenir Next", "Segoe UI", sans-serif;
-  --font-display: "Iowan Old Style", "Cormorant Garamond", serif;
-  --color-paper: #f5f1ea;
-  --color-shell: #fffdfa;
-  --color-ink: #1d1b18;
-  --color-night: #1d1b18;
-  --color-mist: #78716a;
-  --color-line: #ddd5cc;
-  --color-accent: #2d7a69;
-  --color-coral: #c56a4e;
+  --font-sans: "Inter", "SF Pro Display", "Helvetica Neue", sans-serif;
+  
+  --color-bg: #ffffff;
+  --color-surface: #fcfcfc;
+  --color-border: #e4e4e7;
+  --color-text-main: #09090b;
+  --color-text-muted: #71717a;
+  --color-accent: #18181b;
+  --color-highlight: #3b82f6;
+  --color-danger: #ef4444;
 }
 
 :root {
-  color: var(--color-ink);
-  background:
-    radial-gradient(circle at top left, rgba(45, 122, 105, 0.08), transparent 22%),
-    radial-gradient(circle at right center, rgba(197, 106, 78, 0.07), transparent 18%),
-    linear-gradient(180deg, #fcfaf6 0%, #f4efe8 100%);
+  color: var(--color-text-main);
+  background-color: var(--color-bg);
 }
 
-html,
-body {
-  min-height: 100%;
+html, body {
+  height: 100%;
+  overflow: hidden; /* 防止页面整体滚动，实现应用感 */
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
-  color: var(--color-ink);
   font-family: var(--font-sans);
-  text-rendering: optimizeLegibility;
+  letter-spacing: -0.01em;
 }
 
-::selection {
-  background: rgba(45, 122, 105, 0.16);
+/* 极简滚动条 */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+/* 极简按钮 */
+@utility btn-primary {
+  @apply bg-accent text-white px-4 py-2 text-sm font-medium transition-all hover:opacity-90 active:scale-95 disabled:opacity-50;
 }
 
-button,
-input,
-textarea {
-  font: inherit;
+@utility btn-ghost {
+  @apply hover:bg-zinc-100 text-zinc-600 px-4 py-2 text-sm font-medium transition-all active:scale-95;
 }
 
-input::placeholder,
-textarea::placeholder {
-  color: rgba(120, 113, 106, 0.8);
+/* 布局辅助 */
+@utility app-border {
+  border: 1px solid var(--color-border);
 }
