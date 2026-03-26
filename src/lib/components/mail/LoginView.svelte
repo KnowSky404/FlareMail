@@ -12,8 +12,6 @@
     runtimeLabel: string;
     dbBound: boolean;
     bucketBound: boolean;
-    totalMessages: number;
-    lastSubject: string | null;
     loginError?: string;
     pending?: boolean;
     onLogin: (payload: LoginInput) => void | Promise<void>;
@@ -34,24 +32,24 @@
       <div class="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-900 text-2xl font-black text-white shadow-xl">
         F
       </div>
-      <h1 class="text-2xl font-bold tracking-tight text-zinc-900">Welcome to FlareMail</h1>
-      <p class="mt-2 text-sm text-zinc-500">Minimalist email workspace on the edge.</p>
+      <h1 class="text-2xl font-bold tracking-tight text-zinc-900">进入 FlareMail</h1>
+      <p class="mt-2 text-sm text-zinc-500">运行在 Cloudflare 边缘的极简邮件工作台。</p>
     </div>
 
     <form class="space-y-4" onsubmit={submit}>
       <div class="space-y-1">
-        <label for="email" class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Account</label>
+        <label for="email" class="ml-1 text-[10px] font-bold uppercase tracking-widest text-zinc-400">账号</label>
         <input
           id="email"
           bind:value={email}
           class="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
           type="email"
-          placeholder="email@example.com"
+          placeholder="name@example.com"
         />
       </div>
 
       <div class="space-y-1">
-        <label for="password" class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 ml-1">Password</label>
+        <label for="password" class="ml-1 text-[10px] font-bold uppercase tracking-widest text-zinc-400">密码</label>
         <input
           id="password"
           bind:value={password}
@@ -62,7 +60,7 @@
       </div>
 
       {#if loginError}
-        <p class="text-[11px] font-medium text-red-500 ml-1">{loginError}</p>
+        <p class="ml-1 text-[11px] font-medium text-red-500">{loginError}</p>
       {/if}
 
       <button
@@ -70,18 +68,22 @@
         disabled={pending}
         type="submit"
       >
-        {pending ? 'Authenticating...' : 'Sign In'}
+        {pending ? '正在验证...' : '进入工作台'}
       </button>
     </form>
 
-    <div class="mt-12 flex flex-col gap-4 pt-8 border-t border-zinc-200">
+    <div class="mt-12 flex flex-col gap-4 border-t border-zinc-200 pt-8">
       <div class="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-zinc-400">
-        <span>Runtime Status</span>
+        <span>运行状态</span>
         <span class="text-zinc-300">{runtimeLabel}</span>
       </div>
       <div class="flex gap-2">
-         <span class={`px-2 py-0.5 rounded text-[9px] font-bold border ${dbBound ? 'border-zinc-200 text-zinc-500' : 'border-red-100 text-red-400'}`}>D1 {dbBound ? 'ONLINE' : 'OFFLINE'}</span>
-         <span class={`px-2 py-0.5 rounded text-[9px] font-bold border ${bucketBound ? 'border-zinc-200 text-zinc-500' : 'border-red-100 text-red-400'}`}>R2 {bucketBound ? 'ONLINE' : 'OFFLINE'}</span>
+        <span class={`rounded border px-2 py-0.5 text-[9px] font-bold ${dbBound ? 'border-zinc-200 text-zinc-500' : 'border-red-100 text-red-400'}`}>
+          D1 {dbBound ? '已连接' : '未连接'}
+        </span>
+        <span class={`rounded border px-2 py-0.5 text-[9px] font-bold ${bucketBound ? 'border-zinc-200 text-zinc-500' : 'border-red-100 text-red-400'}`}>
+          R2 {bucketBound ? '已连接' : '未连接'}
+        </span>
       </div>
     </div>
   </div>

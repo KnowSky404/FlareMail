@@ -101,11 +101,6 @@
   });
 
   const unreadCount = $derived(mailbox.inbox.filter((message) => !message.read).length);
-  const starredCount = $derived(
-    mailbox.inbox.filter((message) => message.starred).length +
-      mailbox.sent.filter((message) => message.starred).length +
-      mailbox.drafts.filter((message) => message.starred).length
-  );
   const queuedCount = $derived(
     mailbox.sent.filter((message) => message.deliveryStatus === 'queued').length
   );
@@ -191,13 +186,13 @@
 
   const describeDeliveryState = (message: MailMessage) =>
     message.deliveryResultKind === 'accepted'
-      ? `邮件已提交到 ${message.deliveryProvider ?? 'provider'}。`
+      ? `邮件已提交到 ${message.deliveryProvider ?? '投递服务'}。`
       : message.deliveryResultKind === 'queued'
         ? `邮件已进入发送队列，等待投递到 ${message.toEmail}。`
         : message.deliveryResultKind === 'temporary_failure'
-          ? `Provider 暂时不可用，已保留重试入口：${message.deliveryError ?? '请稍后重试。'}`
+          ? `投递服务暂时不可用，已保留重试入口：${message.deliveryError ?? '请稍后重试。'}`
           : message.deliveryResultKind === 'rate_limited'
-            ? `Provider 触发限流，这封邮件暂时未发出：${message.deliveryError ?? '请稍后重试。'}`
+            ? `投递服务触发限流，这封邮件暂时未发出：${message.deliveryError ?? '请稍后重试。'}`
             : `邮件已写入已发送，但投递失败：${message.deliveryError ?? '请稍后重试。'}`;
 
   $effect(() => {
@@ -721,8 +716,6 @@
       {loginError}
       {pending}
       {runtimeLabel}
-      lastSubject={data.lastSubject}
-      totalMessages={data.totalMessages}
       onLogin={handleLogin}
     />
   {:else}
@@ -735,8 +728,6 @@
         {profile}
         queuedCount={queuedCount}
         {runtimeLabel}
-        {starredCount}
-        totalMessages={data.totalMessages}
         unreadCount={unreadCount}
         onCompose={() => {
           openCompose('new');

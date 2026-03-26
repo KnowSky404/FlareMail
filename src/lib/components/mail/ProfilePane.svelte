@@ -40,14 +40,14 @@
 
 <section class="paper-card flex flex-col overflow-hidden rounded-2xl">
   <div class="border-b border-line bg-shell/50 p-6 lg:p-8">
-    <p class="meta-text text-gold">Account Settings</p>
+    <p class="meta-text text-gold">账户设置</p>
     <h2 class="editorial-heading mt-2 text-3xl text-ink lg:text-4xl">个人身份与偏好</h2>
   </div>
 
   <div class="flex-1 overflow-y-auto p-6 lg:p-8">
     <form class="mx-auto max-w-2xl space-y-10" onsubmit={submit}>
       <div class="space-y-6">
-        <p class="meta-text">Basic Information</p>
+        <p class="meta-text">基础信息</p>
         <div class="grid gap-6 md:grid-cols-2">
           <label class="block space-y-2">
             <span class="text-[10px] font-bold uppercase tracking-wider text-mist">邮箱地址</span>
@@ -101,7 +101,7 @@
       </div>
 
       <div class="space-y-6">
-        <p class="meta-text">Email Preferences</p>
+        <p class="meta-text">邮件偏好</p>
         <div class="space-y-4">
           <label class="flex items-center justify-between rounded-lg border border-line bg-paper/30 p-4 transition-colors hover:bg-paper/50">
             <div class="space-y-1">
@@ -114,13 +114,13 @@
       </div>
 
       <div class="space-y-6">
-        <p class="meta-text">Email Signature</p>
+        <p class="meta-text">邮件签名</p>
         <label class="block space-y-2">
           <span class="text-[10px] font-bold uppercase tracking-wider text-mist">个性化签名 (Markdown)</span>
           <textarea
             bind:value={nextProfile.signature}
             class="min-h-[120px] w-full border border-line bg-transparent p-4 text-sm leading-relaxed text-ink outline-none transition focus:border-gold"
-            placeholder="Regards, ..."
+            placeholder="此致，"
           ></textarea>
         </label>
       </div>
@@ -137,10 +137,10 @@
           disabled={pending}
           type="submit"
         >
-          {pending ? 'Saving Changes...' : 'Save Settings'}
+          {pending ? '正在保存...' : '保存设置'}
         </button>
         <p class="text-[10px] text-mist italic">
-          所有设置将立即同步到 D1 数据库。
+          所有设置会立即同步到 D1 数据库。
         </p>
       </div>
     </form>

@@ -6,6 +6,10 @@
     banner,
     pending = false,
     unreadCount,
+    draftCount,
+    queuedCount,
+    failedCount,
+    runtimeLabel,
     onEditProfile,
     onCompose,
     onLogout
@@ -14,11 +18,9 @@
     banner: string;
     runtimeLabel: string;
     unreadCount: number;
-    starredCount: number;
     draftCount: number;
     queuedCount: number;
     failedCount: number;
-    totalMessages: number;
     pending?: boolean;
     onEditProfile: () => void;
     onCompose: () => void;
@@ -32,33 +34,38 @@
       <span class="h-1.5 w-1.5 rounded-full bg-blue-500"></span>
       <span>{profile.company}</span>
     </div>
-    <div class="flex items-center rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-      Unread {unreadCount}
+    <div class="hidden items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-zinc-500 lg:flex">
+      <span class="rounded-md border border-zinc-200 bg-white px-2.5 py-1">{runtimeLabel}</span>
+      <span class="rounded-md border border-zinc-200 bg-white px-2.5 py-1">未读 {unreadCount}</span>
+      <span class="rounded-md border border-zinc-200 bg-white px-2.5 py-1">草稿 {draftCount}</span>
+      {#if queuedCount > 0}
+        <span class="rounded-md border border-zinc-200 bg-white px-2.5 py-1">队列 {queuedCount}</span>
+      {/if}
+      {#if failedCount > 0}
+        <span class="rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-red-600">失败 {failedCount}</span>
+      {/if}
     </div>
-    <div class="h-4 w-px bg-zinc-200"></div>
-    <p class="text-xs text-zinc-500 truncate max-w-md">{banner}</p>
+    <div class="hidden h-4 w-px bg-zinc-200 lg:block"></div>
+    <p class="max-w-md truncate text-xs text-zinc-500">{banner}</p>
   </div>
 
   <div class="flex items-center gap-3">
-    <div class="flex items-center px-2 py-1 bg-zinc-50 border border-zinc-200 rounded-md text-[10px] font-mono text-zinc-400">
-      COMMAND + K
-    </div>
-    
     <button
       class="btn-primary flex items-center gap-2 !rounded-md !py-1.5 shadow-sm"
       disabled={pending}
       onclick={onCompose}
+      type="button"
     >
       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
       </svg>
-      Compose
+      写邮件
     </button>
 
     <div class="h-8 w-px bg-zinc-200 mx-1"></div>
 
     <button
-      aria-label="Open profile settings"
+      aria-label="打开个人资料设置"
       class="btn-ghost !p-2 rounded-md relative"
       onclick={onEditProfile}
       type="button"
@@ -69,7 +76,7 @@
       </svg>
     </button>
     <button
-      aria-label="Sign out"
+      aria-label="退出登录"
       class="btn-ghost !p-2 rounded-md hover:text-zinc-900"
       onclick={onLogout}
       type="button"

@@ -58,7 +58,7 @@
     message
       ? message.source === 'inbound'
         ? inboundDetail?.body ??
-          (inboundDetailPending ? 'Loading body from cloud storage...' : message.body)
+          (inboundDetailPending ? '正在从云端载入正文...' : message.body)
         : message.body
       : ''
   );
@@ -85,38 +85,54 @@
     }
 
     if (message.deliveryResultKind === 'accepted' || message.deliveryStatus === 'sent') {
-      return 'Delivered';
+      return '已投递';
     }
 
     if (message.deliveryResultKind === 'queued' || message.deliveryStatus === 'queued') {
-      return 'Queued';
+      return '排队中';
     }
 
     if (message.deliveryResultKind === 'temporary_failure') {
-      return 'Temporary Failure';
+      return '临时失败';
     }
 
     if (message.deliveryResultKind === 'rate_limited') {
-      return 'Rate Limited';
+      return '已限流';
     }
 
-    return 'Failed';
+    return '投递失败';
   });
 
   const retryLabel = $derived.by(() => {
     if (!message || message.folder !== 'sent') {
-      return 'Retry';
+      return '重试';
     }
 
     if (message.deliveryResultKind === 'rate_limited') {
-      return 'Retry Later';
+      return '稍后重试';
     }
 
     if (message.deliveryResultKind === 'temporary_failure' || message.deliveryStatus === 'queued') {
-      return 'Process Queue';
+      return '处理队列';
     }
 
-    return 'Retry Delivery';
+    return '重新投递';
+  });
+
+  const folderLabel = $derived.by(() => {
+    if (!message) {
+      return '';
+    }
+
+    if (message.folder === 'inbox') {
+      return '收件箱';
+    }
+
+    if (message.folder === 'sent') {
+      return '已发送';
+    }
+
+    return '草稿箱';
   });
 </script>
 
@@ -125,19 +141,19 @@
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-6 py-3 flex-none">
       <div class="flex flex-wrap items-center gap-2">
         <button class="btn-ghost !py-1 text-xs" onclick={() => onToggleStar(message)} type="button">
-          {message.starred ? 'Starred' : 'Star'}
+          {message.starred ? '取消星标' : '加星'}
         </button>
         {#if message.folder === 'inbox'}
           <button class="btn-ghost !py-1 text-xs" onclick={() => onToggleRead(message)} type="button">
-            {message.read ? 'Mark Unread' : 'Mark Read'}
+            {message.read ? '标为未读' : '标为已读'}
           </button>
         {:else if message.folder === 'drafts'}
           <button class="btn-ghost !py-1 text-xs" onclick={() => onEditDraft(message)} type="button">
-            Continue Editing
+            继续编辑
           </button>
         {/if}
         <button class="btn-ghost !py-1 text-xs text-red-500 hover:text-red-600" onclick={() => onRemove(message)} type="button">
-          {message.folder === 'drafts' ? 'Delete Draft' : 'Delete'}
+          {message.folder === 'drafts' ? '删除草稿' : '删除'}
         </button>
       </div>
 
@@ -149,7 +165,7 @@
             onclick={() => onReloadInboundDetail(message)}
             type="button"
           >
-            {inboundDetailPending ? 'Refreshing...' : 'Reload Body'}
+            {inboundDetailPending ? '刷新中...' : '刷新正文'}
           </button>
         {/if}
 
@@ -160,7 +176,7 @@
             onclick={() => onReloadDeliveryDetail(message)}
             type="button"
           >
-            {deliveryDetailPending ? 'Refreshing...' : 'Refresh Receipt'}
+            {deliveryDetailPending ? '刷新中...' : '刷新回执'}
           </button>
 
           {#if message.deliveryStatus !== 'sent'}
@@ -176,10 +192,10 @@
         {/if}
 
         {#if message.folder === 'inbox'}
-          <button class="btn-primary !py-1 !px-3 text-xs" onclick={() => onReply(message)} type="button">Reply</button>
+          <button class="btn-primary !py-1 !px-3 text-xs" onclick={() => onReply(message)} type="button">回复</button>
         {/if}
         {#if message.folder !== 'drafts'}
-          <button class="btn-ghost !py-1 !px-3 text-xs border border-zinc-200" onclick={() => onForward(message)} type="button">Forward</button>
+          <button class="btn-ghost !py-1 !px-3 text-xs border border-zinc-200" onclick={() => onForward(message)} type="button">转发</button>
         {/if}
       </div>
     </div>
@@ -189,7 +205,7 @@
         <div class="mb-10">
           <div class="mb-4 flex flex-wrap items-center gap-2">
             <span class="rounded bg-zinc-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-zinc-400">
-              {message.folder}
+              {folderLabel}
             </span>
             <span class="text-[10px] font-mono text-zinc-400">{formatDate(message.sentAt)}</span>
             {#if message.folder === 'sent' && deliveryLabel}
@@ -198,7 +214,7 @@
               </span>
             {/if}
           </div>
-          <h1 class="text-3xl font-bold tracking-tight text-zinc-950 mb-6">{message.subject}</h1>
+          <h1 class="text-3xl font-bold tracking-tight text-zinc-950 mb-6">{message.subject || '无主题'}</h1>
 
           <div class="grid gap-4 border-y border-zinc-100 py-4 md:grid-cols-[minmax(0,1fr)_260px]">
             <div class="flex items-center gap-3 min-w-0">
@@ -220,28 +236,28 @@
 
             <div class="space-y-1 text-[11px] text-zinc-500">
               <p>
-                Labels:
-                <span class="text-zinc-800">{message.labels.join(', ') || 'None'}</span>
+                标签：
+                <span class="text-zinc-800">{message.labels.join('，') || '无'}</span>
               </p>
               {#if message.folder === 'sent'}
                 <p>
-                  Provider:
+                  投递服务：
                   <span class="text-zinc-800">{message.deliveryProvider ?? 'demo'}</span>
                 </p>
                 <p>
-                  Attempts:
+                  尝试次数：
                   <span class="text-zinc-800">{message.deliveryAttempts ?? 0}</span>
                 </p>
                 {#if message.deliveryError}
                   <p>
-                    Error:
+                    错误：
                     <span class="text-red-600">{message.deliveryError}</span>
                   </p>
                 {/if}
               {/if}
               {#if rawDownloadHref}
                 <a href={rawDownloadHref} class="inline-flex text-[10px] font-bold uppercase tracking-wider text-zinc-400 hover:text-zinc-900">
-                  Download Raw
+                  下载原始邮件
                 </a>
               {/if}
             </div>
@@ -268,9 +284,9 @@
           <section class="space-y-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Inbound Archive</p>
+                <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">入站归档</p>
                 <p class="mt-1 text-sm font-semibold text-zinc-900">
-                  {attachmentCount} attachments
+                  {attachmentCount} 个附件
                   {#if inboundDetail}
                     / {formatBytes(inboundDetail.rawSize)}
                   {/if}
@@ -282,7 +298,7 @@
                 onclick={() => onReloadInboundDetail(message)}
                 type="button"
               >
-                {inboundDetailPending ? 'Refreshing...' : 'Reload MIME'}
+                {inboundDetailPending ? '刷新中...' : '刷新 MIME'}
               </button>
             </div>
 
@@ -295,15 +311,15 @@
                       <p class="truncate text-xs text-zinc-500">{attachment.contentType}</p>
                     </div>
                     <span class="shrink-0 text-xs text-zinc-500">
-                      {formatBytes(attachment.size)}{attachment.inline ? ' / inline' : ''}
+                      {formatBytes(attachment.size)}{attachment.inline ? ' / 内联' : ''}
                     </span>
                   </div>
                 {/each}
               </div>
             {:else if inboundDetail && !inboundDetailPending}
-              <p class="text-sm text-zinc-500">No attachments detected for this message.</p>
+              <p class="text-sm text-zinc-500">当前邮件没有检测到附件。</p>
             {:else if inboundDetailPending}
-              <p class="text-sm text-zinc-500">Loading attachment summary from R2...</p>
+              <p class="text-sm text-zinc-500">正在从 R2 读取附件摘要...</p>
             {/if}
           </section>
         {/if}
@@ -312,9 +328,9 @@
           <section class="space-y-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Delivery Timeline</p>
+                <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">投递时间线</p>
                 <p class="mt-1 text-sm font-semibold text-zinc-900">
-                  {deliveryEventCount} events
+                  {deliveryEventCount} 条事件
                   {#if deliveryDetail?.lastEvent}
                     / {deliveryDetail.lastEvent}
                   {/if}
@@ -327,7 +343,7 @@
                   onclick={() => onReloadDeliveryDetail(message)}
                   type="button"
                 >
-                  {deliveryDetailPending ? 'Refreshing...' : 'Refresh'}
+                  {deliveryDetailPending ? '刷新中...' : '刷新'}
                 </button>
                 {#if message.deliveryStatus !== 'sent'}
                   <button
@@ -355,16 +371,16 @@
                 {/each}
               </div>
             {:else if deliveryDetailPending}
-              <p class="text-sm text-zinc-500">Loading provider receipt timeline...</p>
+              <p class="text-sm text-zinc-500">正在载入投递回执时间线...</p>
             {:else}
-              <p class="text-sm text-zinc-500">No additional provider events for this message yet.</p>
+              <p class="text-sm text-zinc-500">当前还没有更多投递事件。</p>
             {/if}
           </section>
         {/if}
 
         {#if threadCount > 1}
           <div class="border-t border-zinc-100 pt-8">
-            <h4 class="mb-4 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Conversation History</h4>
+            <h4 class="mb-4 text-[10px] font-bold uppercase tracking-widest text-zinc-400">线程记录</h4>
             <div class="space-y-1">
               {#each threadMessages as tm}
                 <button
@@ -378,7 +394,7 @@
                     <div class="min-w-0">
                       <p class="truncate text-xs font-medium text-zinc-700">{tm.preview}</p>
                       <p class="mt-1 text-[10px] uppercase tracking-wider text-zinc-400">
-                        {tm.folder === 'inbox' ? 'Inbox' : tm.folder === 'sent' ? 'Sent' : 'Draft'}
+                        {tm.folder === 'inbox' ? '收件箱' : tm.folder === 'sent' ? '已发送' : '草稿箱'}
                       </p>
                     </div>
                     <span class="shrink-0 text-[10px] font-mono text-zinc-400">{formatDate(tm.sentAt)}</span>
@@ -395,7 +411,7 @@
       <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mb-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
       </svg>
-      <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">Select a thread to start reading</p>
+      <p class="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">选择一封邮件开始阅读</p>
     </div>
   {/if}
 </div>

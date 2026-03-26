@@ -55,7 +55,7 @@
   });
 
   const title = $derived(
-    mode === 'new' ? 'New Correspondence' : mode === 'reply' ? 'Reply' : mode === 'forward' ? 'Forward' : 'Draft'
+    mode === 'new' ? '新邮件' : mode === 'reply' ? '回复邮件' : mode === 'forward' ? '转发邮件' : '编辑草稿'
   );
 </script>
 
@@ -71,7 +71,7 @@
         <span class="meta-text">{profile.email}</span>
       </div>
       <button
-        aria-label="Close compose dialog"
+        aria-label="关闭写信弹窗"
         class="text-mist transition-colors hover:text-coral"
         onclick={onClose}
         type="button"
@@ -87,17 +87,17 @@
       <div class="mx-auto max-w-3xl space-y-8">
         <div class="space-y-4">
           <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
-            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">Recipient</span>
+            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">收件人</span>
             <input
               bind:value={input.toEmail}
               class="w-full bg-transparent text-sm font-semibold text-ink outline-none"
-              placeholder="recipient@example.com"
+              placeholder="someone@example.com"
               type="email"
             />
           </div>
 
           <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
-            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">Cc</span>
+            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">抄送</span>
             <input
               bind:value={input.cc}
               class="w-full bg-transparent text-sm text-ink outline-none"
@@ -107,11 +107,11 @@
           </div>
 
           <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
-            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">Subject</span>
+            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">主题</span>
             <input
               bind:value={input.subject}
               class="editorial-heading w-full bg-transparent text-2xl text-ink outline-none"
-              placeholder="Title of your message"
+              placeholder="输入邮件主题"
               type="text"
             />
           </div>
@@ -121,7 +121,7 @@
           <textarea
             bind:value={input.body}
             class="min-h-[400px] w-full resize-none bg-transparent text-[16px] leading-[1.8] text-ink/90 outline-none placeholder:text-mist/30"
-            placeholder="Compose your message here..."
+            placeholder="在这里撰写正文..."
           ></textarea>
         </div>
       </div>
@@ -136,11 +136,11 @@
           onclick={() => onSaveDraft(input)}
           type="button"
         >
-          Save as Draft
+          保存草稿
         </button>
         <span class="h-4 w-px bg-line"></span>
         <p class="text-[10px] text-mist italic">
-          Auto-saving is currently disabled.
+          当前未启用自动保存。
         </p>
       </div>
 
@@ -150,7 +150,7 @@
           onclick={onClose}
           type="button"
         >
-          Cancel
+          取消
         </button>
         <button
           class="bg-ink px-10 py-3 text-[10px] font-bold uppercase tracking-widest text-paper transition-all hover:bg-accent disabled:opacity-50"
@@ -158,7 +158,7 @@
           onclick={() => onSend(input)}
           type="button"
         >
-          {pending ? 'Dispatching...' : 'Send Message'}
+          {pending ? '正在发送...' : '发送邮件'}
         </button>
       </div>
     </footer>
