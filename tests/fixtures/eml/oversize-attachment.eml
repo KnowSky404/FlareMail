@@ -1,0 +1,18 @@
+From: Limits <limits@example.com>
+To: Inbox <inbox@example.com>
+Subject: Oversize attachment
+Message-ID: <oversize-1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="limit-boundary"
+
+--limit-boundary
+Content-Type: text/plain; charset=utf-8
+
+Limit test.
+--limit-boundary
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="large.bin"
+Content-Transfer-Encoding: base64
+
+MDEyMzQ1Njc4OQ==
+--limit-boundary--

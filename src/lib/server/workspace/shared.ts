@@ -119,6 +119,11 @@ export interface WorkspaceInboundRow {
   snippet: string;
   is_read: number;
   is_starred: number;
+  message_id?: string | null;
+  in_reply_to?: string | null;
+  references?: string | null;
+  thread_key?: string | null;
+  text_body?: string;
 }
 
 export interface WorkspaceOutboundStatusRow {
@@ -247,11 +252,15 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile): M
     toEmail: recipient.email || profile.email,
     subject: row.subject || '(no subject)',
     preview: snippet,
-    body: `${snippet}\n\n原始邮件已存储在 R2。后续可以在这里接入 EML 解析、附件列表和完整正文查看。`,
+    body: row.text_body?.trim() || snippet,
     sentAt: row.timestamp,
     labels: ['Inbound', 'Cloudflare'],
     read: Boolean(row.is_read),
-    starred: Boolean(row.is_starred)
+    starred: Boolean(row.is_starred),
+    messageId: row.message_id,
+    inReplyTo: row.in_reply_to,
+    references: row.references,
+    threadKey: row.thread_key
   };
 }
 

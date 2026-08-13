@@ -1,85 +1,36 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { fromInboundMessageId, isInboundMessageId } from '$lib/domain/mail';
-import type { StoredEmailMessage } from '$lib/server/cloudflare';
-import { parseInboundEmail } from '$lib/server/inbound-email';
+import { listAttachmentsForMessage } from '$lib/server/db/attachments';
+import { findOwnedInboundMessage } from '$lib/server/db/inbound';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
-
-const findWorkspaceMessage = (session: App.Locals['workspaceSession'], messageId: string) =>
-  session
-    ? session.mailbox.inbox.find((message) => message.id === messageId) ??
-      session.mailbox.sent.find((message) => message.id === messageId) ??
-      session.mailbox.drafts.find((message) => message.id === messageId) ??
-      null
-    : null;
 
 export const GET: RequestHandler = async (event) => {
   const session = requireWorkspaceSession(event);
   const env = getRequestEnv(event);
-  const workspaceMessage = findWorkspaceMessage(session, event.params.id);
+  if (!isInboundMessageId(event.params.id)) return json({ ok: false, error: '当前邮件不支持加载入站详情。' }, { status: 404 });
+  if (!env?.DB) return json({ ok: false, error: '入站存储服务暂不可用。' }, { status: 503 });
 
-  if (!workspaceMessage || !isInboundMessageId(workspaceMessage.id)) {
-    return json(
-      {
-        ok: false,
-        error: '当前邮件不支持加载原始详情。'
-      },
-      { status: 404 }
-    );
-  }
-
-  if (!env?.DB || !env.BUCKET) {
-    return json(
-      {
-        ok: false,
-        error: '运行时缺少 D1 或 R2 绑定。'
-      },
-      { status: 503 }
-    );
-  }
-
-  const record = await env.DB.prepare(
-    `
-      SELECT
-        id,
-        message_id,
-        "from",
-        "to",
-        subject,
-        "timestamp",
-        snippet,
-        raw_key,
-        raw_size,
-        created_at
-      FROM email_messages
-      WHERE id = ?
-    `
-  ).bind(fromInboundMessageId(workspaceMessage.id)).first<StoredEmailMessage>();
-
-  if (!record) {
-    return json(
-      {
-        ok: false,
-        error: '找不到对应的原始邮件记录。'
-      },
-      { status: 404 }
-    );
-  }
-
-  const rawObject = await env.BUCKET.get(record.raw_key);
-
-  if (!rawObject) {
-    return json(
-      {
-        ok: false,
-        error: '原始邮件对象不存在。'
-      },
-      { status: 404 }
-    );
-  }
+  const messageId = fromInboundMessageId(event.params.id);
+  const record = await findOwnedInboundMessage(env.DB, session.userId, messageId);
+  if (!record) return json({ ok: false, error: '找不到对应的入站邮件。' }, { status: 404 });
+  const attachments = await listAttachmentsForMessage(env.DB, messageId);
 
   return json({
     ok: true,
-    detail: parseInboundEmail(await rawObject.arrayBuffer())
-  });
+    detail: {
+      body: record.text_body.trim() || record.snippet,
+      rawSize: record.raw_size,
+      hasHtml: Boolean(record.html_body.trim()),
+      attachments: attachments.map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.filename,
+        contentType: attachment.content_type,
+        size: attachment.size,
+        inline: Boolean(attachment.inline),
+        contentId: attachment.content_id,
+        downloadUrl: `/api/workspace/messages/${encodeURIComponent(event.params.id)}/attachments/${encodeURIComponent(attachment.id)}`
+      }))
+    }
+  }, { headers: { 'cache-control': 'private, no-store' } });
 };

@@ -64,16 +64,20 @@ export interface MailRfcHeaders {
 }
 
 export interface MailAttachmentSummary {
+  id?: string;
   filename: string;
   contentType: string;
   size: number;
   inline: boolean;
+  contentId?: string | null;
+  downloadUrl?: string;
 }
 
 export interface InboundMessageDetail {
   body: string;
   attachments: MailAttachmentSummary[];
   rawSize: number;
+  hasHtml?: boolean;
 }
 
 export interface MailMessage extends MailRfcHeaders {

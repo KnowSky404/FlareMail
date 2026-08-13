@@ -1,0 +1,8 @@
+From: Malformed <malformed@example.com>
+To: Inbox <inbox@example.com>
+Subject: =?UTF-8?Q?Tolerable?=
+This line has no colon and should not prevent parsing.
+X-Empty:
+Content-Type: text/plain; charset=utf-8
+
+The body remains readable even with a malformed header line.

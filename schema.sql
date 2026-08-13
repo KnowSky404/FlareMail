@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS email_messages (
   dedupe_key TEXT,
   provider_message_id TEXT,
   idempotency_key TEXT,
+  owner_user_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -35,6 +36,7 @@ CREATE INDEX IF NOT EXISTS idx_email_messages_thread_key ON email_messages(threa
 CREATE UNIQUE INDEX IF NOT EXISTS idx_email_messages_dedupe_key ON email_messages(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_email_messages_provider_message_id ON email_messages(provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_email_messages_recipient_cursor ON email_messages("to", "timestamp" DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_email_messages_owner_cursor ON email_messages(owner_user_id, "timestamp" DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_users (
   id TEXT PRIMARY KEY,

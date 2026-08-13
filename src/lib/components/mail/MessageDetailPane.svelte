@@ -310,9 +310,17 @@
                       <p class="truncate font-medium text-zinc-900">{attachment.filename}</p>
                       <p class="truncate text-xs text-zinc-500">{attachment.contentType}</p>
                     </div>
-                    <span class="shrink-0 text-xs text-zinc-500">
-                      {formatBytes(attachment.size)}{attachment.inline ? ' / 内联' : ''}
-                    </span>
+                    <div class="flex shrink-0 items-center gap-3">
+                      <span class="text-xs text-zinc-500">
+                        {formatBytes(attachment.size)}{attachment.inline ? ' / 内联' : ''}
+                      </span>
+                      {#if attachment.downloadUrl}
+                        <a
+                          href={attachment.downloadUrl}
+                          class="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                        >下载</a>
+                      {/if}
+                    </div>
                   </div>
                 {/each}
               </div>

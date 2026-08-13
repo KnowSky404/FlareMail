@@ -1,57 +1,23 @@
 import { json } from '@sveltejs/kit';
-import type { CloudflareEnv, StoredEmailMessage } from '$lib/server/cloudflare';
 import type { RequestHandler } from './$types';
+import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 
-export const GET: RequestHandler = async ({ platform, url }) => {
-  const env = platform?.env as CloudflareEnv | undefined;
+/** Compatibility listing endpoint. It is authenticated and returns no R2 keys. */
+export const GET: RequestHandler = async (event) => {
+  const session = requireWorkspaceSession(event);
+  const env = getRequestEnv(event);
+  if (!env?.DB) return json({ ok: false, error: '入站存储服务暂不可用。' }, { status: 503 });
+  const requestedLimit = Number(event.url.searchParams.get('limit') ?? '20');
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 100) : 20;
 
-  if (!env?.DB) {
-    return json(
-      {
-        ok: false,
-        error: 'DB binding is not available in this runtime.'
-      },
-      { status: 503 }
-    );
-  }
-
-  const requestedLimit = Number(url.searchParams.get('limit') ?? '20');
-  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 100) : 20;
-
-  try {
-    const result = await env.DB.prepare(
-      `
-        SELECT
-          id,
-          message_id,
-          "from",
-          "to",
-          subject,
-          "timestamp",
-          snippet,
-          raw_key,
-          raw_size,
-          created_at
-        FROM email_messages
-        ORDER BY "timestamp" DESC
-        LIMIT ?
-      `
-    )
-      .bind(limit)
-      .all<StoredEmailMessage>();
-
-    return json({
-      ok: true,
-      limit,
-      messages: result.results ?? []
-    });
-  } catch (error) {
-    return json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : 'Unable to read email metadata.'
-      },
-      { status: 500 }
-    );
-  }
+  const result = await env.DB.prepare(`
+    SELECT id, message_id, "from", "to", subject, "timestamp", snippet, raw_size, created_at
+    FROM email_messages
+    WHERE owner_user_id = ?
+    ORDER BY "timestamp" DESC, id DESC
+    LIMIT ?
+  `).bind(session.userId, limit).all();
+  return json({ ok: true, limit, messages: result.results ?? [] }, {
+    headers: { 'cache-control': 'private, no-store' }
+  });
 };

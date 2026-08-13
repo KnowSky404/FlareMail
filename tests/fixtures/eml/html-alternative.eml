@@ -1,0 +1,16 @@
+From: Sender <sender@example.com>
+To: Reader <reader@example.com>
+Subject: Alternative body
+Message-ID: <alternative-1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alt-boundary"
+
+--alt-boundary
+Content-Type: text/plain; charset=utf-8
+
+Plain fallback body.
+--alt-boundary
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Rich <strong>HTML</strong> body.</p></body></html>
+--alt-boundary--

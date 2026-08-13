@@ -98,14 +98,15 @@ describe('versioned D1 migrations', () => {
       '0002_mail_contracts.sql',
       '0003_auth_and_settings.sql',
       '0004_delivery_states.sql',
-      '0005_operational_indexes.sql'
+      '0005_operational_indexes.sql',
+      '0006_inbound_ownership.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
       new Set([
         'id', 'message_id', 'from', 'to', 'subject', 'timestamp', 'snippet', 'raw_key', 'raw_size', 'created_at',
         'in_reply_to', 'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key',
-        'provider_message_id', 'idempotency_key'
+        'provider_message_id', 'idempotency_key', 'owner_user_id'
       ])
     );
     expect(tableColumns(db, 'workspace_messages')).toEqual(
@@ -152,7 +153,7 @@ describe('versioned D1 migrations', () => {
       new Set([
         'idx_email_messages_timestamp', 'idx_email_messages_from', 'idx_email_messages_to',
         'idx_email_messages_message_id', 'idx_email_messages_thread_key', 'idx_email_messages_dedupe_key',
-        'idx_email_messages_provider_message_id', 'idx_email_messages_recipient_cursor'
+        'idx_email_messages_provider_message_id', 'idx_email_messages_recipient_cursor', 'idx_email_messages_owner_cursor'
       ])
     );
     expect(indexNames(db, 'workspace_delivery_statuses')).toEqual(
@@ -207,7 +208,7 @@ describe('versioned D1 migrations', () => {
     }
 
     const inbound = db.query(
-      `SELECT message_id, thread_key, dedupe_key, direction, text_body, html_body
+      `SELECT message_id, thread_key, dedupe_key, direction, text_body, html_body, owner_user_id
        FROM email_messages WHERE id = 'legacy-email-1'`
     ).get() as Record<string, string | null>;
     expect(inbound).toMatchObject({
@@ -216,7 +217,8 @@ describe('versioned D1 migrations', () => {
       dedupe_key: 'rfc:<legacy-1@example.test>:to:admin@example.test',
       direction: 'inbound',
       text_body: 'Legacy body',
-      html_body: ''
+      html_body: '',
+      owner_user_id: 'legacy-user-1'
     });
 
     const workspaceInbound = db.query(

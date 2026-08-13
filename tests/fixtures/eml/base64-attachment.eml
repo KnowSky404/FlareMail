@@ -1,0 +1,18 @@
+From: Attachments <files@example.com>
+To: Inbox <inbox@example.com>
+Subject: Base64 attachment
+Message-ID: <attachment-1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed-boundary"
+
+--mixed-boundary
+Content-Type: text/plain; charset=utf-8
+
+See the attached file.
+--mixed-boundary
+Content-Type: application/octet-stream; name="hello.bin"
+Content-Disposition: attachment; filename="hello.bin"
+Content-Transfer-Encoding: base64
+
+SGVsbG8sIGZpbGUh
+--mixed-boundary--

@@ -18,17 +18,8 @@ export interface CloudflareEnv {
   RESEND_API_KEY?: string;
   RESEND_API_BASE_URL?: string;
   RESEND_WEBHOOK_SECRET?: string;
-}
-
-export interface StoredEmailMessage {
-  id: string;
-  message_id: string | null;
-  from: string;
-  to: string;
-  subject: string;
-  timestamp: string;
-  snippet: string;
-  raw_key: string;
-  raw_size: number;
-  created_at: string;
+  INBOUND_MAX_RAW_BYTES?: string;
+  INBOUND_MAX_ATTACHMENT_COUNT?: string;
+  INBOUND_MAX_ATTACHMENT_BYTES?: string;
+  INBOUND_MAX_ATTACHMENT_TOTAL_BYTES?: string;
 }

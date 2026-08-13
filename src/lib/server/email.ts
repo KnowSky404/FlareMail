@@ -1,96 +1,226 @@
 import type { CloudflareEnv } from './cloudflare';
+import { parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename } from '$lib/domain/mail';
+import { insertAttachment } from '$lib/server/db/attachments';
+import { findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage } from '$lib/server/db/inbound';
+import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { sendCloudflareAutoReply, sendInboundNotification } from './cloudflare-email';
-import { parseInboundEmail } from './inbound-email';
 
-const toIsoTimestamp = (value: string | null) => {
-  if (!value) {
-    return new Date().toISOString();
+export const DEFAULT_INBOUND_LIMITS = Object.freeze({
+  rawBytes: 25 * 1024 * 1024,
+  attachmentCount: 50,
+  attachmentBytes: 15 * 1024 * 1024,
+  attachmentTotalBytes: 24 * 1024 * 1024
+});
+
+export class InboundRawLimitError extends Error {
+  readonly code = 'INBOUND_RAW_LIMIT';
+  constructor(readonly limit: number, readonly actual: number) {
+    super('Inbound message exceeds the configured raw size limit.');
+    this.name = 'InboundRawLimitError';
   }
+}
 
+const configuredLimit = (value: string | undefined, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const toIsoTimestamp = (value: string | null | undefined) => {
+  if (!value) return new Date().toISOString();
   const parsed = new Date(value);
   return Number.isNaN(parsed.valueOf()) ? new Date().toISOString() : parsed.toISOString();
 };
+
+const addressLabel = (address: { name: string; address: string } | null, fallback: string) =>
+  address?.address ? (address.name ? `${address.name} <${address.address}>` : address.address) : fallback;
+
+const addressList = (addresses: Array<{ name: string; address: string }>) =>
+  addresses.map((address) => address.name ? `${address.name} <${address.address}>` : address.address).join(', ');
+
+const bytesToBase64Url = (value: ArrayBuffer) => {
+  let binary = '';
+  for (const byte of new Uint8Array(value)) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+};
+
+async function sha256(value: ArrayBuffer | Uint8Array | string) {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+  const input = bytes instanceof Uint8Array ? bytes.slice().buffer : value;
+  return bytesToBase64Url(await crypto.subtle.digest('SHA-256', input as ArrayBuffer));
+}
+
+export async function createInboundDedupeKey(messageId: string | null, recipient: string, raw: ArrayBuffer) {
+  const normalizedRecipient = recipient.trim().toLowerCase();
+  const normalizedId = messageId ? normalizeMessageId(messageId) : null;
+  return normalizedId
+    ? `rfc:${normalizedId}:to:${normalizedRecipient}`
+    : `sha256:${await sha256(raw)}:to:${normalizedRecipient}`;
+}
+
+export async function readBoundedRawEmail(
+  stream: ReadableStream<Uint8Array>,
+  declaredSize: number,
+  limit: number
+): Promise<ArrayBuffer> {
+  if (declaredSize > limit) throw new InboundRawLimitError(limit, declaredSize);
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel('inbound raw size limit exceeded');
+        throw new InboundRawLimitError(limit, total);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const raw = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    raw.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return raw.buffer;
+}
+
+function inboundThreadKey(input: { messageId: string | null; inReplyTo: string | null; references: string | null; subject: string; from: string }) {
+  const rfcId = parseMessageIds(input.references)[0] ?? parseMessageIds(input.inReplyTo)[0] ?? parseMessageIds(input.messageId)[0];
+  return rfcId ? `rfc:${rfcId}` : `${normalizeThreadSubject(input.subject)}::${input.from.trim().toLowerCase()}`;
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return error instanceof Error && /unique constraint|constraint failed/iu.test(error.message);
+}
+
+async function removeObjects(bucket: R2Bucket, keys: string[]) {
+  await Promise.all(keys.map((key) => bucket.delete(key).catch(() => undefined)));
+}
+
+function safeLog(event: string, detail: Record<string, string | number | boolean | null>) {
+  console.log(JSON.stringify({ event, ...detail }));
+}
 
 export async function handleInboundEmail(
   message: ForwardableEmailMessage,
   env: CloudflareEnv,
   ctx?: ExecutionContext
 ) {
+  const startedAt = Date.now();
+  const correlationId = crypto.randomUUID();
+  if (!env.DB || !env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
+
+  const rawLimit = configuredLimit(env.INBOUND_MAX_RAW_BYTES, DEFAULT_INBOUND_LIMITS.rawBytes);
+  let raw: ArrayBuffer;
+  let parsed;
   try {
-    const id = crypto.randomUUID();
-    const raw = await new Response(message.raw).arrayBuffer();
-    const subject = message.headers.get('subject') ?? '(no subject)';
-    const timestamp = toIsoTimestamp(message.headers.get('date'));
-    const snippet = parseInboundEmail(raw).snippet || '(empty body)';
-    const messageId = message.headers.get('message-id');
-    const rawKey = `emails/${timestamp.slice(0, 10)}/${id}.eml`;
-
-    await env.BUCKET.put(rawKey, raw, {
-      httpMetadata: {
-        contentType: 'message/rfc822'
-      },
-      customMetadata: {
-        from: message.from,
-        to: message.to,
-        subject: subject.slice(0, 256)
-      }
+    raw = await readBoundedRawEmail(message.raw, message.rawSize, rawLimit);
+    parsed = await parseInboundMime(raw, {
+      maxAttachmentCount: configuredLimit(env.INBOUND_MAX_ATTACHMENT_COUNT, DEFAULT_INBOUND_LIMITS.attachmentCount),
+      maxAttachmentSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_BYTES, DEFAULT_INBOUND_LIMITS.attachmentBytes),
+      maxAttachmentTotalSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_TOTAL_BYTES, DEFAULT_INBOUND_LIMITS.attachmentTotalBytes)
     });
-
-    await env.DB.prepare(
-      `
-        INSERT INTO email_messages (
-          id,
-          message_id,
-          "from",
-          "to",
-          subject,
-          "timestamp",
-          snippet,
-          raw_key,
-          raw_size
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-      .bind(
-        id,
-        messageId,
-        message.from,
-        message.to,
-        subject,
-        timestamp,
-        snippet,
-        rawKey,
-        raw.byteLength
-      )
-      .run();
-
-    const followUpTasks = [
-      sendInboundNotification(env, {
-        from: message.from,
-        to: message.to,
-        subject,
-        timestamp,
-        snippet,
-        rawKey
-      }).catch((error) => {
-        console.error('Failed to send inbound notification', error);
-        return null;
-      }),
-      sendCloudflareAutoReply(message, env).catch((error) => {
-        console.error('Failed to send auto reply', error);
-        return null;
-      })
-    ];
-
-    if (ctx) {
-      ctx.waitUntil(Promise.all(followUpTasks));
-    } else {
-      await Promise.all(followUpTasks);
-    }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Failed to store inbound email.';
-    message.setReject(reason);
+    if (error instanceof InboundRawLimitError || error instanceof InboundMimeLimitError || error instanceof InboundMimeParseError) {
+      message.setReject(error.code);
+      safeLog('inbound_rejected', { correlationId, code: error.code, durationMs: Date.now() - startedAt });
+    }
     throw error;
   }
+
+  if (raw.byteLength !== message.rawSize && message.rawSize > 0) {
+    safeLog('inbound_size_mismatch', { correlationId, declaredBytes: message.rawSize, actualBytes: raw.byteLength });
+  }
+
+  const recipient = message.to.trim().toLowerCase();
+  const messageId = parsed.messageId ?? message.headers.get('message-id');
+  const dedupeKey = await createInboundDedupeKey(messageId, recipient, raw);
+  const existing = await findInboundByDedupeKey(env.DB, dedupeKey);
+  if (existing) {
+    safeLog('inbound_duplicate', { correlationId, messageId: existing.id, durationMs: Date.now() - startedAt });
+    return;
+  }
+
+  const storageId = await sha256(dedupeKey);
+  const date = toIsoTimestamp(parsed.date ?? message.headers.get('date'));
+  const rawKey = `inbound/${date.slice(0, 10)}/${storageId}/message.eml`;
+  const ownerUserId = await findInboundOwnerId(env.DB, recipient);
+  const ownerKey = ownerUserId ?? 'unassigned';
+  const writtenKeys = [rawKey];
+  const attachmentRows = parsed.attachments.map((attachment, index) => {
+    const id = `${storageId.slice(0, 24)}-${String(index + 1).padStart(3, '0')}`;
+    const filename = sanitizeFilename(attachment.filename);
+    const r2Key = `inbound/${date.slice(0, 10)}/${storageId}/attachments/${id}/${encodeURIComponent(filename)}`;
+    writtenKeys.push(r2Key);
+    return { id, userId: ownerKey, messageId: storageId, filename, contentType: attachment.mimeType,
+      size: attachment.size, inline: attachment.inline, contentId: attachment.contentId, r2Key, content: attachment.content };
+  });
+
+  try {
+    await env.BUCKET.put(rawKey, raw, { httpMetadata: { contentType: 'message/rfc822' }, customMetadata: { messageId: storageId } });
+    await Promise.all(attachmentRows.map((attachment) => env.BUCKET.put(attachment.r2Key, attachment.content, {
+      httpMetadata: { contentType: attachment.contentType },
+      customMetadata: { messageId: storageId, attachmentId: attachment.id }
+    })));
+
+    const from = addressLabel(parsed.from, message.from);
+    const subject = parsed.subject.trim() || message.headers.get('subject')?.trim() || '(no subject)';
+    const statements = [insertInboundMessage(env.DB, {
+      id: storageId,
+      messageId,
+      from,
+      to: recipient,
+      cc: addressList(parsed.cc),
+      subject,
+      timestamp: date,
+      snippet: parsed.snippet || '(empty body)',
+      textBody: parsed.text,
+      htmlBody: parsed.html,
+      inReplyTo: parsed.inReplyTo,
+      references: parsed.references,
+      threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from }),
+      dedupeKey,
+      rawKey,
+      rawSize: raw.byteLength,
+      ownerUserId
+    }), ...attachmentRows.map(({ content: _content, ...attachment }) => insertAttachment(env.DB, attachment))];
+    await env.DB.batch(statements);
+  } catch (error) {
+    let duplicate = false;
+    if (isUniqueConstraintError(error)) {
+      try {
+        duplicate = Boolean(await findInboundByDedupeKey(env.DB, dedupeKey));
+      } catch {
+        duplicate = false;
+      }
+    }
+    if (!duplicate) await removeObjects(env.BUCKET, writtenKeys);
+    if (duplicate) {
+      safeLog('inbound_duplicate', { correlationId, messageId: storageId, durationMs: Date.now() - startedAt });
+      return;
+    }
+    safeLog('inbound_storage_failed', { correlationId, code: 'INBOUND_STORAGE_FAILED', durationMs: Date.now() - startedAt });
+    throw error;
+  }
+
+  const followUpTasks = [
+    sendInboundNotification(env, { from: message.from, to: recipient, subject: parsed.subject || '(no subject)',
+      timestamp: date, snippet: parsed.snippet }).catch(() => {
+      safeLog('inbound_notification_failed', { correlationId, messageId: storageId });
+      return null;
+    }),
+    sendCloudflareAutoReply(message, env).catch(() => {
+      safeLog('inbound_auto_reply_failed', { correlationId, messageId: storageId });
+      return null;
+    })
+  ];
+  if (ctx) ctx.waitUntil(Promise.all(followUpTasks));
+  else await Promise.all(followUpTasks);
+  safeLog('inbound_stored', { correlationId, messageId: storageId, rawBytes: raw.byteLength,
+    attachments: attachmentRows.length, owned: Boolean(ownerUserId), durationMs: Date.now() - startedAt });
 }

@@ -1,0 +1,19 @@
+From: Inline <inline@example.com>
+To: Inbox <inbox@example.com>
+Subject: Inline image
+Message-ID: <inline-1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="related-boundary"
+
+--related-boundary
+Content-Type: text/html; charset=utf-8
+
+<p>Logo: <img src="cid:logo@example.com"></p>
+--related-boundary
+Content-Type: image/png
+Content-Disposition: inline; filename="logo.png"
+Content-ID: <logo@example.com>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--related-boundary--

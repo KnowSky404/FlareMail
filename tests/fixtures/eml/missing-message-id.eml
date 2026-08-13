@@ -1,0 +1,7 @@
+From: Legacy <legacy@example.com>
+To: Inbox <inbox@example.com>
+Subject: No identifier
+Date: Thu, 13 Aug 2026 12:00:00 +0000
+Content-Type: text/plain; charset=utf-8
+
+This old message has no Message-ID header.

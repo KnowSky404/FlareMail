@@ -7,16 +7,17 @@ export async function listMessages(db: D1Database, userId: string) {
   `).bind(userId).all<WorkspaceMessageRow>();
 }
 
-export async function listInboundMessages(db: D1Database, userId: string, loginEmail: string, profileEmail: string, capabilities: WorkspaceCapabilities) {
+export async function listInboundMessages(db: D1Database, userId: string, _loginEmail: string, _profileEmail: string, capabilities: WorkspaceCapabilities) {
   if (!capabilities.inboundStates) return { results: [] as WorkspaceInboundRow[] };
   return db.prepare(`
     SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
+      e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE lower(e."to") IN (lower(?), lower(?)) AND s.deleted_at IS NULL
-    ORDER BY e."timestamp" DESC, e.created_at DESC
-  `).bind(userId, loginEmail, profileEmail).all<WorkspaceInboundRow>();
+    WHERE e.owner_user_id = ? AND s.deleted_at IS NULL
+    ORDER BY e."timestamp" DESC, e.id DESC
+  `).bind(userId, userId).all<WorkspaceInboundRow>();
 }
 
 export function insertMessage(db: D1Database, payload: ReturnType<typeof import('$lib/server/workspace/shared').serializeMessageForInsert>) {

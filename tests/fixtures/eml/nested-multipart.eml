@@ -1,0 +1,26 @@
+From: Nested <nested@example.com>
+To: Inbox <inbox@example.com>
+Subject: Nested multipart
+Message-ID: <nested-1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-boundary"
+
+--outer-boundary
+Content-Type: multipart/alternative; boundary="inner-boundary"
+
+--inner-boundary
+Content-Type: text/plain; charset=utf-8
+
+Nested plain body.
+--inner-boundary
+Content-Type: text/html; charset=utf-8
+
+<p>Nested HTML body.</p>
+--inner-boundary--
+--outer-boundary
+Content-Type: text/plain; name="note.txt"
+Content-Disposition: attachment; filename="note.txt"
+Content-Transfer-Encoding: 7bit
+
+Nested attachment.
+--outer-boundary--

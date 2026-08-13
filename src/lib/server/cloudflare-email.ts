@@ -261,7 +261,6 @@ export async function sendInboundNotification(
     subject: string;
     timestamp: string;
     snippet: string;
-    rawKey: string;
   }
 ) {
   if (!normalizeBoolean(env?.INBOUND_NOTIFICATION_ENABLED)) {
@@ -291,8 +290,6 @@ export async function sendInboundNotification(
       `To: ${input.to}`,
       `Subject: ${input.subject}`,
       `Received At: ${input.timestamp}`,
-      `R2 Key: ${input.rawKey}`,
-      '',
       'Snippet:',
       input.snippet || '(empty body)',
       '',
