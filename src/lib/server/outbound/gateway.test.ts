@@ -19,6 +19,13 @@ const jsonResponse = (body: unknown, status = 202) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 describe('ResendOutboundGateway', () => {
+  test('rejects non-HTTPS or credential-bearing provider endpoints', () => {
+    expect(() => new ResendOutboundGateway({ apiKey: 're_test_secret', apiBaseUrl: 'http://resend.test' }))
+      .toThrow(OutboundGatewayError);
+    expect(() => new ResendOutboundGateway({ apiKey: 're_test_secret', apiBaseUrl: 'https://user:pass@resend.test' }))
+      .toThrow(OutboundGatewayError);
+  });
+
   test('serializes the REST payload with snake_case reply_to and optional fields', async () => {
     let request: { url: string; init: RequestInit } | undefined;
     const gateway = new ResendOutboundGateway({
@@ -195,5 +202,13 @@ describe('FakeOutboundGateway', () => {
     const error = new OutboundGatewayError('network_unknown', 'unknown outcome');
     const gateway = new FakeOutboundGateway({ error });
     await expect(gateway.send(input())).rejects.toBe(error);
+  });
+
+  test('derives a stable provider id from the durable idempotency key', async () => {
+    const gateway = new FakeOutboundGateway();
+    const first = await gateway.send(input({ idempotencyKey: 'outbound:message-1' }));
+    const second = await gateway.send(input({ idempotencyKey: 'outbound:message-1' }));
+    expect(first.providerMessageId).toBe('fake-outbound:message-1');
+    expect(second.providerMessageId).toBe(first.providerMessageId);
   });
 });

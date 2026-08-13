@@ -100,7 +100,16 @@ const responseMessage = (payload: unknown, fallback: string) => {
 
 const normalizeBaseUrl = (value: string | undefined) => {
   const baseUrl = value?.trim() || DEFAULT_API_BASE_URL;
-  return baseUrl.replace(/\/+$/, '');
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new OutboundGatewayError('configuration', 'Resend API base URL is invalid.', { retryable: false });
+  }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new OutboundGatewayError('configuration', 'Resend API base URL must be an HTTPS origin or path without credentials, query, or fragment.', { retryable: false });
+  }
+  return parsed.toString().replace(/\/+$/, '');
 };
 
 function validateInput(input: OutboundMailInput) {
@@ -258,7 +267,7 @@ export class FakeOutboundGateway implements OutboundMailGateway {
     if (this.options.error) throw this.options.error;
     return this.options.result ?? {
       status: 'submitted',
-      providerMessageId: this.options.providerMessageId ?? `fake-${this.sent.length}`,
+      providerMessageId: this.options.providerMessageId ?? `fake-${input.idempotencyKey.slice(0, 240)}`,
       remoteStatus: 202
     };
   }
