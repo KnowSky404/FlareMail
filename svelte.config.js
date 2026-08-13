@@ -5,7 +5,22 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 const config = {
   preprocess: vitePreprocess(),
   kit: {
-    adapter: adapter()
+    adapter: adapter({ config: 'wrangler.build.toml' }),
+    csp: {
+      mode: 'nonce',
+      directives: {
+        'default-src': ['self'],
+        'base-uri': ['self'],
+        'connect-src': ['self'],
+        'font-src': ['self'],
+        'form-action': ['self'],
+        'frame-ancestors': ['none'],
+        'img-src': ['self', 'data:'],
+        'object-src': ['none'],
+        'script-src': ['self'],
+        'style-src': ['self', 'unsafe-inline']
+      }
+    }
   }
 };
 

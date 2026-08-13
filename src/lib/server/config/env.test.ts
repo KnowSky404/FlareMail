@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseAppEnv, parseEnvironment, validateEnvironment } from './env';
 
-const bindings = { DB: {}, BUCKET: {}, APP_ORIGIN: 'https://mail.example.test', RESEND_API_KEY: 'placeholder', OUTBOUND_FROM_EMAIL: 'mail@example.test' };
+const bindings = { DB: {}, BUCKET: {}, APP_ORIGIN: 'https://mail.example.test', RESEND_API_KEY: 'placeholder', RESEND_WEBHOOK_SECRET: 'placeholder', OUTBOUND_FROM_EMAIL: 'mail@example.test' };
 
 describe('runtime environment validation', () => {
   test('parses supported app environments and safe default', () => {
@@ -13,8 +13,13 @@ describe('runtime environment validation', () => {
   test('reports production bindings independently without secret values', () => {
     const result = validateEnvironment({ APP_ENV: 'production', APP_ORIGIN: 'https://mail.example.test' });
     expect(result.ok).toBe(false);
-    expect(result.errors.map(({ code }) => code)).toEqual(expect.arrayContaining(['missing_d1', 'missing_r2', 'missing_resend_api_key', 'missing_outbound_from', 'missing_outbound_provider']));
-    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(result.errors.map(({ code }) => code)).toEqual(expect.arrayContaining(['missing_d1', 'missing_r2', 'missing_resend_api_key', 'missing_resend_webhook_secret', 'missing_outbound_from', 'missing_outbound_provider']));
+    expect(JSON.stringify(validateEnvironment({
+      ...bindings,
+      APP_ENV: 'production',
+      OUTBOUND_PROVIDER: 'resend',
+      RESEND_WEBHOOK_SECRET: 'super-private-hook-value'
+    }))).not.toContain('super-private-hook-value');
   });
 
   test('requires an explicit Resend provider in production', () => {

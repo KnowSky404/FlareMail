@@ -6,6 +6,17 @@ import {
   workspaceSessionCookieNames
 } from '$lib/server/workspace';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { ApiError, apiFailure } from '$lib/server/http/api';
+
+const setSecurityHeaders = (response: Response, secure: boolean) => {
+  response.headers.set('referrer-policy', 'no-referrer');
+  response.headers.set('x-content-type-options', 'nosniff');
+  response.headers.set('x-frame-options', 'DENY');
+  response.headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  response.headers.set('cross-origin-opener-policy', 'same-origin');
+  if (secure) response.headers.set('strict-transport-security', 'max-age=63072000; includeSubDomains; preload');
+  return response;
+};
 
 export const handle: Handle = async ({ event, resolve }) => {
   const env = event.platform?.env as CloudflareEnv | undefined;
@@ -27,12 +38,19 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (isApiMutation && !isSignedWebhook) {
     const csrf = validateCsrfOrigin(event.request, { appOrigin: env?.APP_ORIGIN });
     if (!csrf.ok) {
-      return new Response(JSON.stringify({ ok: false, error: 'Request origin validation failed.' }), {
-        status: 403,
-        headers: { 'content-type': 'application/json; charset=utf-8' }
-      });
+      return setSecurityHeaders(apiFailure(
+        event,
+        new ApiError(403, 'CSRF_ORIGIN_REJECTED', '请求来源验证失败。')
+      ), event.url.protocol === 'https:');
     }
   }
 
-  return resolve(event);
+  try {
+    return setSecurityHeaders(await resolve(event), event.url.protocol === 'https:');
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return setSecurityHeaders(apiFailure(event, error), event.url.protocol === 'https:');
+    }
+    throw error;
+  }
 };

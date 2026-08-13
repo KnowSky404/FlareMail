@@ -1,10 +1,22 @@
 name = "flaremail"
-main = "build/_worker.js"
+main = "worker/index.ts"
 compatibility_date = "2026-03-24"
 compatibility_flags = ["nodejs_compat"]
 
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.5
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.05
+
 [vars]
 APP_ENV = "production"
+APP_ORIGIN = "https://mail.example.com"
 OUTBOUND_PROVIDER = "resend"
 OUTBOUND_FROM_EMAIL = "dev@your-domain.com"
 OUTBOUND_FROM_NAME = "FlareMail"

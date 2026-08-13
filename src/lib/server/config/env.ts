@@ -20,6 +20,7 @@ export interface EnvironmentDiagnostic {
     | 'missing_d1'
     | 'missing_r2'
     | 'missing_resend_api_key'
+    | 'missing_resend_webhook_secret'
     | 'missing_outbound_from'
     | 'missing_outbound_provider'
     | 'invalid_outbound_provider'
@@ -84,6 +85,7 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   const hasD1 = Boolean(environment.DB);
   const hasR2 = Boolean(environment.BUCKET);
   const hasResendApiKey = Boolean(asString(environment.RESEND_API_KEY));
+  const hasResendWebhookSecret = Boolean(asString(environment.RESEND_WEBHOOK_SECRET));
   const hasOutboundFrom = Boolean(asString(environment.OUTBOUND_FROM_EMAIL));
   const fakeServicesExplicit = asBoolean(environment.ALLOW_FAKE_SERVICES) ||
     asBoolean(environment.DEV_FAKE_SERVICES) || asBoolean(environment.USE_FAKE_SERVICES);
@@ -98,6 +100,7 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   if (appEnv === 'production' && !hasD1) error('missing_d1', 'Production requires a D1 binding.');
   if (appEnv === 'production' && !hasR2) error('missing_r2', 'Production requires an R2 binding.');
   if (appEnv === 'production' && !hasResendApiKey) error('missing_resend_api_key', 'Production requires a Resend API key.');
+  if (appEnv === 'production' && !hasResendWebhookSecret) error('missing_resend_webhook_secret', 'Production requires a Resend webhook secret.');
   if (appEnv === 'production' && !hasOutboundFrom) error('missing_outbound_from', 'Production requires OUTBOUND_FROM_EMAIL.');
   if (appEnv === 'production' && !provider) error('missing_outbound_provider', 'Production requires OUTBOUND_PROVIDER=resend.');
   if (provider && !['demo', 'fake', 'resend'].includes(provider.toLowerCase())) {

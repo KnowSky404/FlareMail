@@ -16,8 +16,8 @@ if (!existsSync(configPath)) {
 
 const args =
   mode === 'dry-run'
-    ? ['x', 'wrangler', 'deploy', 'worker/index.ts', '--config', configPath, '--dry-run', '--outdir', '/tmp/flaremail-dry-run']
-    : ['x', 'wrangler', 'deploy', 'worker/index.ts', '--config', configPath];
+    ? ['x', 'wrangler', 'deploy', '--config', configPath, '--dry-run', '--outdir', '/tmp/flaremail-dry-run']
+    : ['x', 'wrangler', 'deploy', '--config', configPath];
 
 const child = spawn('bun', args, {
   stdio: 'inherit',

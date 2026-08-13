@@ -15,7 +15,6 @@ export const GET: RequestHandler = async ({ platform }) => {
   const env = platform?.env as CloudflareEnv | undefined;
   const validation = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
   let schemaReady = false;
-  let schemaVersion: string | null = null;
 
   if (env?.DB) {
     try {
@@ -25,9 +24,6 @@ export const GET: RequestHandler = async ({ platform }) => {
         WHERE type = 'table' AND name IN (${placeholders})
       `).bind(...REQUIRED_TABLES).all<{ name: string }>();
       schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length;
-      const latest = await env.DB.prepare(`SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`)
-        .first<{ name: string }>();
-      schemaVersion = latest?.name?.replace(/\.sql$/u, '') ?? null;
     } catch {
       schemaReady = false;
     }
@@ -37,14 +33,6 @@ export const GET: RequestHandler = async ({ platform }) => {
   return json({
     ok,
     version: env?.APP_VERSION ?? 'development',
-    environment: validation.config.appEnv,
-    schema: { ready: schemaReady, version: schemaVersion },
-    services: {
-      database: validation.config.hasD1,
-      objectStorage: validation.config.hasR2,
-      outbound: validation.config.hasResendApiKey && validation.config.outboundProvider === 'resend',
-      webhookVerification: Boolean(env?.RESEND_WEBHOOK_SECRET)
-    },
     timestamp: new Date().toISOString()
   }, { status: ok ? 200 : 503 });
 };
