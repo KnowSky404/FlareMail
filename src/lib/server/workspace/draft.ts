@@ -8,7 +8,8 @@ import { refreshD1Session } from '$lib/server/workspace/mailbox';
 export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session: WorkspaceSession, input: ComposeInput) {
   const currentDraft = input.draftId ? session.mailbox.drafts.find((message) => message.id === input.draftId) ?? null : null;
   const draft = createDraftMessage({ id: input.draftId, from: session.profile, toEmail: input.toEmail, cc: input.cc,
-    subject: input.subject, body: input.body, starred: currentDraft?.starred ?? false });
+    subject: input.subject, body: input.body, starred: currentDraft?.starred ?? false,
+    messageId: input.messageId, inReplyTo: input.inReplyTo, references: input.references });
   if (session.storage === 'd1' && await hasWorkspaceCoreTables(env)) {
     const capabilities = await getWorkspaceCapabilities(env);
     if (!capabilities.drafts) throw new Error('草稿表尚未迁移，请先执行最新的 D1 schema。');

@@ -5,8 +5,7 @@ export interface CloudflareEnv {
   APP_ORIGIN?: string;
   APP_VERSION?: string;
   ALLOW_FAKE_SERVICES?: string;
-  OUTBOUND_EMAIL?: SendEmail;
-  OUTBOUND_PROVIDER?: 'demo' | 'resend' | 'cloudflare';
+  OUTBOUND_PROVIDER?: 'demo' | 'fake' | 'resend';
   OUTBOUND_FROM_EMAIL?: string;
   OUTBOUND_FROM_NAME?: string;
   AUTO_REPLY_ENABLED?: string;
@@ -17,6 +16,7 @@ export interface CloudflareEnv {
   NOTIFICATION_SUBJECT_PREFIX?: string;
   RESEND_API_KEY?: string;
   RESEND_API_BASE_URL?: string;
+  RESEND_TIMEOUT_MS?: string;
   RESEND_WEBHOOK_SECRET?: string;
   INBOUND_MAX_RAW_BYTES?: string;
   INBOUND_MAX_ATTACHMENT_COUNT?: string;

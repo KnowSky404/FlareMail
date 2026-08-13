@@ -20,6 +20,7 @@ export interface EnvironmentDiagnostic {
     | 'missing_d1'
     | 'missing_r2'
     | 'missing_resend_api_key'
+    | 'missing_outbound_from'
     | 'missing_outbound_provider'
     | 'invalid_outbound_provider'
     | 'fake_services_not_explicit'
@@ -83,6 +84,7 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   const hasD1 = Boolean(environment.DB);
   const hasR2 = Boolean(environment.BUCKET);
   const hasResendApiKey = Boolean(asString(environment.RESEND_API_KEY));
+  const hasOutboundFrom = Boolean(asString(environment.OUTBOUND_FROM_EMAIL));
   const fakeServicesExplicit = asBoolean(environment.ALLOW_FAKE_SERVICES) ||
     asBoolean(environment.DEV_FAKE_SERVICES) || asBoolean(environment.USE_FAKE_SERVICES);
   const diagnostics: EnvironmentDiagnostic[] = [];
@@ -96,8 +98,9 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   if (appEnv === 'production' && !hasD1) error('missing_d1', 'Production requires a D1 binding.');
   if (appEnv === 'production' && !hasR2) error('missing_r2', 'Production requires an R2 binding.');
   if (appEnv === 'production' && !hasResendApiKey) error('missing_resend_api_key', 'Production requires a Resend API key.');
+  if (appEnv === 'production' && !hasOutboundFrom) error('missing_outbound_from', 'Production requires OUTBOUND_FROM_EMAIL.');
   if (appEnv === 'production' && !provider) error('missing_outbound_provider', 'Production requires OUTBOUND_PROVIDER=resend.');
-  if (provider && !['demo', 'fake', 'resend', 'cloudflare'].includes(provider.toLowerCase())) {
+  if (provider && !['demo', 'fake', 'resend'].includes(provider.toLowerCase())) {
     error('invalid_outbound_provider', 'OUTBOUND_PROVIDER is not supported.');
   }
   if (appEnv === 'production' && provider && provider.toLowerCase() !== 'resend') {
@@ -105,6 +108,8 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   }
   if (provider && /^(demo|fake)$/iu.test(provider) && appEnv === 'production') {
     error('fake_services_in_production', 'Fake outbound services are disabled in production.');
+  } else if (provider && /^(demo|fake)$/iu.test(provider) && !['development', 'test'].includes(appEnv)) {
+    error('fake_services_not_explicit', 'Fake outbound services are only available in development or test.');
   } else if (provider && /^(demo|fake)$/iu.test(provider) && !fakeServicesExplicit) {
     error('fake_services_not_explicit', 'Fake outbound services require ALLOW_FAKE_SERVICES=true (or an equivalent explicit flag).');
   }

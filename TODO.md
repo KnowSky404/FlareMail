@@ -40,4 +40,4 @@
 ## 备注
 - 当前最推荐的下一步是先做“草稿增强 + 收件箱效率功能”。
 - 如果要跑通真实回执链路，需要在运行环境中配置 `RESEND_WEBHOOK_SECRET`，并让 Resend webhook 指向 `/api/webhooks/resend`。
-- 当前已补上 Cloudflare 原生自动回信与入站通知链路，适合先验证 Worker 侧邮件交互；真正面向任意外部联系人的外发仍建议继续保留 Resend 这类 provider。
+- 工作台发送、重试、自动回信与入站通知现已统一到 Resend gateway；development/test 可显式使用 fake provider，production 不再回退 Cloudflare 原生或 demo 外发。

@@ -3,7 +3,7 @@ import { parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFi
 import { insertAttachment } from '$lib/server/db/attachments';
 import { findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage } from '$lib/server/db/inbound';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
-import { sendCloudflareAutoReply, sendInboundNotification } from './cloudflare-email';
+import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 
 export const DEFAULT_INBOUND_LIMITS = Object.freeze({
   rawBytes: 25 * 1024 * 1024,
@@ -209,12 +209,12 @@ export async function handleInboundEmail(
   }
 
   const followUpTasks = [
-    sendInboundNotification(env, { from: message.from, to: recipient, subject: parsed.subject || '(no subject)',
+    sendInboundNotification(env, { storageId, from: message.from, to: recipient, subject: parsed.subject || '(no subject)',
       timestamp: date, snippet: parsed.snippet }).catch(() => {
       safeLog('inbound_notification_failed', { correlationId, messageId: storageId });
       return null;
     }),
-    sendCloudflareAutoReply(message, env).catch(() => {
+    sendAutomaticReply(message, env, storageId).catch(() => {
       safeLog('inbound_auto_reply_failed', { correlationId, messageId: storageId });
       return null;
     })

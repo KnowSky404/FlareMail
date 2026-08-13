@@ -25,7 +25,7 @@ export async function getWorkspaceCapabilities(env?: CloudflareEnv): Promise<Wor
   try {
     const [drafts, inboundStates, outboundStatuses, outboundReceipts, outboundEvents] = await Promise.all([
       hasNamedTables(env.DB, ['workspace_drafts']), hasNamedTables(env.DB, ['workspace_email_states']),
-      hasNamedTables(env.DB, ['workspace_outbound_statuses']), hasNamedTables(env.DB, ['workspace_outbound_receipts']),
+      hasNamedTables(env.DB, ['workspace_delivery_statuses']), hasNamedTables(env.DB, ['workspace_outbound_receipts']),
       hasNamedTables(env.DB, ['workspace_outbound_events'])
     ]);
     return { drafts, inboundStates, outboundStatuses, outboundReceipts, outboundEvents };

@@ -99,7 +99,8 @@ describe('versioned D1 migrations', () => {
       '0003_auth_and_settings.sql',
       '0004_delivery_states.sql',
       '0005_operational_indexes.sql',
-      '0006_inbound_ownership.sql'
+      '0006_inbound_ownership.sql',
+      '0007_outbound_contracts.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -122,6 +123,12 @@ describe('versioned D1 migrations', () => {
         'id', 'login_email', 'name', 'role', 'email', 'company', 'location', 'timezone', 'forwarding_enabled',
         'signature', 'incoming_sequence', 'created_at', 'updated_at', 'credential_hash', 'credential_salt',
         'credential_iterations', 'credential_updated_at'
+      ])
+    );
+    expect(tableColumns(db, 'workspace_drafts')).toEqual(
+      new Set([
+        'id', 'user_id', 'to_email', 'cc', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
+        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key'
       ])
     );
     expect(tableColumns(db, 'workspace_sessions')).toEqual(

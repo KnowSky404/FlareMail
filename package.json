@@ -14,7 +14,7 @@
     "check": "XDG_CONFIG_HOME=/tmp svelte-kit sync && XDG_CONFIG_HOME=/tmp svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test",
     "test:unit": "bun test src/lib/domain src/lib/server/auth src/lib/server/config src/lib/server/db src/lib/server/inbound/parser.test.ts src/lib/server/email.test.ts",
-    "test:integration": "bun test src/lib/server/email.integration.test.ts src/lib/server/db/migrations.test.ts",
+    "test:integration": "bun test src/lib/server/email.integration.test.ts src/lib/server/workspace/outbound.integration.test.ts src/lib/server/db/migrations.test.ts",
     "cf:typegen": "XDG_CONFIG_HOME=/tmp wrangler types --env-interface CloudflareEnv",
     "db:migrate:local": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --local --config wrangler.toml",
     "db:migrate:remote": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --remote --config wrangler.deploy.toml",

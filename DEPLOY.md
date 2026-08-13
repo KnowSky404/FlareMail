@@ -20,7 +20,8 @@
 推荐本地变量至少包含：
 
 ```env
-OUTBOUND_PROVIDER=demo
+APP_ENV=production
+OUTBOUND_PROVIDER=resend
 OUTBOUND_FROM_EMAIL=dev@your-domain.com
 OUTBOUND_FROM_NAME=FlareMail
 AUTO_REPLY_ENABLED=true
@@ -43,10 +44,10 @@ bun x wrangler r2 bucket create flaremail-bucket-preview
 
 ## 3. 初始化数据库并部署
 
-先将 schema 应用到远程 D1：
+先备份现有数据，再按版本应用远程 D1 migrations：
 
 ```bash
-bun x wrangler d1 execute flaremail-db --remote --file ./schema.sql
+bun run db:migrate:remote
 ```
 
 部署前建议先跑：
@@ -69,13 +70,13 @@ bun run deploy
 
 - 域名已开启 Email Routing
 - `dev@your-domain.com` 这类地址已路由到当前 Worker
-- `send_email` 绑定允许的 sender/destination 与实际配置一致
+- Resend 已验证 `OUTBOUND_FROM_EMAIL` 对应的域名或发件地址
 
 注意：
 
-- 当前默认 `OUTBOUND_PROVIDER=demo`，表示工作台 UI 发送仍走演示 provider
-- 入站自动回信和入站通知由 Worker 原生邮件能力处理
-- 如果要把 UI 发送切到 Cloudflare 原生外发，再把 `OUTBOUND_PROVIDER` 改成 `cloudflare`
+- production 必须使用 `OUTBOUND_PROVIDER=resend`，并通过 Wrangler secret 注入 `RESEND_API_KEY`
+- 工作台发送、重试、入站自动回信和入站通知统一通过 Resend gateway
+- `demo`/`fake` 只允许 development/test 且必须显式设置 `ALLOW_FAKE_SERVICES=true`
 
 ## 5. 文件分工
 

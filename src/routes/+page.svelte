@@ -80,6 +80,7 @@
   let composeMode = $state<ComposeMode>('new');
   let composeInitialInput = $state<ComposeInput | null>(null);
   let composeDraftId = $state<string | undefined>(undefined);
+  let composeSubmissionId = $state<string | undefined>(undefined);
   let composeLiveInput = $state<ComposeInput | null>(null);
   let composeTouched = $state(false);
   let composeAutosavePending = $state(false);
@@ -212,7 +213,10 @@
       toEmail: input.toEmail.trim(),
       cc: (input.cc ?? '').trim(),
       subject: input.subject,
-      body: input.body
+      body: input.body,
+      messageId: input.messageId ?? null,
+      inReplyTo: input.inReplyTo ?? null,
+      references: input.references ?? null
     });
   };
 
@@ -248,6 +252,7 @@
     composeMode = 'new';
     composeInitialInput = null;
     composeDraftId = undefined;
+    composeSubmissionId = undefined;
     composeLiveInput = null;
     composeTouched = false;
     composeAutosavePending = false;
@@ -262,7 +267,10 @@
       toEmail: message.toEmail,
       cc: message.cc ?? '',
       subject: message.subject === '未命名草稿' ? '' : message.subject,
-      body: message.body
+      body: message.body,
+      messageId: message.messageId,
+      inReplyTo: message.inReplyTo,
+      references: message.references
     } satisfies ComposeInput;
 
     composeDraftId = message.id;
@@ -520,6 +528,7 @@
     composeMode = mode;
     composeInitialInput = initialInput;
     composeDraftId = initialInput?.draftId;
+    composeSubmissionId = crypto.randomUUID();
     composeLiveInput = initialInput ? { ...initialInput } : createEmptyComposeInput();
     composeTouched = false;
     composeAutosavePending = false;
@@ -705,6 +714,7 @@
     try {
       const result = await requestJson<MessageResponse>('/api/workspace/messages', {
         method: 'POST',
+        headers: composeSubmissionId ? { 'Idempotency-Key': composeSubmissionId } : undefined,
         body: JSON.stringify(withComposeDraftId(input))
       });
 

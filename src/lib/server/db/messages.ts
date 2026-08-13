@@ -2,7 +2,8 @@ import type { WorkspaceCapabilities, WorkspaceInboundRow, WorkspaceMessageRow } 
 
 export async function listMessages(db: D1Database, userId: string) {
   return db.prepare(`
-    SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred
+    SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred,
+      message_id, in_reply_to, "references", thread_key, cc, idempotency_key
     FROM workspace_messages WHERE user_id = ? ORDER BY sent_at DESC, created_at DESC
   `).bind(userId).all<WorkspaceMessageRow>();
 }
@@ -22,11 +23,21 @@ export async function listInboundMessages(db: D1Database, userId: string, _login
 
 export function insertMessage(db: D1Database, payload: ReturnType<typeof import('$lib/server/workspace/shared').serializeMessageForInsert>) {
   return db.prepare(`
-    INSERT INTO workspace_messages (user_id, id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workspace_messages (user_id, id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred,
+      message_id, in_reply_to, "references", thread_key, cc, idempotency_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(payload.userId, payload.id, payload.folder, payload.fromName, payload.fromEmail, payload.toName, payload.toEmail,
     payload.subject, payload.preview, payload.body, payload.sentAt, payload.labelsJson, payload.isRead, payload.isStarred,
+    payload.messageId, payload.inReplyTo, payload.references, payload.threadKey, payload.cc, payload.idempotencyKey,
     payload.createdAt, payload.updatedAt);
+}
+
+export async function findMessageByIdempotencyKey(db: D1Database, userId: string, idempotencyKey: string) {
+  return db.prepare(`
+    SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
+      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, idempotency_key
+    FROM workspace_messages WHERE user_id = ? AND idempotency_key = ?
+  `).bind(userId, idempotencyKey).first<WorkspaceMessageRow>();
 }
 
 export function updateMessageFlags(db: D1Database, userId: string, messageId: string, read: boolean, starred: boolean, timestamp: string) {

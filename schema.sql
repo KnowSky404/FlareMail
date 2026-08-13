@@ -143,12 +143,20 @@ CREATE TABLE IF NOT EXISTS workspace_drafts (
   subject TEXT NOT NULL DEFAULT '',
   body TEXT NOT NULL DEFAULT '',
   is_starred INTEGER NOT NULL DEFAULT 0,
+  message_id TEXT,
+  in_reply_to TEXT,
+  "references" TEXT,
+  thread_key TEXT,
+  idempotency_key TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_updated_at
   ON workspace_drafts(user_id, updated_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_drafts_idempotency_key ON workspace_drafts(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_workspace_drafts_thread_key ON workspace_drafts(user_id, thread_key, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_email_states (
   id TEXT PRIMARY KEY,

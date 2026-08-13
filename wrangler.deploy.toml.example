@@ -4,7 +4,8 @@ compatibility_date = "2026-03-24"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-OUTBOUND_PROVIDER = "demo"
+APP_ENV = "production"
+OUTBOUND_PROVIDER = "resend"
 OUTBOUND_FROM_EMAIL = "dev@your-domain.com"
 OUTBOUND_FROM_NAME = "FlareMail"
 AUTO_REPLY_ENABLED = "true"
@@ -14,11 +15,6 @@ INBOUND_NOTIFICATION_ENABLED = "true"
 NOTIFICATION_EMAIL = "ops@example.com"
 NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
 
-[[send_email]]
-name = "OUTBOUND_EMAIL"
-allowed_destination_addresses = ["ops@example.com"]
-allowed_sender_addresses = ["dev@your-domain.com"]
-
 [assets]
 directory = "build"
 binding = "ASSETS"
@@ -27,6 +23,7 @@ binding = "ASSETS"
 binding = "DB"
 database_name = "flaremail-db"
 database_id = "REPLACE_WITH_REAL_D1_DATABASE_ID"
+migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "BUCKET"

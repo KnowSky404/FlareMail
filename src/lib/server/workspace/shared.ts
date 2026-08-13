@@ -97,6 +97,12 @@ export interface WorkspaceMessageRow {
   labels_json: string;
   is_read: number;
   is_starred: number;
+  message_id?: string | null;
+  in_reply_to?: string | null;
+  references?: string | null;
+  thread_key?: string | null;
+  cc?: string;
+  idempotency_key?: string | null;
 }
 
 export interface WorkspaceDraftRow {
@@ -108,6 +114,11 @@ export interface WorkspaceDraftRow {
   is_starred: number;
   created_at: string;
   updated_at: string;
+  message_id: string | null;
+  in_reply_to: string | null;
+  references: string | null;
+  thread_key: string | null;
+  idempotency_key: string | null;
 }
 
 export interface WorkspaceInboundRow {
@@ -223,7 +234,12 @@ export const mapWorkspaceMessageRow = (
   deliveryRemoteStatus: row.folder === 'sent' ? outboundStatus?.remote_status ?? null : null,
   deliveryResponsePreview: row.folder === 'sent' ? outboundStatus?.response_preview ?? '' : '',
   deliveryLastEvent: row.folder === 'sent' ? outboundStatus?.last_event ?? null : null,
-  deliveryLastEventAt: row.folder === 'sent' ? outboundStatus?.last_event_at ?? null : null
+  deliveryLastEventAt: row.folder === 'sent' ? outboundStatus?.last_event_at ?? null : null,
+  messageId: row.message_id ?? null,
+  inReplyTo: row.in_reply_to ?? null,
+  references: row.references ?? null,
+  threadKey: row.thread_key ?? null,
+  cc: row.cc ?? ''
 });
 
 export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailMessage =>
@@ -235,7 +251,10 @@ export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailM
     subject: row.subject,
     body: row.body,
     starred: Boolean(row.is_starred),
-    updatedAt: row.updated_at || row.created_at
+    updatedAt: row.updated_at || row.created_at,
+    messageId: row.message_id,
+    inReplyTo: row.in_reply_to,
+    references: row.references
   });
 
 export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile): MailMessage {
@@ -321,25 +340,34 @@ export function memoryDeliveryDetail(message: MailMessage): DeliveryDetail {
   };
 }
 
-export function serializeMessageForInsert(userId: string, message: MailMessage) {
+export function serializeMessageForInsert(userId: string, message: MailMessage, idempotencyKey = `flaremail:send:${message.id}`) {
   const timestamp = nowIso();
   return { userId, id: message.id, folder: message.folder, fromName: message.fromName, fromEmail: message.fromEmail,
     toName: message.toName, toEmail: message.toEmail, subject: message.subject, preview: message.preview, body: message.body,
     sentAt: message.sentAt, labelsJson: JSON.stringify(message.labels), isRead: message.read ? 1 : 0,
-    isStarred: message.starred ? 1 : 0, createdAt: timestamp, updatedAt: timestamp };
+    isStarred: message.starred ? 1 : 0, messageId: message.messageId ?? null, inReplyTo: message.inReplyTo ?? null,
+    references: message.references ?? null, threadKey: message.threadKey ?? null, cc: message.cc ?? '',
+    idempotencyKey, createdAt: timestamp, updatedAt: timestamp };
 }
 
 export function serializeDraftForInsert(userId: string, input: ComposeInput, starred: boolean) {
   const timestamp = nowIso();
-  return { userId, id: input.draftId ?? `draft-live-${crypto.randomUUID()}`, toEmail: input.toEmail.trim(),
+  const id = input.draftId ?? `draft-live-${crypto.randomUUID()}`;
+  return { userId, id, toEmail: input.toEmail.trim(),
     cc: input.cc?.trim() ?? '', subject: input.subject.trim(), body: input.body.trim(), isStarred: starred ? 1 : 0,
+    messageId: input.messageId ?? null, inReplyTo: input.inReplyTo ?? null, references: input.references ?? null,
+    threadKey: input.references ?? input.inReplyTo ?? input.messageId ?? null,
+    idempotencyKey: `flaremail:draft:${id}`,
     createdAt: timestamp, updatedAt: timestamp };
 }
 
 export function serializeOutboundStatusForUpsert(userId: string, messageId: string, state: OutboundDeliveryState) {
   const timestamp = nowIso();
   return { messageId, userId, status: state.status, attempts: state.attempts, deliveredAt: state.deliveredAt,
-    lastError: state.lastError, providerMessageId: state.providerMessageId, createdAt: timestamp, updatedAt: timestamp };
+    lastError: state.lastError, providerMessageId: state.providerMessageId,
+    idempotencyKey: `flaremail:send:${messageId}`, provider: state.provider,
+    submittedAt: null, sentAt: null, lastEvent: 'submission' as const, lastEventAt: timestamp,
+    createdAt: timestamp, updatedAt: timestamp };
 }
 
 export function serializeOutboundReceiptForUpsert(userId: string, messageId: string, state: OutboundDeliveryState) {
