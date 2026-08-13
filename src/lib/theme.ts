@@ -37,6 +37,9 @@ export const applyTheme = (preference: ThemePreference): ResolvedTheme => {
     } catch {
       // Theme remains applied for this tab when persistence is unavailable.
     }
+    window.dispatchEvent(
+      new CustomEvent('flaremail:theme-change', { detail: { preference, resolved } })
+    );
   }
 
   return resolved;

@@ -1,13 +1,18 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
+  import { onMount } from 'svelte';
   import type { PageData } from './$types';
   import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
+  import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
   import LoginView from '$lib/components/mail/LoginView.svelte';
-  import MessageDetailPane from '$lib/components/mail/MessageDetailPane.svelte';
-  import MessageListPane from '$lib/components/mail/MessageListPane.svelte';
+  import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
+  import MessageList from '$lib/components/mail/MessageList.svelte';
   import ProfilePane from '$lib/components/mail/ProfilePane.svelte';
   import AppSidebar from '$lib/components/shell/AppSidebar.svelte';
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
+  import Dialog from '$lib/components/ui/Dialog.svelte';
   import {
     buildMailThreads,
     cloneMailbox,
@@ -31,6 +36,7 @@
   } from '$lib/domain/mail';
 
   type AppSection = MailFolder | 'profile';
+  type MailFilter = 'all' | 'unread' | 'starred';
 
   type SessionResponse = {
     ok: boolean;
@@ -77,6 +83,10 @@
   let mailbox = $state<MailboxState>(cloneMailbox());
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
+  let searchQuery = $state('');
+  let mailFilter = $state<MailFilter>('all');
+  let mobileDetailOpen = $state(false);
+  let shortcutHelpOpen = $state(false);
   let composeOpen = $state(false);
   let composeMode = $state<ComposeMode>('new');
   let composeInitialInput = $state<ComposeInput | null>(null);
@@ -98,15 +108,41 @@
   let loginError = $state('');
   let profileStatus = $state('');
   let pending = $state(false);
+  let mailboxLoading = $state(false);
   let hydratedFromServer = $state(false);
   let composeAutosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let shortcutPrefix = '';
+  let shortcutPrefixTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const urlSection = $derived.by<AppSection>(() => {
+    const folder = page.url.searchParams.get('folder');
+    return folder === 'sent' || folder === 'drafts'
+      ? folder
+      : folder === 'settings'
+        ? 'profile'
+        : 'inbox';
+  });
+  const urlQuery = $derived(page.url.searchParams.get('q')?.slice(0, 200) ?? '');
+  const urlFilter = $derived.by<MailFilter>(() => {
+    const filter = page.url.searchParams.get('filter');
+    return filter === 'unread' || filter === 'starred' ? filter : 'all';
+  });
+  const urlMessageId = $derived(page.url.searchParams.get('message'));
+
+  $effect(() => {
+    activeSection = urlSection;
+    searchQuery = urlQuery;
+    mailFilter = urlFilter;
+    selectedMessageId = urlMessageId;
+    mobileDetailOpen = Boolean(urlMessageId);
+  });
 
   $effect(() => {
     if (!hydratedFromServer && serverWorkspace) {
       authenticated = true;
       profile = serverWorkspace.profile;
       mailbox = serverWorkspace.mailbox;
-      selectedMessageId = serverWorkspace.mailbox.inbox[0]?.id ?? null;
+      selectedMessageId = urlMessageId ?? nextSelection(serverWorkspace.mailbox, urlSection, null);
       banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
       hydratedFromServer = true;
     }
@@ -125,12 +161,43 @@
   const activeThreads = $derived(
     activeSection === 'inbox' || activeSection === 'sent' ? buildMailThreads(mailbox, activeSection) : []
   );
+  const normalizedSearchQuery = $derived(searchQuery.trim().toLocaleLowerCase('zh-CN'));
+  const visibleMessages = $derived.by(() =>
+    activeMessages.filter((message) => {
+      const matchesQuery =
+        !normalizedSearchQuery ||
+        [message.toName, message.toEmail, message.subject, message.preview]
+          .join('\n')
+          .toLocaleLowerCase('zh-CN')
+          .includes(normalizedSearchQuery);
+      const matchesFilter =
+        mailFilter === 'all' ||
+        (mailFilter === 'unread' && !message.read) ||
+        (mailFilter === 'starred' && message.starred);
+      return matchesQuery && matchesFilter;
+    })
+  );
+  const visibleThreads = $derived.by(() =>
+    activeThreads.filter((thread) => {
+      const matchesQuery =
+        !normalizedSearchQuery ||
+        [thread.counterpartLabel, thread.subject, thread.preview]
+          .join('\n')
+          .toLocaleLowerCase('zh-CN')
+          .includes(normalizedSearchQuery);
+      const matchesFilter =
+        mailFilter === 'all' ||
+        (mailFilter === 'unread' && thread.unreadCount > 0) ||
+        (mailFilter === 'starred' && thread.messages.some((message) => message.starred));
+      return matchesQuery && matchesFilter;
+    })
+  );
   const selectedThread = $derived.by(() => {
     if (activeSection === 'drafts' || activeSection === 'profile') {
       return null;
     }
 
-    const threads = activeThreads;
+    const threads = visibleThreads;
 
     if (!threads.length) {
       return null;
@@ -141,7 +208,7 @@
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
     if (activeSection === 'drafts') {
-      const list = activeMessages;
+      const list = visibleMessages;
 
       if (!list.length) {
         return null;
@@ -384,6 +451,16 @@
       options?.section ?? activeSection,
       options?.preferredMessageId ?? selectedMessageId
     );
+
+    if (options?.section) {
+      updateWorkspaceUrl(
+        {
+          section: options.section,
+          messageId: options.section === 'profile' ? null : selectedMessageId
+        },
+        true
+      );
+    }
   }
 
   function resetWorkspace() {
@@ -497,8 +574,42 @@
     }
   }
 
-  function setSection(section: AppSection) {
+  function updateWorkspaceUrl(
+    updates: {
+      section?: AppSection;
+      query?: string;
+      filter?: MailFilter;
+      messageId?: string | null;
+    },
+    replaceState = false
+  ) {
+    const url = new URL(page.url);
+
+    if (updates.section) {
+      url.searchParams.set('folder', updates.section === 'profile' ? 'settings' : updates.section);
+    }
+    if (updates.query !== undefined) {
+      const query = updates.query.trim().slice(0, 200);
+      if (query) url.searchParams.set('q', query);
+      else url.searchParams.delete('q');
+    }
+    if (updates.filter !== undefined) {
+      if (updates.filter === 'all') url.searchParams.delete('filter');
+      else url.searchParams.set('filter', updates.filter);
+    }
+    if (updates.messageId !== undefined) {
+      if (updates.messageId) url.searchParams.set('message', updates.messageId);
+      else url.searchParams.delete('message');
+    }
+
+    void goto(url, { replaceState, noScroll: true, keepFocus: true });
+  }
+
+  function setSection(section: AppSection, syncUrl = true) {
     activeSection = section;
+    searchQuery = '';
+    mailFilter = 'all';
+    mobileDetailOpen = false;
 
     if (section === 'inbox' || section === 'sent') {
       const threads = buildMailThreads(mailbox, section);
@@ -511,10 +622,52 @@
         section,
         currentThread?.sectionLatestMessage.id ?? selectedMessageId
       );
+
+      if (syncUrl) {
+        updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
+      }
       return;
     }
 
     selectedMessageId = nextSelection(mailbox, section, selectedMessageId);
+    if (syncUrl) {
+      updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
+    }
+  }
+
+  function handleSearchQueryChange(query: string) {
+    searchQuery = query;
+    selectedMessageId = null;
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ query, messageId: null }, true);
+  }
+
+  function handleFilterChange(filter: MailFilter) {
+    mailFilter = filter;
+    selectedMessageId = null;
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ filter, messageId: null });
+  }
+
+  function clearMailFilters() {
+    searchQuery = '';
+    mailFilter = 'all';
+    selectedMessageId = null;
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ query: '', filter: 'all', messageId: null }, true);
+  }
+
+  async function refreshWorkspace() {
+    mailboxLoading = true;
+    try {
+      const result = await requestJson<WorkspaceResponse>('/api/workspace/mailbox');
+      applyWorkspace(result.workspace);
+      banner = '邮件列表已刷新。';
+    } catch (error) {
+      banner = error instanceof Error ? error.message : '刷新邮件列表失败。';
+    } finally {
+      mailboxLoading = false;
+    }
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
@@ -577,6 +730,11 @@
 
     resetComposeState();
     banner = savedBeforeClose ? '未完成内容已保存为草稿。' : '已关闭写信面板。';
+  }
+
+  function discardCompose() {
+    resetComposeState();
+    banner = '已放弃本次未保存的改动。';
   }
 
   async function handleLogin(payload: LoginInput) {
@@ -803,6 +961,8 @@
 
   async function handleSelectMessage(message: MailMessage) {
     selectedMessageId = message.id;
+    mobileDetailOpen = true;
+    updateWorkspaceUrl({ messageId: message.id });
 
     if (message.folder === 'inbox' && !message.read) {
       await patchMessage(message, { read: true });
@@ -815,6 +975,11 @@
 
   async function handleSelectThread(thread: MailThread) {
     await handleSelectMessage(thread.sectionLatestMessage);
+  }
+
+  function closeMobileDetail() {
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ messageId: null }, true);
   }
 
   async function handleToggleStar(message: MailMessage) {
@@ -897,6 +1062,102 @@
       ? `已重新载入《${message.subject}》的投递回执。`
       : '重新载入投递回执失败。';
   }
+
+  function isEditableTarget(target: EventTarget | null) {
+    return (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      (target instanceof HTMLElement && target.isContentEditable)
+    );
+  }
+
+  function moveMessageSelection(direction: -1 | 1) {
+    const candidates =
+      activeSection === 'drafts'
+        ? visibleMessages
+        : visibleThreads.map((thread) => thread.sectionLatestMessage);
+    if (!candidates.length) return;
+
+    const currentIndex = candidates.findIndex((message) => message.id === selectedMessageId);
+    const fallbackIndex = direction > 0 ? 0 : candidates.length - 1;
+    const nextIndex =
+      currentIndex < 0
+        ? fallbackIndex
+        : Math.min(candidates.length - 1, Math.max(0, currentIndex + direction));
+    void handleSelectMessage(candidates[nextIndex]);
+  }
+
+  function setShortcutPrefix(value: string) {
+    shortcutPrefix = value;
+    if (shortcutPrefixTimer) clearTimeout(shortcutPrefixTimer);
+    shortcutPrefixTimer = setTimeout(() => {
+      shortcutPrefix = '';
+      shortcutPrefixTimer = null;
+    }, 900);
+  }
+
+  onMount(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!authenticated || composeOpen) return;
+
+      if (event.key === 'Escape') {
+        if (shortcutHelpOpen) {
+          event.preventDefault();
+          shortcutHelpOpen = false;
+        } else if (mobileDetailOpen) {
+          event.preventDefault();
+          closeMobileDetail();
+        }
+        return;
+      }
+
+      if (isEditableTarget(event.target) || event.ctrlKey || event.metaKey || event.altKey) return;
+
+      const key = event.key.toLocaleLowerCase('en-US');
+      if (shortcutPrefix === 'g' && (key === 'i' || key === 's' || key === 'd')) {
+        event.preventDefault();
+        shortcutPrefix = '';
+        setSection(key === 'i' ? 'inbox' : key === 's' ? 'sent' : 'drafts');
+        return;
+      }
+
+      if (key === 'g') {
+        event.preventDefault();
+        setShortcutPrefix('g');
+        return;
+      }
+
+      if (key === '/') {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('flaremail:focus-search'));
+      } else if (key === 'c') {
+        event.preventDefault();
+        openCompose('new');
+      } else if (key === 'j') {
+        event.preventDefault();
+        moveMessageSelection(1);
+      } else if (key === 'k') {
+        event.preventDefault();
+        moveMessageSelection(-1);
+      } else if (key === 'r' && selectedMessage?.folder === 'inbox') {
+        event.preventDefault();
+        handleReplyMessage(selectedMessage);
+      } else if (key === 'f' && selectedMessage && selectedMessage.folder !== 'drafts') {
+        event.preventDefault();
+        handleForwardMessage(selectedMessage);
+      } else if (event.key === '?') {
+        event.preventDefault();
+        shortcutHelpOpen = true;
+      }
+    };
+
+    document.addEventListener('keydown', handleShortcut);
+    return () => {
+      document.removeEventListener('keydown', handleShortcut);
+      if (shortcutPrefixTimer) clearTimeout(shortcutPrefixTimer);
+    };
+  });
 </script>
 
 <svelte:head>
@@ -937,19 +1198,21 @@
         }}
       />
 
-      <MobileNavigation
-        activeSection={activeSection}
-        draftCount={mailbox.drafts.length}
-        {pending}
-        unreadCount={unreadCount}
-        onCompose={() => {
-          openCompose('new');
-          banner = '正在写新邮件。';
-        }}
-        onSelectSection={setSection}
-      />
+      <div class:mobile-detail-nav-hidden={mobileDetailOpen}>
+        <MobileNavigation
+          activeSection={activeSection}
+          draftCount={mailbox.drafts.length}
+          {pending}
+          unreadCount={unreadCount}
+          onCompose={() => {
+            openCompose('new');
+            banner = '正在写新邮件。';
+          }}
+          onSelectSection={setSection}
+        />
+      </div>
 
-      <div class="fm-workspace-body">
+      <div class:mobile-detail-mode={mobileDetailOpen} class="fm-workspace-body">
         <div class="fm-workspace-shell">
           <AppSidebar
             activeSection={activeSection}
@@ -970,20 +1233,40 @@
                 <ProfilePane {pending} {profile} status={profileStatus} onSave={saveProfile} />
               </div>
             {:else}
-              <div class="flex h-full min-w-0">
-                <section class="w-[392px] flex-none border-r border-fm-border" aria-label="邮件列表">
-                  <MessageListPane
+              <div class:detail-open={mobileDetailOpen} class="mail-workspace">
+                <section class="mail-list-panel" aria-label="邮件列表">
+                  <FolderHeader
+                    activeSection={activeSection}
+                    count={activeSection === 'drafts' ? activeMessages.length : activeThreads.length}
+                    unreadCount={activeSection === 'inbox' ? unreadCount : 0}
+                    query={searchQuery}
+                    filter={mailFilter}
+                    loading={mailboxLoading}
+                    onQueryChange={handleSearchQueryChange}
+                    onFilterChange={handleFilterChange}
+                    onRefresh={refreshWorkspace}
+                  />
+                  <MessageList
                     activeSection={activeSection}
                     messages={activeMessages}
                     selectedThreadId={selectedThreadId}
                     threads={activeThreads}
                     {selectedMessageId}
+                    query={searchQuery}
+                    filter={mailFilter}
+                    loading={mailboxLoading}
+                    paginationEnd={true}
                     onSelect={handleSelectMessage}
                     onSelectThread={handleSelectThread}
+                    onToggleStar={handleToggleStar}
+                    onQueryChange={handleSearchQueryChange}
+                    onFilterChange={handleFilterChange}
+                    onClearFilters={clearMailFilters}
+                    onRefresh={refreshWorkspace}
                   />
                 </section>
-                <section class="min-w-0 flex-1 bg-fm-surface" aria-label="邮件详情">
-                  <MessageDetailPane
+                <section class="mail-detail-panel" aria-label="邮件详情">
+                  <MessageDetail
                     message={selectedMessage}
                     deliveryDetail={selectedDeliveryDetail}
                     deliveryDetailError={selectedDeliveryDetailError}
@@ -993,7 +1276,9 @@
                     inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
                     {pending}
                     rawDownloadHref={selectedInboundDownloadHref}
+                    showBack={true}
                     threadMessages={selectedThreadMessages}
+                    onBack={closeMobileDetail}
                     onEditDraft={handleEditDraft}
                     onForward={handleForwardMessage}
                     onReply={handleReplyMessage}
@@ -1027,6 +1312,7 @@
         pending={composeBusy}
         {profile}
         onClose={closeCompose}
+        onDiscard={discardCompose}
         onInputChange={(input) => {
           const nextInput = withComposeDraftId(input);
           const nextSignature = serializeComposeInput(nextInput);
@@ -1052,5 +1338,125 @@
         onSend={sendMessage}
       />
     {/if}
+
+    <Dialog
+      open={shortcutHelpOpen}
+      title="键盘快捷键"
+      description="在输入框和正文编辑器中，单键快捷键会自动停用。"
+      onClose={() => (shortcutHelpOpen = false)}
+    >
+      <dl class="shortcut-grid">
+        <div><dt><kbd>/</kbd></dt><dd>聚焦邮件搜索</dd></div>
+        <div><dt><kbd>C</kbd></dt><dd>写邮件</dd></div>
+        <div><dt><kbd>G</kbd> <kbd>I</kbd></dt><dd>前往收件箱</dd></div>
+        <div><dt><kbd>G</kbd> <kbd>S</kbd></dt><dd>前往已发送</dd></div>
+        <div><dt><kbd>G</kbd> <kbd>D</kbd></dt><dd>前往草稿箱</dd></div>
+        <div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>下一封 / 上一封</dd></div>
+        <div><dt><kbd>R</kbd></dt><dd>回复当前邮件</dd></div>
+        <div><dt><kbd>F</kbd></dt><dd>转发当前邮件</dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>打开快捷键帮助</dd></div>
+      </dl>
+    </Dialog>
   {/if}
 </div>
+
+<style>
+  .shortcut-grid {
+    display: grid;
+    gap: 0;
+    margin: 0;
+  }
+
+  .shortcut-grid div {
+    display: grid;
+    grid-template-columns: 124px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--fm-border);
+  }
+
+  .shortcut-grid div:last-child {
+    border-bottom: 0;
+  }
+
+  .shortcut-grid dt,
+  .shortcut-grid dd {
+    margin: 0;
+  }
+
+  .shortcut-grid dd {
+    color: var(--fm-text-secondary);
+    font-size: 13px;
+  }
+
+  .shortcut-grid kbd {
+    display: inline-flex;
+    min-width: 26px;
+    min-height: 24px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    border: 1px solid var(--fm-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--fm-text-secondary);
+    background: var(--fm-surface-subtle);
+    font: 600 11px/1 var(--font-sans);
+  }
+
+  .mail-workspace {
+    display: flex;
+    height: 100%;
+    min-width: 0;
+  }
+
+  .mail-list-panel {
+    display: flex;
+    width: 392px;
+    min-width: 0;
+    flex: none;
+    flex-direction: column;
+    border-right: 1px solid var(--fm-border);
+    background: var(--fm-surface);
+  }
+
+  .mail-detail-panel {
+    min-width: 520px;
+    flex: 1;
+    background: var(--fm-surface);
+  }
+
+  @media (max-width: 1279px) {
+    .mail-list-panel,
+    .mail-detail-panel {
+      width: 100%;
+      min-width: 0;
+      border-right: 0;
+    }
+
+    .mail-detail-panel,
+    .mail-workspace.detail-open .mail-list-panel {
+      display: none;
+    }
+
+    .mail-workspace.detail-open .mail-detail-panel {
+      display: block;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .mobile-detail-nav-hidden {
+      display: none;
+    }
+
+    :global(.fm-workspace-body.mobile-detail-mode) {
+      grid-template-rows: minmax(0, 1fr);
+      height: 100dvh;
+    }
+
+    :global(.fm-workspace-body.mobile-detail-mode) :global(.fm-workspace-status) {
+      display: none;
+    }
+  }
+</style>

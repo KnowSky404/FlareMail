@@ -1,26 +1,35 @@
 <script lang="ts">
-  import {
-    type ComposeInput,
-    type ComposeMode,
-    type UserProfile
-  } from '$lib/domain/mail';
+  import { validateComposeInput } from '$lib/domain/mail';
+  import { Button, Dialog, TextArea, TextField } from '$lib/components/ui';
+  import type { ComposeInput, ComposeMode, UserProfile } from '$lib/domain/mail';
   import { onMount } from 'svelte';
 
-  const createComposeState = (value: ComposeInput | null): ComposeInput =>
+  const createComposeState = (value: ComposeInput | null, fallbackDraftId?: string): ComposeInput =>
     value
       ? {
-          draftId: value.draftId,
-          toEmail: value.toEmail,
-          cc: value.cc ?? '',
-          subject: value.subject,
-          body: value.body
+          ...value,
+          draftId: value.draftId ?? fallbackDraftId,
+          cc: value.cc ?? ''
         }
       : {
+          draftId: fallbackDraftId,
           toEmail: '',
           cc: '',
           subject: '',
           body: ''
         };
+
+  const serializeComposeInput = (value: ComposeInput) =>
+    JSON.stringify({
+      draftId: value.draftId ?? null,
+      toEmail: value.toEmail,
+      cc: value.cc ?? '',
+      subject: value.subject,
+      body: value.body,
+      messageId: value.messageId ?? null,
+      inReplyTo: value.inReplyTo ?? null,
+      references: value.references ?? null
+    });
 
   let {
     initialInput = null,
@@ -31,6 +40,7 @@
     autosaveStatus = 'idle',
     autosaveMessage = '自动保存会在停顿后触发。',
     onClose,
+    onDiscard,
     onInputChange,
     onSaveDraft,
     onSend
@@ -43,165 +53,226 @@
     autosaveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
     autosaveMessage?: string;
     onClose: () => void;
+    /** Optional discard path; the parent can clear the live compose state without autosaving. */
+    onDiscard?: () => void;
     onInputChange?: (input: ComposeInput) => void;
     onSaveDraft: (input: ComposeInput) => void | Promise<void>;
     onSend: (input: ComposeInput) => void | Promise<void>;
   } = $props();
 
   let input = $state<ComposeInput>(createComposeState(null));
+  let baseline = $state('');
+  let touched = $state<Record<string, boolean>>({});
+  let attempted = $state(false);
+  let showCc = $state(false);
+  let showCloseConfirm = $state(false);
 
   $effect(() => {
-    input = createComposeState(initialInput);
+    const next = createComposeState(initialInput, initialInput?.draftId);
+    input = next;
+    baseline = serializeComposeInput(next);
+    touched = {};
+    attempted = false;
+    showCc = Boolean(next.cc?.trim());
   });
 
   $effect(() => {
-    if (draftId && draftId !== input.draftId) {
-      input = {
-        ...input,
-        draftId
-      };
+    if (draftId && input.draftId !== draftId) {
+      input = { ...input, draftId };
     }
   });
 
-  onMount(() => {
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeydown);
-    return () => window.removeEventListener('keydown', handleKeydown);
+  $effect(() => {
+    if (autosaveStatus === 'saved') {
+      baseline = serializeComposeInput(input);
+    }
   });
 
   const title = $derived(
     mode === 'new' ? '新邮件' : mode === 'reply' ? '回复邮件' : mode === 'forward' ? '转发邮件' : '编辑草稿'
   );
-
+  const validation = $derived(validateComposeInput(input));
+  const isEmpty = $derived(!input.toEmail.trim() && !input.cc?.trim() && !input.subject.trim() && !input.body.trim());
+  const isDirty = $derived(
+    !isEmpty &&
+      (serializeComposeInput(input) !== baseline ||
+        autosaveStatus === 'dirty' ||
+        autosaveStatus === 'saving' ||
+        autosaveStatus === 'error')
+  );
+  const sendDisabled = $derived(pending || !validation.ok);
   const autosaveTone = $derived(
     autosaveStatus === 'error'
-      ? 'text-coral'
+      ? 'text-[var(--fm-danger)]'
       : autosaveStatus === 'saved'
-        ? 'text-accent'
+        ? 'text-[var(--fm-success)]'
         : autosaveStatus === 'saving'
-          ? 'text-gold'
-          : 'text-mist'
+          ? 'text-[var(--fm-warning)]'
+          : 'text-[var(--fm-text-muted)]'
   );
 
-  function updateInput<K extends keyof ComposeInput>(key: K, value: ComposeInput[K]) {
-    const next = {
-      ...input,
-      [key]: value
-    };
+  function fieldError(field: string): string | undefined {
+    if (!attempted && !touched[field]) return undefined;
+    return validation.issues.find((issue) => issue.field === field)?.message;
+  }
 
+  function updateInput<K extends keyof ComposeInput>(key: K, value: ComposeInput[K]) {
+    const next = { ...input, [key]: value };
     input = next;
+    touched = { ...touched, [String(key)]: true };
     onInputChange?.(next);
   }
+
+  function requestClose() {
+    if (showCloseConfirm) return;
+    if (isDirty) {
+      showCloseConfirm = true;
+      return;
+    }
+    onClose();
+  }
+
+  function saveAndClose() {
+    showCloseConfirm = false;
+    onClose();
+  }
+
+  function discardAndClose() {
+    showCloseConfirm = false;
+    if (onDiscard) {
+      onDiscard();
+      return;
+    }
+    // Kept as a compatibility fallback. Parents that autosave in onClose should provide onDiscard.
+    onClose();
+  }
+
+  function handleShortcut(event: KeyboardEvent) {
+    const dialog = document.querySelector('.compose-dialog');
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && dialog?.contains(event.target as Node)) {
+      event.preventDefault();
+      attempted = true;
+      if (!sendDisabled) void onSend(input);
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  });
 </script>
 
-<!-- Backdrop -->
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/20 backdrop-blur-sm p-4">
-  <!-- Modal Content -->
-  <div class="paper-card flex h-full max-h-[850px] w-full max-w-4xl flex-col overflow-hidden rounded-2xl shadow-2xl">
-    <!-- Header -->
-    <header class="flex items-center justify-between border-b border-line bg-shell/50 px-6 py-4">
-      <div class="flex items-center gap-3">
-        <span class="meta-text text-gold">{title}</span>
-        <span class="h-1 w-1 rounded-full bg-line"></span>
-        <span class="meta-text">{profile.email}</span>
-      </div>
-      <button
-        aria-label="关闭写信弹窗"
-        class="text-mist transition-colors hover:text-coral"
-        onclick={onClose}
-        type="button"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </header>
-
-    <!-- Form -->
-    <div class="flex-1 overflow-y-auto bg-shell/30 p-8 lg:p-12">
-      <div class="mx-auto max-w-3xl space-y-8">
-        <div class="space-y-4">
-          <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
-            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">收件人</span>
-            <input
-              class="w-full bg-transparent text-sm font-semibold text-ink outline-none"
-              placeholder="someone@example.com"
-              type="email"
-              value={input.toEmail}
-              oninput={(event) => updateInput('toEmail', event.currentTarget.value)}
-            />
-          </div>
-
-          <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
-            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">抄送</span>
-            <input
-              class="w-full bg-transparent text-sm text-ink outline-none"
-              placeholder="optional@example.com"
-              type="text"
-              value={input.cc ?? ''}
-              oninput={(event) => updateInput('cc', event.currentTarget.value)}
-            />
-          </div>
-
-          <div class="group relative border-b border-line pb-2 focus-within:border-gold transition-colors">
-            <span class="absolute -top-4 left-0 text-[10px] font-bold uppercase tracking-widest text-mist">主题</span>
-            <input
-              class="editorial-heading w-full bg-transparent text-2xl text-ink outline-none"
-              placeholder="输入邮件主题"
-              type="text"
-              value={input.subject}
-              oninput={(event) => updateInput('subject', event.currentTarget.value)}
-            />
-          </div>
-        </div>
-
-        <div class="relative mt-12">
-          <textarea
-            class="min-h-[400px] w-full resize-none bg-transparent text-[16px] leading-[1.8] text-ink/90 outline-none placeholder:text-mist/30"
-            placeholder="在这里撰写正文..."
-            value={input.body}
-            oninput={(event) => updateInput('body', event.currentTarget.value)}
-          ></textarea>
-        </div>
-      </div>
+<Dialog
+  open
+  {title}
+  description={profile.email}
+  size="xl"
+  class="compose-dialog !max-w-[56rem] max-sm:-m-4 max-sm:h-[100dvh] max-sm:max-h-none max-sm:w-[calc(100vw+2rem)] max-sm:max-w-none max-sm:rounded-none"
+  closeOnBackdrop={false}
+  onClose={requestClose}
+>
+  <form class="flex min-h-[34rem] flex-col gap-5 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()}>
+    <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)]">
+      <span>发件人：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
+      <span class="hidden shrink-0 sm:inline">纯文本邮件</span>
     </div>
 
-    <!-- Footer Actions -->
-    <footer class="flex items-center justify-between border-t border-line bg-shell/50 px-8 py-6">
-      <div class="flex items-center gap-6">
-        <button
-          class="meta-text transition-colors hover:text-gold disabled:opacity-50"
-          disabled={pending}
-          onclick={() => onSaveDraft(input)}
-          type="button"
-        >
-          保存草稿
-        </button>
-        <span class="h-4 w-px bg-line"></span>
-        <p class={`text-[10px] italic ${autosaveTone}`}>
-          {autosaveMessage}
-        </p>
+    <div class="grid gap-4">
+      <TextField
+        id="compose-to"
+        label="收件人"
+        type="email"
+        required
+        autocomplete="email"
+        placeholder="name@example.com"
+        value={input.toEmail}
+        error={fieldError('toEmail')}
+        oninput={(event) => updateInput('toEmail', event.currentTarget.value)}
+      />
+
+      <div class="grid gap-2">
+        {#if showCc}
+          <TextField
+            id="compose-cc"
+            label="抄送"
+            hint="多个地址可使用逗号、分号或空格分隔。"
+            placeholder="optional@example.com"
+            value={input.cc ?? ''}
+            error={fieldError('cc')}
+            oninput={(event) => updateInput('cc', event.currentTarget.value)}
+          />
+        {:else}
+          <button
+            class="w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
+            type="button"
+            aria-expanded="false"
+            onclick={() => (showCc = true)}
+          >
+            添加抄送
+          </button>
+        {/if}
       </div>
 
-      <div class="flex items-center gap-4">
-        <button
-          class="border border-line px-8 py-3 text-[10px] font-bold uppercase tracking-widest text-ink transition-all hover:bg-paper"
-          onclick={onClose}
-          type="button"
-        >
-          取消
-        </button>
-        <button
-          class="bg-ink px-10 py-3 text-[10px] font-bold uppercase tracking-widest text-paper transition-all hover:bg-accent disabled:opacity-50"
-          disabled={pending}
-          onclick={() => onSend(input)}
-          type="button"
-        >
-          {pending ? '正在发送...' : '发送邮件'}
-        </button>
+      <TextField
+        id="compose-subject"
+        label="主题"
+        required
+        placeholder="输入邮件主题"
+        value={input.subject}
+        error={fieldError('subject')}
+        oninput={(event) => updateInput('subject', event.currentTarget.value)}
+      />
+    </div>
+
+    <TextArea
+      id="compose-body"
+      label="正文"
+      required
+      rows={12}
+      placeholder="在这里撰写正文…"
+      value={input.body}
+      error={fieldError('body')}
+      class="min-h-[18rem] flex-1 max-sm:min-h-[12rem]"
+      oninput={(event) => updateInput('body', event.currentTarget.value)}
+    />
+
+    {#if attempted && !validation.ok}
+      <p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/30 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">
+        请修正标记的字段后再发送。
+      </p>
+    {/if}
+  </form>
+
+  {#snippet footer()}
+    <div class="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <Button variant="ghost" size="sm" disabled={pending} onclick={() => onSaveDraft(input)}>保存草稿</Button>
+        <span class={`truncate text-xs ${autosaveTone}`} role="status" aria-live="polite">{autosaveMessage}</span>
+        <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> 发送</span>
       </div>
-    </footer>
-  </div>
-</div>
+      <div class="flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
+        <Button variant="outline" disabled={pending} onclick={requestClose}>取消</Button>
+        <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(input); }}>发送邮件</Button>
+      </div>
+    </div>
+  {/snippet}
+</Dialog>
+
+{#if showCloseConfirm}
+  <Dialog
+    open
+    title="未保存的改动"
+    description="这封邮件还有未保存内容。请选择离开方式。"
+    size="sm"
+    onClose={() => (showCloseConfirm = false)}
+  >
+    <p class="text-sm leading-6 text-[var(--fm-text-secondary)]">保存后可以在草稿箱继续编辑；放弃改动将永久丢失当前内容。</p>
+    {#snippet footer()}
+      <div class="flex w-full flex-wrap justify-end gap-2">
+        <Button variant="ghost" onclick={() => (showCloseConfirm = false)}>继续编辑</Button>
+        <Button variant="outline" onclick={saveAndClose}>保存并关闭</Button>
+        <Button variant="danger" onclick={discardAndClose}>放弃改动</Button>
+      </div>
+    {/snippet}
+  </Dialog>
+{/if}

@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
   import Switch from '$lib/components/ui/Switch.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
   import type { UserProfile } from '$lib/domain/mail';
+  import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
 
   const createProfileDraft = (profile: UserProfile): UserProfile => ({ ...profile });
 
@@ -32,6 +35,11 @@
       signature: ''
     })
   );
+  let themePreference = $state<ThemePreference>('system');
+
+  onMount(() => {
+    themePreference = readThemePreference();
+  });
 
   $effect(() => {
     nextProfile = createProfileDraft(profile);
@@ -123,6 +131,25 @@
       />
     </Panel>
 
+    <Panel title="外观" description="主题选择保存在当前浏览器，并在首屏绘制前应用。">
+      <div class="theme-field">
+        <Select
+          id="profile-theme"
+          label="颜色主题"
+          value={themePreference}
+          options={[
+            { value: 'system', label: '跟随系统' },
+            { value: 'light', label: '浅色' },
+            { value: 'dark', label: '深色' }
+          ]}
+          onchange={(value) => {
+            themePreference = value as ThemePreference;
+            applyTheme(themePreference);
+          }}
+        />
+      </div>
+    </Panel>
+
     <div class="save-row">
       <Button type="submit" loading={pending}>{pending ? '正在保存' : '保存设置'}</Button>
       {#if status}
@@ -170,6 +197,10 @@
     min-height: 44px;
     align-items: center;
     gap: var(--space-4);
+  }
+
+  .theme-field {
+    max-width: 320px;
   }
 
   .save-row p {
