@@ -1,6 +1,7 @@
-import { error } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { loadD1Session } from '$lib/server/workspace/mailbox';
+import { ApiError } from '$lib/server/http/api';
 
 export function getRequestEnv(event: RequestEvent) {
   return event.platform?.env as CloudflareEnv | undefined;
@@ -10,8 +11,17 @@ export function requireWorkspaceSession(event: RequestEvent) {
   const session = event.locals.workspaceSession;
 
   if (!session) {
-    throw error(401, '请先登录工作台。');
+    throw new ApiError(401, 'AUTHENTICATION_REQUIRED', '请先登录工作台。');
   }
 
+  return session;
+}
+
+export async function requireWorkspaceMailboxSession(event: RequestEvent) {
+  const context = requireWorkspaceSession(event);
+  const env = getRequestEnv(event);
+  if (!env?.DB) throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', '工作区存储暂不可用。');
+  const session = await loadD1Session(env, context.id);
+  if (!session) throw new ApiError(401, 'SESSION_EXPIRED', '登录会话已失效，请重新登录。');
   return session;
 }

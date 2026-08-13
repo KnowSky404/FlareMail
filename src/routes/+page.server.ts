@@ -1,36 +1,27 @@
 import type { PageServerLoad } from './$types';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { serializeWorkspace } from '$lib/server/workspace';
+import type { MailFolder, MailboxFilter, MailboxPage, WorkspacePayload } from '$lib/domain/mail';
+import { loadMailboxPage } from '$lib/server/workspace';
+import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
 
-type DashboardRow = {
-  total: number;
-  last_subject: string | null;
-  last_timestamp: string | null;
-};
+const mailFolders: MailFolder[] = ['inbox', 'sent', 'drafts'];
 
-export const load: PageServerLoad = async ({ platform, locals }) => {
+function requestedFolder(value: string | null): MailFolder {
+  return mailFolders.includes(value as MailFolder) ? value as MailFolder : 'inbox';
+}
+
+export const load: PageServerLoad = async ({ platform, locals, url }) => {
   const env = platform?.env as CloudflareEnv | undefined;
   const dbBound = Boolean(env?.DB);
   const bucketBound = Boolean(env?.BUCKET);
-  const workspace = locals.workspaceSession ? serializeWorkspace(locals.workspaceSession) : null;
+  const context = locals.workspaceSession;
 
-  if (!workspace) {
-    return {
-      dbBound: false,
-      bucketBound: false,
-      workspace: null,
-      schemaReady: false,
-      totalMessages: 0,
-      lastSubject: null,
-      lastTimestamp: null
-    };
-  }
-
-  if (!env?.DB) {
+  if (!context || !env?.DB) {
     return {
       dbBound,
       bucketBound,
-      workspace,
+      workspace: null,
+      mailboxPages: null,
       schemaReady: false,
       totalMessages: 0,
       lastSubject: null,
@@ -39,40 +30,45 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
   }
 
   try {
-    const stats = await env.DB.prepare(
-      `
-        SELECT
-          COUNT(*) AS total,
-          (
-            SELECT subject
-            FROM email_messages
-            ORDER BY "timestamp" DESC
-            LIMIT 1
-          ) AS last_subject,
-          (
-            SELECT "timestamp"
-            FROM email_messages
-            ORDER BY "timestamp" DESC
-            LIMIT 1
-          ) AS last_timestamp
-        FROM email_messages
-      `
-    ).first<DashboardRow>();
+    const activeFolder = requestedFolder(url.searchParams.get('folder'));
+    const pages = await Promise.all(mailFolders.map((folder) => {
+      const params = new URLSearchParams({ folder, limit: '40' });
+      if (folder === activeFolder) {
+        const query = url.searchParams.get('q');
+        const filter = url.searchParams.get('filter');
+        const status = url.searchParams.get('status');
+        if (query) params.set('q', query);
+        if (filter) params.set('filter', filter);
+        if (status) params.set('status', status);
+      }
+      return loadMailboxPage(env, context, parseMailboxQuery(params));
+    }));
+    const mailboxPages = Object.fromEntries(pages.map((page) => [page.folder, page])) as Record<MailFolder, MailboxPage>;
+    const mailbox = {
+      inbox: mailboxPages.inbox.messages,
+      sent: mailboxPages.sent.messages,
+      drafts: mailboxPages.drafts.messages
+    };
+    const metrics = mailboxPages.inbox.metrics;
+    const workspace: WorkspacePayload = { profile: context.profile, mailbox, metrics };
+    const latest = mailbox.inbox[0] ?? mailbox.sent[0] ?? null;
 
     return {
       dbBound,
       bucketBound,
       workspace,
+      mailboxPages,
       schemaReady: true,
-      totalMessages: stats?.total ?? 0,
-      lastSubject: stats?.last_subject ?? null,
-      lastTimestamp: stats?.last_timestamp ?? null
+      totalMessages: metrics.inboxCount + metrics.sentCount,
+      lastSubject: latest?.subject ?? null,
+      lastTimestamp: latest?.sentAt ?? null
     };
   } catch {
     return {
       dbBound,
       bucketBound,
-      workspace,
+      workspace: null,
+      mailboxPages: null,
       schemaReady: false,
       totalMessages: 0,
       lastSubject: null,

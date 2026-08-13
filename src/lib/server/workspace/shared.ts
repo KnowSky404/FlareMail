@@ -12,6 +12,8 @@ import {
   type DeliveryResultKind,
   type DeliveryStatus,
   type MailFolder,
+  type MailboxFilter,
+  type MailboxPage,
   type MailboxState,
   type MailMessage,
   type MessagePatch,
@@ -32,6 +34,8 @@ export type {
   DeliveryResultKind,
   DeliveryStatus,
   MailFolder,
+  MailboxFilter,
+  MailboxPage,
   MailboxState,
   MailMessage,
   MessagePatch,
@@ -47,15 +51,18 @@ export interface WorkspaceCapabilities {
   outboundEvents: boolean;
 }
 
-export interface WorkspaceSession {
+export interface WorkspaceContext {
   id: string;
   userId: string;
   profile: UserProfile;
-  mailbox: MailboxState;
   incomingSequence: number;
   createdAt: string;
   updatedAt: string;
   storage: 'memory' | 'd1';
+}
+
+export interface WorkspaceSession extends WorkspaceContext {
+  mailbox: MailboxState;
 }
 
 export interface WorkspaceUserRow {

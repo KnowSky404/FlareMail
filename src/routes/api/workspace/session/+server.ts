@@ -1,7 +1,7 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { LoginInput } from '$lib/domain/mail';
 import { clearLoginAttempts, consumeLoginAttempt } from '$lib/server/auth/rate-limit';
+import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/http/api';
 import {
   authenticateWorkspaceUser,
   clearSessionCookieOptions,
@@ -9,7 +9,7 @@ import {
   getWorkspaceSessionCookieName,
   isSecureSessionRequest,
   legacyWorkspaceSessionCookie,
-  serializeWorkspace,
+  loadWorkspaceSnapshot,
   sessionCookieOptions,
   secureWorkspaceSessionCookie,
   WorkspaceAuthUnavailableError,
@@ -17,37 +17,34 @@ import {
 } from '$lib/server/workspace';
 import { getRequestEnv } from '$lib/server/workspace-api';
 
-export const GET: RequestHandler = async ({ locals }) => {
-  return json({
-    ok: true,
-    authenticated: Boolean(locals.workspaceSession),
-    workspace: locals.workspaceSession ? serializeWorkspace(locals.workspaceSession) : null
+export const GET: RequestHandler = withApiHandler(async (event) => {
+  const env = getRequestEnv(event);
+  const snapshot = event.locals.workspaceSession && env?.DB
+    ? await loadWorkspaceSnapshot(env, event.locals.workspaceSession)
+    : null;
+  return apiSuccess(event, {
+    authenticated: Boolean(event.locals.workspaceSession),
+    workspace: snapshot?.workspace ?? null
   });
-};
+});
 
-export const POST: RequestHandler = async (event) => {
-  let payload: LoginInput;
-  try {
-    payload = (await event.request.json()) as LoginInput;
-  } catch {
-    return json({ ok: false, error: '请提供有效的登录信息。' }, { status: 400 });
-  }
-  if (!payload || typeof payload.email !== 'string' || typeof payload.password !== 'string') {
-    return json({ ok: false, error: '请提供有效的登录信息。' }, { status: 400 });
-  }
-  if (payload.email.length > 320 || payload.password.length > 1024) {
-    return json({ ok: false, error: '请提供有效的登录信息。' }, { status: 400 });
-  }
+export const POST: RequestHandler = withApiHandler(async (event) => {
+  const payload = await readJsonBody<LoginInput>(event);
+  if (
+    !payload ||
+    typeof payload.email !== 'string' ||
+    typeof payload.password !== 'string' ||
+    payload.email.length > 320 ||
+    payload.password.length > 1024
+  ) throw new ApiError(400, 'INVALID_LOGIN_INPUT', '请提供有效的登录信息。');
 
   const env = getRequestEnv(event);
-  const clientAddress = event.request.headers.get('CF-Connecting-IP') ?? event.request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ?? 'unknown';
+  const clientAddress = event.request.headers.get('CF-Connecting-IP') ??
+    event.request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ?? 'unknown';
   const attemptKey = `${clientAddress}:${payload.email}`;
   const rateLimit = consumeLoginAttempt(attemptKey);
   if (!rateLimit.allowed) {
-    return json({ ok: false, error: '登录尝试过多，请稍后再试。' }, {
-      status: 429,
-      headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) }
-    });
+    throw new ApiError(429, 'LOGIN_RATE_LIMITED', `登录尝试过多，请在 ${rateLimit.retryAfterSeconds} 秒后重试。`);
   }
 
   let authenticated;
@@ -55,20 +52,11 @@ export const POST: RequestHandler = async (event) => {
     authenticated = await authenticateWorkspaceUser(env, payload.email, payload.password, Boolean(payload.remember));
   } catch (error) {
     if (error instanceof WorkspaceAuthUnavailableError) {
-      return json({ ok: false, error: '当前运行环境尚未完成认证配置。' }, { status: 503 });
+      throw new ApiError(503, 'AUTHENTICATION_UNAVAILABLE', '当前运行环境尚未完成认证配置。');
     }
     throw error;
   }
-
-  if (!authenticated) {
-    return json(
-      {
-        ok: false,
-        error: '账号或密码错误。'
-      },
-      { status: 401 }
-    );
-  }
+  if (!authenticated) throw new ApiError(401, 'INVALID_CREDENTIALS', '账号或密码错误。');
 
   clearLoginAttempts(attemptKey);
   const secure = isSecureSessionRequest(event.url, env);
@@ -77,23 +65,16 @@ export const POST: RequestHandler = async (event) => {
   if (cookieName !== workspaceSessionCookie) event.cookies.delete(workspaceSessionCookie, clearSessionCookieOptions(false));
   event.cookies.delete(legacyWorkspaceSessionCookie, clearSessionCookieOptions(false));
 
-  return json({
-    ok: true,
+  return apiSuccess(event, {
     authenticated: true,
-    workspace: serializeWorkspace(authenticated.session)
+    workspace: (await loadWorkspaceSnapshot(env!, authenticated.session)).workspace
   });
-};
+});
 
-export const DELETE: RequestHandler = async (event) => {
-  const env = getRequestEnv(event);
-  await destroyWorkspaceSession(env, event.locals.workspaceSessionToken);
+export const DELETE: RequestHandler = withApiHandler(async (event) => {
+  await destroyWorkspaceSession(getRequestEnv(event), event.locals.workspaceSessionToken);
   event.cookies.delete(secureWorkspaceSessionCookie, clearSessionCookieOptions(true));
   event.cookies.delete(workspaceSessionCookie, clearSessionCookieOptions(false));
   event.cookies.delete(legacyWorkspaceSessionCookie, clearSessionCookieOptions(false));
-
-  return json({
-    ok: true,
-    authenticated: false,
-    workspace: null
-  });
-};
+  return apiSuccess(event, { authenticated: false, workspace: null });
+});

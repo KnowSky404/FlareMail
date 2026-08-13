@@ -154,6 +154,20 @@ export interface WorkspacePayload {
   metrics: WorkspaceMetrics;
 }
 
+export type MailboxFilter = 'all' | 'unread' | 'starred';
+
+export interface MailboxPage {
+  folder: MailFolder;
+  messages: MailMessage[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  limit: number;
+  query: string;
+  filter: MailboxFilter;
+  deliveryStatus: DeliveryStatus | null;
+  metrics: WorkspaceMetrics;
+}
+
 export interface DeliveryEvent {
   id: string;
   type: DeliveryEventType;

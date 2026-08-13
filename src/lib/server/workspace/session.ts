@@ -2,11 +2,11 @@ import type { Cookies } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { generateSessionToken, hashSessionToken } from '$lib/server/auth/token';
 import { hashPassword, verifyPassword } from '$lib/server/auth/password';
-import { getWorkspaceCapabilities, hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
+import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import { createSession, revokeSessionByTokenHash, touchSession } from '$lib/server/db/sessions';
 import { findAuthUserByLogin } from '$lib/server/db/users';
-import { loadD1Session, loadD1SessionByTokenHash } from '$lib/server/workspace/mailbox';
-import type { WorkspaceSession } from '$lib/server/workspace/shared';
+import { loadD1WorkspaceContext, loadD1WorkspaceContextByTokenHash } from '$lib/server/workspace/mailbox';
+import type { WorkspaceContext } from '$lib/server/workspace/shared';
 
 export const workspaceSessionCookie = 'flaremail_session';
 export const secureWorkspaceSessionCookie = '__Host-flaremail_session';
@@ -31,7 +31,7 @@ export class WorkspaceAuthUnavailableError extends Error {
 }
 
 export interface AuthenticatedWorkspace {
-  session: WorkspaceSession;
+  session: WorkspaceContext;
   token: string;
 }
 
@@ -54,7 +54,7 @@ export async function getWorkspaceSession(env: CloudflareEnv | undefined, token?
   if (!token || !(await hasWorkspaceCoreTables(env))) return null;
   try {
     const tokenHash = await hashSessionToken(token);
-    const session = await loadD1SessionByTokenHash(env!, tokenHash);
+    const session = await loadD1WorkspaceContextByTokenHash(env!, tokenHash);
     if (session) await touchSession(env!.DB, session.id).run();
     return session;
   } catch {
@@ -87,7 +87,7 @@ export async function authenticateWorkspaceUser(
   const lifetimeMs = remember ? REMEMBER_SESSION_DAYS * 24 * 60 * 60 * 1000 : SESSION_HOURS * 60 * 60 * 1000;
   const expiresAt = new Date(Date.now() + lifetimeMs).toISOString();
   const sessionId = await createSession(env.DB, user.id, tokenHash, expiresAt);
-  const session = await loadD1Session(env, sessionId, await getWorkspaceCapabilities(env));
+  const session = await loadD1WorkspaceContext(env, sessionId);
   if (!session) throw new WorkspaceAuthUnavailableError();
   return { session, token };
 }

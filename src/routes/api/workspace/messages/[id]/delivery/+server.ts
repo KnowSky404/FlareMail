@@ -1,25 +1,11 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
+import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
+import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
 import { getWorkspaceMessageDeliveryDetail } from '$lib/server/workspace';
 
-export const GET: RequestHandler = async (event) => {
-  const session = requireWorkspaceSession(event);
-  const env = getRequestEnv(event);
-  const detail = await getWorkspaceMessageDeliveryDetail(env, session, event.params.id);
-
-  if (!detail) {
-    return json(
-      {
-        ok: false,
-        error: '当前邮件没有可用的投递回执。'
-      },
-      { status: 404 }
-    );
-  }
-
-  return json({
-    ok: true,
-    detail
-  });
-};
+export const GET: RequestHandler = withApiHandler(async (event) => {
+  const session = await requireWorkspaceMailboxSession(event);
+  const detail = await getWorkspaceMessageDeliveryDetail(getRequestEnv(event), session, requirePathParam(event, 'id'));
+  if (!detail) throw new ApiError(404, 'DELIVERY_DETAIL_NOT_FOUND', '当前邮件没有可用的投递回执。');
+  return apiSuccess(event, { detail });
+});

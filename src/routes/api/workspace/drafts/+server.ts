@@ -1,16 +1,11 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { ComposeInput } from '$lib/domain/mail';
-import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
+import { apiSuccess, readJsonBody, withApiHandler } from '$lib/server/http/api';
+import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
 import { saveWorkspaceDraft } from '$lib/server/workspace';
 
-export const POST: RequestHandler = async (event) => {
-  const session = requireWorkspaceSession(event);
-  const payload = (await event.request.json()) as ComposeInput;
-  const env = getRequestEnv(event);
-
-  return json({
-    ok: true,
-    ...(await saveWorkspaceDraft(env, session, payload))
-  });
-};
+export const POST: RequestHandler = withApiHandler(async (event) => {
+  const session = await requireWorkspaceMailboxSession(event);
+  const payload = await readJsonBody<ComposeInput>(event);
+  return apiSuccess(event, await saveWorkspaceDraft(getRequestEnv(event), session, payload));
+});

@@ -13,6 +13,8 @@
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
+  import { requestJson } from '$lib/client/api';
+  import { LatestRequest } from '$lib/client/latest-request';
   import {
     buildMailThreads,
     cloneMailbox,
@@ -29,6 +31,7 @@
     type MailFolder,
     type MailMessage,
     type MailboxState,
+    type MailboxPage,
     type MailThread,
     type MessagePatch,
     type UserProfile,
@@ -50,6 +53,8 @@
     workspace: WorkspacePayload;
     error?: string;
   };
+
+  type MailboxPageResponse = { page: MailboxPage };
 
   type MessageResponse = WorkspaceResponse & {
     message: MailMessage;
@@ -81,6 +86,7 @@
   let authenticated = $state(false);
   let profile = $state<UserProfile>(cloneProfile());
   let mailbox = $state<MailboxState>(cloneMailbox());
+  let mailboxPages = $state<Record<MailFolder, MailboxPage> | null>(null);
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let searchQuery = $state('');
@@ -110,6 +116,10 @@
   let pending = $state(false);
   let mailboxLoading = $state(false);
   let hydratedFromServer = $state(false);
+  let appliedServerWorkspace = $state<WorkspacePayload | null>(null);
+  const mailboxRequest = new LatestRequest();
+  const inboundDetailRequest = new LatestRequest();
+  const deliveryDetailRequest = new LatestRequest();
   let composeAutosaveTimer: ReturnType<typeof setTimeout> | null = null;
   let shortcutPrefix = '';
   let shortcutPrefixTimer: ReturnType<typeof setTimeout> | null = null;
@@ -138,13 +148,17 @@
   });
 
   $effect(() => {
-    if (!hydratedFromServer && serverWorkspace) {
+    if (serverWorkspace && appliedServerWorkspace !== serverWorkspace) {
       authenticated = true;
       profile = serverWorkspace.profile;
       mailbox = serverWorkspace.mailbox;
+      mailboxPages = data.mailboxPages;
       selectedMessageId = urlMessageId ?? nextSelection(serverWorkspace.mailbox, urlSection, null);
-      banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
+      if (!hydratedFromServer) {
+        banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
+      }
       hydratedFromServer = true;
+      appliedServerWorkspace = serverWorkspace;
     }
   });
 
@@ -489,24 +503,6 @@
     loginError = '';
   }
 
-  async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        'content-type': 'application/json',
-        ...(init?.headers ?? {})
-      }
-    });
-
-    const payload = (await response.json()) as T & { error?: string };
-
-    if (!response.ok) {
-      throw new Error(payload.error ?? '请求失败。');
-    }
-
-    return payload;
-  }
-
   async function loadInboundDetail(message: MailMessage, force = false) {
     if (!isInboundMessageId(message.id)) {
       return false;
@@ -516,6 +512,7 @@
       return true;
     }
 
+    const request = inboundDetailRequest.begin();
     inboundDetailPendingId = message.id;
     inboundDetailErrors = {
       ...inboundDetailErrors,
@@ -524,22 +521,25 @@
 
     try {
       const result = await requestJson<InboundDetailResponse>(
-        `/api/workspace/messages/${encodeURIComponent(message.id)}/detail`
+        `/api/workspace/messages/${encodeURIComponent(message.id)}/detail`,
+        { signal: request.signal }
       );
-
-      inboundDetails = {
-        ...inboundDetails,
-        [message.id]: result.detail
-      };
+      if (request.isCurrent()) {
+        inboundDetails = {
+          ...inboundDetails,
+          [message.id]: result.detail
+        };
+      }
       return true;
     } catch (error) {
+      if (request.signal.aborted) return false;
       inboundDetailErrors = {
         ...inboundDetailErrors,
         [message.id]: error instanceof Error ? error.message : '加载原始邮件失败。'
       };
       return false;
     } finally {
-      if (inboundDetailPendingId === message.id) {
+      if (request.isCurrent() && inboundDetailPendingId === message.id) {
         inboundDetailPendingId = null;
       }
     }
@@ -554,6 +554,7 @@
       return true;
     }
 
+    const request = deliveryDetailRequest.begin();
     deliveryDetailPendingId = message.id;
     deliveryDetailErrors = {
       ...deliveryDetailErrors,
@@ -562,22 +563,25 @@
 
     try {
       const result = await requestJson<DeliveryDetailResponse>(
-        `/api/workspace/messages/${encodeURIComponent(message.id)}/delivery`
+        `/api/workspace/messages/${encodeURIComponent(message.id)}/delivery`,
+        { signal: request.signal }
       );
-
-      deliveryDetails = {
-        ...deliveryDetails,
-        [message.id]: result.detail
-      };
+      if (request.isCurrent()) {
+        deliveryDetails = {
+          ...deliveryDetails,
+          [message.id]: result.detail
+        };
+      }
       return true;
     } catch (error) {
+      if (request.signal.aborted) return false;
       deliveryDetailErrors = {
         ...deliveryDetailErrors,
         [message.id]: error instanceof Error ? error.message : '加载投递回执失败。'
       };
       return false;
     } finally {
-      if (deliveryDetailPendingId === message.id) {
+      if (request.isCurrent() && deliveryDetailPendingId === message.id) {
         deliveryDetailPendingId = null;
       }
     }
@@ -667,15 +671,70 @@
   }
 
   async function refreshWorkspace() {
+    const request = mailboxRequest.begin();
     mailboxLoading = true;
     try {
-      const result = await requestJson<WorkspaceResponse>('/api/workspace/mailbox');
-      applyWorkspace(result.workspace);
-      banner = '邮件列表已刷新。';
+      const params = new URLSearchParams({
+        folder: activeSection === 'profile' ? 'inbox' : activeSection,
+        limit: '40'
+      });
+      if (searchQuery.trim()) params.set('q', searchQuery.trim());
+      if (mailFilter !== 'all') params.set('filter', mailFilter);
+      const result = await requestJson<MailboxPageResponse>(`/api/workspace/mailbox?${params}`, {
+        signal: request.signal
+      });
+      if (request.isCurrent()) {
+        applyMailboxPage(result.page, false);
+        banner = '邮件列表已刷新。';
+      }
     } catch (error) {
+      if (request.signal.aborted) return;
       banner = error instanceof Error ? error.message : '刷新邮件列表失败。';
     } finally {
-      mailboxLoading = false;
+      if (request.isCurrent()) mailboxLoading = false;
+    }
+  }
+
+  function applyMailboxPage(page: MailboxPage, append: boolean) {
+    const existing = append ? mailbox[page.folder] : [];
+    const byId = new Map(existing.map((message) => [message.id, message]));
+    for (const message of page.messages) byId.set(message.id, message);
+    mailbox = {
+      ...mailbox,
+      [page.folder]: [...byId.values()].sort(
+        (left, right) => right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id)
+      )
+    };
+    mailboxPages = {
+      ...(mailboxPages ?? {} as Record<MailFolder, MailboxPage>),
+      [page.folder]: page
+    };
+  }
+
+  async function loadMoreMailbox() {
+    if (activeSection === 'profile') return;
+    const currentPage = mailboxPages?.[activeSection];
+    if (!currentPage?.nextCursor || !currentPage.hasMore) return;
+    const request = mailboxRequest.begin();
+    mailboxLoading = true;
+    try {
+      const params = new URLSearchParams({
+        folder: activeSection,
+        cursor: currentPage.nextCursor,
+        limit: String(currentPage.limit)
+      });
+      if (searchQuery.trim()) params.set('q', searchQuery.trim());
+      if (mailFilter !== 'all') params.set('filter', mailFilter);
+      const result = await requestJson<MailboxPageResponse>(`/api/workspace/mailbox?${params}`, {
+        signal: request.signal
+      });
+      if (request.isCurrent()) applyMailboxPage(result.page, true);
+    } catch (error) {
+      if (!request.signal.aborted) {
+        banner = error instanceof Error ? error.message : '加载更多邮件失败。';
+      }
+    } finally {
+      if (request.isCurrent()) mailboxLoading = false;
     }
   }
 
@@ -1267,7 +1326,8 @@
                     query={searchQuery}
                     filter={mailFilter}
                     loading={mailboxLoading}
-                    paginationEnd={true}
+                    hasMore={mailboxPages?.[activeSection]?.hasMore ?? false}
+                    paginationEnd={!(mailboxPages?.[activeSection]?.hasMore ?? false)}
                     onSelect={handleSelectMessage}
                     onSelectThread={handleSelectThread}
                     onToggleStar={handleToggleStar}
@@ -1275,6 +1335,7 @@
                     onFilterChange={handleFilterChange}
                     onClearFilters={clearMailFilters}
                     onRefresh={refreshWorkspace}
+                    onLoadMore={loadMoreMailbox}
                   />
                 </section>
                 <section class="mail-detail-panel" aria-label="邮件详情">

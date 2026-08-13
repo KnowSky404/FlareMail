@@ -1,23 +1,21 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { fromInboundMessageId, isInboundMessageId } from '$lib/domain/mail';
 import { listAttachmentsForMessage } from '$lib/server/db/attachments';
 import { findOwnedInboundMessage } from '$lib/server/db/inbound';
+import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 
-export const GET: RequestHandler = async (event) => {
+export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
   const env = getRequestEnv(event);
-  if (!isInboundMessageId(event.params.id)) return json({ ok: false, error: '当前邮件不支持加载入站详情。' }, { status: 404 });
-  if (!env?.DB) return json({ ok: false, error: '入站存储服务暂不可用。' }, { status: 503 });
-
-  const messageId = fromInboundMessageId(event.params.id);
+  const routeMessageId = requirePathParam(event, 'id');
+  if (!isInboundMessageId(routeMessageId)) throw new ApiError(404, 'INBOUND_DETAIL_NOT_FOUND', '当前邮件不支持加载入站详情。');
+  if (!env?.DB) throw new ApiError(503, 'INBOUND_STORAGE_UNAVAILABLE', '入站存储服务暂不可用。');
+  const messageId = fromInboundMessageId(routeMessageId);
   const record = await findOwnedInboundMessage(env.DB, session.userId, messageId);
-  if (!record) return json({ ok: false, error: '找不到对应的入站邮件。' }, { status: 404 });
+  if (!record) throw new ApiError(404, 'INBOUND_MESSAGE_NOT_FOUND', '找不到对应的入站邮件。');
   const attachments = await listAttachmentsForMessage(env.DB, messageId);
-
-  return json({
-    ok: true,
+  return apiSuccess(event, {
     detail: {
       body: record.text_body.trim() || record.snippet,
       rawSize: record.raw_size,
@@ -29,8 +27,8 @@ export const GET: RequestHandler = async (event) => {
         size: attachment.size,
         inline: Boolean(attachment.inline),
         contentId: attachment.content_id,
-        downloadUrl: `/api/workspace/messages/${encodeURIComponent(event.params.id)}/attachments/${encodeURIComponent(attachment.id)}`
+        downloadUrl: `/api/workspace/messages/${encodeURIComponent(routeMessageId)}/attachments/${encodeURIComponent(attachment.id)}`
       }))
     }
-  }, { headers: { 'cache-control': 'private, no-store' } });
-};
+  });
+});

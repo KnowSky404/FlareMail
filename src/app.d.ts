@@ -3,7 +3,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import type { CloudflareEnv } from './lib/server/cloudflare';
-import type { WorkspaceSession } from './lib/server/workspace';
+import type { WorkspaceContext } from './lib/server/workspace';
 
 declare global {
   namespace App {
@@ -18,7 +18,7 @@ declare global {
     interface Locals {
       workspaceSessionId?: string | null;
       workspaceSessionToken?: string | null;
-      workspaceSession?: WorkspaceSession | null;
+      workspaceSession?: WorkspaceContext | null;
     }
   }
 }

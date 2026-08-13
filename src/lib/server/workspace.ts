@@ -12,15 +12,17 @@ export type {
   DeliveryResultKind,
   DeliveryStatus,
   MailFolder,
+  MailboxFilter,
+  MailboxPage,
   MailboxState,
   MailMessage,
   MessagePatch,
   UserProfile,
   WorkspacePayload
 } from '$lib/server/workspace/shared';
-export type { WorkspaceSession } from '$lib/server/workspace/shared';
+export type { WorkspaceContext, WorkspaceSession } from '$lib/server/workspace/shared';
 
-export { serializeWorkspace } from '$lib/server/workspace/mailbox';
+export { loadMailboxPage, loadWorkspaceSnapshot, serializeWorkspace } from '$lib/server/workspace/mailbox';
 export {
   authenticateWorkspaceUser,
   clearSessionCookieOptions,

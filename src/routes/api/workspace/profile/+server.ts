@@ -1,26 +1,30 @@
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { UserProfile } from '$lib/domain/mail';
+import { validateProfile, type UserProfile } from '$lib/domain/mail';
+import {
+  ApiError,
+  apiSuccess,
+  fieldErrorsFromIssues,
+  readJsonBody,
+  withApiHandler
+} from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
-import { serializeWorkspace, updateWorkspaceProfile } from '$lib/server/workspace';
+import { loadWorkspaceSnapshot, updateWorkspaceProfile } from '$lib/server/workspace';
 
-export const GET: RequestHandler = async (event) => {
+export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
-
-  return json({
-    ok: true,
-    profile: session.profile,
-    workspace: serializeWorkspace(session)
-  });
-};
-
-export const PUT: RequestHandler = async (event) => {
-  const session = requireWorkspaceSession(event);
-  const payload = (await event.request.json()) as UserProfile;
   const env = getRequestEnv(event);
+  if (!env?.DB) throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', '工作区存储暂不可用。');
+  const { workspace } = await loadWorkspaceSnapshot(env, session);
+  return apiSuccess(event, { profile: session.profile, workspace });
+});
 
-  return json({
-    ok: true,
-    workspace: await updateWorkspaceProfile(env, session, payload)
+export const PUT: RequestHandler = withApiHandler(async (event) => {
+  const session = requireWorkspaceSession(event);
+  const validation = validateProfile(await readJsonBody<UserProfile>(event));
+  if (!validation.ok) {
+    throw new ApiError(400, 'VALIDATION_FAILED', '个人资料未通过验证。', fieldErrorsFromIssues(validation.issues));
+  }
+  return apiSuccess(event, {
+    workspace: await updateWorkspaceProfile(getRequestEnv(event), session, validation.value)
   });
-};
+});
