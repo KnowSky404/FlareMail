@@ -100,7 +100,8 @@ describe('versioned D1 migrations', () => {
       '0004_delivery_states.sql',
       '0005_operational_indexes.sql',
       '0006_inbound_ownership.sql',
-      '0007_outbound_contracts.sql'
+      '0007_outbound_contracts.sql',
+      '0008_login_rate_limits.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -155,6 +156,9 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_settings')).toEqual(
       new Set(['user_id', 'theme', 'settings_json', 'created_at', 'updated_at'])
     );
+    expect(tableColumns(db, 'workspace_login_rate_limits')).toEqual(
+      new Set(['identity_hash', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'])
+    );
 
     expect(indexNames(db, 'email_messages')).toEqual(
       new Set([
@@ -172,6 +176,9 @@ describe('versioned D1 migrations', () => {
     );
     expect(indexNames(db, 'workspace_attachments')).toEqual(
       new Set(['idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id'])
+    );
+    expect(indexNames(db, 'workspace_login_rate_limits')).toEqual(
+      new Set(['idx_workspace_login_rate_limits_reset_at'])
     );
 
     // The complete state CHECK and idempotency/dedupe uniqueness are real D1

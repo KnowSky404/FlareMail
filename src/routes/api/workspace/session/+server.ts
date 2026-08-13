@@ -39,10 +39,11 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   ) throw new ApiError(400, 'INVALID_LOGIN_INPUT', '请提供有效的登录信息。');
 
   const env = getRequestEnv(event);
+  if (!env?.DB) throw new ApiError(503, 'AUTHENTICATION_UNAVAILABLE', '当前运行环境尚未完成认证配置。');
   const clientAddress = event.request.headers.get('CF-Connecting-IP') ??
     event.request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ?? 'unknown';
   const attemptKey = `${clientAddress}:${payload.email}`;
-  const rateLimit = consumeLoginAttempt(attemptKey);
+  const rateLimit = await consumeLoginAttempt(env.DB, attemptKey);
   if (!rateLimit.allowed) {
     throw new ApiError(429, 'LOGIN_RATE_LIMITED', `登录尝试过多，请在 ${rateLimit.retryAfterSeconds} 秒后重试。`);
   }
@@ -58,7 +59,7 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   }
   if (!authenticated) throw new ApiError(401, 'INVALID_CREDENTIALS', '账号或密码错误。');
 
-  clearLoginAttempts(attemptKey);
+  await clearLoginAttempts(env.DB, attemptKey);
   const secure = isSecureSessionRequest(event.url, env);
   const cookieName = getWorkspaceSessionCookieName(secure);
   event.cookies.set(cookieName, authenticated.token, sessionCookieOptions(Boolean(payload.remember), secure));
