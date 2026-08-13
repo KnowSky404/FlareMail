@@ -273,6 +273,17 @@ summary {
 }
 
 @media (max-width: 767px) {
+  button,
+  [role='button'],
+  a,
+  summary,
+  input:not(.peer),
+  textarea,
+  select {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .fm-workspace-shell {
     display: block;
   }

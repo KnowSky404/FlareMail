@@ -15,9 +15,9 @@ export const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 export const buttonSizes: Record<ControlSize, string> = {
-  sm: 'min-h-8 px-2.5 text-xs',
-  md: 'min-h-9 px-3.5 text-sm',
-  lg: 'min-h-10 px-4 text-sm'
+  sm: 'min-h-11 min-w-11 px-2.5 text-xs sm:min-h-8 sm:min-w-0',
+  md: 'min-h-11 min-w-11 px-3.5 text-sm sm:min-h-9 sm:min-w-0',
+  lg: 'min-h-11 min-w-11 px-4 text-sm sm:min-h-10 sm:min-w-0'
 };
 
 export const controlBase =

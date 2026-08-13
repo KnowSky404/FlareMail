@@ -13,7 +13,7 @@
     Trash2
   } from '@lucide/svelte';
   import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/domain/mail';
-  import { ConfirmDialog, StatusBadge } from '$lib/components/ui';
+  import { ConfirmDialog, DropdownMenu, StatusBadge } from '$lib/components/ui';
 
   let {
     message = null,
@@ -56,6 +56,7 @@
   } = $props();
 
   let removeConfirmOpen = $state(false);
+  let actionsMenuOpen = $state(false);
 
   const formatDate = (value: string) =>
     new Intl.DateTimeFormat('zh-CN', {
@@ -171,20 +172,26 @@
         >
           <Mail class="size-[18px]" aria-hidden="true" />
         </button>
-        <details class="relative">
-          <summary class="grid size-11 cursor-pointer list-none place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)]" aria-label="更多邮件操作">
+        <DropdownMenu
+          open={actionsMenuOpen}
+          align="end"
+          class="message-actions-menu"
+          onOpenChange={(open) => (actionsMenuOpen = open)}
+        >
+          {#snippet trigger()}
             <MoreHorizontal class="size-[18px]" aria-hidden="true" />
-          </summary>
-          <div class="absolute right-0 top-12 z-10 w-52 rounded-[var(--radius-lg)] border border-[var(--fm-border)] bg-[var(--fm-surface)] p-1 shadow-[var(--fm-shadow-overlay)]">
+            <span class="sr-only">更多邮件操作</span>
+          {/snippet}
+          {#snippet children()}
             {#if message.folder === 'drafts'}
-              <button class="menu-action" type="button" onclick={() => onEditDraft?.(message)}><Archive class="size-4" aria-hidden="true" />继续编辑草稿</button>
+              <button class="menu-action" role="menuitem" type="button" onclick={() => onEditDraft?.(message)}><Archive class="size-4" aria-hidden="true" />继续编辑草稿</button>
             {/if}
             {#if message.folder === 'inbox'}
-              <button class="menu-action" type="button" onclick={() => onToggleRead?.(message)}><Mail class="size-4" aria-hidden="true" />{message.read ? '标为未读' : '标为已读'}</button>
+              <button class="menu-action" role="menuitem" type="button" onclick={() => onToggleRead?.(message)}><Mail class="size-4" aria-hidden="true" />{message.read ? '标为未读' : '标为已读'}</button>
             {/if}
-            <button class="menu-action text-[var(--fm-danger)]" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{message.folder === 'drafts' ? '删除草稿' : '删除邮件'}</button>
-          </div>
-        </details>
+            <button class="menu-action text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{message.folder === 'drafts' ? '删除草稿' : '删除邮件'}</button>
+          {/snippet}
+        </DropdownMenu>
       </div>
     </div>
 
@@ -284,10 +291,25 @@
   .action-button:disabled { cursor: not-allowed; opacity: 0.5; }
   .action-button-primary { border-color: var(--fm-primary); color: var(--fm-text-inverse); background: var(--fm-primary); }
   .action-button-primary:hover:not(:disabled) { color: var(--fm-text-inverse); background: var(--fm-primary-hover); }
-  .menu-action { display: flex; width: 100%; align-items: center; gap: 0.5rem; border-radius: var(--radius-md); padding: 0.55rem 0.625rem; text-align: left; font-size: 0.75rem; color: var(--fm-text-secondary); }
+  .menu-action { display: flex; width: 100%; min-height: 36px; align-items: center; gap: 0.5rem; border-radius: var(--radius-md); padding: 0.55rem 0.625rem; text-align: left; font-size: 0.75rem; color: var(--fm-text-secondary); }
   .menu-action:hover { background: var(--fm-surface-hover); color: var(--fm-text); }
 
-  @media (max-width: 639px) {
+  :global(.message-actions-menu > button) {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    gap: 0;
+    border-radius: var(--radius-md);
+    color: var(--fm-text-muted);
+  }
+
+  :global(.message-actions-menu > button:hover) { background: var(--fm-surface-hover); color: var(--fm-text); }
+  :global(.message-actions-menu > button > svg:last-child) { display: none; }
+  :global(.message-actions-menu [role='menu']) { width: 13rem; }
+
+  @media (max-width: 767px) {
     .action-button { min-height: 44px; padding-inline: 0.75rem; }
+    .menu-action { min-height: 44px; }
   }
 </style>
