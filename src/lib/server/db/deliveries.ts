@@ -22,7 +22,7 @@ export async function findDeliveryDetailRows(db: D1Database, userId: string, mes
     FROM workspace_outbound_receipts WHERE user_id = ? AND message_id = ?
   `).bind(userId, messageId).first<WorkspaceOutboundReceiptRow>() : null;
   const events = capabilities.outboundEvents ? await db.prepare(`
-    SELECT svix_id, event_type, event_created_at, summary, payload_json
+    SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json
     FROM workspace_outbound_events WHERE user_id = ? AND message_id = ? ORDER BY event_created_at DESC, created_at DESC
   `).bind(userId, messageId).all<WorkspaceOutboundEventRow>() : { results: [] as WorkspaceOutboundEventRow[] };
   return { receipt, events: events.results ?? [] };
@@ -179,7 +179,7 @@ export async function hasOutboundEvent(db: D1Database, svixId: string) {
 }
 
 export async function listUnmatchedOutboundEvents(db: D1Database, providerMessageId: string) {
-  return db.prepare(`SELECT svix_id, event_type, event_created_at, summary, payload_json
+  return db.prepare(`SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json
     FROM workspace_outbound_events
     WHERE user_id = 'unmatched' AND provider_message_id = ?
     ORDER BY event_created_at ASC, created_at ASC`)

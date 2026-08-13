@@ -170,6 +170,7 @@ export interface WorkspaceOutboundReceiptRow {
 
 export interface WorkspaceOutboundEventRow {
   svix_id: string;
+  provider_message_id: string | null;
   event_type: DeliveryEventType;
   event_created_at: string;
   summary: string;
@@ -389,7 +390,12 @@ export function serializeOutboundEventInsert(input: {
 }) { return { ...input, createdAt: nowIso() }; }
 
 export const mapEventRowToDeliveryEvent = (row: WorkspaceOutboundEventRow): DeliveryEvent => ({
-  id: row.svix_id, type: row.event_type, createdAt: row.event_created_at, summary: row.summary, payloadPreview: row.payload_json
+  id: row.svix_id,
+  type: row.event_type,
+  createdAt: row.event_created_at,
+  summary: row.summary,
+  payloadPreview: row.payload_json,
+  providerMessageId: row.provider_message_id
 });
 
 export function touchMemorySession(session: WorkspaceSession) {

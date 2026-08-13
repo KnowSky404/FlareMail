@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { FakeOutboundGateway, OutboundGatewayError } from '$lib/server/outbound/gateway';
 import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound';
+import { getWorkspaceMessageDeliveryDetail } from './delivery';
 import type { WorkspaceSession } from './shared';
 
 class TestStatement {
@@ -79,6 +80,8 @@ describe('outbound workspace persistence', () => {
 
     expect(database.query(`SELECT status, attempts, provider_message_id, delivered_at FROM workspace_delivery_statuses`).get())
       .toEqual({ status: 'submitted', attempts: 1, provider_message_id: 're_test_1', delivered_at: null });
+    expect((await getWorkspaceMessageDeliveryDetail(env, duplicateSession, first.message.id))?.events[0]?.providerMessageId)
+      .toBe('re_test_1');
 
     const envWithoutProvider = { ...env, OUTBOUND_PROVIDER: undefined };
     const replayWhileUnconfigured = await sendWorkspaceMessage(envWithoutProvider, duplicateSession, input, { requestId: 'compose-1' });
