@@ -17,6 +17,7 @@ declare global {
 
     interface Locals {
       workspaceSessionId?: string | null;
+      workspaceSessionToken?: string | null;
       workspaceSession?: WorkspaceSession | null;
     }
   }

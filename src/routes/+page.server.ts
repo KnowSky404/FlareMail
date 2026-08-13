@@ -14,6 +14,18 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
   const bucketBound = Boolean(env?.BUCKET);
   const workspace = locals.workspaceSession ? serializeWorkspace(locals.workspaceSession) : null;
 
+  if (!workspace) {
+    return {
+      dbBound: false,
+      bucketBound: false,
+      workspace: null,
+      schemaReady: false,
+      totalMessages: 0,
+      lastSubject: null,
+      lastTimestamp: null
+    };
+  }
+
   if (!env?.DB) {
     return {
       dbBound,

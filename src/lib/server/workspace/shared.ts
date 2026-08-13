@@ -39,24 +39,6 @@ export type {
   WorkspacePayload
 };
 
-export const demoCredentials = {
-  email: 'founder@flaremail.dev',
-  password: 'flaremail-demo'
-} as const;
-
-export const mockProfile: UserProfile = {
-  name: 'FlareMail User',
-  role: 'Workspace Owner',
-  email: demoCredentials.email,
-  company: 'FlareMail',
-  location: '',
-  timezone: 'Asia/Shanghai',
-  forwardingEnabled: false,
-  signature: ''
-};
-
-export const workspaceSessionCookie = 'flaremail_workspace';
-
 export interface WorkspaceCapabilities {
   drafts: boolean;
   inboundStates: boolean;
@@ -88,6 +70,11 @@ export interface WorkspaceUserRow {
   forwarding_enabled: number;
   signature: string;
   incoming_sequence: number;
+}
+
+export interface WorkspaceAuthUserRow extends WorkspaceUserRow {
+  credential_hash: string | null;
+  credential_updated_at: string | null;
 }
 
 export interface WorkspaceSessionJoinRow extends WorkspaceUserRow {
@@ -165,20 +152,6 @@ export interface WorkspaceOutboundEventRow {
   summary: string;
   payload_json: string;
 }
-
-export const legacySeedMessageIds = ['inbox-01', 'inbox-02', 'inbox-03', 'sent-01', 'sent-02'] as const;
-export const legacySeedSentIds = ['sent-01', 'sent-02'] as const;
-export const legacySeedDraftIds = ['draft-01'] as const;
-export const legacyProfileMatch = {
-  name: 'Evelyn Chen',
-  role: 'Founder, FlareMail',
-  email: demoCredentials.email,
-  company: 'FlareMail Labs',
-  location: 'Shanghai',
-  timezone: 'Asia/Shanghai',
-  forwardingEnabled: true,
-  signature: 'Regards,\nEvelyn\nFlareMail'
-} as const;
 
 export const nowIso = () => new Date().toISOString();
 
@@ -316,14 +289,6 @@ export const normalizePatch = (message: MailMessage, patch: MessagePatch): MailM
 export const cloneSession = (session: WorkspaceSession): WorkspaceSession => ({
   ...session, profile: cloneProfile(session.profile), mailbox: cloneMailbox(session.mailbox)
 });
-
-export function createMemoryWorkspaceSession(): WorkspaceSession {
-  const now = nowIso();
-  return {
-    id: crypto.randomUUID(), userId: 'memory-demo-user', profile: cloneProfile(), mailbox: cloneMailbox(),
-    incomingSequence: 0, createdAt: now, updatedAt: now, storage: 'memory'
-  };
-}
 
 export const serializeWorkspace = (session: WorkspaceSession): WorkspacePayload =>
   createWorkspacePayload(session.profile, session.mailbox);

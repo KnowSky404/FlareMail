@@ -1,6 +1,10 @@
 export interface CloudflareEnv {
   DB: D1Database;
   BUCKET: R2Bucket;
+  APP_ENV?: 'development' | 'preview' | 'test' | 'production';
+  APP_ORIGIN?: string;
+  APP_VERSION?: string;
+  ALLOW_FAKE_SERVICES?: string;
   OUTBOUND_EMAIL?: SendEmail;
   OUTBOUND_PROVIDER?: 'demo' | 'resend' | 'cloudflare';
   OUTBOUND_FROM_EMAIL?: string;

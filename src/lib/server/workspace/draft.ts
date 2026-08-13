@@ -2,9 +2,8 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { getWorkspaceCapabilities, hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import { upsertDraft } from '$lib/server/db/drafts';
 import { touchSession } from '$lib/server/db/sessions';
-import { createDraftMessage, serializeDraftForInsert, serializeWorkspace, sortMessages, type ComposeInput, type WorkspaceSession } from '$lib/server/workspace/shared';
+import { createDraftMessage, serializeDraftForInsert, serializeWorkspace, type ComposeInput, type WorkspaceSession } from '$lib/server/workspace/shared';
 import { refreshD1Session } from '$lib/server/workspace/mailbox';
-import { persistMemorySession } from '$lib/server/workspace/session';
 
 export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session: WorkspaceSession, input: ComposeInput) {
   const currentDraft = input.draftId ? session.mailbox.drafts.find((message) => message.id === input.draftId) ?? null : null;
@@ -20,7 +19,5 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
     if (!nextSession) throw new Error('保存草稿后无法重新加载工作区。');
     return { message: nextSession.mailbox.drafts.find((item) => item.id === draft.id) ?? draft, workspace: serializeWorkspace(nextSession) };
   }
-  session.mailbox = { inbox: session.mailbox.inbox.map((m) => ({ ...m, labels: [...m.labels] })), sent: session.mailbox.sent.map((m) => ({ ...m, labels: [...m.labels] })), drafts: sortMessages([draft, ...session.mailbox.drafts.filter((message) => message.id !== draft.id).map((m) => ({ ...m, labels: [...m.labels] }))]) };
-  persistMemorySession(session);
-  return { message: draft, workspace: serializeWorkspace(session) };
+  throw new Error('工作区存储未配置，无法保存草稿。');
 }

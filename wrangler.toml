@@ -4,6 +4,8 @@ compatibility_date = "2026-03-24"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
+APP_ENV = "development"
+ALLOW_FAKE_SERVICES = "true"
 OUTBOUND_PROVIDER = "demo"
 OUTBOUND_FROM_EMAIL = "dev@example.com"
 OUTBOUND_FROM_NAME = "FlareMail"
@@ -36,6 +38,7 @@ binding = "ASSETS"
 binding = "DB"
 database_name = "flaremail-db"
 database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "BUCKET"

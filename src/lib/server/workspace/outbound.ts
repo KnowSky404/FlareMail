@@ -5,9 +5,8 @@ import { deleteDraft } from '$lib/server/db/drafts';
 import { insertMessage } from '$lib/server/db/messages';
 import { touchSession } from '$lib/server/db/sessions';
 import { insertOutboundEvent, insertOutboundStatus, upsertOutboundReceipt, upsertOutboundStatus } from '$lib/server/db/deliveries';
-import { createSentMessage, findMessage, nowIso, serializeMessageForInsert, serializeOutboundEventInsert, serializeOutboundReceiptForUpsert, serializeOutboundStatusForUpsert, serializeWorkspace, sortMessages, type ComposeInput, type MailMessage, type WorkspaceSession } from '$lib/server/workspace/shared';
+import { createSentMessage, findMessage, nowIso, serializeMessageForInsert, serializeOutboundEventInsert, serializeOutboundReceiptForUpsert, serializeOutboundStatusForUpsert, serializeWorkspace, type ComposeInput, type MailMessage, type WorkspaceSession } from '$lib/server/workspace/shared';
 import { refreshD1Session } from '$lib/server/workspace/mailbox';
-import { persistMemorySession } from '$lib/server/workspace/session';
 
 const outboundInput = (message: MailMessage) => ({ messageId: message.id, fromName: message.fromName, fromEmail: message.fromEmail,
   toEmail: message.toEmail, cc: message.cc, subject: message.subject, text: message.body });
@@ -51,9 +50,7 @@ export async function sendWorkspaceMessage(env: CloudflareEnv | undefined, sessi
     if (!nextSession) throw new Error('发送邮件后无法重新加载工作区。');
     return { message, workspace: serializeWorkspace(nextSession) };
   }
-  session.mailbox = { inbox: session.mailbox.inbox.map((m) => ({ ...m, labels: [...m.labels] })), sent: sortMessages([message, ...session.mailbox.sent.map((m) => ({ ...m, labels: [...m.labels] }))]), drafts: session.mailbox.drafts.filter((m) => m.id !== draftId).map((m) => ({ ...m, labels: [...m.labels] })) };
-  persistMemorySession(session);
-  return { message, workspace: serializeWorkspace(session) };
+  throw new Error('工作区存储未配置，无法发送邮件。');
 }
 
 export async function retryWorkspaceMessageDelivery(env: CloudflareEnv | undefined, session: WorkspaceSession, messageId: string) {
@@ -72,8 +69,5 @@ export async function retryWorkspaceMessageDelivery(env: CloudflareEnv | undefin
     const nextMessage = findMessage(nextSession, messageId);
     return nextMessage ? { message: nextMessage, workspace: serializeWorkspace(nextSession) } : null;
   }
-  const message = applyDelivery(currentMessage, state);
-  session.mailbox = { inbox: session.mailbox.inbox.map((m) => ({ ...m, labels: [...m.labels] })), sent: session.mailbox.sent.map((item) => item.id === messageId ? message : { ...item, labels: [...item.labels] }), drafts: session.mailbox.drafts.map((m) => ({ ...m, labels: [...m.labels] })) };
-  persistMemorySession(session);
-  return { message, workspace: serializeWorkspace(session) };
+  throw new Error('工作区存储未配置，无法重试投递。');
 }

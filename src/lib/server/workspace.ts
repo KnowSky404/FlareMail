@@ -25,8 +25,14 @@ export {
   authenticateWorkspaceUser,
   clearSessionCookieOptions,
   destroyWorkspaceSession,
+  getWorkspaceSessionCookieName,
   getWorkspaceSession,
+  isSecureSessionRequest,
+  legacyWorkspaceSessionCookie,
   sessionCookieOptions,
+  secureWorkspaceSessionCookie,
+  WorkspaceAuthUnavailableError,
+  workspaceSessionCookieNames,
   workspaceSessionCookie
 } from '$lib/server/workspace/session';
 export { updateWorkspaceProfile } from '$lib/server/workspace/profile';

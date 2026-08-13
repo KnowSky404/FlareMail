@@ -42,12 +42,12 @@ type OutboundMessage = {
 
 const nowIso = () => new Date().toISOString();
 
-const normalizeProvider = (value: string | undefined | null): OutboundProviderName =>
-  value?.trim().toLowerCase() === 'resend'
-    ? 'resend'
-    : value?.trim().toLowerCase() === 'cloudflare'
-      ? 'cloudflare'
-      : 'demo';
+const normalizeProvider = (value: string | undefined | null): OutboundProviderName => {
+  const provider = value?.trim().toLowerCase();
+  if (provider === 'resend' || provider === 'cloudflare' || provider === 'demo') return provider;
+  if (provider === 'fake') return 'demo';
+  throw new Error('OUTBOUND_PROVIDER must be explicitly configured.');
+};
 
 const normalizeReason = (value: string) => value.trim().replace(/\s+/g, ' ');
 

@@ -9,9 +9,8 @@ import {
 } from '$lib/server/db/messages';
 import { deleteOutboundStatus } from '$lib/server/db/deliveries';
 import { touchSession } from '$lib/server/db/sessions';
-import { findMessage, fromInboundMessageId, isInboundMessageId, normalizePatch, nowIso, serializeWorkspace, type MessagePatch, type WorkspaceSession } from '$lib/server/workspace/shared';
+import { findMessage, fromInboundMessageId, isInboundMessageId, nowIso, serializeWorkspace, type MessagePatch, type WorkspaceSession } from '$lib/server/workspace/shared';
 import { refreshD1Session } from '$lib/server/workspace/mailbox';
-import { persistMemorySession } from '$lib/server/workspace/session';
 
 export async function patchWorkspaceMessage(env: CloudflareEnv | undefined, session: WorkspaceSession, messageId: string, patch: MessagePatch) {
   const currentMessage = findMessage(session, messageId);
@@ -34,14 +33,7 @@ export async function patchWorkspaceMessage(env: CloudflareEnv | undefined, sess
     const message = findMessage(nextSession, messageId);
     return message ? { message, workspace: serializeWorkspace(nextSession) } : null;
   }
-  session.mailbox = {
-    inbox: session.mailbox.inbox.map((m) => m.id === messageId ? normalizePatch(m, patch) : { ...m, labels: [...m.labels] }),
-    sent: session.mailbox.sent.map((m) => m.id === messageId ? normalizePatch(m, patch) : { ...m, labels: [...m.labels] }),
-    drafts: session.mailbox.drafts.map((m) => m.id === messageId ? normalizePatch(m, patch) : { ...m, labels: [...m.labels] })
-  };
-  persistMemorySession(session);
-  const message = findMessage(session, messageId);
-  return message ? { message, workspace: serializeWorkspace(session) } : null;
+  throw new Error('工作区存储未配置，无法更新邮件。');
 }
 
 export async function deleteWorkspaceMessage(env: CloudflareEnv | undefined, session: WorkspaceSession, messageId: string) {
@@ -68,7 +60,5 @@ export async function deleteWorkspaceMessage(env: CloudflareEnv | undefined, ses
     if (!nextSession) throw new Error('删除邮件后无法重新加载工作区。');
     return { folder, workspace: serializeWorkspace(nextSession) };
   }
-  session.mailbox = { inbox: session.mailbox.inbox.filter((m) => m.id !== messageId).map((m) => ({ ...m, labels: [...m.labels] })), sent: session.mailbox.sent.filter((m) => m.id !== messageId).map((m) => ({ ...m, labels: [...m.labels] })), drafts: session.mailbox.drafts.filter((m) => m.id !== messageId).map((m) => ({ ...m, labels: [...m.labels] })) };
-  persistMemorySession(session);
-  return { folder, workspace: serializeWorkspace(session) };
+  throw new Error('工作区存储未配置，无法删除邮件。');
 }
