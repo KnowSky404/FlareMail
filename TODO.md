@@ -9,6 +9,9 @@
 - 单管理员安全认证：PBKDF2、D1 session、Cookie、CSRF/Origin、登录限速和 bootstrap 流程。
 - 版本化 D1 migrations、入站去重、R2 原文/附件落库和 ownership 下载。
 - Cloudflare 风格响应式应用壳、light/dark/system、移动端 drill-in 与全屏纯文本写信。
+- 服务端 mailbox query/filter/cursor 分页、typed API envelope 与前端“加载更多”。
+- D1 原子登录限速、请求关联 ID、Workers observability 与只读优先的 retention/orphan maintenance。
+- Playwright 隔离 E2E、axe WCAG 2.1 A/AA、44px 触控目标、320px/200% 缩放和 CI 浏览器门禁。
 
 ## 第二阶段
 
@@ -20,7 +23,7 @@
 ### P2 收件箱效率功能
 - 归档、批量选择、多选操作。
 - 标签/分类筛选。
-- 服务端全文搜索、结果分页与 cursor（当前 UI 已支持对已加载邮件搜索/筛选）。
+- D1 FTS5 或外部索引（当前服务端 query 为受控 `LIKE` 搜索，并已支持 cursor 分页）。
 
 ### P2 邮件内容能力
 - 完整 MIME 结构展示。
@@ -36,11 +39,11 @@
 - 个人资料、签名、发信身份、转发规则持久化完善。
 
 ### P3 运维与可观测性
-- 关键 API 与 Worker 日志埋点。
-- D1 / R2 / Email Routing 异常监控。
+- 告警目标与 SLO：在 Cloudflare Dashboard 配置 D1 / R2 / Email Routing 错误率和延迟告警。
+- 定期运行 maintenance dry-run，人工审阅 retention 与 R2 orphan inventory。
 - 错误追踪与操作审计。
 
 ## 备注
-- 当前最推荐的下一步是先做“草稿增强 + 收件箱效率功能”。
+- 当前最推荐的下一步是“草稿并发冲突处理 + 批量收件箱操作”，同时补生产环境 SLO/告警。
 - 如果要跑通真实回执链路，需要在运行环境中配置 `RESEND_WEBHOOK_SECRET`，并让 Resend webhook 指向 `/api/webhooks/resend`。
 - 工作台发送、重试、自动回信与入站通知现已统一到 Resend gateway；development/test 可显式使用 fake provider，production 不再回退 Cloudflare 原生或 demo 外发。

@@ -10,7 +10,9 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
 - 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、附件/原文下载、纯文本写信、自动保存、主题和键盘快捷键。
-- 版本化 D1 migration：`migrations/0001` 至 `0007`，并由 `schema.sql` 保存最新结构快照。
+- 版本化 D1 migration：`migrations/0001` 至 `0008`，包括 D1 原子登录限速，并由 `schema.sql` 保存最新结构快照。
+- 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention 与 orphan 报告。
+- 隔离浏览器验证：Playwright 在 `/tmp` 创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖桌面、移动端与 320px 窄屏。
 
 ## 运行环境边界
 
@@ -32,6 +34,7 @@ worker/index.ts
 └── email  -> src/lib/server/email.ts
 
 src/lib/domain/mail/           纯邮件领域契约、线程、写信、投递状态与校验
+src/lib/client/                typed API client、请求竞态与快捷键/草稿控制器
 src/lib/server/auth/           密码、session、CSRF、限速
 src/lib/server/db/             D1 repositories
 src/lib/server/inbound/        MIME 解析
@@ -75,10 +78,20 @@ bun run test:unit
 bun run test:integration
 bun run check
 bun run build
+bun run test:e2e
+bun run test:a11y
 bun run deploy:dry-run
 ```
 
 `deploy:dry-run` 需要先从 `wrangler.deploy.toml.example` 创建本地私有的 `wrangler.deploy.toml`。它只构建和校验 Worker，不会发布。
+
+`test:e2e`/`test:a11y` 不读取生产配置、不调用真实 Resend，也不会访问远程 D1/R2。若 Playwright 未自动找到 Chromium，可显式设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`。
+
+运维清理默认仅生成报告；只有显式 `--remote` 才访问远程资源，只有再加 `--apply` 才执行经过范围保护的删除：
+
+```bash
+bun run maintenance -- --config wrangler.toml
+```
 
 ## 部署安全
 

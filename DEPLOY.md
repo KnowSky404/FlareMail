@@ -79,7 +79,10 @@ unset FLAREMAIL_ADMIN_EMAIL FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
 
 ```bash
 bun run check
+bun test src scripts
 bun run build
+bun run test:e2e
+bun run test:a11y
 bun run deploy:dry-run
 ```
 
@@ -130,7 +133,7 @@ bun run deploy
 ## 7. 回滚与恢复
 
 - 应用 migration 前记录提交 SHA、待应用 migration 列表和 D1 导出文件位置。
-- 运行时回滚优先部署上一已知良好提交；`0001`–`0007` 均不通过无备份 `DROP` 删除业务数据。
+- 运行时回滚优先部署上一已知良好提交；`0001`–`0008` 均不通过无备份 `DROP` 删除业务数据。
 - 如果需要恢复数据，先停止写入并由操作者选择导入预迁移 SQL，或使用 D1 Time Travel 恢复到明确 bookmark/timestamp。
 - Time Travel 会覆盖数据库并取消进行中的请求，属于破坏性操作，执行前必须再次导出当前状态并取得明确批准。
 - R2 原始 `.eml` 和附件不要在代码回滚时删除；恢复 D1 后抽样核对 ownership、object key 与行数。
@@ -148,3 +151,14 @@ bun x wrangler d1 time-travel restore flaremail-db --timestamp=<UNIX_TIMESTAMP> 
 - 发信停在 `submitted`：检查 webhook URL、签名 secret 和 Resend 投递事件；不要把 `submitted` 手工改成 `delivered`。
 - 入站存在 D1 记录但正文/附件不可用：核对 R2 binding、object key 与 ownership；不要直接公开 R2 对象。
 - 重复 webhook：以 `svix_id` 去重是预期行为；查看事件时间线，不要重放成新的本地 message。
+
+## 9. 保留策略与安全清理
+
+日常报告和清理使用 `scripts/maintenance.ts`。命令默认 dry-run；远程资源必须显式加 `--remote`，删除还必须显式加 `--apply`。R2 清理只接受已审阅 inventory，并且只处理受管的 `inbound/YYYY-MM-DD/<id>/...` key。
+
+```bash
+bun run maintenance -- --config wrangler.toml --json
+bun run maintenance -- --remote --config wrangler.deploy.toml --r2-manifest /secure/reviewed-r2-inventory.json --json
+```
+
+完整参数、安全边界和 apply 示例见 `docs/DEPLOYMENT.md`。生产维护前必须先导出 D1、记录提交 SHA，并人工审阅 dry-run 报告。

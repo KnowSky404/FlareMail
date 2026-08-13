@@ -1,6 +1,6 @@
 # FlareMail 全量重构执行计划
 
-> 文档状态：11 个阶段已实施；本文同时保留实施前基线、回滚点与最终证据边界
+> 文档状态：11 个阶段与后续安全/质量收口已实施；本文同时保留实施前基线、回滚点与最终证据边界
 >
 > 规范来源：`https://microbin.knowsky.uk/raw/egx53a`
 >
@@ -10,7 +10,7 @@
 
 ## 0. 实施结果（2026-08-13）
 
-11 个阶段已按顺序完成。运行时提交为：
+11 个阶段已按顺序完成，随后又完成 mailbox cursor、runtime 安全、维护、D1 登录限速、provider endpoint、无障碍、草稿竞态、设置和 delivery detail 收口。阶段提交为：
 
 1. `d38a524` `docs: add refactor plan and cloudflare-inspired design system`
 2. `54dbab3` `refactor: extract mail domain and shared contracts`
@@ -22,11 +22,13 @@
 8. `8ec7c13` `feat: rebuild flaremail app shell and ui primitives`
 9. `2f84096` `feat: complete responsive mailbox and compose flows`
 10. `a2f0536` / `ef61f68`：真实 Chromium QA 发现并修复 D1 可选绑定、筛选状态泄漏、移动端溢出与嵌套 overlay 行为。
-11. 本次 `docs: finalize deployment and migration guide` closeout 提交：同步 README、部署/恢复、安全边界、TODO、仓库规则与本验收清单。
+11. `b3736b4` `docs: finalize deployment and migration guide`
 
-实际 migrations 为 `0001_baseline`、`0002_mail_contracts`、`0003_auth_and_settings`、`0004_delivery_states`、`0005_operational_indexes`、`0006_inbound_ownership`、`0007_outbound_contracts`。`schema.sql` 已由自动测试验证与顺序应用结果一致。
+后续收口提交为 `c0e7072`、`3d292aa`、`933c298`、`6e54d98`、`317edb1`、`1a290c5`、`835ca4a`、`4234659`、`ac7382e`、`794ae22`、`a57dd4d`；最终文档同步在本轮 closeout 中完成。
 
-最终本地 QA 使用隔离 `/tmp` D1/R2、demo gateway 与 Chromium；覆盖登录、搜索/筛选、读信、发送、主题、手机详情/返回、全屏写信、嵌套 Dialog、Drawer 焦点恢复、无横向溢出和无 console error/warning。未执行生产部署、远程 migration、真实 Resend、真实 Email Routing 或真实邮件 smoke test。
+实际 migrations 为 `0001_baseline`、`0002_mail_contracts`、`0003_auth_and_settings`、`0004_delivery_states`、`0005_operational_indexes`、`0006_inbound_ownership`、`0007_outbound_contracts`、`0008_login_rate_limits`。`schema.sql` 已由自动测试验证与顺序应用结果一致。
+
+最终本地 QA 使用提交到仓库的 Playwright harness，在 `/tmp` 创建隔离 D1/R2、fake gateway 与 Chromium；覆盖登录、服务端搜索/筛选/cursor、读信/星标持久化、草稿自动保存、发送、签名 webhook、delivery timeline、主题/快捷键、手机详情/返回、320px/200% 缩放、axe WCAG 2.1 A/AA、44px 触控目标及 console error。CI 复用同一 harness。未执行生产部署、远程 migration、真实 Resend、真实 Email Routing 或真实邮件 smoke test。
 
 ## 1. 目标与范围
 
@@ -339,14 +341,14 @@ src/lib/
 
 - [x] 无生产硬编码 demo credential；password hash、session hash/expiry/logout、`__Host-` cookie、CSRF/Origin、rate limit、CSP/security headers、typed errors、ownership 下载有测试或代码证据。
 - [x] workspace routes 是 thin routes，认证失败不泄露 binding/secret 诊断。
-- [ ] 服务端 mailbox cursor/全文 query 尚未实现；当前搜索和筛选针对已加载工作区数据，列入 `TODO.md`。
+- [x] 服务端 mailbox query/filter/cursor 与 typed envelope 已实现并有 integration/E2E 证据；大规模全文检索仍可在后续升级为 FTS。
 
 ### Frontend / accessibility
 
 - [x] `DESIGN.md` 权威且与实现同步；共享 primitives 统一变体，桌面/平板/手机流程可用。
 - [x] light/dark/system 在首屏前生效；邮件正文默认只安全渲染 plain text；附件、delivery timeline、compose autosave/error 可见。
 - [x] Chromium 核心流程验证键盘快捷键、Dialog/Drawer focus、ARIA role、触控主操作、移动端无横向滚动和 reduced-motion CSS。
-- [ ] 未执行正式第三方 WCAG 对比度、屏幕阅读器和 200% zoom 审计；发布生产前仍需人工完成。
+- [x] axe WCAG 2.1 A/AA（light/dark）、44px 触控目标、320px 与模拟 200% zoom 已自动化；真实屏幕阅读器仍需生产发布前人工抽查。
 
 ### Quality / evidence
 
@@ -356,10 +358,10 @@ src/lib/
 
 ### 已知限制
 
-- 搜索/筛选仅针对当前已加载工作区数据；服务端全文索引、cursor 和大邮箱分页尚未实现。
+- 服务端受控 query/filter/cursor 与大列表分页已实现；尚未引入 D1 FTS5 或外部全文索引。
 - HTML MIME 内容会持久化但不会直接渲染；sandbox/sanitized HTML、远程图片策略与内嵌 CID 预览仍在 TODO。
-- Playwright QA 使用 `/tmp` 隔离 harness，没有把浏览器和凭据 fixture 提交到仓库；CI 当前只运行 Bun 测试、check/build 等既有门禁。
-- 未执行正式 WCAG 审计、真实 D1/R2/Email Routing/Resend smoke、远程 migration 或生产部署。
+- Playwright harness 与确定性凭据 fixture 已提交，但只作用于 `/tmp` 隔离本地 D1/R2 和 fake provider；CI 运行 Bun、check/build 与浏览器门禁。
+- 已执行自动 axe/缩放/触控审计；未执行真实屏幕阅读器、真实 D1/R2/Email Routing/Resend smoke、远程 migration 或生产部署。
 - 单附件与原始 `.eml` 下载已实现；附件预览、批量下载和完整 MIME 结构 UI 尚未实现。
 
 ## 8. 需要人工完成的生产步骤（实施后清单）

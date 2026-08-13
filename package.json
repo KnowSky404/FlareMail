@@ -23,7 +23,8 @@
     "auth:bootstrap:local": "bun ./scripts/bootstrap-admin.ts",
     "auth:bootstrap:remote": "bun ./scripts/bootstrap-admin.ts --remote",
     "deploy:dry-run": "bun run build && bun ./scripts/deploy.mjs dry-run",
-    "deploy": "bun run build && bun ./scripts/deploy.mjs"
+    "deploy": "bun run build && bun ./scripts/deploy.mjs",
+    "maintenance": "bun ./scripts/maintenance.ts"
   },
   "dependencies": {
     "@lucide/svelte": "^1.31.0",
