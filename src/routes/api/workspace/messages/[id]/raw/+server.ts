@@ -1,5 +1,5 @@
 import type { RequestHandler } from './$types';
-import { fromInboundMessageId, isInboundMessageId } from '$lib/mock/mailbox';
+import { fromInboundMessageId, isInboundMessageId } from '$lib/domain/mail';
 import type { StoredEmailMessage } from '$lib/server/cloudflare';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 

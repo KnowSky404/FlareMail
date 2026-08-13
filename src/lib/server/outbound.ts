@@ -1,4 +1,4 @@
-import type { DeliveryResultKind, DeliveryStatus } from '$lib/mock/mailbox';
+import type { DeliveryResultKind, DeliveryStatus } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import {
   classifyCloudflareSendFailure,

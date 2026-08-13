@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { ComposeInput } from '$lib/mock/mailbox';
+import type { ComposeInput } from '$lib/domain/mail';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 import { saveWorkspaceDraft } from '$lib/server/workspace';
 

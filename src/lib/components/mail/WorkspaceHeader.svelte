@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { UserProfile } from '$lib/mock/mailbox';
+  import type { UserProfile } from '$lib/domain/mail';
 
   let {
     profile,

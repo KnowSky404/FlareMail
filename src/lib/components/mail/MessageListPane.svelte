@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MailFolder, MailMessage, MailThread } from '$lib/mock/mailbox';
+  import type { MailFolder, MailMessage, MailThread } from '$lib/domain/mail';
 
   type AppSection = MailFolder | 'profile';
 

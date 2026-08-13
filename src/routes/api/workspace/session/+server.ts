@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { LoginInput } from '$lib/mock/mailbox';
+import type { LoginInput } from '$lib/domain/mail';
 import {
   authenticateWorkspaceUser,
   clearSessionCookieOptions,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/mock/mailbox';
+  import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/domain/mail';
 
   let {
     message = null,

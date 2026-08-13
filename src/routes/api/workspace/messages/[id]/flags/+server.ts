@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { MessagePatch } from '$lib/mock/mailbox';
+import type { MessagePatch } from '$lib/domain/mail';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 import { patchWorkspaceMessage } from '$lib/server/workspace';
 

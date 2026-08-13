@@ -27,7 +27,7 @@
     type MessagePatch,
     type UserProfile,
     type WorkspacePayload
-  } from '$lib/mock/mailbox';
+  } from '$lib/domain/mail';
 
   type AppSection = MailFolder | 'profile';
 

@@ -1,4 +1,4 @@
-import type { DeliveryEventType, DeliveryResultKind, DeliveryStatus } from '$lib/mock/mailbox';
+import type { DeliveryEventType, DeliveryResultKind, DeliveryStatus } from '$lib/domain/mail';
 
 type ResendWebhookPayload = {
   type: string;

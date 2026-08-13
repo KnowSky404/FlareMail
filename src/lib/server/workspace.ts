@@ -8,7 +8,6 @@ import {
   createDraftMessage,
   createSentMessage,
   createWorkspacePayload,
-  demoCredentials,
   type DeliveryDetail,
   type DeliveryEvent,
   type DeliveryEventType,
@@ -16,7 +15,6 @@ import {
   type DeliveryResultKind,
   fromInboundMessageId,
   isInboundMessageId,
-  mockProfile,
   toInboundMessageId,
   type ComposeInput,
   type MailFolder,
@@ -25,7 +23,25 @@ import {
   type MessagePatch,
   type UserProfile,
   type WorkspacePayload
-} from '$lib/mock/mailbox';
+} from '$lib/domain/mail';
+
+// Removed in the secure-auth migration. Keeping the legacy prototype values
+// local prevents production contracts from depending on development fixtures.
+const demoCredentials = {
+  email: 'founder@flaremail.dev',
+  password: 'flaremail-demo'
+} as const;
+
+const mockProfile: UserProfile = {
+  name: 'FlareMail User',
+  role: 'Workspace Owner',
+  email: demoCredentials.email,
+  company: 'FlareMail',
+  location: '',
+  timezone: 'Asia/Shanghai',
+  forwardingEnabled: false,
+  signature: ''
+};
 
 export const workspaceSessionCookie = 'flaremail_workspace';
 type CookieOptions = Parameters<Cookies['set']>[2];

@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { fromInboundMessageId, isInboundMessageId } from '$lib/mock/mailbox';
+import { fromInboundMessageId, isInboundMessageId } from '$lib/domain/mail';
 import type { StoredEmailMessage } from '$lib/server/cloudflare';
 import { parseInboundEmail } from '$lib/server/inbound-email';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';

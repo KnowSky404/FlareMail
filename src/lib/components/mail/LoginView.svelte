@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { demoCredentials, type LoginInput } from '$lib/mock/mailbox';
+  import type { LoginInput } from '$lib/domain/mail';
 
   let {
     runtimeLabel,
@@ -17,8 +17,8 @@
     onLogin: (payload: LoginInput) => void | Promise<void>;
   } = $props();
 
-  let email = $state(demoCredentials.email);
-  let password = $state(demoCredentials.password);
+  let email = $state('');
+  let password = $state('');
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -44,6 +44,8 @@
           bind:value={email}
           class="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
           type="email"
+          autocomplete="username"
+          required
           placeholder="name@example.com"
         />
       </div>
@@ -55,6 +57,8 @@
           bind:value={password}
           class="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition-all focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
           type="password"
+          autocomplete="current-password"
+          required
           placeholder="••••••••"
         />
       </div>

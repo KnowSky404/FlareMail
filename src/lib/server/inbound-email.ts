@@ -1,4 +1,4 @@
-import type { InboundMessageDetail, MailAttachmentSummary } from '$lib/mock/mailbox';
+import type { InboundMessageDetail, MailAttachmentSummary } from '$lib/domain/mail';
 
 const decoder = new TextDecoder();
 

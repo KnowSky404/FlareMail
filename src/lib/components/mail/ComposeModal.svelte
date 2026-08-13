@@ -3,7 +3,7 @@
     type ComposeInput,
     type ComposeMode,
     type UserProfile
-  } from '$lib/mock/mailbox';
+  } from '$lib/domain/mail';
   import { onMount } from 'svelte';
 
   const createComposeState = (value: ComposeInput | null): ComposeInput =>
