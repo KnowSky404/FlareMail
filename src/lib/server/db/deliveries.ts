@@ -155,7 +155,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
 }
 export function insertOutboundEvent(db: D1Database, p: DeliveryEventPayload) {
   return db.prepare(`INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, summary, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(p.svixId, p.messageId, p.userId, p.provider, p.providerMessageId, p.eventType, p.eventCreatedAt, p.summary, p.payloadJson, p.createdAt);
+    .bind(p.svixId, p.messageId, p.userId, p.provider, p.providerMessageId ?? null, p.eventType, p.eventCreatedAt, p.summary, p.payloadJson, p.createdAt);
 }
 export function deleteOutboundStatus(db: D1Database, userId: string, messageId: string) {
   return db.prepare(`DELETE FROM workspace_delivery_statuses WHERE user_id = ? AND message_id = ?`).bind(userId, messageId);
