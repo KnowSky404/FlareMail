@@ -5,7 +5,7 @@
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
-  import X from '@lucide/svelte/icons/x';
+  import { Drawer } from '$lib/components/ui';
   import type { MailFolder } from '$lib/domain/mail';
   import BrandMark from './BrandMark.svelte';
 
@@ -48,21 +48,13 @@
   </button>
   <BrandMark compact />
   <strong>{labels[activeSection]}</strong>
-  <button class="compose" type="button" disabled={pending} onclick={onCompose}>
+  <button class="compose" type="button" aria-label="写邮件" title="写邮件" disabled={pending} onclick={onCompose}>
     <PenLine size={18} aria-hidden="true" /><span>写邮件</span>
   </button>
 </header>
 
-{#if open}
-  <button class="scrim" type="button" aria-label="关闭导航" onclick={() => (open = false)}></button>
-  <aside class="drawer" aria-label="移动端导航">
-    <div class="drawer-heading">
-      <BrandMark />
-      <button class="icon" type="button" aria-label="关闭导航" onclick={() => (open = false)}>
-        <X size={20} aria-hidden="true" />
-      </button>
-    </div>
-    <nav>
+<Drawer {open} title="FlareMail 导航" description="切换邮箱文件夹与设置" side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
+    <nav class="mobile-nav-list" aria-label="移动端导航">
       <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
         <Inbox size={19} aria-hidden="true" /><span>收件箱</span><small>{unreadCount || ''}</small>
       </button>
@@ -76,8 +68,7 @@
         <Settings size={19} aria-hidden="true" /><span>设置</span>
       </button>
     </nav>
-  </aside>
-{/if}
+</Drawer>
 
 <style>
   .mobile-bar {
@@ -122,44 +113,14 @@
     font-weight: 600;
   }
 
-  .scrim {
-    position: fixed;
-    z-index: 70;
-    inset: 0;
-    border: 0;
-    background: var(--fm-overlay);
-  }
-
-  .drawer {
-    position: fixed;
-    z-index: 80;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: min(84vw, 320px);
-    padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-3) max(var(--space-3), env(safe-area-inset-bottom));
-    border-right: 1px solid var(--fm-border);
-    background: var(--fm-surface);
-    box-shadow: var(--fm-shadow-overlay);
-  }
-
-  .drawer-heading {
-    display: flex;
-    min-height: 48px;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: var(--space-3);
-    border-bottom: 1px solid var(--fm-border);
-  }
-
-  nav {
+  .mobile-nav-list {
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
     padding-top: var(--space-3);
   }
 
-  nav button {
+  .mobile-nav-list button {
     display: grid;
     grid-template-columns: 22px 1fr auto;
     min-height: 48px;
@@ -173,13 +134,13 @@
     text-align: left;
   }
 
-  nav button.active {
+  .mobile-nav-list button.active {
     color: var(--fm-primary);
     background: var(--fm-surface-selected);
     font-weight: 600;
   }
 
-  nav small {
+  .mobile-nav-list small {
     font-size: 11px;
   }
 

@@ -167,7 +167,7 @@
   {title}
   description={profile.email}
   size="xl"
-  class="compose-dialog !max-w-[56rem] max-sm:-m-4 max-sm:h-[100dvh] max-sm:max-h-none max-sm:w-[calc(100vw+2rem)] max-sm:max-w-none max-sm:rounded-none"
+  class="compose-dialog !max-w-[56rem] max-sm:fixed max-sm:inset-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:rounded-none"
   closeOnBackdrop={false}
   onClose={requestClose}
 >

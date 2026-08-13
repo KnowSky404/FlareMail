@@ -282,7 +282,8 @@ summary {
   }
 
   .fm-workspace-main {
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 }
 

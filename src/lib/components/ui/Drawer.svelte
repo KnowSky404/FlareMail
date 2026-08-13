@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
   import { cn, focusRing } from './styles';
+  import { isTopOverlay, registerOverlay } from './overlay';
 
   let {
     open = false,
@@ -31,12 +32,14 @@
 
   let drawerElement = $state<HTMLDivElement>();
   let restoreElement: HTMLElement | null = null;
+  const overlayToken = {};
   let drawerId = `drawer-${Math.random().toString(36).slice(2, 8)}`;
   const widths = { sm: 'w-full max-w-sm', md: 'w-full max-w-md', lg: 'w-full max-w-2xl' };
   const positions = { left: 'left-0', right: 'right-0' };
 
   function focusables() { return [...drawerElement?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []]; }
   function handleKeydown(event: KeyboardEvent) {
+    if (!isTopOverlay(overlayToken)) return;
     if (event.key === 'Escape' && dismissible) { event.preventDefault(); onClose?.(); return; }
     if (event.key !== 'Tab') return;
     const elements = focusables(); if (!elements.length) return;
@@ -49,9 +52,9 @@
     if (!open || typeof document === 'undefined') return;
     restoreElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = requestAnimationFrame(() => focusables()[0]?.focus());
-    document.body.style.overflow = 'hidden';
+    const releaseOverlay = registerOverlay(overlayToken);
     document.addEventListener('keydown', handleKeydown);
-    return () => { cancelAnimationFrame(frame); document.body.style.overflow = ''; document.removeEventListener('keydown', handleKeydown); restoreElement?.focus(); restoreElement = null; };
+    return () => { cancelAnimationFrame(frame); releaseOverlay(); document.removeEventListener('keydown', handleKeydown); restoreElement?.focus(); restoreElement = null; };
   });
 </script>
 

@@ -436,6 +436,7 @@
     options?: {
       section?: AppSection;
       preferredMessageId?: string | null;
+      clearMailView?: boolean;
     }
   ) {
     profile = workspace.profile;
@@ -444,6 +445,12 @@
 
     if (options?.section) {
       activeSection = options.section;
+    }
+
+    if (options?.clearMailView) {
+      searchQuery = '';
+      mailFilter = 'all';
+      mobileDetailOpen = false;
     }
 
     selectedMessageId = nextSelection(
@@ -456,6 +463,8 @@
       updateWorkspaceUrl(
         {
           section: options.section,
+          query: options.clearMailView ? '' : undefined,
+          filter: options.clearMailView ? 'all' : undefined,
           messageId: options.section === 'profile' ? null : selectedMessageId
         },
         true
@@ -753,7 +762,8 @@
 
       applyWorkspace(result.workspace, {
         section: 'inbox',
-        preferredMessageId: result.workspace.mailbox.inbox[0]?.id ?? null
+        preferredMessageId: result.workspace.mailbox.inbox[0]?.id ?? null,
+        clearMailView: true
       });
       banner = '已进入工作台。当前会话由 Cookie、SvelteKit API 和 D1 状态驱动。';
     } catch (error) {
@@ -811,7 +821,8 @@
 
       applyWorkspace(result.workspace, {
         section: 'drafts',
-        preferredMessageId: result.message.id
+        preferredMessageId: result.message.id,
+        clearMailView: true
       });
       resetComposeState();
       banner = (input.draftId ?? composeDraftId) ? '草稿已更新。' : '草稿已保存到工作区。';
@@ -879,7 +890,8 @@
 
       applyWorkspace(result.workspace, {
         section: 'sent',
-        preferredMessageId: result.message.id
+        preferredMessageId: result.message.id,
+        clearMailView: true
       });
       resetComposeState();
       banner =
@@ -1446,6 +1458,17 @@
   }
 
   @media (max-width: 767px) {
+    .mail-workspace,
+    .mail-detail-panel {
+      width: 100%;
+      max-width: 100vw;
+    }
+
+    .mail-detail-panel {
+      flex: 0 0 100%;
+      overflow-x: hidden;
+    }
+
     .mobile-detail-nav-hidden {
       display: none;
     }

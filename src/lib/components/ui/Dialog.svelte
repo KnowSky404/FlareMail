@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
   import { cn, focusRing } from './styles';
+  import { isTopOverlay, registerOverlay } from './overlay';
 
   let {
     open = false,
@@ -29,6 +30,7 @@
 
   let dialogElement = $state<HTMLDivElement>();
   let restoreElement: HTMLElement | null = null;
+  const overlayToken = {};
   let dialogId = `dialog-${Math.random().toString(36).slice(2, 8)}`;
   const sizeClasses = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl' };
 
@@ -37,6 +39,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (!isTopOverlay(overlayToken)) return;
     if (event.key === 'Escape' && dismissible) {
       event.preventDefault();
       onClose?.();
@@ -55,11 +58,11 @@
     if (!open || typeof document === 'undefined') return;
     restoreElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = requestAnimationFrame(() => focusables()[0]?.focus());
-    document.body.style.overflow = 'hidden';
+    const releaseOverlay = registerOverlay(overlayToken);
     document.addEventListener('keydown', handleKeydown);
     return () => {
       cancelAnimationFrame(frame);
-      document.body.style.overflow = '';
+      releaseOverlay();
       document.removeEventListener('keydown', handleKeydown);
       restoreElement?.focus();
       restoreElement = null;
