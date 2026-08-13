@@ -33,6 +33,7 @@ import {
   type WorkspaceSession
 } from '$lib/server/workspace/shared';
 import { refreshD1Session } from '$lib/server/workspace/mailbox';
+import { reconcilePendingResendEvents } from '$lib/server/workspace/delivery';
 
 export interface OutboundSubmissionOptions {
   requestId?: string | null;
@@ -156,6 +157,7 @@ async function submitPersistedMessage(
         eventType: 'submission', eventCreatedAt: completedAt, summary: 'Provider accepted the message for delivery.',
         payloadJson: JSON.stringify({ status: 'submitted', remoteStatus: result.remoteStatus }) }))
     ]);
+    await reconcilePendingResendEvents(env, result.providerMessageId).catch(() => undefined);
   } catch (cause) {
     const error = isOutboundGatewayError(cause)
       ? cause
@@ -198,7 +200,13 @@ export async function sendWorkspaceMessage(
   }
   const idempotencyKey = requestId ? `flaremail:send:${session.userId}:${requestId}` : `flaremail:send:${messageId}`;
   const existing = await findMessageByIdempotencyKey(env.DB, session.userId, idempotencyKey);
-  if (existing) return refreshedResult(env, session, existing.id);
+  if (existing) {
+    const delivery = await findDeliveryStatus(env.DB, session.userId, existing.id);
+    if (delivery?.provider_message_id) {
+      await reconcilePendingResendEvents(env, delivery.provider_message_id).catch(() => undefined);
+    }
+    return refreshedResult(env, session, existing.id);
+  }
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? 'injected' : outboundProviderName(env);
 
