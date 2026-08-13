@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { PageData } from './$types';
   import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
   import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
@@ -14,7 +14,9 @@
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
   import { requestJson } from '$lib/client/api';
+  import { ComposeSaveSequence } from '$lib/client/compose-save-sequence';
   import { LatestRequest } from '$lib/client/latest-request';
+  import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import {
     buildMailThreads,
     cloneMailbox,
@@ -116,13 +118,13 @@
   let pending = $state(false);
   let mailboxLoading = $state(false);
   let hydratedFromServer = $state(false);
-  let appliedServerWorkspace = $state<WorkspacePayload | null>(null);
+  let appliedServerRevision = '';
   const mailboxRequest = new LatestRequest();
   const inboundDetailRequest = new LatestRequest();
   const deliveryDetailRequest = new LatestRequest();
+  const composeSaveSequence = new ComposeSaveSequence();
   let composeAutosaveTimer: ReturnType<typeof setTimeout> | null = null;
-  let shortcutPrefix = '';
-  let shortcutPrefixTimer: ReturnType<typeof setTimeout> | null = null;
+  const shortcuts = new WorkspaceShortcutController();
 
   const urlSection = $derived.by<AppSection>(() => {
     const folder = page.url.searchParams.get('folder');
@@ -138,6 +140,7 @@
     return filter === 'unread' || filter === 'starred' ? filter : 'all';
   });
   const urlMessageId = $derived(page.url.searchParams.get('message'));
+  const serverRevision = $derived(serverWorkspace ? JSON.stringify(serverWorkspace) : '');
 
   $effect(() => {
     activeSection = urlSection;
@@ -148,17 +151,21 @@
   });
 
   $effect(() => {
-    if (serverWorkspace && appliedServerWorkspace !== serverWorkspace) {
-      authenticated = true;
-      profile = serverWorkspace.profile;
-      mailbox = serverWorkspace.mailbox;
-      mailboxPages = data.mailboxPages;
-      selectedMessageId = urlMessageId ?? nextSelection(serverWorkspace.mailbox, urlSection, null);
-      if (!hydratedFromServer) {
-        banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
-      }
-      hydratedFromServer = true;
-      appliedServerWorkspace = serverWorkspace;
+    const workspace = serverWorkspace;
+    const revision = serverRevision;
+    if (workspace && revision !== appliedServerRevision) {
+      untrack(() => {
+        authenticated = true;
+        profile = workspace.profile;
+        mailbox = workspace.mailbox;
+        mailboxPages = data.mailboxPages;
+        selectedMessageId = urlMessageId ?? nextSelection(workspace.mailbox, urlSection, null);
+        if (!hydratedFromServer) {
+          banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
+        }
+        hydratedFromServer = true;
+        appliedServerRevision = revision;
+      });
     }
   });
 
@@ -323,6 +330,7 @@
 
   const resetComposeState = () => {
     clearComposeAutosaveTimer();
+    composeSaveSequence.reset();
     composeOpen = false;
     composeMode = 'new';
     composeInitialInput = null;
@@ -740,6 +748,7 @@
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
     clearComposeAutosaveTimer();
+    composeSaveSequence.reset();
     composeMode = mode;
     composeInitialInput = initialInput;
     composeDraftId = initialInput?.draftId;
@@ -909,6 +918,7 @@
     composeAutosavePending = true;
     composeAutosaveStatus = 'saving';
     composeAutosaveMessage = '正在自动保存草稿...';
+    const save = composeSaveSequence.begin();
 
     try {
       const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
@@ -917,15 +927,27 @@
       });
 
       applyWorkspace(result.workspace);
-      syncComposeDraftState(
-        result.message,
-        `已自动保存于 ${formatComposeSavedAt(result.message.sentAt)}。`
-      );
+      if (!save.isActive()) return;
+      if (save.isCurrent()) {
+        syncComposeDraftState(
+          result.message,
+          `已自动保存于 ${formatComposeSavedAt(result.message.sentAt)}。`
+        );
+      } else {
+        composeDraftId = result.message.id;
+        if (composeLiveInput) composeLiveInput = { ...composeLiveInput, draftId: result.message.id };
+        composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id });
+        composeTouched = true;
+        composeAutosaveStatus = 'dirty';
+        composeAutosaveMessage = '较早改动已保存，正在等待保存最新内容。';
+      }
     } catch (error) {
-      composeAutosaveStatus = 'error';
-      composeAutosaveMessage = error instanceof Error ? error.message : '自动保存失败。';
+      if (save.isActive()) {
+        composeAutosaveStatus = 'error';
+        composeAutosaveMessage = error instanceof Error ? error.message : '自动保存失败。';
+      }
     } finally {
-      composeAutosavePending = false;
+      if (save.isActive()) composeAutosavePending = false;
     }
   }
 
@@ -1134,15 +1156,6 @@
       : '重新载入投递回执失败。';
   }
 
-  function isEditableTarget(target: EventTarget | null) {
-    return (
-      target instanceof HTMLInputElement ||
-      target instanceof HTMLTextAreaElement ||
-      target instanceof HTMLSelectElement ||
-      (target instanceof HTMLElement && target.isContentEditable)
-    );
-  }
-
   function moveMessageSelection(direction: -1 | 1) {
     const candidates =
       activeSection === 'drafts'
@@ -1159,74 +1172,38 @@
     void handleSelectMessage(candidates[nextIndex]);
   }
 
-  function setShortcutPrefix(value: string) {
-    shortcutPrefix = value;
-    if (shortcutPrefixTimer) clearTimeout(shortcutPrefixTimer);
-    shortcutPrefixTimer = setTimeout(() => {
-      shortcutPrefix = '';
-      shortcutPrefixTimer = null;
-    }, 900);
-  }
-
   onMount(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (!authenticated || composeOpen) return;
-
-      if (event.key === 'Escape') {
-        if (shortcutHelpOpen) {
-          event.preventDefault();
-          shortcutHelpOpen = false;
-        } else if (mobileDetailOpen) {
-          event.preventDefault();
-          closeMobileDetail();
-        }
-        return;
-      }
-
-      if (isEditableTarget(event.target) || event.ctrlKey || event.metaKey || event.altKey) return;
-
-      const key = event.key.toLocaleLowerCase('en-US');
-      if (shortcutPrefix === 'g' && (key === 'i' || key === 's' || key === 'd')) {
-        event.preventDefault();
-        shortcutPrefix = '';
-        setSection(key === 'i' ? 'inbox' : key === 's' ? 'sent' : 'drafts');
-        return;
-      }
-
-      if (key === 'g') {
-        event.preventDefault();
-        setShortcutPrefix('g');
-        return;
-      }
-
-      if (key === '/') {
-        event.preventDefault();
-        window.dispatchEvent(new CustomEvent('flaremail:focus-search'));
-      } else if (key === 'c') {
-        event.preventDefault();
-        openCompose('new');
-      } else if (key === 'j') {
-        event.preventDefault();
-        moveMessageSelection(1);
-      } else if (key === 'k') {
-        event.preventDefault();
-        moveMessageSelection(-1);
-      } else if (key === 'r' && selectedMessage?.folder === 'inbox') {
-        event.preventDefault();
-        handleReplyMessage(selectedMessage);
-      } else if (key === 'f' && selectedMessage && selectedMessage.folder !== 'drafts') {
-        event.preventDefault();
-        handleForwardMessage(selectedMessage);
-      } else if (event.key === '?') {
-        event.preventDefault();
-        shortcutHelpOpen = true;
+      const action = shortcuts.handle(event, {
+        helpOpen: shortcutHelpOpen,
+        mobileDetailOpen,
+        canReply: selectedMessage?.folder === 'inbox',
+        canForward: Boolean(selectedMessage && selectedMessage.folder !== 'drafts')
+      });
+      const actions: Partial<Record<WorkspaceShortcutAction, () => void>> = {
+        'close-help': () => (shortcutHelpOpen = false),
+        'close-mobile-detail': closeMobileDetail,
+        'folder-inbox': () => setSection('inbox'),
+        'folder-sent': () => setSection('sent'),
+        'folder-drafts': () => setSection('drafts'),
+        'focus-search': () => window.dispatchEvent(new CustomEvent('flaremail:focus-search')),
+        compose: () => openCompose('new'),
+        'next-message': () => moveMessageSelection(1),
+        'previous-message': () => moveMessageSelection(-1),
+        reply: () => selectedMessage && handleReplyMessage(selectedMessage),
+        forward: () => selectedMessage && handleForwardMessage(selectedMessage),
+        'open-help': () => (shortcutHelpOpen = true)
+      };
+      if (action) {
+        actions[action]?.();
       }
     };
 
     document.addEventListener('keydown', handleShortcut);
     return () => {
       document.removeEventListener('keydown', handleShortcut);
-      if (shortcutPrefixTimer) clearTimeout(shortcutPrefixTimer);
+      shortcuts.dispose();
     };
   });
 </script>
@@ -1301,7 +1278,7 @@
           <main class="fm-workspace-main" aria-label="邮件工作区">
             {#if activeSection === 'profile'}
               <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
-                <ProfilePane {pending} {profile} status={profileStatus} onSave={saveProfile} />
+                <ProfilePane {pending} {profile} diagnostics={data.runtimeDiagnostics} status={profileStatus} onSave={saveProfile} />
               </div>
             {:else}
               <div class:detail-open={mobileDetailOpen} class="mail-workspace">
@@ -1387,6 +1364,7 @@
         onClose={closeCompose}
         onDiscard={discardCompose}
         onInputChange={(input) => {
+          composeSaveSequence.changed();
           const nextInput = withComposeDraftId(input);
           const nextSignature = serializeComposeInput(nextInput);
 

@@ -6,6 +6,23 @@ import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
 
 const mailFolders: MailFolder[] = ['inbox', 'sent', 'drafts'];
 
+const enabled = (value: string | undefined) => /^(1|true|yes|on)$/iu.test(value?.trim() ?? '');
+
+function safeRuntimeDiagnostics(env: CloudflareEnv) {
+  const provider = env.OUTBOUND_PROVIDER?.trim().toLowerCase() ?? '';
+  return {
+    environment: env.APP_ENV?.trim() || 'development',
+    d1Configured: Boolean(env.DB),
+    r2Configured: Boolean(env.BUCKET),
+    outboundConfigured: provider === 'resend' ? Boolean(env.RESEND_API_KEY?.trim()) : /^(demo|fake)$/u.test(provider),
+    outboundMode: provider === 'resend' ? 'Resend' : /^(demo|fake)$/u.test(provider) ? '开发假服务' : '未配置',
+    webhookConfigured: Boolean(env.RESEND_WEBHOOK_SECRET?.trim()),
+    senderConfigured: Boolean(env.OUTBOUND_FROM_EMAIL?.trim()),
+    autoReplyEnabled: enabled(env.AUTO_REPLY_ENABLED),
+    notificationEnabled: enabled(env.INBOUND_NOTIFICATION_ENABLED)
+  };
+}
+
 function requestedFolder(value: string | null): MailFolder {
   return mailFolders.includes(value as MailFolder) ? value as MailFolder : 'inbox';
 }
@@ -22,6 +39,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       bucketBound,
       workspace: null,
       mailboxPages: null,
+      runtimeDiagnostics: null,
       schemaReady: false,
       totalMessages: 0,
       lastSubject: null,
@@ -58,6 +76,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       bucketBound,
       workspace,
       mailboxPages,
+      runtimeDiagnostics: safeRuntimeDiagnostics(env),
       schemaReady: true,
       totalMessages: metrics.inboxCount + metrics.sentCount,
       lastSubject: latest?.subject ?? null,
@@ -69,6 +88,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       bucketBound,
       workspace: null,
       mailboxPages: null,
+      runtimeDiagnostics: null,
       schemaReady: false,
       totalMessages: 0,
       lastSubject: null,
