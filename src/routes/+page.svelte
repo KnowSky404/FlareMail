@@ -2,11 +2,12 @@
   import type { PageData } from './$types';
   import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
   import LoginView from '$lib/components/mail/LoginView.svelte';
-  import MailSidebar from '$lib/components/mail/MailSidebar.svelte';
   import MessageDetailPane from '$lib/components/mail/MessageDetailPane.svelte';
   import MessageListPane from '$lib/components/mail/MessageListPane.svelte';
   import ProfilePane from '$lib/components/mail/ProfilePane.svelte';
-  import WorkspaceHeader from '$lib/components/mail/WorkspaceHeader.svelte';
+  import AppSidebar from '$lib/components/shell/AppSidebar.svelte';
+  import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
+  import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import {
     buildMailThreads,
     cloneMailbox,
@@ -162,13 +163,6 @@
     );
   });
   const selectedThreadMessages = $derived(selectedThread?.messages ?? (selectedMessage ? [selectedMessage] : []));
-  const lastActivityAt = $derived(
-    mailbox.inbox[0]?.sentAt ??
-      mailbox.sent[0]?.sentAt ??
-      mailbox.drafts[0]?.sentAt ??
-      data.lastTimestamp ??
-      null
-  );
   const selectedInboundDetail = $derived(
     selectedMessage && isInboundMessageId(selectedMessage.id)
       ? inboundDetails[selectedMessage.id] ?? null
@@ -909,11 +903,11 @@
   <title>FlareMail</title>
   <meta
     name="description"
-    content="极简风格的 FlareMail 邮件工作台，覆盖登录、个人信息、收件箱、草稿箱、发件箱与写信交互。"
+    content="FlareMail 邮件工作台，覆盖收件箱、已发送、草稿、投递状态与安全写信流程。"
   />
 </svelte:head>
 
-<div class="min-h-screen">
+<div class="fm-app-shell">
   {#if !authenticated}
     <LoginView
       dbBound={data.dbBound}
@@ -924,9 +918,8 @@
       onLogin={handleLogin}
     />
   {:else}
-    <div class="flex h-screen w-full flex-col overflow-hidden bg-bg">
-      <WorkspaceHeader
-        {banner}
+    <div class="fm-app-shell">
+      <AppTopbar
         draftCount={mailbox.drafts.length}
         failedCount={failedCount}
         {pending}
@@ -934,73 +927,92 @@
         queuedCount={queuedCount}
         {runtimeLabel}
         unreadCount={unreadCount}
+        onEditProfile={() => {
+          setSection('profile');
+          banner = '已打开设置。';
+        }}
+        onLogout={handleLogout}
+        onSearch={() => {
+          window.dispatchEvent(new CustomEvent('flaremail:focus-search'));
+        }}
+      />
+
+      <MobileNavigation
+        activeSection={activeSection}
+        draftCount={mailbox.drafts.length}
+        {pending}
+        unreadCount={unreadCount}
         onCompose={() => {
           openCompose('new');
           banner = '正在写新邮件。';
         }}
-        onEditProfile={() => {
-          setSection('profile');
-          banner = '个人资料设置。';
-        }}
-        onLogout={handleLogout}
+        onSelectSection={setSection}
       />
 
-      <div class="flex flex-1 overflow-hidden">
-        <MailSidebar
-          activeSection={activeSection}
-          draftCount={mailbox.drafts.length}
-          forwardingEnabled={profile.forwardingEnabled}
-          lastTimestamp={lastActivityAt}
-          {profile}
-          sentCount={mailbox.sent.length}
-          unreadCount={unreadCount}
-          onSelectSection={setSection}
-        />
+      <div class="fm-workspace-body">
+        <div class="fm-workspace-shell">
+          <AppSidebar
+            activeSection={activeSection}
+            draftCount={mailbox.drafts.length}
+            {pending}
+            sentCount={mailbox.sent.length}
+            unreadCount={unreadCount}
+            onCompose={() => {
+              openCompose('new');
+              banner = '正在写新邮件。';
+            }}
+            onSelectSection={setSection}
+          />
 
-        <div class="flex flex-1 min-w-0">
-          {#if activeSection === 'profile'}
-            <div class="flex-1 overflow-y-auto bg-surface p-8 lg:p-12">
-              <ProfilePane {pending} {profile} status={profileStatus} onSave={saveProfile} />
-            </div>
-          {:else}
-            <!-- Message List column: fixed width -->
-            <div class="w-[360px] flex-none border-r border-zinc-200">
-              <MessageListPane
-                activeSection={activeSection}
-                messages={activeMessages}
-                selectedThreadId={selectedThreadId}
-                threads={activeThreads}
-                {selectedMessageId}
-                onSelect={handleSelectMessage}
-                onSelectThread={handleSelectThread}
-              />
-            </div>
-            <!-- Detail Pane: fills remaining space -->
-            <div class="flex-1 min-w-0 bg-white">
-              <MessageDetailPane
-                message={selectedMessage}
-                deliveryDetail={selectedDeliveryDetail}
-                deliveryDetailError={selectedDeliveryDetailError}
-                deliveryDetailPending={deliveryDetailPendingId === selectedMessage?.id}
-                inboundDetail={selectedInboundDetail}
-                inboundDetailError={selectedInboundDetailError}
-                inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
-                {pending}
-                rawDownloadHref={selectedInboundDownloadHref}
-                threadMessages={selectedThreadMessages}
-                onEditDraft={handleEditDraft}
-                onForward={handleForwardMessage}
-                onReply={handleReplyMessage}
-                onReloadDeliveryDetail={handleReloadDeliveryDetail}
-                onRetryDelivery={retryMessageDelivery}
-                onReloadInboundDetail={handleReloadInboundDetail}
-                onRemove={handleDeleteMessage}
-                onSelectThreadMessage={handleSelectMessage}
-                onToggleRead={handleToggleRead}
-                onToggleStar={handleToggleStar}
-              />
-            </div>
-          {/if}
+          <main class="fm-workspace-main" aria-label="邮件工作区">
+            {#if activeSection === 'profile'}
+              <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
+                <ProfilePane {pending} {profile} status={profileStatus} onSave={saveProfile} />
+              </div>
+            {:else}
+              <div class="flex h-full min-w-0">
+                <section class="w-[392px] flex-none border-r border-fm-border" aria-label="邮件列表">
+                  <MessageListPane
+                    activeSection={activeSection}
+                    messages={activeMessages}
+                    selectedThreadId={selectedThreadId}
+                    threads={activeThreads}
+                    {selectedMessageId}
+                    onSelect={handleSelectMessage}
+                    onSelectThread={handleSelectThread}
+                  />
+                </section>
+                <section class="min-w-0 flex-1 bg-fm-surface" aria-label="邮件详情">
+                  <MessageDetailPane
+                    message={selectedMessage}
+                    deliveryDetail={selectedDeliveryDetail}
+                    deliveryDetailError={selectedDeliveryDetailError}
+                    deliveryDetailPending={deliveryDetailPendingId === selectedMessage?.id}
+                    inboundDetail={selectedInboundDetail}
+                    inboundDetailError={selectedInboundDetailError}
+                    inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
+                    {pending}
+                    rawDownloadHref={selectedInboundDownloadHref}
+                    threadMessages={selectedThreadMessages}
+                    onEditDraft={handleEditDraft}
+                    onForward={handleForwardMessage}
+                    onReply={handleReplyMessage}
+                    onReloadDeliveryDetail={handleReloadDeliveryDetail}
+                    onRetryDelivery={retryMessageDelivery}
+                    onReloadInboundDetail={handleReloadInboundDetail}
+                    onRemove={handleDeleteMessage}
+                    onSelectThreadMessage={handleSelectMessage}
+                    onToggleRead={handleToggleRead}
+                    onToggleStar={handleToggleStar}
+                  />
+                </section>
+              </div>
+            {/if}
+          </main>
+        </div>
+
+        <div class="fm-workspace-status" role="status" aria-live="polite">
+          <span>{banner}</span>
         </div>
       </div>
     </div>

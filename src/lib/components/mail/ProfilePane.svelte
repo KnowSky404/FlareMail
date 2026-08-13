@@ -1,4 +1,9 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
+  import Panel from '$lib/components/ui/Panel.svelte';
+  import Switch from '$lib/components/ui/Switch.svelte';
+  import TextArea from '$lib/components/ui/TextArea.svelte';
+  import TextField from '$lib/components/ui/TextField.svelte';
   import type { UserProfile } from '$lib/domain/mail';
 
   const createProfileDraft = (profile: UserProfile): UserProfile => ({ ...profile });
@@ -38,111 +43,148 @@
   }
 </script>
 
-<section class="paper-card flex flex-col overflow-hidden rounded-2xl">
-  <div class="border-b border-line bg-shell/50 p-6 lg:p-8">
-    <p class="meta-text text-gold">账户设置</p>
-    <h2 class="editorial-heading mt-2 text-3xl text-ink lg:text-4xl">个人身份与偏好</h2>
-  </div>
+<div class="settings-layout">
+  <header>
+    <h1>设置</h1>
+    <p>管理个人资料、发件身份与邮件偏好。</p>
+  </header>
 
-  <div class="flex-1 overflow-y-auto p-6 lg:p-8">
-    <form class="mx-auto max-w-2xl space-y-10" onsubmit={submit}>
-      <div class="space-y-6">
-        <p class="meta-text">基础信息</p>
-        <div class="grid gap-6 md:grid-cols-2">
-          <label class="block space-y-2">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">邮箱地址</span>
-            <input
-              bind:value={nextProfile.email}
-              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
-              type="email"
-            />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">显示姓名</span>
-            <input
-              bind:value={nextProfile.name}
-              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
-              type="text"
-            />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">职位角色</span>
-            <input
-              bind:value={nextProfile.role}
-              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
-              type="text"
-            />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">公司名称</span>
-            <input
-              bind:value={nextProfile.company}
-              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
-              type="text"
-            />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">所在时区</span>
-            <input
-              bind:value={nextProfile.timezone}
-              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
-              type="text"
-            />
-          </label>
-          <label class="block space-y-2">
-            <span class="text-[10px] font-bold uppercase tracking-wider text-mist">所在地区</span>
-            <input
-              bind:value={nextProfile.location}
-              class="w-full border-b border-line bg-transparent py-2 text-sm text-ink outline-none transition focus:border-gold"
-              type="text"
-            />
-          </label>
-        </div>
-      </div>
-
-      <div class="space-y-6">
-        <p class="meta-text">邮件偏好</p>
-        <div class="space-y-4">
-          <label class="flex items-center justify-between rounded-lg border border-line bg-paper/30 p-4 transition-colors hover:bg-paper/50">
-            <div class="space-y-1">
-              <p class="text-xs font-bold text-ink">转发入站邮件</p>
-              <p class="text-[10px] text-mist">将收到的所有邮件转发到备用邮箱。</p>
-            </div>
-            <input bind:checked={nextProfile.forwardingEnabled} class="h-4 w-4 rounded-sm border-line text-gold focus:ring-gold" type="checkbox" />
-          </label>
-        </div>
-      </div>
-
-      <div class="space-y-6">
-        <p class="meta-text">邮件签名</p>
-        <label class="block space-y-2">
-          <span class="text-[10px] font-bold uppercase tracking-wider text-mist">个性化签名 (Markdown)</span>
-          <textarea
-            bind:value={nextProfile.signature}
-            class="min-h-[120px] w-full border border-line bg-transparent p-4 text-sm leading-relaxed text-ink outline-none transition focus:border-gold"
-            placeholder="此致，"
-          ></textarea>
-        </label>
-      </div>
-
-      {#if status}
-        <p class={`text-xs font-medium ${status.includes('成功') || status.includes('已保存') ? 'text-accent' : 'text-coral'}`}>
-          {status}
-        </p>
-      {/if}
-
-      <div class="flex items-center gap-4 pt-4">
-        <button
-          class="bg-ink px-8 py-3 text-[10px] font-bold uppercase tracking-widest text-paper transition-all hover:bg-accent disabled:opacity-50"
+  <form onsubmit={submit}>
+    <Panel title="个人资料" description="这些信息会显示在工作区和新邮件中。">
+      <div class="field-grid">
+        <TextField
+          id="profile-email"
+          label="邮箱地址"
+          type="email"
+          value={nextProfile.email}
+          required
           disabled={pending}
-          type="submit"
-        >
-          {pending ? '正在保存...' : '保存设置'}
-        </button>
-        <p class="text-[10px] text-mist italic">
-          所有设置会立即同步到 D1 数据库。
-        </p>
+          oninput={(event) => (nextProfile.email = event.currentTarget.value)}
+        />
+        <TextField
+          id="profile-name"
+          label="显示姓名"
+          value={nextProfile.name}
+          required
+          disabled={pending}
+          oninput={(event) => (nextProfile.name = event.currentTarget.value)}
+        />
+        <TextField
+          id="profile-role"
+          label="职位角色"
+          value={nextProfile.role}
+          disabled={pending}
+          oninput={(event) => (nextProfile.role = event.currentTarget.value)}
+        />
+        <TextField
+          id="profile-company"
+          label="公司名称"
+          value={nextProfile.company}
+          disabled={pending}
+          oninput={(event) => (nextProfile.company = event.currentTarget.value)}
+        />
+        <TextField
+          id="profile-timezone"
+          label="所在时区"
+          value={nextProfile.timezone}
+          disabled={pending}
+          oninput={(event) => (nextProfile.timezone = event.currentTarget.value)}
+        />
+        <TextField
+          id="profile-location"
+          label="所在地区"
+          value={nextProfile.location}
+          disabled={pending}
+          oninput={(event) => (nextProfile.location = event.currentTarget.value)}
+        />
       </div>
-    </form>
-  </div>
-</section>
+    </Panel>
+
+    <Panel title="邮件偏好" description="控制入站邮件在工作区之外的处理方式。">
+      <Switch
+        id="profile-forwarding"
+        checked={nextProfile.forwardingEnabled}
+        label="转发入站邮件"
+        description="将收到的邮件转发到已配置的通知地址。"
+        disabled={pending}
+        onchange={(checked) => (nextProfile.forwardingEnabled = checked)}
+      />
+    </Panel>
+
+    <Panel title="邮件签名" description="新邮件、回复和转发会使用这段纯文本签名。">
+      <TextArea
+        id="profile-signature"
+        label="签名内容"
+        value={nextProfile.signature}
+        rows={6}
+        disabled={pending}
+        placeholder="此致，"
+        oninput={(event) => (nextProfile.signature = event.currentTarget.value)}
+      />
+    </Panel>
+
+    <div class="save-row">
+      <Button type="submit" loading={pending}>{pending ? '正在保存' : '保存设置'}</Button>
+      {#if status}
+        <p role="status" aria-live="polite" class:error={!status.includes('已保存')}>{status}</p>
+      {/if}
+    </div>
+  </form>
+</div>
+
+<style>
+  .settings-layout {
+    width: min(100%, 920px);
+    margin: 0 auto;
+  }
+
+  header {
+    margin-bottom: var(--space-6);
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 650;
+    letter-spacing: -0.025em;
+  }
+
+  header p {
+    margin: var(--space-1) 0 0;
+    color: var(--fm-text-muted);
+  }
+
+  form {
+    display: grid;
+    gap: var(--space-5);
+  }
+
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+  }
+
+  .save-row {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: var(--space-4);
+  }
+
+  .save-row p {
+    margin: 0;
+    color: var(--fm-success);
+    font-size: 13px;
+  }
+
+  .save-row p.error {
+    color: var(--fm-danger);
+  }
+
+  @media (max-width: 720px) {
+    .field-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

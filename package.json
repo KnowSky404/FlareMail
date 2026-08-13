@@ -24,6 +24,7 @@
     "deploy": "bun run build && bun ./scripts/deploy.mjs"
   },
   "dependencies": {
+    "@lucide/svelte": "^1.31.0",
     "@sveltejs/kit": "^2.55.0",
     "postal-mime": "^3.0.0",
     "svelte": "^5.55.0"
