@@ -4,7 +4,7 @@
   let { compact = false }: { compact?: boolean } = $props();
 </script>
 
-<span class="brand" aria-label="FlareMail">
+<span class="brand" role="img" aria-label="FlareMail">
   <span class="mark" aria-hidden="true"><Flame size={compact ? 18 : 20} strokeWidth={2.2} /></span>
   {#if !compact}<span class="wordmark">FlareMail</span>{/if}
 </span>
