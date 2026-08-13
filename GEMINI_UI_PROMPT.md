@@ -1,4 +1,8 @@
-# Gemini UI Prompt
+# Gemini UI Prompt（已归档）
+
+> 本文件中的旧版 editorial/paper 视觉方向已于 2026-08-13 退役，不再是实现依据。
+> FlareMail 的权威设计规范是根目录 [`DESIGN.md`](./DESIGN.md)，实施顺序与回滚点见
+> [`REFACTOR_PLAN.md`](./REFACTOR_PLAN.md)。如本文件余下内容与这两份文档冲突，以它们为准。
 
 请基于当前 `FlareMail` 仓库，专注做一轮 **UI 外观美化**，不要改动已有业务逻辑、接口路径和状态流。
 
