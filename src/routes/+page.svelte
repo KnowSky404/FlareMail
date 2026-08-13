@@ -13,9 +13,21 @@
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
-  import { requestJson } from '$lib/client/api';
   import { ComposeSaveSequence } from '$lib/client/compose-save-sequence';
   import { LatestRequest } from '$lib/client/latest-request';
+  import {
+    createSession,
+    deleteMessage,
+    deleteSession,
+    fetchDeliveryDetail,
+    fetchInboundDetail,
+    fetchMailboxPage,
+    persistDraft,
+    retryDelivery,
+    submitMessage,
+    updateMessageFlags,
+    updateProfile
+  } from '$lib/client/workspace-api';
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import {
     buildMailThreads,
@@ -24,8 +36,8 @@
     createComposeInputFromDraft,
     createForwardComposeInput,
     createReplyComposeInput,
-    type DeliveryDetail,
     isInboundMessageId,
+    type DeliveryDetail,
     type ComposeInput,
     type ComposeMode,
     type InboundMessageDetail,
@@ -42,41 +54,6 @@
 
   type AppSection = MailFolder | 'profile';
   type MailFilter = 'all' | 'unread' | 'starred';
-
-  type SessionResponse = {
-    ok: boolean;
-    authenticated: boolean;
-    workspace: WorkspacePayload | null;
-    error?: string;
-  };
-
-  type WorkspaceResponse = {
-    ok: boolean;
-    workspace: WorkspacePayload;
-    error?: string;
-  };
-
-  type MailboxPageResponse = { page: MailboxPage };
-
-  type MessageResponse = WorkspaceResponse & {
-    message: MailMessage;
-  };
-
-  type DeleteResponse = WorkspaceResponse & {
-    folder: MailFolder;
-  };
-
-  type InboundDetailResponse = {
-    ok: boolean;
-    detail: InboundMessageDetail;
-    error?: string;
-  };
-
-  type DeliveryDetailResponse = {
-    ok: boolean;
-    detail: DeliveryDetail;
-    error?: string;
-  };
 
   type ComposeAutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
@@ -528,10 +505,7 @@
     };
 
     try {
-      const result = await requestJson<InboundDetailResponse>(
-        `/api/workspace/messages/${encodeURIComponent(message.id)}/detail`,
-        { signal: request.signal }
-      );
+      const result = await fetchInboundDetail(message.id, request.signal);
       if (request.isCurrent()) {
         inboundDetails = {
           ...inboundDetails,
@@ -570,10 +544,7 @@
     };
 
     try {
-      const result = await requestJson<DeliveryDetailResponse>(
-        `/api/workspace/messages/${encodeURIComponent(message.id)}/delivery`,
-        { signal: request.signal }
-      );
+      const result = await fetchDeliveryDetail(message.id, request.signal);
       if (request.isCurrent()) {
         deliveryDetails = {
           ...deliveryDetails,
@@ -688,9 +659,7 @@
       });
       if (searchQuery.trim()) params.set('q', searchQuery.trim());
       if (mailFilter !== 'all') params.set('filter', mailFilter);
-      const result = await requestJson<MailboxPageResponse>(`/api/workspace/mailbox?${params}`, {
-        signal: request.signal
-      });
+      const result = await fetchMailboxPage(params, request.signal);
       if (request.isCurrent()) {
         applyMailboxPage(result.page, false);
         banner = '邮件列表已刷新。';
@@ -733,9 +702,7 @@
       });
       if (searchQuery.trim()) params.set('q', searchQuery.trim());
       if (mailFilter !== 'all') params.set('filter', mailFilter);
-      const result = await requestJson<MailboxPageResponse>(`/api/workspace/mailbox?${params}`, {
-        signal: request.signal
-      });
+      const result = await fetchMailboxPage(params, request.signal);
       if (request.isCurrent()) applyMailboxPage(result.page, true);
     } catch (error) {
       if (!request.signal.aborted) {
@@ -783,10 +750,7 @@
       composeAutosaveMessage = '正在关闭前保存草稿...';
 
       try {
-        const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
-          method: 'POST',
-          body: JSON.stringify(input)
-        });
+        const result = await persistDraft(input);
 
         applyWorkspace(result.workspace);
         syncComposeDraftState(
@@ -819,10 +783,7 @@
     loginError = '';
 
     try {
-      const result = await requestJson<SessionResponse>('/api/workspace/session', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
+      const result = await createSession(payload);
 
       if (!result.workspace) {
         throw new Error('登录后未返回工作区数据。');
@@ -845,9 +806,7 @@
     pending = true;
 
     try {
-      await requestJson<SessionResponse>('/api/workspace/session', {
-        method: 'DELETE'
-      });
+      await deleteSession();
       resetWorkspace();
       banner = '你已退出工作台。';
     } finally {
@@ -860,10 +819,7 @@
     profileStatus = '';
 
     try {
-      const result = await requestJson<WorkspaceResponse>('/api/workspace/profile', {
-        method: 'PUT',
-        body: JSON.stringify(nextProfile)
-      });
+      const result = await updateProfile(nextProfile);
 
       applyWorkspace(result.workspace, {
         section: 'profile'
@@ -882,10 +838,7 @@
     pending = true;
 
     try {
-      const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
-        method: 'POST',
-        body: JSON.stringify(withComposeDraftId(input))
-      });
+      const result = await persistDraft(withComposeDraftId(input));
 
       applyWorkspace(result.workspace, {
         section: 'drafts',
@@ -921,10 +874,7 @@
     const save = composeSaveSequence.begin();
 
     try {
-      const result = await requestJson<MessageResponse>('/api/workspace/drafts', {
-        method: 'POST',
-        body: JSON.stringify(input)
-      });
+      const result = await persistDraft(input);
 
       applyWorkspace(result.workspace);
       if (!save.isActive()) return;
@@ -956,11 +906,7 @@
     pending = true;
 
     try {
-      const result = await requestJson<MessageResponse>('/api/workspace/messages', {
-        method: 'POST',
-        headers: composeSubmissionId ? { 'Idempotency-Key': composeSubmissionId } : undefined,
-        body: JSON.stringify(withComposeDraftId(input))
-      });
+      const result = await submitMessage(withComposeDraftId(input), composeSubmissionId);
 
       deliveryDetails = Object.fromEntries(
         Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
@@ -992,12 +938,7 @@
     pending = true;
 
     try {
-      const result = await requestJson<MessageResponse>(
-        `/api/workspace/messages/${encodeURIComponent(message.id)}/retry`,
-        {
-          method: 'POST'
-        }
-      );
+      const result = await retryDelivery(message.id);
 
       deliveryDetails = Object.fromEntries(
         Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
@@ -1031,16 +972,11 @@
     pending = true;
 
     try {
-      const result = await requestJson<MessageResponse>(
-        `/api/workspace/messages/${message.id}/flags`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify(patch)
-        }
-      );
+      const result = await updateMessageFlags(message.id, patch);
 
+      const nextSection = activeSection === 'profile' ? message.folder : activeSection;
       applyWorkspace(result.workspace, {
-        section: activeSection === 'profile' ? message.folder : activeSection,
+        section: nextSection === activeSection ? undefined : nextSection,
         preferredMessageId: result.message.id
       });
 
@@ -1099,9 +1035,7 @@
     pending = true;
 
     try {
-      const result = await requestJson<DeleteResponse>(`/api/workspace/messages/${message.id}`, {
-        method: 'DELETE'
-      });
+      const result = await deleteMessage(message.id);
 
       applyWorkspace(result.workspace, {
         section: activeSection === 'profile' ? result.folder : activeSection
