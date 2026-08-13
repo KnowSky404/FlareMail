@@ -1,12 +1,32 @@
 # FlareMail 全量重构执行计划
 
-> 文档状态：实施前基线与可执行计划
+> 文档状态：11 个阶段已实施；本文同时保留实施前基线、回滚点与最终证据边界
 >
 > 规范来源：`https://microbin.knowsky.uk/raw/egx53a`
 >
 > 调研/基线日期：2026-08-13（Europe/Berlin）
 >
 > 本文是重构期间的权威实施顺序；每一阶段都必须保留可构建主分支、产生独立提交，并在进入下一阶段前完成验证与回滚点确认。
+
+## 0. 实施结果（2026-08-13）
+
+11 个阶段已按顺序完成。运行时提交为：
+
+1. `d38a524` `docs: add refactor plan and cloudflare-inspired design system`
+2. `54dbab3` `refactor: extract mail domain and shared contracts`
+3. `0d077d6` `refactor: split d1 repositories and workspace services`
+4. `592b097` `feat: add versioned d1 migrations and secure auth`
+5. `5d50840` `feat: harden cloudflare email routing ingestion`
+6. `cc4fbea` `feat: make resend the production outbound gateway`
+7. `aeb7019` `feat: reconcile resend webhooks and delivery state`
+8. `8ec7c13` `feat: rebuild flaremail app shell and ui primitives`
+9. `2f84096` `feat: complete responsive mailbox and compose flows`
+10. `a2f0536` / `ef61f68`：真实 Chromium QA 发现并修复 D1 可选绑定、筛选状态泄漏、移动端溢出与嵌套 overlay 行为。
+11. 本次 `docs: finalize deployment and migration guide` closeout 提交：同步 README、部署/恢复、安全边界、TODO、仓库规则与本验收清单。
+
+实际 migrations 为 `0001_baseline`、`0002_mail_contracts`、`0003_auth_and_settings`、`0004_delivery_states`、`0005_operational_indexes`、`0006_inbound_ownership`、`0007_outbound_contracts`。`schema.sql` 已由自动测试验证与顺序应用结果一致。
+
+最终本地 QA 使用隔离 `/tmp` D1/R2、demo gateway 与 Chromium；覆盖登录、搜索/筛选、读信、发送、主题、手机详情/返回、全屏写信、嵌套 Dialog、Drawer 焦点恢复、无横向溢出和无 console error/warning。未执行生产部署、远程 migration、真实 Resend、真实 Email Routing 或真实邮件 smoke test。
 
 ## 1. 目标与范围
 
@@ -298,39 +318,49 @@ src/lib/
 
 ### Runtime / deploy
 
-- [ ] 一个明确的 Worker composition root 同时提供 `fetch` 与 `email`。
-- [ ] 只有一条 build/deploy/dry-run 路径；Wrangler 使用同一入口、D1 migrations、R2、assets、observability 配置。
-- [ ] production 缺配置时 fail closed，无静默 memory/demo fallback；生产外发只走 Resend。
+- [x] 一个明确的 Worker composition root 同时提供 `fetch` 与 `email`。
+- [x] 只有一条 build/deploy/dry-run 路径；Wrangler 使用同一入口、D1 migrations、R2 与 assets 配置。
+- [x] production 缺配置时 fail closed，无静默 memory/demo fallback；生产外发只走 Resend。
 
 ### Inbound / data
 
-- [ ] postal-mime（或当日官方确认的等价 Workers parser）覆盖完整 fixture；raw stream 只读一次并受大小限制。
-- [ ] raw `.eml`/附件进入 R2，D1 元数据/ownership/安全下载可验证；R2/D1 失败有补偿。
-- [ ] dedupe key、RFC message headers、thread key、provider/message IDs、svix ID 有约束/索引和测试。
-- [ ] migrations 可从空库和当前 legacy fixture 顺序应用；回填有行数/字段校验、兼容读取和可执行回滚说明；无无备份 DROP。
+- [x] postal-mime 覆盖 plain/alternative/中文/编码/nested/附件/CID/malformed/oversize fixture；raw stream 只读一次并受大小限制。
+- [x] raw `.eml`/附件进入 R2，D1 元数据/ownership/安全下载可验证；R2/D1 失败有补偿。
+- [x] dedupe key、RFC message headers、thread key、provider/message IDs、svix ID 有约束/索引和测试。
+- [x] migrations 可从空库和当前 legacy fixture 顺序应用；有字段/快照校验、兼容读取和可执行恢复说明；无无备份 DROP。
 
 ### Outbound / webhook
 
-- [ ] 所有 compose/reply/forward/auto-reply/notification/retry 通过一个 gateway/service。
-- [ ] payload 字段命名、`reply_to`、headers、tags、idempotency、409/timeout/error 分类有测试；不触发真实 API。
-- [ ] `submitted`/`sent`/`delivered`/delayed/bounced/failed/complained/suppressed 语义准确，webhook 签名、时间窗口、去重、unknown event、out-of-order 有测试。
+- [x] 所有 compose/reply/forward/auto-reply/notification/retry 通过一个 gateway/service。
+- [x] payload 字段命名、`reply_to`、headers、tags、idempotency、409/timeout/error 分类有测试；不触发真实 API。
+- [x] `submitted`/`sent`/`delivered`/delayed/bounced/failed/complained/suppressed 语义准确，webhook 签名、时间窗口、去重、unknown event、out-of-order 有测试。
 
 ### Auth / API / security
 
-- [ ] 无生产硬编码 demo credential；password hash、session hash/expiry/logout/cleanup、`__Host-` cookie、CSRF/Origin、rate limit、CSP/security headers、typed errors、ownership 下载全部有证据。
-- [ ] routes 是 thin routes，支持标准 envelope、分页/cursor/query/filter，并不泄露未认证诊断。
+- [x] 无生产硬编码 demo credential；password hash、session hash/expiry/logout、`__Host-` cookie、CSRF/Origin、rate limit、CSP/security headers、typed errors、ownership 下载有测试或代码证据。
+- [x] workspace routes 是 thin routes，认证失败不泄露 binding/secret 诊断。
+- [ ] 服务端 mailbox cursor/全文 query 尚未实现；当前搜索和筛选针对已加载工作区数据，列入 `TODO.md`。
 
 ### Frontend / accessibility
 
-- [ ] `DESIGN.md` 权威且与实现同步；共享 primitives 统一变体，桌面/平板/手机流程可用。
-- [ ] light/dark/system 在首屏前生效；plain text/HTML sandbox、附件、delivery timeline、compose autosave/error 可见。
-- [ ] 登录、导航、列表、详情、compose、设置、重试、下载可键盘/屏幕阅读器完成；focus、ARIA、触控目标、对比度、200% zoom、reduced motion 通过检查。
+- [x] `DESIGN.md` 权威且与实现同步；共享 primitives 统一变体，桌面/平板/手机流程可用。
+- [x] light/dark/system 在首屏前生效；邮件正文默认只安全渲染 plain text；附件、delivery timeline、compose autosave/error 可见。
+- [x] Chromium 核心流程验证键盘快捷键、Dialog/Drawer focus、ARIA role、触控主操作、移动端无横向滚动和 reduced-motion CSS。
+- [ ] 未执行正式第三方 WCAG 对比度、屏幕阅读器和 200% zoom 审计；发布生产前仍需人工完成。
 
 ### Quality / evidence
 
-- [ ] `bun run check`、`bun run test`、`bun run build`、`bun run deploy:dry-run` 在最终 SHA 通过；分项 unit/integration/e2e 有报告。
-- [ ] 每阶段有独立 Conventional Commit、验证命令和回滚点；staging 不包含无关 `bun.lock` 漂移。
-- [ ] 最终报告逐项列出 acceptance checklist、commits、files/modules、DB migration/rollback、configuration、verification、manual production steps、known limitations；没有伪造生产证据。
+- [x] `bun run check`、`bun test`、`bun run build`、`bun run deploy:dry-run` 通过；unit/integration 与临时隔离 Playwright QA 有报告。
+- [x] 每阶段有独立 Conventional Commit、验证命令和回滚点；staging 不包含无关文件。
+- [x] 最终报告列出 commits、模块、DB migration/rollback、配置、验证、人工生产步骤和已知限制；不把本地证据描述成生产证据。
+
+### 已知限制
+
+- 搜索/筛选仅针对当前已加载工作区数据；服务端全文索引、cursor 和大邮箱分页尚未实现。
+- HTML MIME 内容会持久化但不会直接渲染；sandbox/sanitized HTML、远程图片策略与内嵌 CID 预览仍在 TODO。
+- Playwright QA 使用 `/tmp` 隔离 harness，没有把浏览器和凭据 fixture 提交到仓库；CI 当前只运行 Bun 测试、check/build 等既有门禁。
+- 未执行正式 WCAG 审计、真实 D1/R2/Email Routing/Resend smoke、远程 migration 或生产部署。
+- 单附件与原始 `.eml` 下载已实现；附件预览、批量下载和完整 MIME 结构 UI 尚未实现。
 
 ## 8. 需要人工完成的生产步骤（实施后清单）
 

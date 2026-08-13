@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-`src/` 是 SvelteKit 主应用目录。页面放在 `src/routes/`，接口使用 `+server.ts`，例如 `src/routes/api/messages/+server.ts`。仅服务端可用的 Cloudflare 逻辑放在 `src/lib/server/`。Worker 包装入口位于 `worker/index.ts`，统一承载网页/API 的 `fetch` 与 Email Routing 的 `email()`。D1 表结构定义在 `schema.sql`。`build/`、`.svelte-kit/`、`.wrangler/` 均为构建产物，不要手改。
+`src/` 是 SvelteKit 主应用目录。页面放在 `src/routes/`，接口使用 `+server.ts`，例如 `src/routes/api/messages/+server.ts`。纯邮件契约放在 `src/lib/domain/mail/`；仅服务端可用的认证、D1、入站、出站与工作区逻辑放在 `src/lib/server/`。Worker 包装入口位于 `worker/index.ts`，统一承载网页/API 的 `fetch` 与 Email Routing 的 `email()`。D1 变更以 `migrations/` 为权威顺序，`schema.sql` 只是最新结构快照。`build/`、`.svelte-kit/`、`.wrangler/` 均为构建产物，不要手改。
 
 ## 构建、测试与开发命令
 
@@ -11,10 +11,12 @@
 - `bun run check`：执行类型检查与路由校验
 - `bun run build`：构建 Cloudflare Workers 产物
 - `bun run preview`：用 Wrangler 本地预览 Worker
-- `bun run db:migrate:local`：将 `schema.sql` 应用到本地 D1
+- `bun test`：运行 Bun unit/integration 测试
+- `bun run db:migrate:local`：顺序应用 `migrations/` 到本地 D1
+- `bun run deploy:dry-run`：使用私有部署配置构建并校验 Worker，不发布
 - `bun run deploy`：构建并部署到 Cloudflare
 
-提交前至少运行 `bun run check`；涉及 Worker、D1、R2 或 Email Routing 时，再执行 `bun run build` 或 `bun run preview`。
+提交前至少运行 `bun test` 与 `bun run check`；涉及 Worker、D1、R2、Resend 或 Email Routing 时，再执行 `bun run build`。浏览器交互变更还应运行 Playwright/Chromium QA；真实 deploy、远程 migration 或邮件 smoke test 必须得到明确授权。
 
 ## 编码风格与命名约定
 
@@ -22,7 +24,7 @@
 
 ## 测试与验证要求
 
-仓库当前未接入专门的单元测试框架，因此 `bun run check` 与 `bun run build` 是默认必跑项。新增测试时，建议与目标模块相邻放置，并使用 `*.test.ts` 命名。接口变更应至少补充一条本地验证路径，例如 `GET /api/health`。
+仓库使用 Bun test runner，测试与目标模块相邻并使用 `*.test.ts` 命名。默认门禁是 `bun test`、`bun run check` 与 `bun run build`；接口变更还应补充本地验证路径，例如 `GET /api/health`。D1 migration 必须同时验证空库、legacy fixture 与 `schema.sql` 快照一致性。
 
 ## 提交与 Pull Request 规范
 
