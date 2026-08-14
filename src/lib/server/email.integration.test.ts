@@ -177,7 +177,7 @@ describe('inbound email persistence', () => {
     expect(test.BUCKET.objects.size).toBe(2);
     expect(test.BUCKET.putCount).toBe(2);
     const storedRaw = [...test.BUCKET.objects.values()].find((value) => value.byteLength > 300);
-    expect(storedRaw).toBeDefined();
+    if (!storedRaw) throw new Error('The winner raw object was not persisted.');
     expect([fixtureBytes(), variant]).toContainEqual(storedRaw);
   });
 
