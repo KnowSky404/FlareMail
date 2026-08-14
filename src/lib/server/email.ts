@@ -110,7 +110,8 @@ function safeLog(event: string, detail: Record<string, string | number | boolean
 const rejectReason = (code: string) => ({
   INBOUND_RAW_LIMIT: 'Message exceeds the inbound size limit.',
   INBOUND_MIME_LIMIT: 'Message exceeds the MIME attachment limit.',
-  INBOUND_MIME_PARSE: 'Message could not be parsed as MIME.'
+  INBOUND_MIME_PARSE: 'Message could not be parsed as MIME.',
+  INBOUND_MIME_PARSE_FAILED: 'Message could not be parsed as MIME.'
 }[code] ?? 'Message was rejected by the inbound safety limits.').slice(0, 128);
 
 export async function handleInboundEmail(
@@ -138,7 +139,17 @@ export async function handleInboundEmail(
     safeLog('inbound_phase', { correlationId, phase: 'mime_parse', bytes: raw.byteLength, attachments: parsed.attachments.length, durationMs: Date.now() - mimeStartedAt });
   } catch (error) {
     if (error instanceof InboundRawLimitError || error instanceof InboundMimeLimitError || error instanceof InboundMimeParseError) {
-      safeLog('inbound_rejected', { correlationId, code: error.code, durationMs: Date.now() - startedAt });
+      const detail: Record<string, string | number | boolean | null> = {
+        correlationId,
+        code: error.code,
+        durationMs: Date.now() - startedAt,
+        bytes: error instanceof InboundRawLimitError ? error.actual : message.rawSize
+      };
+      if (error instanceof InboundMimeLimitError) {
+        detail.limitKind = error.kind;
+        detail.actual = error.actual;
+      }
+      safeLog('inbound_rejected', detail);
       message.setReject(rejectReason(error.code));
       return;
     }
