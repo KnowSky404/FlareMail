@@ -20,6 +20,8 @@ type MaintenanceReport = {
   cutoffs: { sessions: string; webhookEvents: string };
   sessions: { candidates: number; deleted: number };
   webhookEvents: { candidates: number; deleted: number };
+  staleClaims: { candidates: number; deleted: number };
+  deliveryReview: { staleSubmitting: number; approachingExpiry: number; expiredReviewRequired: number };
   r2: {
     inventory: 'manifest' | 'unavailable';
     referenced: number;
@@ -102,8 +104,12 @@ export function maintenanceSql(cutoffs: { sessions: string; webhookEvents: strin
   return {
     sessionCandidates: `SELECT COUNT(*) AS count FROM workspace_sessions WHERE (revoked_at IS NOT NULL AND datetime(revoked_at) <= datetime(${sessionCutoff})) OR (expires_at IS NOT NULL AND datetime(expires_at) <= datetime(${sessionCutoff}))`,
     webhookCandidates: `SELECT COUNT(*) AS count FROM workspace_outbound_events WHERE datetime(created_at) <= datetime(${webhookCutoff})`,
+    staleClaimCandidates: `SELECT COUNT(*) AS count FROM workspace_inbound_ingest_claims WHERE status = 'processing' AND datetime(updated_at) <= datetime('now', '-15 minutes')`,
+    staleSubmittingCandidates: `SELECT COUNT(*) AS count FROM workspace_delivery_attempts WHERE status = 'submitting' AND completed_at IS NULL AND datetime(started_at) <= datetime('now', '-15 minutes')`,
+    approachingExpiryCandidates: `SELECT COUNT(*) AS count FROM workspace_delivery_attempts WHERE status IN ('submitting', 'delayed', 'failed') AND datetime(started_at) > datetime('now', '-24 hours') AND datetime(started_at) <= datetime('now', '-23 hours')`,
+    expiredReviewCandidates: `SELECT COUNT(*) AS count FROM workspace_delivery_attempts WHERE status IN ('submitting', 'delayed', 'failed') AND datetime(started_at) <= datetime('now', '-24 hours')`,
     references: `SELECT raw_key AS key FROM email_messages WHERE raw_key <> '' UNION SELECT r2_key AS key FROM workspace_attachments WHERE r2_key <> ''`,
-    apply: `DELETE FROM workspace_sessions WHERE (revoked_at IS NOT NULL AND datetime(revoked_at) <= datetime(${sessionCutoff})) OR (expires_at IS NOT NULL AND datetime(expires_at) <= datetime(${sessionCutoff})); DELETE FROM workspace_outbound_events WHERE datetime(created_at) <= datetime(${webhookCutoff});`
+    apply: `DELETE FROM workspace_sessions WHERE (revoked_at IS NOT NULL AND datetime(revoked_at) <= datetime(${sessionCutoff})) OR (expires_at IS NOT NULL AND datetime(expires_at) <= datetime(${sessionCutoff})); DELETE FROM workspace_outbound_events WHERE datetime(created_at) <= datetime(${webhookCutoff}); DELETE FROM workspace_inbound_ingest_claims WHERE status = 'processing' AND datetime(updated_at) <= datetime('now', '-15 minutes');`
   };
 }
 
@@ -250,6 +256,8 @@ function reportOutput(report: MaintenanceReport, json: boolean) {
   console.log(`Maintenance ${report.mode} (${report.target})`);
   console.log(`Sessions: ${report.sessions.candidates} candidate(s), ${report.sessions.deleted} deleted.`);
   console.log(`Webhook events: ${report.webhookEvents.candidates} candidate(s), ${report.webhookEvents.deleted} deleted.`);
+  console.log(`Inbound claims: ${report.staleClaims.candidates} stale candidate(s), ${report.staleClaims.deleted} deleted.`);
+  console.log(`Delivery review: ${report.deliveryReview.staleSubmitting} stale submitting, ${report.deliveryReview.approachingExpiry} approaching expiry, ${report.deliveryReview.expiredReviewRequired} expired review-required.`);
   if (report.r2.objects === null) console.log(`R2: inventory unavailable (${report.r2.note ?? 'no inventory'}).`);
   else console.log(`R2: ${report.r2.objects} object(s), ${report.r2.orphaned} orphan(s), ${report.r2.deleted} deleted.`);
   if (report.r2.keys.length > 0) console.log(`R2 orphan keys: ${report.r2.keys.join(', ')}`);
@@ -262,9 +270,13 @@ export async function runMaintenance(options: MaintenanceOptions) {
     webhookEvents: cutoffIso(new Date(), options.webhookRetentionDays)
   };
   const sql = maintenanceSql(cutoffs);
-  const [sessionCount, webhookCount, referencesResult, r2Inventory] = await Promise.all([
+  const [sessionCount, webhookCount, staleClaimCount, staleSubmittingCount, approachingExpiryCount, expiredReviewCount, referencesResult, r2Inventory] = await Promise.all([
     executeD1(options, sql.sessionCandidates),
     executeD1(options, sql.webhookCandidates),
+    executeD1(options, sql.staleClaimCandidates),
+    executeD1(options, sql.staleSubmittingCandidates),
+    executeD1(options, sql.approachingExpiryCandidates),
+    executeD1(options, sql.expiredReviewCandidates),
     executeD1(options, sql.references),
     listR2Objects(options)
   ]);
@@ -273,7 +285,8 @@ export async function runMaintenance(options: MaintenanceOptions) {
   const applyD1 = options.apply
     ? await Promise.all([
       executeD1(options, sql.apply.split(';')[0], true),
-      executeD1(options, sql.apply.split(';')[1], true)
+      executeD1(options, sql.apply.split(';')[1], true),
+      executeD1(options, sql.apply.split(';')[2], true)
     ])
     : null;
   const r2DeleteResult = options.apply && r2Inventory.inventory !== 'unavailable'
@@ -285,6 +298,12 @@ export async function runMaintenance(options: MaintenanceOptions) {
     cutoffs,
     sessions: { candidates: d1Count(sessionCount), deleted: options.apply ? d1Changes(applyD1?.[0]) : 0 },
     webhookEvents: { candidates: d1Count(webhookCount), deleted: options.apply ? d1Changes(applyD1?.[1]) : 0 },
+    staleClaims: { candidates: d1Count(staleClaimCount), deleted: options.apply ? d1Changes(applyD1?.[2]) : 0 },
+    deliveryReview: {
+      staleSubmitting: d1Count(staleSubmittingCount),
+      approachingExpiry: d1Count(approachingExpiryCount),
+      expiredReviewRequired: d1Count(expiredReviewCount)
+    },
     r2: {
       inventory: r2Inventory.inventory,
       referenced: references.size,

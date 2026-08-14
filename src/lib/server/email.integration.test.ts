@@ -1,7 +1,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
-import { handleInboundEmail } from './email';
+import { createInboundDedupeKey, handleInboundEmail } from './email';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -14,8 +14,14 @@ class TestStatement {
 
 class TestD1 {
   failBatch = false;
+  failClaimCompletion = false;
   constructor(readonly database: Database) {}
-  prepare(sql: string) { return new TestStatement(this.database, sql) as unknown as D1PreparedStatement; }
+  prepare(sql: string) {
+    if (this.failClaimCompletion && sql.includes("UPDATE workspace_inbound_ingest_claims SET status = 'completed'")) {
+      return { bind: () => ({ run: async () => { throw new Error('simulated claim finalize failure'); } }) } as unknown as D1PreparedStatement;
+    }
+    return new TestStatement(this.database, sql) as unknown as D1PreparedStatement;
+  }
   async batch(statements: D1PreparedStatement[]) {
     if (this.failBatch) throw new Error('simulated d1 write failure');
     const results = [];
@@ -26,7 +32,9 @@ class TestD1 {
 
 class TestBucket {
   readonly objects = new Map<string, Uint8Array>();
+  failPuts = false;
   async put(key: string, value: ArrayBuffer | Uint8Array) {
+    if (this.failPuts) throw new Error('simulated r2 write failure');
     this.objects.set(key, value instanceof Uint8Array ? new Uint8Array(value) : new Uint8Array(value.slice(0)));
     return {} as R2Object;
   }
@@ -111,5 +119,41 @@ describe('inbound email persistence', () => {
     await expect(handleInboundEmail(oversized.value, test.env)).resolves.toBeUndefined();
     expect(oversized.rejected()).toBe('Message exceeds the inbound size limit.');
     expect(test.BUCKET.objects.size).toBe(0);
+  });
+
+  test('allows only one claimant for concurrent duplicate inbound messages', async () => {
+    const test = environment();
+    await Promise.all([handleInboundEmail(message().value, test.env), handleInboundEmail(message().value, test.env)]);
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+    expect(test.database.query("SELECT COUNT(*) AS count FROM workspace_inbound_ingest_claims WHERE status = 'completed'").get()).toEqual({ count: 1 });
+    expect(test.BUCKET.objects.size).toBe(2);
+  });
+
+  test('releases a claim after R2 failure without deleting another claimant objects', async () => {
+    const test = environment();
+    test.BUCKET.failPuts = true;
+    await expect(handleInboundEmail(message().value, test.env)).rejects.toThrow('simulated r2 write failure');
+    expect(test.database.query('SELECT COUNT(*) AS count FROM workspace_inbound_ingest_claims').get()).toEqual({ count: 0 });
+    expect(test.BUCKET.objects.size).toBe(0);
+  });
+
+  test('keeps objects when D1 finalization fails and completes the claim on recovery', async () => {
+    const test = environment();
+    test.DB.failClaimCompletion = true;
+    await expect(handleInboundEmail(message().value, test.env)).rejects.toThrow('simulated claim finalize failure');
+    expect(test.BUCKET.objects.size).toBe(2);
+    test.DB.failClaimCompletion = false;
+    await handleInboundEmail(message().value, test.env);
+    expect(test.database.query("SELECT status FROM workspace_inbound_ingest_claims").get()).toEqual({ status: 'completed' });
+  });
+
+  test('recovers a stale claim with a new storage id', async () => {
+    const test = environment();
+    const dedupeKey = await createInboundDedupeKey('<attachment-1@example.com>', 'owner@example.test', fixtureBytes().buffer);
+    test.database.query(`INSERT INTO workspace_inbound_ingest_claims (dedupe_key, storage_id, claim_token, raw_key, status, created_at, updated_at)
+      VALUES (?, 'stale-storage', 'stale-token', 'inbound/2020-01-01/stale-storage/message.eml', 'processing', '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z')`).run(dedupeKey);
+    await handleInboundEmail(message().value, test.env);
+    expect(test.database.query('SELECT storage_id, status FROM workspace_inbound_ingest_claims').get()).toMatchObject({ status: 'completed' });
+    expect(test.database.query('SELECT storage_id FROM workspace_inbound_ingest_claims').get()).not.toEqual({ storage_id: 'stale-storage', status: 'completed' });
   });
 });

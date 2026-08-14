@@ -1,7 +1,7 @@
 import type { CloudflareEnv } from './cloudflare';
 import { parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
-import { claimInboundIngest, completeInboundIngestClaim, findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
+import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 
@@ -125,13 +125,17 @@ export async function handleInboundEmail(
   const rawLimit = configuredLimit(env.INBOUND_MAX_RAW_BYTES, DEFAULT_INBOUND_LIMITS.rawBytes, DEFAULT_INBOUND_LIMITS.rawBytes);
   let raw: ArrayBuffer;
   let parsed;
+  const rawStartedAt = Date.now();
   try {
     raw = await readBoundedRawEmail(message.raw, message.rawSize, rawLimit);
+    safeLog('inbound_phase', { correlationId, phase: 'raw_read', bytes: raw.byteLength, durationMs: Date.now() - rawStartedAt });
+    const mimeStartedAt = Date.now();
     parsed = await parseInboundMime(raw, {
       maxAttachmentCount: configuredLimit(env.INBOUND_MAX_ATTACHMENT_COUNT, DEFAULT_INBOUND_LIMITS.attachmentCount, 100),
       maxAttachmentSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_BYTES, DEFAULT_INBOUND_LIMITS.attachmentBytes, DEFAULT_INBOUND_LIMITS.attachmentBytes),
       maxAttachmentTotalSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_TOTAL_BYTES, DEFAULT_INBOUND_LIMITS.attachmentTotalBytes, DEFAULT_INBOUND_LIMITS.attachmentTotalBytes)
     });
+    safeLog('inbound_phase', { correlationId, phase: 'mime_parse', bytes: raw.byteLength, attachments: parsed.attachments.length, durationMs: Date.now() - mimeStartedAt });
   } catch (error) {
     if (error instanceof InboundRawLimitError || error instanceof InboundMimeLimitError || error instanceof InboundMimeParseError) {
       safeLog('inbound_rejected', { correlationId, code: error.code, durationMs: Date.now() - startedAt });
@@ -150,6 +154,7 @@ export async function handleInboundEmail(
   const dedupeKey = await createInboundDedupeKey(messageId, recipient, raw);
   const existing = await findInboundByDedupeKey(env.DB, dedupeKey);
   if (existing) {
+    await completeInboundIngestClaimForExistingMessage(env.DB, dedupeKey);
     safeLog('inbound_duplicate', { correlationId, messageId: existing.id, durationMs: Date.now() - startedAt });
     return;
   }
@@ -184,12 +189,15 @@ export async function handleInboundEmail(
       size: attachment.size, inline: attachment.inline, contentId: attachment.contentId, r2Key, content: attachment.content };
   });
 
+  let d1Finalized = false;
   try {
+    const r2StartedAt = Date.now();
     await env.BUCKET.put(rawKey, raw, { httpMetadata: { contentType: 'message/rfc822' }, customMetadata: { messageId: storageId } });
     await Promise.all(attachmentRows.map((attachment) => env.BUCKET.put(attachment.r2Key, attachment.content, {
       httpMetadata: { contentType: attachment.contentType },
       customMetadata: { messageId: storageId, attachmentId: attachment.id }
     })));
+    safeLog('inbound_phase', { correlationId, phase: 'r2_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - r2StartedAt });
 
     const from = addressLabel(parsed.from, message.from);
     const subject = parsed.subject.trim() || message.headers.get('subject')?.trim() || '(no subject)';
@@ -212,7 +220,10 @@ export async function handleInboundEmail(
       rawSize: raw.byteLength,
       ownerUserId
     }), ...attachmentRows.map(({ content: _content, ...attachment }) => insertAttachment(env.DB, attachment))];
+    const d1StartedAt = Date.now();
     await env.DB.batch(statements);
+    safeLog('inbound_phase', { correlationId, phase: 'd1_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - d1StartedAt });
+    d1Finalized = true;
     await completeInboundIngestClaim(env.DB, dedupeKey, claim.claimToken);
   } catch (error) {
     let duplicate = false;
@@ -223,7 +234,7 @@ export async function handleInboundEmail(
         duplicate = false;
       }
     }
-    if (!duplicate) {
+    if (!duplicate && !d1Finalized) {
       await removeObjects(env.BUCKET, writtenKeys);
       await releaseInboundIngestClaim(env.DB, dedupeKey, claim.claimToken).catch(() => undefined);
     }

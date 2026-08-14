@@ -134,6 +134,7 @@ async function submitPersistedMessage(
 ) {
   const startedAt = nowIso();
   const attemptNumber = attempts + 1;
+  const d1StartedAt = Date.now();
   await env.DB.batch([
     upsertOutboundStatus(env.DB, statusPayload({ session, messageId: message.id, idempotencyKey, provider,
       status: 'submitting', attempts: attemptNumber, remoteTimestamp: startedAt })),
@@ -141,6 +142,7 @@ async function submitPersistedMessage(
       attemptNumber, idempotencyKey, provider, providerMessageId: null, status: 'submitting', error: null,
       startedAt, completedAt: null, createdAt: startedAt })
   ]);
+  console.log(JSON.stringify({ event: 'outbound_phase', phase: 'd1_attempt_persist', durationMs: Date.now() - d1StartedAt }));
 
   try {
     const result = await gateway.send(gatewayInput(env, message, idempotencyKey));

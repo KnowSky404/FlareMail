@@ -72,6 +72,11 @@ export async function releaseInboundIngestClaim(db: D1Database, dedupeKey: strin
   await db.prepare(`DELETE FROM workspace_inbound_ingest_claims WHERE dedupe_key = ? AND claim_token = ? AND status = 'processing'`).bind(dedupeKey, claimToken).run();
 }
 
+export async function completeInboundIngestClaimForExistingMessage(db: D1Database, dedupeKey: string) {
+  await db.prepare(`UPDATE workspace_inbound_ingest_claims SET status = 'completed', completed_at = ?, updated_at = ? WHERE dedupe_key = ? AND status = 'processing'`)
+    .bind(new Date().toISOString(), new Date().toISOString(), dedupeKey).run();
+}
+
 export async function findInboundByDedupeKey(db: D1Database, dedupeKey: string) {
   return db.prepare(`SELECT id, raw_key FROM email_messages WHERE dedupe_key = ?`)
     .bind(dedupeKey).first<{ id: string; raw_key: string }>();

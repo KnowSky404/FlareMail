@@ -24,6 +24,9 @@ describe('maintenance CLI safety helpers', () => {
     expect(sql.sessionCandidates).toContain('COUNT(*) AS count');
     expect(sql.apply).toContain('DELETE FROM workspace_sessions');
     expect(sql.apply).toContain('DELETE FROM workspace_outbound_events');
+    expect(sql.apply).toContain('DELETE FROM workspace_inbound_ingest_claims');
+    expect(sql.staleClaimCandidates).toContain('workspace_inbound_ingest_claims');
+    expect(sql.expiredReviewCandidates).toContain('24 hours');
     expect(sql.apply).not.toContain('DROP');
   });
 
