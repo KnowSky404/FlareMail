@@ -32,9 +32,11 @@ class TestD1 {
 
 class TestBucket {
   readonly objects = new Map<string, Uint8Array>();
+  putCount = 0;
   failPuts = false;
   async put(key: string, value: ArrayBuffer | Uint8Array) {
     if (this.failPuts) throw new Error('simulated r2 write failure');
+    this.putCount += 1;
     this.objects.set(key, value instanceof Uint8Array ? new Uint8Array(value) : new Uint8Array(value.slice(0)));
     return {} as R2Object;
   }
@@ -46,12 +48,35 @@ const fixtureBytes = () => {
   return new Uint8Array(bytes);
 };
 
-const message = (bytes = fixtureBytes(), to = 'owner@example.test', declaredSize = bytes.byteLength) => {
+type Barrier = { wait: () => Promise<void> };
+
+const barrier = (count: number): Barrier => {
+  let arrivals = 0;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  return {
+    wait: async () => {
+      arrivals += 1;
+      if (arrivals >= count) release();
+      await released;
+    }
+  };
+};
+
+const message = (bytes = fixtureBytes(), to = 'owner@example.test', declaredSize = bytes.byteLength, gate?: Barrier) => {
   let rejected = '';
   const value = {
     from: 'alice@example.com',
     to,
-    raw: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
+    raw: new ReadableStream<Uint8Array>({
+      start(controller) {
+        void (async () => {
+          await gate?.wait();
+          controller.enqueue(bytes);
+          controller.close();
+        })();
+      }
+    }),
     rawSize: declaredSize,
     headers: new Headers(),
     setReject(reason: string) { rejected = reason; }
@@ -127,6 +152,24 @@ describe('inbound email persistence', () => {
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
     expect(test.database.query("SELECT COUNT(*) AS count FROM workspace_inbound_ingest_claims WHERE status = 'completed'").get()).toEqual({ count: 1 });
     expect(test.BUCKET.objects.size).toBe(2);
+  });
+
+  test('does not let same Message-ID concurrent variants overwrite the winner', async () => {
+    const test = environment();
+    const gate = barrier(2);
+    const variant = fixtureBytes();
+    variant[variant.length - 3] = variant[variant.length - 3] === 65 ? 66 : 65;
+    await Promise.all([
+      handleInboundEmail(message(fixtureBytes(), 'owner@example.test', undefined, gate).value, test.env),
+      handleInboundEmail(message(variant, 'owner@example.test', undefined, gate).value, test.env)
+    ]);
+
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+    expect(test.BUCKET.objects.size).toBe(2);
+    expect(test.BUCKET.putCount).toBe(2);
+    const storedRaw = [...test.BUCKET.objects.values()].find((value) => value.byteLength > 300);
+    expect(storedRaw).toBeDefined();
+    expect([fixtureBytes(), variant]).toContainEqual(storedRaw);
   });
 
   test('releases a claim after R2 failure without deleting another claimant objects', async () => {
