@@ -178,7 +178,9 @@ describe('inbound email persistence', () => {
     expect(test.BUCKET.putCount).toBe(2);
     const storedRaw = [...test.BUCKET.objects.values()].find((value) => value.byteLength > 300);
     if (!storedRaw) throw new Error('The winner raw object was not persisted.');
-    expect([fixtureBytes(), variant]).toContainEqual(storedRaw);
+    const sameBytes = (left: Uint8Array, right: Uint8Array) =>
+      left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+    expect(sameBytes(storedRaw, fixtureBytes()) || sameBytes(storedRaw, variant)).toBe(true);
   });
 
   test('releases a claim after R2 failure without deleting another claimant objects', async () => {
