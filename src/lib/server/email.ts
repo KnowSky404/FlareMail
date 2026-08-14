@@ -146,8 +146,8 @@ export async function handleInboundEmail(
         bytes: error instanceof InboundRawLimitError ? error.actual : message.rawSize
       };
       if (error instanceof InboundMimeLimitError) {
-        detail.limitKind = error.kind;
-        detail.actual = error.actual;
+        if (error.kind === 'attachment_count') detail.count = error.actual;
+        else detail.bytes = error.actual;
       }
       safeLog('inbound_rejected', detail);
       message.setReject(rejectReason(error.code));

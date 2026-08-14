@@ -43,8 +43,8 @@ class TestBucket {
   async delete(key: string) { this.objects.delete(key); }
 }
 
-const fixtureBytes = () => {
-  const bytes = readFileSync(new URL('../../../tests/fixtures/eml/base64-attachment.eml', import.meta.url));
+const fixtureBytes = (name = 'base64-attachment') => {
+  const bytes = readFileSync(new URL(`../../../tests/fixtures/eml/${name}.eml`, import.meta.url));
   return new Uint8Array(bytes);
 };
 
@@ -143,6 +143,15 @@ describe('inbound email persistence', () => {
     const oversized = message(fixtureBytes(), 'owner@example.test', 101);
     await expect(handleInboundEmail(oversized.value, test.env)).resolves.toBeUndefined();
     expect(oversized.rejected()).toBe('Message exceeds the inbound size limit.');
+    expect(test.BUCKET.objects.size).toBe(0);
+  });
+
+  test('returns a safe reject for a MIME attachment limit without failing the invocation', async () => {
+    const test = environment();
+    test.env.INBOUND_MAX_ATTACHMENT_BYTES = '8';
+    const rejected = message(fixtureBytes('oversize-attachment'));
+    await expect(handleInboundEmail(rejected.value, test.env)).resolves.toBeUndefined();
+    expect(rejected.rejected()).toBe('Message exceeds the MIME attachment limit.');
     expect(test.BUCKET.objects.size).toBe(0);
   });
 
