@@ -16,12 +16,20 @@ record the evidence.
 This repository does not run a remote benchmark automatically. An operator
 should use an isolated preview Worker and preview D1/R2 resources, then:
 
-1. deploy the exact tested commit to the preview Worker and verify `/api/health`;
-2. use Workers Logs or `wrangler tail` and record `cpuTime`, duration,
+1. generate deterministic local MIME inputs without contacting any remote
+   service:
+
+   ```bash
+   bun run runtime:fixtures -- --output /tmp/flaremail-runtime-fixtures
+   ```
+
+   The directory contains 1 MiB, 5 MiB, and near-25 MiB raw-message fixtures.
+2. deploy the exact tested commit to the preview Worker and verify `/api/health`;
+3. use Workers Logs or `wrangler tail` and record `cpuTime`, duration,
    invocation outcome, and any `exceededCpu` event;
-3. test login (successful and rejected), an SSR mailbox request, and inbound
+4. test login (successful and rejected), an SSR mailbox request, and inbound
    MIME fixtures at approximately 1 MiB, 5 MiB, and near the configured limit;
-4. separately observe D1, R2, parser, and Resend failure outcomes.
+5. separately observe D1, R2, parser, and Resend failure outcomes.
 
 The application emits structured, non-sensitive phase timing events. They may
 contain a correlation ID, byte/count totals, status code, and duration only;

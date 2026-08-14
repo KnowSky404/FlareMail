@@ -17,6 +17,7 @@
     "test:integration": "bun test src/lib/server/email.integration.test.ts src/lib/server/workspace/outbound.integration.test.ts src/lib/server/workspace/delivery.integration.test.ts src/lib/server/workspace/draft.integration.test.ts src/lib/server/workspace/mutation-query-counter.integration.test.ts src/lib/server/db/migrations.test.ts src/routes/api/health/health.test.ts",
     "test:e2e": "playwright test",
     "test:a11y": "playwright test --project=mobile --project=narrow --grep 'horizontal overflow|touch targets|accessible'",
+    "runtime:fixtures": "bun scripts/runtime-fixtures.ts",
     "cf:typegen": "XDG_CONFIG_HOME=/tmp wrangler types --env-interface CloudflareEnv",
     "db:migrate:local": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --local --config wrangler.toml",
     "db:migrate:remote": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --remote --config wrangler.deploy.toml",
