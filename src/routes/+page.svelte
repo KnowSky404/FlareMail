@@ -715,6 +715,7 @@
       ...(mailboxPages ?? {} as Record<MailFolder, MailboxPage>),
       [page.folder]: page
     };
+    if (page.metrics) metrics = page.metrics;
   }
 
   async function loadMoreMailbox() {

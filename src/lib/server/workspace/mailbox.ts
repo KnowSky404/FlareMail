@@ -104,7 +104,7 @@ export async function loadMailboxPage(
     filter: query.filter,
     deliveryStatus: query.deliveryStatus
   };
-  const metricsPromise = getMailboxMetrics(env.DB, workspace.userId);
+  const metricsPromise = query.cursor ? Promise.resolve<Awaited<ReturnType<typeof getMailboxMetrics>> | undefined>(undefined) : getMailboxMetrics(env.DB, workspace.userId);
   let messages;
   if (query.folder === 'drafts') {
     const page = await listDraftPage(env.DB, workspace.userId, repositoryQuery);
@@ -139,7 +139,7 @@ export async function loadMailboxPage(
     query: query.query,
     filter: query.filter,
     deliveryStatus: query.deliveryStatus,
-    metrics: await metricsPromise
+    ...(await metricsPromise ? { metrics: await metricsPromise } : {})
   };
 }
 
@@ -166,7 +166,7 @@ export async function loadWorkspaceSnapshot(
         sent: pages.sent.messages,
         drafts: pages.drafts.messages
       },
-      metrics: pages.inbox.metrics
+      metrics: pages.inbox.metrics ?? { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 }
     },
     pages
   };

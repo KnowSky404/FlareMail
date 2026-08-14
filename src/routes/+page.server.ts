@@ -66,7 +66,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       sent: mailboxPages.sent.messages,
       drafts: mailboxPages.drafts.messages
     };
-    const metrics = mailboxPages.inbox.metrics;
+    const metrics = mailboxPages.inbox.metrics ?? { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 };
     const workspace: WorkspacePayload = { profile: context.profile, mailbox, metrics };
     const latest = mailbox.inbox[0] ?? mailbox.sent[0] ?? null;
 

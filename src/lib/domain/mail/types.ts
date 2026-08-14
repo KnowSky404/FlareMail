@@ -165,7 +165,7 @@ export interface MailboxPage {
   query: string;
   filter: MailboxFilter;
   deliveryStatus: DeliveryStatus | null;
-  metrics: WorkspaceMetrics;
+  metrics?: WorkspaceMetrics;
 }
 
 export interface DeliveryEvent {
