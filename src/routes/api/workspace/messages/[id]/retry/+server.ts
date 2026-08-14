@@ -17,6 +17,9 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
     if (isOutboundGatewayError(error) && error.kind === 'idempotency_conflict') {
       throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', '投递服务拒绝了幂等重试。');
     }
+    if (isOutboundGatewayError(error) && error.kind === 'idempotency_expired') {
+      throw new ApiError(409, 'DELIVERY_REVIEW_REQUIRED', 'Provider 幂等窗口已过。请先检查 Resend Dashboard、收件箱和投递时间线，再决定是否重新发送。', undefined, { reviewRequired: true, providerWindowHours: 24 });
+    }
     throw error;
   }
 });

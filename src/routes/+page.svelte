@@ -14,6 +14,7 @@
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
   import { ComposeSaveSequence } from '$lib/client/compose-save-sequence';
+  import { ClientApiError } from '$lib/client/api';
   import { LatestRequest } from '$lib/client/latest-request';
   import {
     createSession,
@@ -49,7 +50,8 @@
     type MailThread,
     type MessagePatch,
     type UserProfile,
-    type WorkspacePayload
+    type WorkspacePayload,
+    type WorkspaceMetrics
   } from '$lib/domain/mail';
 
   type AppSection = MailFolder | 'profile';
@@ -65,6 +67,7 @@
   let authenticated = $state(false);
   let profile = $state<UserProfile>(cloneProfile());
   let mailbox = $state<MailboxState>(cloneMailbox());
+  let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 });
   let mailboxPages = $state<Record<MailFolder, MailboxPage> | null>(null);
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
@@ -83,6 +86,7 @@
   let composeAutosaveStatus = $state<ComposeAutosaveStatus>('idle');
   let composeAutosaveMessage = $state('自动保存会在停顿后触发。');
   let composeLastSavedSignature = $state('');
+  let draftConflict = $state<MailMessage | null>(null);
   let inboundDetails = $state<Record<string, InboundMessageDetail>>({});
   let deliveryDetails = $state<Record<string, DeliveryDetail>>({});
   let inboundDetailErrors = $state<Record<string, string>>({});
@@ -135,6 +139,7 @@
         authenticated = true;
         profile = workspace.profile;
         mailbox = workspace.mailbox;
+        metrics = workspace.metrics;
         mailboxPages = data.mailboxPages;
         selectedMessageId = urlMessageId ?? nextSelection(workspace.mailbox, urlSection, null);
         if (!hydratedFromServer) {
@@ -146,7 +151,7 @@
     }
   });
 
-  const unreadCount = $derived(mailbox.inbox.filter((message) => !message.read).length);
+  const unreadCount = $derived(metrics.unreadCount);
   const queuedCount = $derived(
     mailbox.sent.filter((message) => message.deliveryStatus === 'queued').length
   );
@@ -319,6 +324,7 @@
     composeAutosaveStatus = 'idle';
     composeAutosaveMessage = '自动保存会在停顿后触发。';
     composeLastSavedSignature = '';
+    draftConflict = null;
   };
 
   const syncComposeDraftState = (message: MailMessage, statusMessage: string) => {
@@ -330,7 +336,8 @@
       body: message.body,
       messageId: message.messageId,
       inReplyTo: message.inReplyTo,
-      references: message.references
+      references: message.references,
+      expectedUpdatedAt: message.sentAt
     } satisfies ComposeInput;
 
     composeDraftId = message.id;
@@ -340,6 +347,28 @@
     composeAutosaveMessage = statusMessage;
     composeLastSavedSignature = serializeComposeInput(nextInput);
   };
+
+  function applyMessageDelta(result: { message: MailMessage; metrics: WorkspaceMetrics }, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
+    const nextMailbox = cloneMailbox(mailbox);
+    if (options?.removeDraftId) nextMailbox.drafts = nextMailbox.drafts.filter((item) => item.id !== options.removeDraftId);
+    const folder = result.message.folder;
+    const current = nextMailbox[folder];
+    const index = current.findIndex((item) => item.id === result.message.id);
+    if (index >= 0) current[index] = result.message;
+    else current.push(result.message);
+    current.sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id));
+    mailbox = nextMailbox;
+    metrics = result.metrics;
+    authenticated = true;
+    if (options?.section) activeSection = options.section;
+    if (options?.clearMailView) {
+      searchQuery = '';
+      mailFilter = 'all';
+      mobileDetailOpen = false;
+    }
+    selectedMessageId = nextSelection(nextMailbox, options?.section ?? activeSection, options?.preferredMessageId ?? selectedMessageId);
+    if (options?.section) updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
+  }
 
   const describeDeliveryState = (message: MailMessage) =>
     message.deliveryResultKind === 'accepted'
@@ -723,6 +752,7 @@
     composeLiveInput = initialInput ? { ...initialInput } : createEmptyComposeInput();
     composeTouched = false;
     composeAutosavePending = false;
+    draftConflict = null;
     composeAutosaveStatus = initialInput?.draftId ? 'saved' : 'idle';
     composeAutosaveMessage = initialInput?.draftId
       ? '草稿内容已载入，继续编辑后会自动保存。'
@@ -752,7 +782,7 @@
       try {
         const result = await persistDraft(input);
 
-        applyWorkspace(result.workspace);
+        applyMessageDelta(result);
         syncComposeDraftState(
           result.message,
           `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`
@@ -821,9 +851,8 @@
     try {
       const result = await updateProfile(nextProfile);
 
-      applyWorkspace(result.workspace, {
-        section: 'profile'
-      });
+      profile = result.profile ?? profile;
+      metrics = result.metrics ?? metrics;
       profileStatus = '个人资料已保存到工作区。';
       banner = '个人信息已更新，写信时会自动使用新的身份与签名。';
     } catch (error) {
@@ -840,7 +869,7 @@
     try {
       const result = await persistDraft(withComposeDraftId(input));
 
-      applyWorkspace(result.workspace, {
+      applyMessageDelta(result, {
         section: 'drafts',
         preferredMessageId: result.message.id,
         clearMailView: true
@@ -848,6 +877,11 @@
       resetComposeState();
       banner = (input.draftId ?? composeDraftId) ? '草稿已更新。' : '草稿已保存到工作区。';
     } catch (error) {
+      if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
+        draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+        composeAutosaveStatus = 'error';
+        composeAutosaveMessage = '服务器版本已更新，请选择如何处理冲突。';
+      }
       banner = error instanceof Error ? error.message : '保存草稿失败。';
     } finally {
       pending = false;
@@ -857,7 +891,7 @@
   async function autosaveDraft() {
     const liveInput = composeLiveInput;
 
-    if (!liveInput || !composeOpen) {
+    if (!liveInput || !composeOpen || draftConflict) {
       return;
     }
 
@@ -876,7 +910,7 @@
     try {
       const result = await persistDraft(input);
 
-      applyWorkspace(result.workspace);
+      applyMessageDelta(result);
       if (!save.isActive()) return;
       if (save.isCurrent()) {
         syncComposeDraftState(
@@ -893,6 +927,9 @@
       }
     } catch (error) {
       if (save.isActive()) {
+        if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
+          draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+        }
         composeAutosaveStatus = 'error';
         composeAutosaveMessage = error instanceof Error ? error.message : '自动保存失败。';
       }
@@ -915,10 +952,11 @@
         Object.entries(deliveryDetailErrors).filter(([id]) => id !== result.message.id)
       );
 
-      applyWorkspace(result.workspace, {
+      applyMessageDelta(result, {
         section: 'sent',
         preferredMessageId: result.message.id,
-        clearMailView: true
+        clearMailView: true,
+        removeDraftId: input.draftId ?? composeDraftId
       });
       resetComposeState();
       banner =
@@ -947,7 +985,7 @@
         Object.entries(deliveryDetailErrors).filter(([id]) => id !== result.message.id)
       );
 
-      applyWorkspace(result.workspace, {
+      applyMessageDelta(result, {
         section: 'sent',
         preferredMessageId: result.message.id
       });
@@ -975,7 +1013,7 @@
       const result = await updateMessageFlags(message.id, patch);
 
       const nextSection = activeSection === 'profile' ? message.folder : activeSection;
-      applyWorkspace(result.workspace, {
+      applyMessageDelta(result, {
         section: nextSection === activeSection ? undefined : nextSection,
         preferredMessageId: result.message.id
       });
@@ -986,6 +1024,28 @@
     } finally {
       pending = false;
     }
+  }
+
+  function loadServerDraft() {
+    if (!draftConflict) return;
+    syncComposeDraftState(draftConflict, '已载入服务器版本。');
+    draftConflict = null;
+  }
+
+  async function saveDraftCopy() {
+    const local = composeLiveInput;
+    if (!local) return;
+    draftConflict = null;
+    await saveDraft({ ...local, draftId: undefined, saveAsCopy: true });
+  }
+
+  async function overwriteServerDraft() {
+    const local = composeLiveInput;
+    if (!local || !draftConflict) return;
+    const expectedUpdatedAt = draftConflict.sentAt;
+    const draftId = draftConflict.id;
+    draftConflict = null;
+    await saveDraft({ ...local, draftId, expectedUpdatedAt, overwrite: true });
   }
 
   async function handleSelectMessage(message: MailMessage) {
@@ -1037,9 +1097,11 @@
     try {
       const result = await deleteMessage(message.id);
 
-      applyWorkspace(result.workspace, {
-        section: activeSection === 'profile' ? result.folder : activeSection
-      });
+      const nextMailbox = cloneMailbox(mailbox);
+      nextMailbox[result.folder] = nextMailbox[result.folder].filter((item) => item.id !== result.removedId);
+      mailbox = nextMailbox;
+      metrics = result.metrics ?? metrics;
+      selectedMessageId = nextSelection(nextMailbox, activeSection === 'profile' ? result.folder : activeSection, selectedMessageId);
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
       }
@@ -1297,6 +1359,10 @@
         {profile}
         onClose={closeCompose}
         onDiscard={discardCompose}
+        draftConflict={draftConflict}
+        onLoadServerDraft={loadServerDraft}
+        onSaveDraftCopy={saveDraftCopy}
+        onOverwriteServerDraft={overwriteServerDraft}
         onInputChange={(input) => {
           composeSaveSequence.changed();
           const nextInput = withComposeDraftId(input);

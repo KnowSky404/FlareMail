@@ -40,6 +40,14 @@ export async function findMessageByIdempotencyKey(db: D1Database, userId: string
   `).bind(userId, idempotencyKey).first<WorkspaceMessageRow>();
 }
 
+export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, messageId: string) {
+  return db.prepare(`
+    SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
+      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, idempotency_key
+    FROM workspace_messages WHERE user_id = ? AND id = ?
+  `).bind(userId, messageId).first<WorkspaceMessageRow>();
+}
+
 export function updateMessageFlags(db: D1Database, userId: string, messageId: string, read: boolean, starred: boolean, timestamp: string) {
   return db.prepare(`UPDATE workspace_messages SET is_read = ?, is_starred = ?, updated_at = ? WHERE user_id = ? AND id = ?`)
     .bind(read ? 1 : 0, starred ? 1 : 0, timestamp, userId, messageId);

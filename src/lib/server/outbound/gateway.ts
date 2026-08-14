@@ -41,7 +41,8 @@ export type OutboundGatewayErrorKind =
   | 'server_error'
   | 'invalid_response'
   | 'timeout'
-  | 'network_unknown';
+  | 'network_unknown'
+  | 'idempotency_expired';
 
 export class OutboundGatewayError extends Error {
   readonly kind: OutboundGatewayErrorKind;

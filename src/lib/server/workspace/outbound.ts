@@ -10,8 +10,7 @@ import {
   upsertOutboundStatus,
   type DeliveryStatusPayload
 } from '$lib/server/db/deliveries';
-import { findMessageByIdempotencyKey, insertMessage } from '$lib/server/db/messages';
-import { touchSession } from '$lib/server/db/sessions';
+import { findMessageByIdempotencyKey, findOwnedWorkspaceMessage, insertMessage } from '$lib/server/db/messages';
 import {
   OutboundGatewayError,
   isOutboundGatewayError,
@@ -21,18 +20,17 @@ import {
 import { createOutboundGateway, outboundProviderName } from '$lib/server/outbound/provider';
 import {
   createSentMessage,
-  findMessage,
   nowIso,
   serializeMessageForInsert,
   serializeOutboundEventInsert,
-  serializeWorkspace,
+  mapWorkspaceMessageRow,
   type ComposeInput,
   type DeliveryResultKind,
   type DeliveryStatus,
   type MailMessage,
-  type WorkspaceSession
+  type WorkspaceContext
 } from '$lib/server/workspace/shared';
-import { refreshD1Session } from '$lib/server/workspace/mailbox';
+import { getMailboxMetrics } from '$lib/server/db/mailbox';
 import { reconcilePendingResendEvents } from '$lib/server/workspace/delivery';
 
 export interface OutboundSubmissionOptions {
@@ -91,7 +89,7 @@ const failedStatus = (error: OutboundGatewayError): DeliveryStatus => {
 };
 
 function statusPayload(input: {
-  session: WorkspaceSession; messageId: string; idempotencyKey: string; provider: string; status: DeliveryStatus;
+  session: WorkspaceContext; messageId: string; idempotencyKey: string; provider: string; status: DeliveryStatus;
   attempts: number; providerMessageId?: string | null; lastError?: string; remoteTimestamp: string;
 }): DeliveryStatusPayload {
   return {
@@ -113,17 +111,21 @@ function statusPayload(input: {
   };
 }
 
-async function refreshedResult(env: CloudflareEnv, session: WorkspaceSession, messageId: string) {
-  const nextSession = await refreshD1Session(env, session.id);
-  if (!nextSession) throw new Error('Unable to reload the workspace after outbound persistence.');
-  const message = findMessage(nextSession, messageId);
-  if (!message) throw new Error('Persisted outbound message is missing from the workspace.');
-  return { message, workspace: serializeWorkspace(nextSession) };
+async function refreshedResult(env: CloudflareEnv, session: WorkspaceContext, messageId: string) {
+  const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
+  if (!row) throw new Error('Persisted outbound message is missing from the workspace.');
+  const delivery = await findDeliveryStatus(env.DB, session.userId, messageId);
+  const message = mapWorkspaceMessageRow(row, delivery ? {
+    message_id: messageId, status: delivery.status, attempts: delivery.attempts, delivered_at: delivery.delivered_at,
+    last_error: delivery.last_error, provider_message_id: delivery.provider_message_id, provider: delivery.provider,
+    result_kind: delivery.result_kind, remote_status: delivery.remote_status, response_preview: delivery.response_preview ?? '', last_event: delivery.last_event, last_event_at: delivery.last_event_at
+  } : undefined);
+  return { message, metrics: await getMailboxMetrics(env.DB, session.userId) };
 }
 
 async function submitPersistedMessage(
   env: CloudflareEnv,
-  session: WorkspaceSession,
+  session: WorkspaceContext,
   message: MailMessage,
   idempotencyKey: string,
   attempts: number,
@@ -183,7 +185,7 @@ async function submitPersistedMessage(
 
 export async function sendWorkspaceMessage(
   env: CloudflareEnv | undefined,
-  session: WorkspaceSession,
+  session: WorkspaceContext,
   input: ComposeInput,
   options: OutboundSubmissionOptions = {}
 ) {
@@ -216,7 +218,7 @@ export async function sendWorkspaceMessage(
   message.threadKey = threadKey(message);
   const timestamp = nowIso();
   const statements = [insertMessage(env.DB, serializeMessageForInsert(session.userId, message, idempotencyKey)),
-    touchSession(env.DB, session.id, timestamp)];
+  ];
   if (draftId && capabilities.drafts) statements.unshift(deleteDraft(env.DB, session.userId, draftId));
   try {
     await env.DB.batch(statements);
@@ -234,18 +236,23 @@ export async function sendWorkspaceMessage(
 
 export async function retryWorkspaceMessageDelivery(
   env: CloudflareEnv | undefined,
-  session: WorkspaceSession,
+  session: WorkspaceContext,
   messageId: string,
   options: Pick<OutboundSubmissionOptions, 'gateway'> = {}
 ) {
-  const message = findMessage(session, messageId);
-  if (!message || message.folder !== 'sent' || message.source !== 'workspace') return null;
   if (session.storage !== 'd1' || !env || !(await hasWorkspaceCoreTables(env))) {
     throw new Error('Workspace storage is unavailable for outbound retry.');
   }
   const delivery = await findDeliveryStatus(env.DB, session.userId, messageId);
+  const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
+  const message = row ? mapWorkspaceMessageRow(row) : null;
+  if (!message || message.folder !== 'sent' || message.source !== 'workspace') return null;
   if (!delivery?.idempotency_key) throw new Error('The persisted idempotency key is missing.');
   if (!['failed', 'delayed', 'submitting'].includes(delivery.status)) return null;
+  const attemptStartedAt = delivery.attempt_started_at ?? delivery.last_event_at ?? null;
+  if (attemptStartedAt && Date.now() - Date.parse(attemptStartedAt) >= 24 * 60 * 60 * 1000) {
+    throw new OutboundGatewayError('idempotency_expired', 'Provider idempotency window expired; review the provider dashboard before resending.', { retryable: false });
+  }
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? delivery.provider || 'injected' : outboundProviderName(env);
   await submitPersistedMessage(env, session, message, delivery.idempotency_key, delivery.attempts, gateway, provider);

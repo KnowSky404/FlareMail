@@ -2,6 +2,7 @@ export interface ClientApiErrorBody {
   code: string;
   message: string;
   fieldErrors?: Record<string, string[]>;
+  details?: Record<string, unknown>;
 }
 
 export class ClientApiError extends Error {
@@ -10,7 +11,8 @@ export class ClientApiError extends Error {
     readonly code: string,
     message: string,
     readonly requestId?: string,
-    readonly fieldErrors?: Record<string, string[]>
+    readonly fieldErrors?: Record<string, string[]>,
+    readonly details?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'ClientApiError';
@@ -58,7 +60,8 @@ export async function requestJson<T>(url: string, init: RequestInit = {}): Promi
       modernError?.code ?? ('code' in payload && typeof payload.code === 'string' ? payload.code : 'REQUEST_FAILED'),
       modernError?.message ?? (typeof rawError === 'string' ? rawError : '请求失败。'),
       'requestId' in payload && typeof payload.requestId === 'string' ? payload.requestId : response.headers.get('x-request-id') ?? undefined,
-      modernError?.fieldErrors
+      modernError?.fieldErrors,
+      modernError?.details
     );
   }
 

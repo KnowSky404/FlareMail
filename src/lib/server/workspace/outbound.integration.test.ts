@@ -72,8 +72,8 @@ describe('outbound workspace persistence', () => {
       headers: { 'In-Reply-To': '<original@example.net>', References: '<root@example.net> <original@example.net>' }
     });
 
-    const duplicateSession = { ...session, mailbox: first.workspace.mailbox };
-    const duplicate = await sendWorkspaceMessage(env, duplicateSession, input, { requestId: 'compose-1', gateway });
+    const duplicate = await sendWorkspaceMessage(env, session, input, { requestId: 'compose-1', gateway });
+    const duplicateSession = session;
     expect(duplicate.message.id).toBe(first.message.id);
     expect(gateway.sent).toHaveLength(1);
     expect(database.query('SELECT COUNT(*) AS count FROM workspace_messages').get()).toEqual({ count: 1 });
@@ -107,11 +107,20 @@ describe('outbound workspace persistence', () => {
       .toEqual({ status: 'submitting', completed_at: null });
 
     const retryGateway = new FakeOutboundGateway({ providerMessageId: 're_after_unknown' });
-    const retrySession = { ...session, mailbox: result.workspace.mailbox };
-    const retried = await retryWorkspaceMessageDelivery(env, retrySession, result.message.id, { gateway: retryGateway });
+    const retried = await retryWorkspaceMessageDelivery(env, session, result.message.id, { gateway: retryGateway });
     expect(retried?.message.deliveryStatus).toBe('submitted');
     expect(retryGateway.sent[0]?.idempotencyKey).toBe('flaremail:send:user-1:compose-unknown');
     expect(database.query(`SELECT status, attempts, provider_message_id FROM workspace_delivery_statuses`).get())
       .toEqual({ status: 'submitted', attempts: 2, provider_message_id: 're_after_unknown' });
+  });
+
+  test('refuses ordinary retry after the provider idempotency window expires', async () => {
+    const { env, database, session } = setup();
+    const first = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Old', body: 'Body' }, {
+      requestId: 'expired', gateway: new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'outcome unknown') })
+    });
+    database.query(`UPDATE workspace_delivery_attempts SET started_at = ?, created_at = ? WHERE message_id = ?`).run('2026-08-12T00:00:00.000Z', '2026-08-12T00:00:00.000Z', first.message.id);
+    await expect(retryWorkspaceMessageDelivery(env, session, first.message.id, { gateway: new FakeOutboundGateway() }))
+      .rejects.toMatchObject({ kind: 'idempotency_expired' });
   });
 });

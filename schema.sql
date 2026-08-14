@@ -306,3 +306,9 @@ CREATE TABLE IF NOT EXISTS workspace_inbound_ingest_claims (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_inbound_ingest_claims_status_updated
   ON workspace_inbound_ingest_claims(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS workspace_schema_metadata (
+  schema_name TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+  updated_at TEXT NOT NULL
+);

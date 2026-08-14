@@ -19,14 +19,10 @@ export type SessionResponse = {
   error?: string;
 };
 
-export type WorkspaceResponse = {
-  ok: boolean;
-  workspace: WorkspacePayload;
-  error?: string;
-};
+export type WorkspaceResponse = { ok: boolean; workspace?: WorkspacePayload; error?: string; profile?: UserProfile; metrics?: WorkspacePayload['metrics'] };
 
-export type MessageResponse = WorkspaceResponse & { message: MailMessage };
-export type DeleteResponse = WorkspaceResponse & { folder: MailFolder };
+export type MessageResponse = { ok: boolean; message: MailMessage; metrics: WorkspacePayload['metrics']; error?: string };
+export type DeleteResponse = WorkspaceResponse & { removedId: string; folder: MailFolder };
 
 export function fetchInboundDetail(messageId: string, signal?: AbortSignal) {
   return requestJson<{ ok: boolean; detail: InboundMessageDetail; error?: string }>(

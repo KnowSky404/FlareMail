@@ -25,7 +25,8 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
-    readonly fieldErrors?: ApiFieldErrors
+    readonly fieldErrors?: ApiFieldErrors,
+    readonly details?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'ApiError';
@@ -65,7 +66,8 @@ export function apiFailure(event: RequestEvent, error: ApiError, init: ResponseI
       error: {
         code: error.code,
         message: error.message,
-        ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {})
+        ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
+        ...(error.details ? { details: error.details } : {})
       },
       requestId
     },
@@ -81,6 +83,9 @@ export function withApiHandler(
       return await handler(event);
     } catch (error) {
       if (error instanceof ApiError) return apiFailure(event, error);
+      if (error instanceof Error && /no such table|no such column|schema.*migrat/iu.test(error.message)) {
+        return apiFailure(event, new ApiError(503, 'SCHEMA_NOT_READY', '服务数据结构尚未就绪。'));
+      }
       const requestId = getRequestId(event);
       console.error(JSON.stringify({
         level: 'error',

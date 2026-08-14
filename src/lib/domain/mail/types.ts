@@ -195,6 +195,9 @@ export interface LoginInput {
 
 export interface ComposeInput extends MailRfcHeaders {
   draftId?: string;
+  expectedUpdatedAt?: string;
+  overwrite?: boolean;
+  saveAsCopy?: boolean;
   toEmail: string;
   cc?: string;
   subject: string;

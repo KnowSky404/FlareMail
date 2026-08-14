@@ -1,7 +1,7 @@
 <script lang="ts">
   import { validateComposeInput } from '$lib/domain/mail';
   import { Button, Dialog, TextArea, TextField } from '$lib/components/ui';
-  import type { ComposeInput, ComposeMode, UserProfile } from '$lib/domain/mail';
+  import type { ComposeInput, ComposeMode, MailMessage, UserProfile } from '$lib/domain/mail';
   import { onMount } from 'svelte';
 
   const createComposeState = (value: ComposeInput | null, fallbackDraftId?: string): ComposeInput =>
@@ -43,7 +43,11 @@
     onDiscard,
     onInputChange,
     onSaveDraft,
-    onSend
+    onSend,
+    draftConflict = null,
+    onLoadServerDraft,
+    onSaveDraftCopy,
+    onOverwriteServerDraft
   }: {
     initialInput?: ComposeInput | null;
     draftId?: string | undefined;
@@ -58,6 +62,10 @@
     onInputChange?: (input: ComposeInput) => void;
     onSaveDraft: (input: ComposeInput) => void | Promise<void>;
     onSend: (input: ComposeInput) => void | Promise<void>;
+    draftConflict?: MailMessage | null;
+    onLoadServerDraft?: () => void;
+    onSaveDraftCopy?: () => void | Promise<void>;
+    onOverwriteServerDraft?: () => void | Promise<void>;
   } = $props();
 
   let input = $state<ComposeInput>(createComposeState(null));
@@ -240,6 +248,17 @@
       <p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/30 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">
         请修正标记的字段后再发送。
       </p>
+    {/if}
+    {#if draftConflict}
+      <div class="grid gap-2 rounded-[var(--radius-md)] border border-[var(--fm-warning)]/40 bg-[var(--fm-warning-soft)] px-3 py-3 text-sm text-[var(--fm-text)]" role="alert">
+        <strong>服务器版本已更新</strong>
+        <span class="text-xs text-[var(--fm-text-secondary)]">你的本地编辑仍然保留。请选择载入服务器版本、另存副本，或明确覆盖服务器版本。</span>
+        <div class="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onclick={() => onLoadServerDraft?.()}>载入服务器版本</Button>
+          <Button variant="outline" size="sm" onclick={() => onSaveDraftCopy?.()}>另存为新草稿</Button>
+          <Button variant="primary" size="sm" onclick={() => onOverwriteServerDraft?.()}>明确覆盖</Button>
+        </div>
+      </div>
     {/if}
   </form>
 

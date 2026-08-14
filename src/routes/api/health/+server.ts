@@ -8,8 +8,15 @@ const REQUIRED_TABLES = [
   'workspace_users',
   'workspace_sessions',
   'workspace_attachments',
-  'workspace_delivery_statuses'
+  'workspace_delivery_statuses',
+  'workspace_login_rate_limits',
+  'workspace_outbound_receipts',
+  'workspace_outbound_events',
+  'workspace_inbound_ingest_claims',
+  'workspace_delivery_attempts',
+  'workspace_schema_metadata'
 ] as const;
+const REQUIRED_SCHEMA_VERSION = 9;
 
 export const GET: RequestHandler = async ({ platform }) => {
   const env = platform?.env as CloudflareEnv | undefined;
@@ -23,7 +30,8 @@ export const GET: RequestHandler = async ({ platform }) => {
         SELECT name FROM sqlite_master
         WHERE type = 'table' AND name IN (${placeholders})
       `).bind(...REQUIRED_TABLES).all<{ name: string }>();
-      schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length;
+      const version = await env.DB.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?').bind('flaremail').first<{ schema_version: number }>();
+      schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && version?.schema_version === REQUIRED_SCHEMA_VERSION;
     } catch {
       schemaReady = false;
     }

@@ -12,7 +12,8 @@ import {
   reconcileDeliveryStatus,
   updateOutboundReceiptForCurrentEvent
 } from '$lib/server/db/deliveries';
-import { findMessage, mapEventRowToDeliveryEvent, memoryDeliveryDetail, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceSession } from '$lib/server/workspace/shared';
+import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
+import { findOwnedWorkspaceMessage } from '$lib/server/db/messages';
 
 export class DeliveryPersistenceError extends Error {
   readonly code = 'DELIVERY_PERSISTENCE_UNAVAILABLE';
@@ -22,10 +23,11 @@ export class DeliveryPersistenceError extends Error {
   }
 }
 
-export async function getWorkspaceMessageDeliveryDetail(env: CloudflareEnv | undefined, session: WorkspaceSession, messageId: string) {
-  const message = findMessage(session, messageId);
+export async function getWorkspaceMessageDeliveryDetail(env: CloudflareEnv | undefined, session: WorkspaceContext, messageId: string) {
+  if (session.storage !== 'd1' || !env?.DB || !(await hasWorkspaceCoreTables(env))) return null;
+  const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
+  const message = row ? mapWorkspaceMessageRow(row) : null;
   if (!message || message.folder !== 'sent' || message.source !== 'workspace') return null;
-  if (session.storage !== 'd1' || !(await hasWorkspaceCoreTables(env))) return memoryDeliveryDetail(message);
   const capabilities = await getWorkspaceCapabilities(env);
   const { receipt, events: eventRows } = await findDeliveryDetailRows(env!.DB, session.userId, messageId, capabilities);
   const events = eventRows.map(mapEventRowToDeliveryEvent);

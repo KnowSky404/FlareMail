@@ -8,6 +8,49 @@ export async function listDrafts(db: D1Database, userId: string) {
   `).bind(userId).all<WorkspaceDraftRow>();
 }
 
+export async function findOwnedDraft(db: D1Database, userId: string, draftId: string) {
+  return db.prepare(`
+    SELECT id, to_email, cc, subject, body, is_starred, created_at, updated_at,
+      message_id, in_reply_to, "references", thread_key, idempotency_key
+    FROM workspace_drafts WHERE user_id = ? AND id = ?
+  `).bind(userId, draftId).first<WorkspaceDraftRow>();
+}
+
+export function insertDraft(db: D1Database, payload: {
+  id: string; userId: string; toEmail: string; cc: string; subject: string; body: string; isStarred: number;
+  messageId: string | null; inReplyTo: string | null; references: string | null; threadKey: string | null;
+  idempotencyKey: string; createdAt: string; updatedAt: string;
+}) {
+  return db.prepare(`
+    INSERT INTO workspace_drafts (id, user_id, to_email, cc, subject, body, is_starred, message_id, in_reply_to, "references", thread_key, idempotency_key, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(payload.id, payload.userId, payload.toEmail, payload.cc, payload.subject, payload.body, payload.isStarred,
+    payload.messageId, payload.inReplyTo, payload.references, payload.threadKey, payload.idempotencyKey, payload.createdAt, payload.updatedAt);
+}
+
+export function updateDraftIfVersion(db: D1Database, payload: {
+  id: string; userId: string; expectedUpdatedAt: string; toEmail: string; cc: string; subject: string; body: string;
+  isStarred: number; messageId: string | null; inReplyTo: string | null; references: string | null; threadKey: string | null;
+  idempotencyKey: string; updatedAt: string;
+}) {
+  return db.prepare(`
+    UPDATE workspace_drafts SET to_email = ?, cc = ?, subject = ?, body = ?, is_starred = ?, message_id = ?,
+      in_reply_to = ?, "references" = ?, thread_key = ?, idempotency_key = ?, updated_at = ?
+    WHERE user_id = ? AND id = ? AND updated_at = ?
+  `).bind(payload.toEmail, payload.cc, payload.subject, payload.body, payload.isStarred, payload.messageId,
+    payload.inReplyTo, payload.references, payload.threadKey, payload.idempotencyKey, payload.updatedAt,
+    payload.userId, payload.id, payload.expectedUpdatedAt);
+}
+
+export function overwriteDraft(db: D1Database, payload: Omit<Parameters<typeof updateDraftIfVersion>[1], 'expectedUpdatedAt'>) {
+  return db.prepare(`
+    UPDATE workspace_drafts SET to_email = ?, cc = ?, subject = ?, body = ?, is_starred = ?, message_id = ?,
+      in_reply_to = ?, "references" = ?, thread_key = ?, idempotency_key = ?, updated_at = ?
+    WHERE user_id = ? AND id = ?
+  `).bind(payload.toEmail, payload.cc, payload.subject, payload.body, payload.isStarred, payload.messageId,
+    payload.inReplyTo, payload.references, payload.threadKey, payload.idempotencyKey, payload.updatedAt, payload.userId, payload.id);
+}
+
 export function upsertDraft(db: D1Database, payload: {
   id: string; userId: string; toEmail: string; cc: string; subject: string; body: string; isStarred: number;
   messageId: string | null; inReplyTo: string | null; references: string | null; threadKey: string | null;

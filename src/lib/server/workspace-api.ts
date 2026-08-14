@@ -1,6 +1,5 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { loadD1Session } from '$lib/server/workspace/mailbox';
 import { ApiError } from '$lib/server/http/api';
 
 export function getRequestEnv(event: RequestEvent) {
@@ -19,9 +18,6 @@ export function requireWorkspaceSession(event: RequestEvent) {
 
 export async function requireWorkspaceMailboxSession(event: RequestEvent) {
   const context = requireWorkspaceSession(event);
-  const env = getRequestEnv(event);
-  if (!env?.DB) throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', '工作区存储暂不可用。');
-  const session = await loadD1Session(env, context.id);
-  if (!session) throw new ApiError(401, 'SESSION_EXPIRED', '登录会话已失效，请重新登录。');
-  return session;
+  if (context.storage !== 'd1' || !getRequestEnv(event)?.DB) throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', '工作区存储暂不可用。');
+  return context;
 }
