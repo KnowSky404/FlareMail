@@ -2,6 +2,12 @@
 
 ## 当前优先级
 
+### 本轮可靠性收口（已实现，待操作者验证）
+- clean checkout CI preparation、bounded JSON、production origin/auth hardening、session touch throttle。
+- inbound claim lease/recovery、expected reject、RFC 3834 loop guard、schema readiness metadata。
+- workspace mutation deltas、targeted ownership queries、draft optimistic conflict actions、Resend expiry review。
+- 仍需操作者在 isolated preview 运行 CPU/容量测量和生产 smoke checklist；本仓库不自动执行远程操作。
+
 ### 已完成
 - 线程与会话视图：已支持对话线程聚合、展开整段往来和线程内消息切换。
 - 生产发信 Provider：生产只允许 Resend；`demo`/fake 仅可在 development/test 显式启用。

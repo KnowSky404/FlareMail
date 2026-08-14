@@ -26,7 +26,7 @@
 
 后续收口提交为 `c0e7072`、`3d292aa`、`933c298`、`6e54d98`、`317edb1`、`1a290c5`、`835ca4a`、`4234659`、`ac7382e`、`794ae22`、`a57dd4d`；最终文档同步在本轮 closeout 中完成。
 
-实际 migrations 为 `0001_baseline`、`0002_mail_contracts`、`0003_auth_and_settings`、`0004_delivery_states`、`0005_operational_indexes`、`0006_inbound_ownership`、`0007_outbound_contracts`、`0008_login_rate_limits`。`schema.sql` 已由自动测试验证与顺序应用结果一致。
+实际 migrations 为 `0001_baseline`、`0002_mail_contracts`、`0003_auth_and_settings`、`0004_delivery_states`、`0005_operational_indexes`、`0006_inbound_ownership`、`0007_outbound_contracts`、`0008_login_rate_limits`、`0009_inbound_ingest_claims`。`schema.sql` 已由自动测试验证与顺序应用结果一致；`workspace_schema_metadata` 由 `0009` 推进到版本 9，health readiness 会拒绝部分 schema。
 
 最终本地 QA 使用提交到仓库的 Playwright harness，在 `/tmp` 创建隔离 D1/R2、fake gateway 与 Chromium；覆盖登录、服务端搜索/筛选/cursor、读信/星标持久化、草稿自动保存、发送、签名 webhook、delivery timeline、主题/快捷键、手机详情/返回、320px/200% 缩放、axe WCAG 2.1 A/AA、44px 触控目标及 console error。CI 复用同一 harness。未执行生产部署、远程 migration、真实 Resend、真实 Email Routing 或真实邮件 smoke test。
 

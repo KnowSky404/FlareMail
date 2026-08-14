@@ -13,7 +13,7 @@ R2 object contents, or access tokens to logs.
 ## Maintenance CLI
 
 The maintenance command is read-only by default. It reports expired/revoked
-sessions, old `workspace_outbound_events`, and R2 objects that are not
+sessions, stale inbound claims, delivery review windows, old `workspace_outbound_events`, and R2 objects that are not
 referenced by `email_messages.raw_key` or `workspace_attachments.r2_key`:
 
 ```bash
@@ -54,3 +54,17 @@ Before production maintenance, export D1 and record the current commit. Keep
 the export in a protected operator directory and inspect the dry-run output.
 Production deployment and remote migration remain separate, explicitly
 authorized operations.
+
+## Schema, claims, and delivery review
+
+Migration `0009_inbound_ingest_claims.sql` adds the project-owned
+`workspace_schema_metadata` version marker and the inbound claim lease. Apply
+migrations in order; do not edit `0001` through `0008`. A stale claim report is
+read-only by default. Review the claim age and D1/R2 evidence before using the
+explicit `--apply` path to remove stale processing claims.
+
+The maintenance report also lists stale submitting attempts, attempts within
+one hour of the Resend 24-hour idempotency expiry, and expired attempts that
+require review. A normal retry after expiry returns
+`DELIVERY_REVIEW_REQUIRED`; inspect Resend Dashboard, the inbox, and the
+delivery timeline before choosing any separately authorized resend workflow.

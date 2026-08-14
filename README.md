@@ -12,7 +12,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
 - 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、附件/原文下载、纯文本写信、自动保存、主题和键盘快捷键。
-- 版本化 D1 migration：`migrations/0001` 至 `0008`，包括 D1 原子登录限速，并由 `schema.sql` 保存最新结构快照。
+- 版本化 D1 migration：`migrations/0001` 至 `0009`，包括 D1 原子登录限速、schema metadata 和 inbound ingest claim，并由 `schema.sql` 保存最新结构快照。
 - 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention 与 orphan 报告。
 - 隔离浏览器验证：Playwright 在 `/tmp` 创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖桌面、移动端与 320px 窄屏。
 
@@ -109,5 +109,7 @@ bun run maintenance -- --config wrangler.toml
 - [DESIGN.md](./DESIGN.md)：权威设计系统与响应式/可访问性规则。
 - [REFACTOR_PLAN.md](./REFACTOR_PLAN.md)：阶段实施、回滚点和最终验收边界。
 - [DEPLOY.md](./DEPLOY.md)：生产配置、migration、回滚与 smoke test。
+- [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)：维护 dry-run、stale claim 和投递 review 报告。
+- [docs/RUNTIME_BUDGET.md](./docs/RUNTIME_BUDGET.md)：Workers CPU 预算与 preview 人工测量流程。
 - [TODO.md](./TODO.md)：重构完成后的剩余产品路线。
 - [GEMINI_UI_PROMPT.md](./GEMINI_UI_PROMPT.md)：已归档的旧视觉提示，不再是实现依据。

@@ -14,7 +14,7 @@
   cp wrangler.deploy.toml.example wrangler.deploy.toml
   ```
 - 按真实环境填写 `wrangler.deploy.toml`
-- 仓库中的 [wrangler.toml](/root/Clouds/FlareMail/wrangler.toml) 只保留可公开提交的模板配置
+- 仓库中的 [wrangler.toml](./wrangler.toml) 只保留可公开提交的模板配置
 - 真正部署只使用本地私有的 `wrangler.deploy.toml`
 
 推荐本地变量至少包含：
@@ -110,10 +110,10 @@ bun run deploy
 
 ## 5. 文件分工
 
-- [wrangler.toml](/root/Clouds/FlareMail/wrangler.toml)：公开模板，可提交
-- [wrangler.deploy.toml.example](/root/Clouds/FlareMail/wrangler.deploy.toml.example)：部署模板，可提交
+- [wrangler.toml](./wrangler.toml)：公开模板，可提交
+- [wrangler.deploy.toml.example](./wrangler.deploy.toml.example)：部署模板，可提交
 - `wrangler.deploy.toml`：私有真实部署配置，不提交
-- [.dev.vars.example](/root/Clouds/FlareMail/.dev.vars.example)：本地变量模板，可提交
+- [.dev.vars.example](./.dev.vars.example)：本地变量模板，可提交
 - `.dev.vars`：本地真实变量，不提交
 
 ## 6. 上线后验证
@@ -162,3 +162,20 @@ bun run maintenance -- --remote --config wrangler.deploy.toml --r2-manifest /sec
 ```
 
 完整参数、安全边界和 apply 示例见 `docs/DEPLOYMENT.md`。生产维护前必须先导出 D1、记录提交 SHA，并人工审阅 dry-run 报告。
+
+## 10. 生产 smoke checklist（仅供操作者执行，本轮不执行）
+
+1. 记录 preview/production migration list 和 D1 备份；
+2. 验证 `/api/health` readiness 和 schema metadata version；
+3. 外部邮箱入站；
+4. D1 ownership；
+5. R2 raw 与附件；
+6. expected reject 不产生 Worker failure；
+7. 自动回复 loop guard；
+8. 工作台 Resend 提交；
+9. signed webhook；
+10. `submitted` 到 `delivered` 状态；
+11. webhook duplicate/out-of-order；
+12. stale submitting 与 expired delivery review；
+13. mobile、theme、keyboard、logout；
+14. Workers `cpuTime`、`exceededCpu`、D1/R2 error 观察。
