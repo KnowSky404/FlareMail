@@ -163,6 +163,9 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_inbound_ingest_claims')).toEqual(
       new Set(['dedupe_key', 'storage_id', 'claim_token', 'raw_key', 'status', 'created_at', 'updated_at', 'completed_at'])
     );
+    expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
+      { schema_name: 'flaremail', schema_version: 9 }
+    ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
       new Set([
