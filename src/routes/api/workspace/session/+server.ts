@@ -1,6 +1,7 @@
 import type { RequestHandler } from './$types';
 import type { LoginInput } from '$lib/domain/mail';
 import { clearLoginAttempts, consumeLoginAttempt } from '$lib/server/auth/rate-limit';
+import { normalizeLoginEmail } from '$lib/server/auth/rate-limit';
 import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/http/api';
 import {
   authenticateWorkspaceUser,
@@ -29,7 +30,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
 });
 
 export const POST: RequestHandler = withApiHandler(async (event) => {
-  const payload = await readJsonBody<LoginInput>(event);
+  const payload = await readJsonBody<LoginInput>(event, { maxBytes: 8 * 1024 });
   if (
     !payload ||
     typeof payload.email !== 'string' ||
@@ -42,7 +43,8 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   if (!env?.DB) throw new ApiError(503, 'AUTHENTICATION_UNAVAILABLE', '当前运行环境尚未完成认证配置。');
   const clientAddress = event.request.headers.get('CF-Connecting-IP') ??
     event.request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ?? 'unknown';
-  const attemptKey = `${clientAddress}:${payload.email}`;
+  const normalizedEmail = normalizeLoginEmail(payload.email);
+  const attemptKey = `${clientAddress}:${normalizedEmail}`;
   const rateLimit = await consumeLoginAttempt(env.DB, attemptKey);
   if (!rateLimit.allowed) {
     throw new ApiError(429, 'LOGIN_RATE_LIMITED', `登录尝试过多，请在 ${rateLimit.retryAfterSeconds} 秒后重试。`);

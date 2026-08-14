@@ -5,8 +5,7 @@ import {
   ResendOutboundGateway,
   type OutboundMailGateway
 } from './gateway';
-
-const enabled = (value: string | undefined) => value?.trim().toLowerCase() === 'true';
+import { parseBoolean } from '$lib/server/config/env';
 
 const timeoutMs = (value: string | undefined) => {
   const parsed = Number(value);
@@ -30,7 +29,7 @@ export function createOutboundGateway(env: CloudflareEnv | undefined): OutboundM
   }
 
   const appEnv = env?.APP_ENV ?? 'development';
-  if ((provider === 'demo' || provider === 'fake') && (appEnv === 'development' || appEnv === 'test') && enabled(env?.ALLOW_FAKE_SERVICES)) {
+  if ((provider === 'demo' || provider === 'fake') && (appEnv === 'development' || appEnv === 'test') && parseBoolean(env?.ALLOW_FAKE_SERVICES)) {
     return new FakeOutboundGateway();
   }
 

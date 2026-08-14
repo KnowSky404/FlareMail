@@ -36,6 +36,7 @@ export interface AuthenticatedWorkspace {
 }
 
 export function isSecureSessionRequest(url: URL, env?: CloudflareEnv): boolean {
+  if (url.protocol === 'https:') return true;
   if (env?.APP_ORIGIN) {
     try {
       return new URL(env.APP_ORIGIN).protocol === 'https:';
@@ -51,16 +52,15 @@ export function getWorkspaceSessionCookieName(secure: boolean) {
 }
 
 export async function getWorkspaceSession(env: CloudflareEnv | undefined, token?: string | null) {
-  if (!token || !(await hasWorkspaceCoreTables(env))) return null;
+  if (!token || !env?.DB) return null;
   try {
     const tokenHash = await hashSessionToken(token);
     const session = await loadD1WorkspaceContextByTokenHash(env!, tokenHash);
     if (session) await touchSession(env!.DB, session.id).run();
     return session;
-  } catch {
-    // Missing auth migrations or unavailable bindings must never fall back to
-    // an implicit account. Treat the request as unauthenticated.
-    return null;
+  } catch (error) {
+    console.error(JSON.stringify({ level: 'error', event: 'auth_session_store_unavailable', errorName: error instanceof Error ? error.name : 'UnknownError' }));
+    throw new WorkspaceAuthUnavailableError();
   }
 }
 
@@ -72,14 +72,16 @@ export async function authenticateWorkspaceUser(
 ): Promise<AuthenticatedWorkspace | null> {
   if (!env?.DB || !(await hasWorkspaceCoreTables(env))) throw new WorkspaceAuthUnavailableError();
 
+  const startedAt = Date.now();
   let user;
   try {
-    user = await findAuthUserByLogin(env.DB, email.trim());
+    user = await findAuthUserByLogin(env.DB, email.trim().toLowerCase());
   } catch {
     throw new WorkspaceAuthUnavailableError();
   }
   const credentialHash = user?.credential_hash ?? await getDummyCredentialHash();
   const passwordMatches = await verifyPassword(password, credentialHash);
+  console.log(JSON.stringify({ event: 'auth_verify', outcome: user?.credential_hash && passwordMatches ? 'success' : 'rejected', durationMs: Date.now() - startedAt }));
   if (!user?.credential_hash || !passwordMatches) return null;
 
   const token = generateSessionToken();

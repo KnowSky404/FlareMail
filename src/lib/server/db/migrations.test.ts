@@ -101,7 +101,8 @@ describe('versioned D1 migrations', () => {
       '0005_operational_indexes.sql',
       '0006_inbound_ownership.sql',
       '0007_outbound_contracts.sql',
-      '0008_login_rate_limits.sql'
+      '0008_login_rate_limits.sql',
+      '0009_inbound_ingest_claims.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -158,6 +159,9 @@ describe('versioned D1 migrations', () => {
     );
     expect(tableColumns(db, 'workspace_login_rate_limits')).toEqual(
       new Set(['identity_hash', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'])
+    );
+    expect(tableColumns(db, 'workspace_inbound_ingest_claims')).toEqual(
+      new Set(['dedupe_key', 'storage_id', 'claim_token', 'raw_key', 'status', 'created_at', 'updated_at', 'completed_at'])
     );
 
     expect(indexNames(db, 'email_messages')).toEqual(

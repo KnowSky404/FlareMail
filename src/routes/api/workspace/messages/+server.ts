@@ -10,10 +10,11 @@ import {
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
 import { sendWorkspaceMessage } from '$lib/server/workspace';
 import { isOutboundGatewayError } from '$lib/server/outbound/gateway';
+import { MAIL_LIMITS } from '$lib/domain/mail';
 
 export const POST: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
-  const validation = validateComposeInput(await readJsonBody<ComposeInput>(event));
+  const validation = validateComposeInput(await readJsonBody<ComposeInput>(event, { maxBytes: MAIL_LIMITS.body * 4 + 32 * 1024 }));
   if (!validation.ok) {
     throw new ApiError(400, 'VALIDATION_FAILED', '邮件内容未通过验证。', fieldErrorsFromIssues(validation.issues));
   }

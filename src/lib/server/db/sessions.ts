@@ -31,7 +31,8 @@ export async function createSession(db: D1Database, userId: string, tokenHash: s
 }
 
 export function touchSession(db: D1Database, sessionId: string, timestamp = new Date().toISOString()) {
-  return db.prepare(`UPDATE workspace_sessions SET updated_at = ?, last_seen_at = ? WHERE id = ?`).bind(timestamp, timestamp, sessionId);
+  const cutoff = new Date(Date.parse(timestamp) - 5 * 60 * 1000).toISOString();
+  return db.prepare(`UPDATE workspace_sessions SET updated_at = ?, last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at <= ?)`).bind(timestamp, timestamp, sessionId, cutoff);
 }
 
 export async function deleteSession(db: D1Database, sessionId: string) {

@@ -1,7 +1,7 @@
 import type { CloudflareEnv } from './cloudflare';
 import { parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
-import { findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage } from '$lib/server/db/inbound';
+import { claimInboundIngest, completeInboundIngestClaim, findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 
@@ -20,8 +20,9 @@ export class InboundRawLimitError extends Error {
   }
 }
 
-const configuredLimit = (value: string | undefined, fallback: number) => {
+const configuredLimit = (value: string | undefined, fallback: number, maximum: number) => {
   const parsed = Number(value);
+  if (Number.isSafeInteger(parsed) && parsed > maximum) throw new Error('INBOUND_LIMIT_CONFIGURATION_INVALID');
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 };
 
@@ -106,6 +107,12 @@ function safeLog(event: string, detail: Record<string, string | number | boolean
   console.log(JSON.stringify({ event, ...detail }));
 }
 
+const rejectReason = (code: string) => ({
+  INBOUND_RAW_LIMIT: 'Message exceeds the inbound size limit.',
+  INBOUND_MIME_LIMIT: 'Message exceeds the MIME attachment limit.',
+  INBOUND_MIME_PARSE: 'Message could not be parsed as MIME.'
+}[code] ?? 'Message was rejected by the inbound safety limits.').slice(0, 128);
+
 export async function handleInboundEmail(
   message: ForwardableEmailMessage,
   env: CloudflareEnv,
@@ -115,20 +122,21 @@ export async function handleInboundEmail(
   const correlationId = crypto.randomUUID();
   if (!env.DB || !env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
 
-  const rawLimit = configuredLimit(env.INBOUND_MAX_RAW_BYTES, DEFAULT_INBOUND_LIMITS.rawBytes);
+  const rawLimit = configuredLimit(env.INBOUND_MAX_RAW_BYTES, DEFAULT_INBOUND_LIMITS.rawBytes, DEFAULT_INBOUND_LIMITS.rawBytes);
   let raw: ArrayBuffer;
   let parsed;
   try {
     raw = await readBoundedRawEmail(message.raw, message.rawSize, rawLimit);
     parsed = await parseInboundMime(raw, {
-      maxAttachmentCount: configuredLimit(env.INBOUND_MAX_ATTACHMENT_COUNT, DEFAULT_INBOUND_LIMITS.attachmentCount),
-      maxAttachmentSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_BYTES, DEFAULT_INBOUND_LIMITS.attachmentBytes),
-      maxAttachmentTotalSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_TOTAL_BYTES, DEFAULT_INBOUND_LIMITS.attachmentTotalBytes)
+      maxAttachmentCount: configuredLimit(env.INBOUND_MAX_ATTACHMENT_COUNT, DEFAULT_INBOUND_LIMITS.attachmentCount, 100),
+      maxAttachmentSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_BYTES, DEFAULT_INBOUND_LIMITS.attachmentBytes, DEFAULT_INBOUND_LIMITS.attachmentBytes),
+      maxAttachmentTotalSize: configuredLimit(env.INBOUND_MAX_ATTACHMENT_TOTAL_BYTES, DEFAULT_INBOUND_LIMITS.attachmentTotalBytes, DEFAULT_INBOUND_LIMITS.attachmentTotalBytes)
     });
   } catch (error) {
     if (error instanceof InboundRawLimitError || error instanceof InboundMimeLimitError || error instanceof InboundMimeParseError) {
-      message.setReject(error.code);
       safeLog('inbound_rejected', { correlationId, code: error.code, durationMs: Date.now() - startedAt });
+      message.setReject(rejectReason(error.code));
+      return;
     }
     throw error;
   }
@@ -146,8 +154,23 @@ export async function handleInboundEmail(
     return;
   }
 
-  const storageId = await sha256(dedupeKey);
   const date = toIsoTimestamp(parsed.date ?? message.headers.get('date'));
+  const claim = await claimInboundIngest(env.DB, dedupeKey, (storageId) => `inbound/${date.slice(0, 10)}/${storageId}/message.eml`);
+  if (!claim) {
+    safeLog('inbound_claim_busy', { correlationId, code: 'INBOUND_CLAIM_BUSY', durationMs: Date.now() - startedAt });
+    return;
+  }
+  if (claim.status === 'completed') {
+    safeLog('inbound_duplicate', { correlationId, code: 'INBOUND_CLAIM_COMPLETED', durationMs: Date.now() - startedAt });
+    return;
+  }
+  const storageId = claim.storageId;
+  const claimedExisting = await findInboundByDedupeKey(env.DB, dedupeKey);
+  if (claimedExisting) {
+    await completeInboundIngestClaim(env.DB, dedupeKey, claim.claimToken);
+    safeLog('inbound_duplicate', { correlationId, code: 'INBOUND_MESSAGE_EXISTS', durationMs: Date.now() - startedAt });
+    return;
+  }
   const rawKey = `inbound/${date.slice(0, 10)}/${storageId}/message.eml`;
   const ownerUserId = await findInboundOwnerId(env.DB, recipient);
   const ownerKey = ownerUserId ?? 'unassigned';
@@ -190,6 +213,7 @@ export async function handleInboundEmail(
       ownerUserId
     }), ...attachmentRows.map(({ content: _content, ...attachment }) => insertAttachment(env.DB, attachment))];
     await env.DB.batch(statements);
+    await completeInboundIngestClaim(env.DB, dedupeKey, claim.claimToken);
   } catch (error) {
     let duplicate = false;
     if (isUniqueConstraintError(error)) {
@@ -199,7 +223,10 @@ export async function handleInboundEmail(
         duplicate = false;
       }
     }
-    if (!duplicate) await removeObjects(env.BUCKET, writtenKeys);
+    if (!duplicate) {
+      await removeObjects(env.BUCKET, writtenKeys);
+      await releaseInboundIngestClaim(env.DB, dedupeKey, claim.claimToken).catch(() => undefined);
+    }
     if (duplicate) {
       safeLog('inbound_duplicate', { correlationId, messageId: storageId, durationMs: Date.now() - startedAt });
       return;

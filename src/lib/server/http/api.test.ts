@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiError, apiFailure, apiSuccess, getRequestId } from './api';
+import { ApiError, apiFailure, apiSuccess, getRequestId, readJsonBody } from './api';
 
 const event = (requestId?: string) => ({
   request: new Request('https://mail.example.test/api/test', {
@@ -37,5 +37,31 @@ describe('API response envelope', () => {
 
   test('rejects unsafe correlation ids', () => {
     expect(getRequestId(event('bad id with spaces'))).not.toBe('bad id with spaces');
+  });
+
+  test('bounds JSON by media type, declared length and observed bytes', async () => {
+    const validEvent = (request: Request) => ({ request }) as never;
+    await expect(readJsonBody(validEvent(new Request('https://mail.example.test', {
+      method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}'
+    })))).rejects.toMatchObject({ status: 415, code: 'UNSUPPORTED_MEDIA_TYPE' });
+    await expect(readJsonBody(validEvent(new Request('https://mail.example.test', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'content-length': '999' }, body: '{}'
+    })), { maxBytes: 10 })).rejects.toMatchObject({ status: 413, code: 'JSON_BODY_TOO_LARGE' });
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"value":"12345'));
+        controller.enqueue(new TextEncoder().encode('67890"}'));
+        controller.close();
+      }
+    });
+    await expect(readJsonBody(validEvent(new Request('https://mail.example.test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: stream
+    })), { maxBytes: 10 })).rejects.toMatchObject({ status: 413, code: 'JSON_BODY_TOO_LARGE' });
+    await expect(readJsonBody(validEvent(new Request('https://mail.example.test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{'
+    })))).rejects.toMatchObject({ status: 400, code: 'INVALID_JSON' });
+    await expect(readJsonBody(validEvent(new Request('https://mail.example.test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"ok":true}'
+    })))).resolves.toEqual({ ok: true });
   });
 });

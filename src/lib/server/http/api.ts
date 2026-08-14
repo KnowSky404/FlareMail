@@ -102,10 +102,45 @@ export function withApiHandler(
   };
 }
 
-export async function readJsonBody<T>(event: RequestEvent): Promise<T> {
+export interface JsonBodyOptions {
+  maxBytes?: number;
+}
+
+const DEFAULT_JSON_BODY_LIMIT = 64 * 1024;
+
+export async function readJsonBody<T>(event: RequestEvent, options: JsonBodyOptions = {}): Promise<T> {
+  const contentType = event.request.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+  if (!contentType || (contentType !== 'application/json' && !/^application\/[a-z0-9.+-]+\+json$/u.test(contentType))) {
+    throw new ApiError(415, 'UNSUPPORTED_MEDIA_TYPE', '请求正文必须使用 JSON。');
+  }
+  const maxBytes = options.maxBytes ?? DEFAULT_JSON_BODY_LIMIT;
+  const declared = event.request.headers.get('content-length');
+  if (declared !== null) {
+    if (!/^\d+$/u.test(declared.trim())) throw new ApiError(400, 'INVALID_CONTENT_LENGTH', '请求长度无效。');
+    if (Number(declared) > maxBytes) throw new ApiError(413, 'JSON_BODY_TOO_LARGE', '请求正文超过大小限制。');
+  }
   try {
-    return await event.request.json() as T;
-  } catch {
+    if (!event.request.body) throw new Error('empty body');
+    const reader = event.request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) throw new ApiError(413, 'JSON_BODY_TOO_LARGE', '请求正文超过大小限制。');
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return JSON.parse(new TextDecoder().decode(bytes)) as T;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError(400, 'INVALID_JSON', '请求正文必须是有效的 JSON。');
   }
 }

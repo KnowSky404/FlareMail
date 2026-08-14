@@ -6,6 +6,10 @@ export interface RateLimitResult {
 const DEFAULT_LIMIT = 5;
 const DEFAULT_WINDOW_MS = 15 * 60 * 1000;
 
+export function normalizeLoginEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
 async function identityHash(key: string) {
   const normalized = key.trim().toLowerCase();
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));

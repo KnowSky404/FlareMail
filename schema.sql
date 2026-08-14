@@ -292,3 +292,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_delivery_statuses_provider_messa
 CREATE INDEX IF NOT EXISTS idx_workspace_delivery_statuses_user_status ON workspace_delivery_statuses(user_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_delivery_attempts_message_id ON workspace_delivery_attempts(message_id, attempt_number DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_delivery_attempts_provider_message_id ON workspace_delivery_attempts(provider_message_id) WHERE provider_message_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS workspace_inbound_ingest_claims (
+  dedupe_key TEXT PRIMARY KEY,
+  storage_id TEXT NOT NULL UNIQUE,
+  claim_token TEXT NOT NULL UNIQUE,
+  raw_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('processing', 'completed')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_inbound_ingest_claims_status_updated
+  ON workspace_inbound_ingest_claims(status, updated_at);

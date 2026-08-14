@@ -20,7 +20,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
 
 export const PUT: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
-  const validation = validateProfile(await readJsonBody<UserProfile>(event));
+  const validation = validateProfile(await readJsonBody<UserProfile>(event, { maxBytes: 32 * 1024 }));
   if (!validation.ok) {
     throw new ApiError(400, 'VALIDATION_FAILED', '个人资料未通过验证。', fieldErrorsFromIssues(validation.issues));
   }

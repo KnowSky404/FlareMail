@@ -25,4 +25,8 @@ describe('workspace session cookie policy', () => {
       APP_ORIGIN: 'https://mail.example.test'
     } as never)).toBe(true);
   });
+
+  test('never downgrades an HTTPS request because APP_ORIGIN is malformed', () => {
+    expect(isSecureSessionRequest(new URL('https://mail.example.test'), { APP_ORIGIN: 'http://bad.example.test' } as never)).toBe(true);
+  });
 });

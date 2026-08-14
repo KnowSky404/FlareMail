@@ -108,8 +108,8 @@ describe('inbound email persistence', () => {
     const test = environment();
     test.env.INBOUND_MAX_RAW_BYTES = '100';
     const oversized = message(fixtureBytes(), 'owner@example.test', 101);
-    await expect(handleInboundEmail(oversized.value, test.env)).rejects.toMatchObject({ code: 'INBOUND_RAW_LIMIT' });
-    expect(oversized.rejected()).toBe('INBOUND_RAW_LIMIT');
+    await expect(handleInboundEmail(oversized.value, test.env)).resolves.toBeUndefined();
+    expect(oversized.rejected()).toBe('Message exceeds the inbound size limit.');
     expect(test.BUCKET.objects.size).toBe(0);
   });
 });

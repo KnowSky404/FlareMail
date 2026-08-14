@@ -3,10 +3,9 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { MailFolder, MailboxFilter, MailboxPage, WorkspacePayload } from '$lib/domain/mail';
 import { loadMailboxPage } from '$lib/server/workspace';
 import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
+import { parseBoolean } from '$lib/server/config/env';
 
 const mailFolders: MailFolder[] = ['inbox', 'sent', 'drafts'];
-
-const enabled = (value: string | undefined) => /^(1|true|yes|on)$/iu.test(value?.trim() ?? '');
 
 function safeRuntimeDiagnostics(env: CloudflareEnv) {
   const provider = env.OUTBOUND_PROVIDER?.trim().toLowerCase() ?? '';
@@ -18,8 +17,8 @@ function safeRuntimeDiagnostics(env: CloudflareEnv) {
     outboundMode: provider === 'resend' ? 'Resend' : /^(demo|fake)$/u.test(provider) ? '开发假服务' : '未配置',
     webhookConfigured: Boolean(env.RESEND_WEBHOOK_SECRET?.trim()),
     senderConfigured: Boolean(env.OUTBOUND_FROM_EMAIL?.trim()),
-    autoReplyEnabled: enabled(env.AUTO_REPLY_ENABLED),
-    notificationEnabled: enabled(env.INBOUND_NOTIFICATION_ENABLED)
+    autoReplyEnabled: parseBoolean(env.AUTO_REPLY_ENABLED),
+    notificationEnabled: parseBoolean(env.INBOUND_NOTIFICATION_ENABLED)
   };
 }
 

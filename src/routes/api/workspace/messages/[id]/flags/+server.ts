@@ -6,7 +6,7 @@ import { patchWorkspaceMessage } from '$lib/server/workspace';
 
 export const PATCH: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
-  const payload = await readJsonBody<MessagePatch>(event);
+  const payload = await readJsonBody<MessagePatch>(event, { maxBytes: 2 * 1024 });
   if (
     !payload ||
     (payload.read === undefined && payload.starred === undefined) ||

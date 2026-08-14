@@ -5,6 +5,7 @@ import {
   getWorkspaceSession,
   workspaceSessionCookieNames
 } from '$lib/server/workspace';
+import { WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError, apiFailure } from '$lib/server/http/api';
 
@@ -27,7 +28,15 @@ export const handle: Handle = async ({ event, resolve }) => {
   const sessionToken = workspaceSessionCookieNames
     .map((name) => event.cookies.get(name))
     .find((value): value is string => Boolean(value)) ?? null;
-  const session = await getWorkspaceSession(env, sessionToken);
+  let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
+  try {
+    session = await getWorkspaceSession(env, sessionToken);
+  } catch (error) {
+    if (error instanceof WorkspaceAuthUnavailableError && event.url.pathname !== '/api/health') {
+      return setSecurityHeaders(new Response('Authentication storage is unavailable.', { status: 503 }), event.url.protocol === 'https:');
+    }
+    throw error;
+  }
 
   event.locals.workspaceSessionToken = sessionToken;
   event.locals.workspaceSessionId = session?.id ?? null;
