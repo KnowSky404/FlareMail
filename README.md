@@ -78,6 +78,7 @@ bun run preview
 bun test
 bun run test:unit
 bun run test:integration
+bun run test:remaining
 bun run check
 bun run build
 bun run test:e2e
@@ -88,6 +89,8 @@ bun run deploy:dry-run
 `deploy:dry-run` 需要先从 `wrangler.deploy.toml.example` 创建本地私有的 `wrangler.deploy.toml`。它只构建和校验 Worker，不会发布。
 
 `test:e2e`/`test:a11y` 不读取生产配置、不调用真实 Resend，也不会访问远程 D1/R2。若 Playwright 未自动找到 Chromium，可显式设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`。
+
+CI 将 unit、integration 和 remaining test collection 按不重叠文件集合运行；`bun test src scripts` 是本地聚合全量命令。
 
 运维清理默认仅生成报告；只有显式 `--remote` 才访问远程资源，只有再加 `--apply` 才执行经过范围保护的删除：
 
