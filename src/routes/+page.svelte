@@ -13,9 +13,28 @@
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
-  import { ComposeSaveSequence } from '$lib/client/compose-save-sequence';
   import { ClientApiError } from '$lib/client/api';
-  import { LatestRequest } from '$lib/client/latest-request';
+  import {
+    ComposeAutosaveController,
+    composeInputFromSavedDraft,
+    createEmptyComposeInput,
+    formatComposeSavedAt,
+    hasComposeContent,
+    serializeComposeInput,
+    withComposeDraftId
+  } from '$lib/client/compose-controller';
+  import { DetailCacheController } from '$lib/client/detail-cache-controller';
+  import {
+    MailboxController,
+    mergeMailboxPage,
+    mergeMessageDelta,
+    moveSelection,
+    removeMessage,
+    selectNextMessage,
+    selectionCandidates,
+    type MailFilter,
+    type WorkspaceSection
+  } from '$lib/client/mailbox-controller';
   import {
     createSession,
     deleteMessage,
@@ -30,6 +49,7 @@
     updateProfile
   } from '$lib/client/workspace-api';
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
+  import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl } from '$lib/client/workspace-url-controller';
   import {
     buildMailThreads,
     cloneMailbox,
@@ -54,8 +74,7 @@
     type WorkspaceMetrics
   } from '$lib/domain/mail';
 
-  type AppSection = MailFolder | 'profile';
-  type MailFilter = 'all' | 'unread' | 'starred';
+  type AppSection = WorkspaceSection;
 
   type ComposeAutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 
@@ -68,7 +87,7 @@
   let profile = $state<UserProfile>(cloneProfile());
   let mailbox = $state<MailboxState>(cloneMailbox());
   let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 });
-  let mailboxPages = $state<Record<MailFolder, MailboxPage> | null>(null);
+  let mailboxPages = $state<Partial<Record<MailFolder, MailboxPage>> | null>(null);
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let searchQuery = $state('');
@@ -100,27 +119,24 @@
   let mailboxLoading = $state(false);
   let hydratedFromServer = $state(false);
   let appliedServerRevision = '';
-  const mailboxRequest = new LatestRequest();
-  const inboundDetailRequest = new LatestRequest();
-  const deliveryDetailRequest = new LatestRequest();
-  const composeSaveSequence = new ComposeSaveSequence();
-  let composeAutosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const composeAutosave = new ComposeAutosaveController();
+  const inboundDetailCache = new DetailCacheController<InboundMessageDetail>('加载原始邮件失败。', (snapshot) => {
+    inboundDetails = snapshot.values;
+    inboundDetailErrors = snapshot.errors;
+    inboundDetailPendingId = snapshot.pendingId;
+  });
+  const deliveryDetailCache = new DetailCacheController<DeliveryDetail>('加载投递回执失败。', (snapshot) => {
+    deliveryDetails = snapshot.values;
+    deliveryDetailErrors = snapshot.errors;
+    deliveryDetailPendingId = snapshot.pendingId;
+  });
   const shortcuts = new WorkspaceShortcutController();
 
-  const urlSection = $derived.by<AppSection>(() => {
-    const folder = page.url.searchParams.get('folder');
-    return folder === 'sent' || folder === 'drafts'
-      ? folder
-      : folder === 'settings'
-        ? 'profile'
-        : 'inbox';
-  });
-  const urlQuery = $derived(page.url.searchParams.get('q')?.slice(0, 200) ?? '');
-  const urlFilter = $derived.by<MailFilter>(() => {
-    const filter = page.url.searchParams.get('filter');
-    return filter === 'unread' || filter === 'starred' ? filter : 'all';
-  });
-  const urlMessageId = $derived(page.url.searchParams.get('message'));
+  const urlState = $derived(readWorkspaceUrl(page.url));
+  const urlSection = $derived(urlState.section);
+  const urlQuery = $derived(urlState.query);
+  const urlFilter = $derived(urlState.filter);
+  const urlMessageId = $derived(urlState.messageId);
   const serverRevision = $derived(serverWorkspace ? JSON.stringify(serverWorkspace) : '');
 
   $effect(() => {
@@ -141,7 +157,7 @@
         mailbox = workspace.mailbox;
         metrics = workspace.metrics;
         mailboxPages = data.mailboxPages;
-        selectedMessageId = urlMessageId ?? nextSelection(workspace.mailbox, urlSection, null);
+        selectedMessageId = urlMessageId ?? selectNextMessage(workspace.mailbox, urlSection, null);
         if (!hydratedFromServer) {
           banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
         }
@@ -260,59 +276,16 @@
   );
   const composeBusy = $derived(pending || composeAutosavePending);
 
-  const createEmptyComposeInput = (): ComposeInput => ({
-    toEmail: '',
-    cc: '',
-    subject: '',
-    body: ''
-  });
-
-  const serializeComposeInput = (input: ComposeInput | null) => {
-    if (!input) {
-      return '';
-    }
-
-    return JSON.stringify({
-      draftId: input.draftId?.trim() || null,
-      toEmail: input.toEmail.trim(),
-      cc: (input.cc ?? '').trim(),
-      subject: input.subject,
-      body: input.body,
-      messageId: input.messageId ?? null,
-      inReplyTo: input.inReplyTo ?? null,
-      references: input.references ?? null
-    });
-  };
-
-  const withComposeDraftId = (input: ComposeInput) => ({
-    ...input,
-    draftId: composeDraftId ?? input.draftId
-  });
-
-  const hasComposeContent = (input: ComposeInput | null) =>
-    Boolean(
-      input &&
-        (input.toEmail.trim() || (input.cc ?? '').trim() || input.subject.trim() || input.body.trim())
-    );
-
-  const formatComposeSavedAt = (value: string) =>
-    new Intl.DateTimeFormat('zh-CN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    }).format(new Date(value));
-
   const clearComposeAutosaveTimer = () => {
-    if (composeAutosaveTimer) {
-      clearTimeout(composeAutosaveTimer);
-      composeAutosaveTimer = null;
-    }
+    composeAutosave.clear();
   };
+
+  const withCurrentComposeDraftId = (input: ComposeInput) =>
+    withComposeDraftId(input, composeDraftId);
 
   const resetComposeState = () => {
     clearComposeAutosaveTimer();
-    composeSaveSequence.reset();
+    composeAutosave.reset();
     composeOpen = false;
     composeMode = 'new';
     composeInitialInput = null;
@@ -328,17 +301,7 @@
   };
 
   const syncComposeDraftState = (message: MailMessage, statusMessage: string) => {
-    const nextInput = {
-      draftId: message.id,
-      toEmail: message.toEmail,
-      cc: message.cc ?? '',
-      subject: message.subject === '未命名草稿' ? '' : message.subject,
-      body: message.body,
-      messageId: message.messageId,
-      inReplyTo: message.inReplyTo,
-      references: message.references,
-      expectedUpdatedAt: message.sentAt
-    } satisfies ComposeInput;
+    const nextInput = composeInputFromSavedDraft(message);
 
     composeDraftId = message.id;
     composeLiveInput = nextInput;
@@ -349,16 +312,20 @@
   };
 
   function applyMessageDelta(result: { message: MailMessage; metrics: WorkspaceMetrics }, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
-    const nextMailbox = cloneMailbox(mailbox);
-    if (options?.removeDraftId) nextMailbox.drafts = nextMailbox.drafts.filter((item) => item.id !== options.removeDraftId);
-    const folder = result.message.folder;
-    const current = nextMailbox[folder];
-    const index = current.findIndex((item) => item.id === result.message.id);
-    if (index >= 0) current[index] = result.message;
-    else current.push(result.message);
-    current.sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id));
-    mailbox = nextMailbox;
-    metrics = result.metrics;
+    const merged = mergeMessageDelta(
+      { mailbox, mailboxPages, metrics },
+      result,
+      {
+        currentSection: activeSection,
+        currentSelectedMessageId: selectedMessageId,
+        section: options?.section,
+        preferredMessageId: options?.preferredMessageId,
+        removeDraftId: options?.removeDraftId
+      }
+    );
+    mailbox = merged.snapshot.mailbox;
+    mailboxPages = merged.snapshot.mailboxPages;
+    metrics = merged.snapshot.metrics;
     authenticated = true;
     if (options?.section) activeSection = options.section;
     if (options?.clearMailView) {
@@ -366,7 +333,7 @@
       mailFilter = 'all';
       mobileDetailOpen = false;
     }
-    selectedMessageId = nextSelection(nextMailbox, options?.section ?? activeSection, options?.preferredMessageId ?? selectedMessageId);
+    selectedMessageId = merged.selectedMessageId;
     if (options?.section) updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
   }
 
@@ -397,7 +364,7 @@
     clearComposeAutosaveTimer();
 
     const input = composeLiveInput;
-    const signature = serializeComposeInput(input ? withComposeDraftId(input) : null);
+    const signature = serializeComposeInput(input ? withCurrentComposeDraftId(input) : null);
 
     if (
       !composeOpen ||
@@ -411,9 +378,9 @@
       return;
     }
 
-    composeAutosaveTimer = setTimeout(() => {
+    composeAutosave.schedule(() => {
       void autosaveDraft();
-    }, 1500);
+    });
 
     return () => {
       clearComposeAutosaveTimer();
@@ -432,32 +399,6 @@
       void loadDeliveryDetail(selectedMessage);
     }
   });
-
-  function nextSelection(
-    nextMailbox: MailboxState,
-    section: AppSection,
-    preferredMessageId: string | null = selectedMessageId
-  ) {
-    if (section === 'profile') {
-      return selectedMessageId;
-    }
-
-    if (section === 'drafts') {
-      const list = nextMailbox.drafts;
-      return list.find((message) => message.id === preferredMessageId)?.id ?? list[0]?.id ?? null;
-    }
-
-    const threads = buildMailThreads(nextMailbox, section);
-    const preferredThread = preferredMessageId
-      ? threads.find((thread) => thread.messages.some((message) => message.id === preferredMessageId))
-      : null;
-
-    if (preferredThread && preferredMessageId) {
-      return preferredMessageId;
-    }
-
-    return threads[0]?.sectionLatestMessage.id ?? null;
-  }
 
   function applyWorkspace(
     workspace: WorkspacePayload,
@@ -481,7 +422,7 @@
       mobileDetailOpen = false;
     }
 
-    selectedMessageId = nextSelection(
+    selectedMessageId = selectNextMessage(
       workspace.mailbox,
       options?.section ?? activeSection,
       options?.preferredMessageId ?? selectedMessageId
@@ -510,9 +451,8 @@
     activeSection = 'inbox';
     selectedMessageId = initialMailbox.inbox[0]?.id ?? null;
     resetComposeState();
-    deliveryDetailPendingId = null;
-    deliveryDetails = {};
-    deliveryDetailErrors = {};
+    inboundDetailCache.reset();
+    deliveryDetailCache.reset();
     profileStatus = '';
     loginError = '';
   }
@@ -521,78 +461,22 @@
     if (!isInboundMessageId(message.id)) {
       return false;
     }
-
-    if (!force && inboundDetails[message.id]) {
-      return true;
-    }
-
-    const request = inboundDetailRequest.begin();
-    inboundDetailPendingId = message.id;
-    inboundDetailErrors = {
-      ...inboundDetailErrors,
-      [message.id]: ''
-    };
-
-    try {
-      const result = await fetchInboundDetail(message.id, request.signal);
-      if (request.isCurrent()) {
-        inboundDetails = {
-          ...inboundDetails,
-          [message.id]: result.detail
-        };
-      }
-      return true;
-    } catch (error) {
-      if (request.signal.aborted) return false;
-      inboundDetailErrors = {
-        ...inboundDetailErrors,
-        [message.id]: error instanceof Error ? error.message : '加载原始邮件失败。'
-      };
-      return false;
-    } finally {
-      if (request.isCurrent() && inboundDetailPendingId === message.id) {
-        inboundDetailPendingId = null;
-      }
-    }
+    return inboundDetailCache.load(
+      message.id,
+      async (signal) => (await fetchInboundDetail(message.id, signal)).detail,
+      force
+    );
   }
 
   async function loadDeliveryDetail(message: MailMessage, force = false) {
     if (message.folder !== 'sent' || message.source !== 'workspace') {
       return false;
     }
-
-    if (!force && deliveryDetails[message.id]) {
-      return true;
-    }
-
-    const request = deliveryDetailRequest.begin();
-    deliveryDetailPendingId = message.id;
-    deliveryDetailErrors = {
-      ...deliveryDetailErrors,
-      [message.id]: ''
-    };
-
-    try {
-      const result = await fetchDeliveryDetail(message.id, request.signal);
-      if (request.isCurrent()) {
-        deliveryDetails = {
-          ...deliveryDetails,
-          [message.id]: result.detail
-        };
-      }
-      return true;
-    } catch (error) {
-      if (request.signal.aborted) return false;
-      deliveryDetailErrors = {
-        ...deliveryDetailErrors,
-        [message.id]: error instanceof Error ? error.message : '加载投递回执失败。'
-      };
-      return false;
-    } finally {
-      if (request.isCurrent() && deliveryDetailPendingId === message.id) {
-        deliveryDetailPendingId = null;
-      }
-    }
+    return deliveryDetailCache.load(
+      message.id,
+      async (signal) => (await fetchDeliveryDetail(message.id, signal)).detail,
+      force
+    );
   }
 
   function updateWorkspaceUrl(
@@ -604,26 +488,7 @@
     },
     replaceState = false
   ) {
-    const url = new URL(page.url);
-
-    if (updates.section) {
-      url.searchParams.set('folder', updates.section === 'profile' ? 'settings' : updates.section);
-    }
-    if (updates.query !== undefined) {
-      const query = updates.query.trim().slice(0, 200);
-      if (query) url.searchParams.set('q', query);
-      else url.searchParams.delete('q');
-    }
-    if (updates.filter !== undefined) {
-      if (updates.filter === 'all') url.searchParams.delete('filter');
-      else url.searchParams.set('filter', updates.filter);
-    }
-    if (updates.messageId !== undefined) {
-      if (updates.messageId) url.searchParams.set('message', updates.messageId);
-      else url.searchParams.delete('message');
-    }
-
-    void goto(url, { replaceState, noScroll: true, keepFocus: true });
+    void goto(buildWorkspaceUrl(page.url, updates), { replaceState, noScroll: true, keepFocus: true });
   }
 
   function setSection(section: AppSection, syncUrl = true) {
@@ -638,7 +503,7 @@
         ? threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
         : null;
 
-      selectedMessageId = nextSelection(
+      selectedMessageId = selectNextMessage(
         mailbox,
         section,
         currentThread?.sectionLatestMessage.id ?? selectedMessageId
@@ -650,7 +515,7 @@
       return;
     }
 
-    selectedMessageId = nextSelection(mailbox, section, selectedMessageId);
+    selectedMessageId = selectNextMessage(mailbox, section, selectedMessageId);
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
@@ -679,73 +544,35 @@
   }
 
   async function refreshWorkspace() {
-    const request = mailboxRequest.begin();
-    mailboxLoading = true;
-    try {
-      const params = new URLSearchParams({
-        folder: activeSection === 'profile' ? 'inbox' : activeSection,
-        limit: '40'
-      });
-      if (searchQuery.trim()) params.set('q', searchQuery.trim());
-      if (mailFilter !== 'all') params.set('filter', mailFilter);
-      const result = await fetchMailboxPage(params, request.signal);
-      if (request.isCurrent()) {
-        applyMailboxPage(result.page, false);
-        banner = '邮件列表已刷新。';
-      }
-    } catch (error) {
-      if (request.signal.aborted) return;
-      banner = error instanceof Error ? error.message : '刷新邮件列表失败。';
-    } finally {
-      if (request.isCurrent()) mailboxLoading = false;
-    }
+    const refreshed = await mailboxController.refresh(
+      activeSection === 'profile' ? 'inbox' : activeSection,
+      searchQuery,
+      mailFilter
+    );
+    if (refreshed) banner = '邮件列表已刷新。';
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {
-    const existing = append ? mailbox[page.folder] : [];
-    const byId = new Map(existing.map((message) => [message.id, message]));
-    for (const message of page.messages) byId.set(message.id, message);
-    mailbox = {
-      ...mailbox,
-      [page.folder]: [...byId.values()].sort(
-        (left, right) => right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id)
-      )
-    };
-    mailboxPages = {
-      ...(mailboxPages ?? {} as Record<MailFolder, MailboxPage>),
-      [page.folder]: page
-    };
-    if (page.metrics) metrics = page.metrics;
+    const merged = mergeMailboxPage({ mailbox, mailboxPages, metrics }, page, append);
+    mailbox = merged.mailbox;
+    mailboxPages = merged.mailboxPages;
+    metrics = merged.metrics;
   }
+
+  const mailboxController = new MailboxController(fetchMailboxPage, {
+    onPage: (page, append) => applyMailboxPage(page, append),
+    onLoading: (loading) => (mailboxLoading = loading),
+    onError: (message) => (banner = message)
+  });
 
   async function loadMoreMailbox() {
     if (activeSection === 'profile') return;
-    const currentPage = mailboxPages?.[activeSection];
-    if (!currentPage?.nextCursor || !currentPage.hasMore) return;
-    const request = mailboxRequest.begin();
-    mailboxLoading = true;
-    try {
-      const params = new URLSearchParams({
-        folder: activeSection,
-        cursor: currentPage.nextCursor,
-        limit: String(currentPage.limit)
-      });
-      if (searchQuery.trim()) params.set('q', searchQuery.trim());
-      if (mailFilter !== 'all') params.set('filter', mailFilter);
-      const result = await fetchMailboxPage(params, request.signal);
-      if (request.isCurrent()) applyMailboxPage(result.page, true);
-    } catch (error) {
-      if (!request.signal.aborted) {
-        banner = error instanceof Error ? error.message : '加载更多邮件失败。';
-      }
-    } finally {
-      if (request.isCurrent()) mailboxLoading = false;
-    }
+    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection]);
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
     clearComposeAutosaveTimer();
-    composeSaveSequence.reset();
+    composeAutosave.reset();
     composeMode = mode;
     composeInitialInput = initialInput;
     composeDraftId = initialInput?.draftId;
@@ -766,7 +593,7 @@
     clearComposeAutosaveTimer();
     let savedBeforeClose = false;
 
-    const input = composeLiveInput ? withComposeDraftId(composeLiveInput) : null;
+    const input = composeLiveInput ? withCurrentComposeDraftId(composeLiveInput) : null;
     const signature = serializeComposeInput(input);
 
     if (
@@ -868,7 +695,7 @@
     pending = true;
 
     try {
-      const result = await persistDraft(withComposeDraftId(input));
+      const result = await persistDraft(withCurrentComposeDraftId(input));
 
       applyMessageDelta(result, {
         section: 'drafts',
@@ -896,7 +723,7 @@
       return;
     }
 
-    const input = withComposeDraftId(liveInput);
+    const input = withCurrentComposeDraftId(liveInput);
     const signature = serializeComposeInput(input);
 
     if (!hasComposeContent(input) || signature === composeLastSavedSignature) {
@@ -906,7 +733,7 @@
     composeAutosavePending = true;
     composeAutosaveStatus = 'saving';
     composeAutosaveMessage = '正在自动保存草稿...';
-    const save = composeSaveSequence.begin();
+    const save = composeAutosave.sequence.begin();
 
     try {
       const result = await persistDraft(input);
@@ -944,7 +771,7 @@
     pending = true;
 
     try {
-      const result = await submitMessage(withComposeDraftId(input), composeSubmissionId);
+      const result = await submitMessage(withCurrentComposeDraftId(input), composeSubmissionId);
 
       deliveryDetails = Object.fromEntries(
         Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
@@ -1098,11 +925,18 @@
     try {
       const result = await deleteMessage(message.id);
 
-      const nextMailbox = cloneMailbox(mailbox);
-      nextMailbox[result.folder] = nextMailbox[result.folder].filter((item) => item.id !== result.removedId);
-      mailbox = nextMailbox;
-      metrics = result.metrics ?? metrics;
-      selectedMessageId = nextSelection(nextMailbox, activeSection === 'profile' ? result.folder : activeSection, selectedMessageId);
+      const removed = removeMessage(
+        { mailbox, mailboxPages, metrics },
+        result.removedId,
+        result.folder,
+        activeSection,
+        selectedMessageId,
+        result.metrics
+      );
+      mailbox = removed.snapshot.mailbox;
+      mailboxPages = removed.snapshot.mailboxPages;
+      metrics = removed.snapshot.metrics;
+      selectedMessageId = removed.selectedMessageId;
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
       }
@@ -1154,19 +988,12 @@
   }
 
   function moveMessageSelection(direction: -1 | 1) {
-    const candidates =
-      activeSection === 'drafts'
-        ? visibleMessages
-        : visibleThreads.map((thread) => thread.sectionLatestMessage);
-    if (!candidates.length) return;
-
-    const currentIndex = candidates.findIndex((message) => message.id === selectedMessageId);
-    const fallbackIndex = direction > 0 ? 0 : candidates.length - 1;
-    const nextIndex =
-      currentIndex < 0
-        ? fallbackIndex
-        : Math.min(candidates.length - 1, Math.max(0, currentIndex + direction));
-    void handleSelectMessage(candidates[nextIndex]);
+    const next = moveSelection(
+      selectionCandidates(mailbox, activeSection, visibleMessages, visibleThreads),
+      selectedMessageId,
+      direction
+    );
+    if (next) void handleSelectMessage(next);
   }
 
   onMount(() => {
@@ -1365,8 +1192,8 @@
         onSaveDraftCopy={saveDraftCopy}
         onOverwriteServerDraft={overwriteServerDraft}
         onInputChange={(input) => {
-          composeSaveSequence.changed();
-          const nextInput = withComposeDraftId(input);
+          composeAutosave.changed();
+          const nextInput = withCurrentComposeDraftId(input);
           const nextSignature = serializeComposeInput(nextInput);
 
           composeLiveInput = nextInput;
