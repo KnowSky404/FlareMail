@@ -29,6 +29,8 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 
 本地 `wrangler.toml` 默认启用 demo provider，目的仅是验证 UI 与本地持久化。它不代表生产发送成功，也不会证明真实 Resend、Email Routing 或远程 Cloudflare 资源可用。
 
+仓库中的 `wrangler.toml`、`wrangler.build.toml` 和 `wrangler.deploy.toml.example` 统一使用 `compatibility_date = "2026-08-19"` 与 `compatibility_flags = ["nodejs_compat"]`。修改 Worker 运行时版本时请同步三个配置，并运行 `bun run cf:typegen` 更新生成类型。
+
 ## 架构
 
 ```text

@@ -2,7 +2,7 @@
 # wrangler.toml, whose composition root adds Email Routing to this generated app.
 name = "flaremail-svelte-build"
 main = "build/_worker.js"
-compatibility_date = "2026-03-24"
+compatibility_date = "2026-08-19"
 compatibility_flags = ["nodejs_compat"]
 
 [assets]
