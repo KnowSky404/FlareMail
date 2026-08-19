@@ -28,6 +28,8 @@ class TestD1 {
 const setup = () => {
   const database = new Database(':memory:');
   database.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
+  database.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', 11, '2026-08-19T00:00:00.000Z')`).run();
   database.query(`INSERT INTO workspace_users
     (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '-- Owner', 0)`).run();
@@ -55,7 +57,9 @@ describe('outbound workspace persistence', () => {
   test('persists before submission, returns submitted and deduplicates double-clicks', async () => {
     const { database, env, session } = setup();
     const gateway = new FakeOutboundGateway({ providerMessageId: 're_test_1' });
-    const input = { toEmail: 'alice@example.net', cc: 'copy@example.net', subject: 'Re: Contract', body: 'Reply',
+    const input = { to: [{ name: 'Alice', email: 'ALICE@example.net' }, 'second@example.net'],
+      cc: [{ name: 'Copy', email: 'copy@example.net' }, { name: 'Duplicate', email: 'alice@example.net' }],
+      bcc: ['blind@example.net', 'copy@example.net'], subject: 'Re: Contract', body: 'Reply',
       inReplyTo: '<original@example.net>', references: '<root@example.net> <original@example.net>' };
 
     const first = await sendWorkspaceMessage(env, session, input, { requestId: 'compose-1', gateway });
@@ -66,8 +70,9 @@ describe('outbound workspace persistence', () => {
     expect(gateway.sent[0]).toMatchObject({
       idempotencyKey: 'flaremail:send:user-1:compose-1',
       from: 'FlareMail <mail@example.test>',
-      to: ['alice@example.net'],
-      cc: ['copy@example.net'],
+      to: ['Alice <alice@example.net>', 'second@example.net'],
+      cc: ['Copy <copy@example.net>'],
+      bcc: ['blind@example.net'],
       replyTo: ['mail@example.test'],
       headers: { 'In-Reply-To': '<original@example.net>', References: '<root@example.net> <original@example.net>' }
     });

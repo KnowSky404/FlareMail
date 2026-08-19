@@ -1,3 +1,5 @@
+import type { MailAddress, MailAddressInput } from './addresses';
+
 /**
  * Provider and framework independent mail contracts.
  *
@@ -99,6 +101,11 @@ export interface MailMessage extends MailRfcHeaders {
   toName: string;
   toEmail: string;
   cc?: string;
+  /** Canonical recipients; legacy display strings remain for old UI/readers. */
+  toAddresses?: MailAddress[];
+  ccAddresses?: MailAddress[];
+  bccAddresses?: MailAddress[];
+  bcc?: string;
   subject: string;
   preview: string;
   body: string;
@@ -243,8 +250,12 @@ export interface ComposeInput extends MailRfcHeaders {
   expectedUpdatedAt?: string;
   overwrite?: boolean;
   saveAsCopy?: boolean;
-  toEmail: string;
-  cc?: string;
+  /** New payload shape. Strings are accepted only as a legacy compatibility input. */
+  to?: MailAddressInput[] | string;
+  cc?: MailAddressInput[] | string;
+  bcc?: MailAddressInput[] | string;
+  /** Legacy payload fields retained for old drafts and clients. */
+  toEmail?: string;
   subject: string;
   body: string;
 }
@@ -257,8 +268,10 @@ export interface MessagePatch {
 export interface DraftMessageInput {
   id?: string;
   from: UserProfile;
-  toEmail: string;
-  cc?: string;
+  to?: MailAddressInput[] | string;
+  cc?: MailAddressInput[] | string;
+  bcc?: MailAddressInput[] | string;
+  toEmail?: string;
   subject: string;
   body: string;
   starred?: boolean;
@@ -293,7 +306,13 @@ export interface DeliveryState {
 }
 
 export function cloneMessage(message: MailMessage): MailMessage {
-  return { ...message, labels: [...message.labels] };
+  return {
+    ...message,
+    labels: [...message.labels],
+    toAddresses: message.toAddresses?.map((address) => ({ ...address })),
+    ccAddresses: message.ccAddresses?.map((address) => ({ ...address })),
+    bccAddresses: message.bccAddresses?.map((address) => ({ ...address }))
+  };
 }
 
 export function cloneMailbox(mailbox: MailboxState = { inbox: [], sent: [], drafts: [] }): MailboxState {

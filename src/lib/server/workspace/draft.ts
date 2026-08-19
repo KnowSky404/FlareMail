@@ -29,10 +29,10 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
   const timestamp = currentRow && now <= currentRow.updated_at
     ? new Date(Date.parse(currentRow.updated_at) + 1).toISOString()
     : now;
-  const draft = createDraftMessage({ id: requestedId, from: session.profile, toEmail: input.toEmail, cc: input.cc,
+  const draft = createDraftMessage({ id: requestedId, from: session.profile, to: input.to, toEmail: input.toEmail, cc: input.cc, bcc: input.bcc,
     subject: input.subject, body: input.body, starred: Boolean(currentRow?.is_starred), updatedAt: timestamp,
     messageId: input.messageId, inReplyTo: input.inReplyTo, references: input.references });
-  const serialized = serializeDraftForInsert(session.userId, { ...input, draftId: draft.id }, draft.starred);
+  const serialized = serializeDraftForInsert(session.userId, draft);
   serialized.createdAt = currentRow?.created_at ?? timestamp;
   serialized.updatedAt = timestamp;
 

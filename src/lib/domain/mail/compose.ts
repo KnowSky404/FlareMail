@@ -1,4 +1,5 @@
 import { normalizeMessageId, parseMessageIds } from './thread';
+import { dedupeAddresses, parseAddressList, serializeAddressList } from './addresses';
 import type {
   ComposeInput,
   DraftMessageInput,
@@ -28,6 +29,21 @@ function canonicalMessageId(value: string | null | undefined): string | undefine
   return normalized ? `<${normalized}>` : undefined;
 }
 
+function composeAddresses(input: { to?: DraftMessageInput['to']; toEmail?: string; cc?: DraftMessageInput['cc']; bcc?: DraftMessageInput['bcc'] }) {
+  const to = dedupeAddresses(parseAddressList(input.to ?? input.toEmail ?? ''));
+  const used = new Set(to.map((address) => address.email));
+  const uniqueField = (value: DraftMessageInput['cc'] | DraftMessageInput['bcc']) => dedupeAddresses(parseAddressList(value)).filter((address) => {
+    if (used.has(address.email)) return false;
+    used.add(address.email);
+    return true;
+  });
+  return {
+    to,
+    cc: uniqueField(input.cc),
+    bcc: uniqueField(input.bcc)
+  };
+}
+
 function composeReferences(message: Pick<MailMessage, 'references' | 'inReplyTo' | 'messageId'>): string | undefined {
   const ids = [...parseMessageIds(message.references), ...parseMessageIds(message.inReplyTo), ...parseMessageIds(message.messageId)];
   const unique = ids.filter((id, index) => ids.indexOf(id) === index);
@@ -51,7 +67,8 @@ function sharedRfcFields(input: { messageId?: string | null; inReplyTo?: string 
 
 /** Build a new draft without any provider or framework dependencies. */
 export function createDraftMessage(input: DraftMessageInput): MailMessage {
-  const toEmail = input.toEmail.trim();
+  const recipients = composeAddresses(input);
+  const toEmail = recipients.to[0]?.email ?? (input.to === undefined ? input.toEmail?.trim() ?? '' : '');
   const body = input.body.trim();
   const rfc = sharedRfcFields(input);
 
@@ -61,9 +78,13 @@ export function createDraftMessage(input: DraftMessageInput): MailMessage {
     source: 'workspace',
     fromName: input.from.name,
     fromEmail: input.from.email,
-    toName: toEmail ? deriveToName(toEmail) : '待填写',
+    toName: recipients.to[0]?.name || (toEmail ? deriveToName(toEmail) : '待填写'),
     toEmail,
-    cc: input.cc?.trim() ?? '',
+    cc: serializeAddressList(recipients.cc),
+    bcc: serializeAddressList(recipients.bcc),
+    toAddresses: recipients.to,
+    ccAddresses: recipients.cc,
+    bccAddresses: recipients.bcc,
     subject: input.subject.trim() || '未命名草稿',
     preview: normalizePreview(body || '继续补充内容…'),
     body,
@@ -78,10 +99,10 @@ export function createDraftMessage(input: DraftMessageInput): MailMessage {
 
 /** Build a sent message in the submitted/queued state, never delivered by implication. */
 export function createSentMessage(input: SentMessageInput): MailMessage {
-  const toEmail = input.toEmail.trim();
+  const recipients = composeAddresses(input);
+  const toEmail = recipients.to[0]?.email ?? (input.to === undefined ? input.toEmail?.trim() ?? '' : '');
   const signatureBlock = input.from.signature ? `\n\n${input.from.signature}` : '';
-  const cc = input.cc?.trim() ?? '';
-  const ccLine = cc ? `CC: ${cc}\n\n` : '';
+  const cc = serializeAddressList(recipients.cc);
   const body = input.body.trim();
   const rfc = sharedRfcFields(input);
 
@@ -91,12 +112,16 @@ export function createSentMessage(input: SentMessageInput): MailMessage {
     source: 'workspace',
     fromName: input.from.name,
     fromEmail: input.from.email,
-    toName: deriveToName(toEmail),
+    toName: recipients.to[0]?.name || deriveToName(toEmail),
     toEmail,
     cc,
+    bcc: serializeAddressList(recipients.bcc),
+    toAddresses: recipients.to,
+    ccAddresses: recipients.cc,
+    bccAddresses: recipients.bcc,
     subject: input.subject.trim(),
     preview: normalizePreview(body),
-    body: `${ccLine}${body}${signatureBlock}`,
+    body: `${body}${signatureBlock}`,
     sentAt: input.sentAt ?? new Date().toISOString(),
     labels: ['Sent'],
     read: true,
@@ -119,8 +144,10 @@ export function createComposeInputFromDraft(message: MailMessage): ComposeInput 
   return {
     draftId: message.folder === 'drafts' ? message.id : undefined,
     expectedUpdatedAt: message.folder === 'drafts' ? message.sentAt : undefined,
+    to: message.toAddresses ?? parseAddressList(message.toEmail),
+    cc: message.ccAddresses ?? parseAddressList(message.cc ?? ''),
+    bcc: message.bccAddresses ?? parseAddressList(message.bcc ?? ''),
     toEmail: message.toEmail,
-    cc: message.cc ?? '',
     subject: message.subject === '未命名草稿' ? '' : message.subject,
     body: message.body,
     messageId: message.messageId,
@@ -134,8 +161,10 @@ export function createReplyComposeInput(message: MailMessage, quotedBody = messa
   const references = composeReferences(message);
 
   return {
+    to: [{ name: message.fromName, email: message.fromEmail }],
+    cc: [],
+    bcc: [],
     toEmail: message.fromEmail,
-    cc: '',
     subject: prefixedSubject('Re', message.subject),
     body: `Hi ${message.fromName},\n\n\n\n在 ${message.sentAt}，${message.fromName} <${message.fromEmail}> 写道：\n${quoteBody(quotedBody)}`,
     inReplyTo,
@@ -145,8 +174,10 @@ export function createReplyComposeInput(message: MailMessage, quotedBody = messa
 
 export function createForwardComposeInput(message: MailMessage, forwardedBody = message.body): ComposeInput {
   return {
+    to: [],
+    cc: [],
+    bcc: [],
     toEmail: '',
-    cc: '',
     subject: prefixedSubject('Fwd', message.subject),
     body: `Hi,\n\n转发给你参考。\n\n---------- 转发邮件 ----------\n发件人: ${message.fromName} <${message.fromEmail}>\n收件人: ${message.toName} <${message.toEmail}>\n时间: ${message.sentAt}\n主题: ${message.subject}\n\n${forwardedBody}`
   };

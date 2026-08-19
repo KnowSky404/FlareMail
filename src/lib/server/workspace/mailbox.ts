@@ -13,6 +13,7 @@ import {
   resolveOwnedMailboxThreadMessageIds
 } from '$lib/server/db/messages';
 import { findSessionJoin, findSessionJoinByTokenHash } from '$lib/server/db/sessions';
+import { buildD1LikeSearchPattern } from '$lib/server/workspace/mailbox-query';
 import {
   mapDraftRow,
   mapInboundRow,
@@ -256,7 +257,7 @@ async function listInboundMessageSummaryPage(
   ];
   const bindings: unknown[] = [userId];
   if (input.query) {
-    const pattern = `%${input.query.toLocaleLowerCase()}%`;
+    const pattern = buildD1LikeSearchPattern(input.query);
     conditions.push(`(
       lower(e.subject) LIKE ? OR lower(e.snippet) LIKE ? OR
       lower(e."from") LIKE ? OR lower(e."to") LIKE ?

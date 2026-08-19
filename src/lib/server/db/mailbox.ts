@@ -1,4 +1,5 @@
 import type { DeliveryStatus, MailFolder, MailboxFilter, MailboxSection, WorkspaceMetrics } from '$lib/domain/mail';
+import { buildD1LikeSearchPattern } from '$lib/server/workspace/mailbox-query';
 import type {
   WorkspaceDraftRow,
   WorkspaceMessageRow,
@@ -33,8 +34,6 @@ export interface WorkspaceMessagePageRow extends WorkspaceMessageRow {
   delivery_attempt_started_at: string | null;
 }
 
-const searchPattern = (query: string) => `%${query.toLocaleLowerCase()}%`;
-
 function flagPredicate(filter: MailboxFilter, readColumn: string, starredColumn: string) {
   if (filter === 'unread') return `${readColumn} = 0`;
   if (filter === 'starred') return `${starredColumn} = 1`;
@@ -58,9 +57,10 @@ export async function listWorkspaceMessagePage(
     conditions.push(`(
       lower(m.subject) LIKE ? OR lower(m.preview) LIKE ? OR lower(m.body) LIKE ? OR
       lower(m.from_name) LIKE ? OR lower(m.from_email) LIKE ? OR
-      lower(m.to_name) LIKE ? OR lower(m.to_email) LIKE ?
+      lower(m.to_name) LIKE ? OR lower(m.to_email) LIKE ? OR
+      lower(m.cc) LIKE ? OR lower(m.to_json) LIKE ? OR lower(m.cc_json) LIKE ? OR lower(m.bcc_json) LIKE ?
     )`);
-    bindings.push(...Array(7).fill(searchPattern(input.query)));
+    bindings.push(...Array(11).fill(buildD1LikeSearchPattern(input.query)));
   }
   if (input.timestamp && input.cursorId) {
     conditions.push('(m.sent_at < ? OR (m.sent_at = ? AND m.id < ?))');
@@ -76,7 +76,7 @@ export async function listWorkspaceMessagePage(
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
       m.subject, m.preview, m.body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
-      m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.idempotency_key,
+      m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key,
       ds.status AS delivery_status,
       ds.attempts AS delivery_attempts,
       ds.delivered_at AS delivery_delivered_at,
@@ -113,8 +113,11 @@ export async function listDraftPage(
   const bindings: unknown[] = [userId];
   if (input.filter === 'unread') conditions.push('1 = 0');
   if (input.query) {
-    conditions.push('(lower(d.subject) LIKE ? OR lower(d.body) LIKE ? OR lower(d.to_email) LIKE ? OR lower(d.cc) LIKE ?)');
-    bindings.push(...Array(4).fill(searchPattern(input.query)));
+    conditions.push(`(
+      lower(d.subject) LIKE ? OR lower(d.body) LIKE ? OR lower(d.to_email) LIKE ? OR lower(d.cc) LIKE ? OR
+      lower(d.to_json) LIKE ? OR lower(d.cc_json) LIKE ? OR lower(d.bcc_json) LIKE ?
+    )`);
+    bindings.push(...Array(7).fill(buildD1LikeSearchPattern(input.query)));
   }
   if (input.timestamp && input.cursorId) {
     conditions.push('(d.updated_at < ? OR (d.updated_at = ? AND d.id < ?))');
@@ -123,7 +126,7 @@ export async function listDraftPage(
   bindings.push(input.limit);
 
   return db.prepare(`
-    SELECT d.id, d.to_email, d.cc, d.subject, d.body, d.is_starred, d.created_at, d.updated_at,
+    SELECT d.id, d.to_email, d.cc, d.to_json, d.cc_json, d.bcc_json, d.subject, d.body, d.is_starred, d.created_at, d.updated_at,
       d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key
     FROM workspace_drafts AS d
     WHERE ${conditions.join(' AND ')}

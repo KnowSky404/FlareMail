@@ -158,6 +158,48 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('persists To CC and BCC chips as canonical recipient arrays', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  await expect(page.getByRole('dialog', { name: '新邮件' })).toBeVisible();
+
+  await page.getByLabel('收件人').fill('"张 三" <ZHANG@flaremail.test>, second@flaremail.test');
+  await page.getByLabel('收件人').press('Enter');
+  await page.getByRole('button', { name: '添加抄送', exact: true }).click();
+  await page.getByLabel('抄送').fill('copy@flaremail.test; duplicate@flaremail.test');
+  await page.getByLabel('抄送').press('Enter');
+  await page.getByRole('button', { name: '添加密送', exact: true }).click();
+  await page.getByLabel('密送').evaluate((input) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', 'blind@flaremail.test\nsecret@flaremail.test');
+    input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, clipboardData }));
+  });
+  const subject = `E2E recipient arrays ${Date.now()}`;
+  await page.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
+  await page.getByRole('textbox', { name: '正文', exact: true }).fill('Structured recipient draft.');
+  await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
+
+  const response = await page.request.get(`/api/workspace/mailbox?folder=drafts&q=${encodeURIComponent(subject)}&limit=10`);
+  expect(response.ok()).toBe(true);
+  const payload = await response.json() as {
+    data: { page: { messages: Array<{ toAddresses?: Array<{ name: string; email: string }>; ccAddresses?: Array<{ name: string; email: string }>; bccAddresses?: Array<{ name: string; email: string }> }> } };
+  };
+  const draft = payload.data.page.messages[0];
+  expect(draft?.toAddresses).toEqual([
+    { name: '张 三', email: 'zhang@flaremail.test' },
+    { name: '', email: 'second@flaremail.test' }
+  ]);
+  expect(draft?.ccAddresses).toEqual([
+    { name: '', email: 'copy@flaremail.test' },
+    { name: '', email: 'duplicate@flaremail.test' }
+  ]);
+  expect(draft?.bccAddresses).toEqual([
+    { name: '', email: 'blind@flaremail.test' },
+    { name: '', email: 'secret@flaremail.test' }
+  ]);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('preserves the latest existing-draft edit while an autosave is in flight and closing', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop flow exercises deterministic request delay and close coordination.');
   await login(page);

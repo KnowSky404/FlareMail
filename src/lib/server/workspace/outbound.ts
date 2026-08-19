@@ -30,6 +30,7 @@ import {
   type MailMessage,
   type WorkspaceContext
 } from '$lib/server/workspace/shared';
+import { parseAddressList, serializeAddress, type MailAddress } from '$lib/domain/mail';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
 import {
   assertPersistedDeliveryRetryable,
@@ -42,7 +43,6 @@ export interface OutboundSubmissionOptions {
   gateway?: OutboundMailGateway;
 }
 
-const addresses = (value: string | undefined) => (value ?? '').split(/[;,]/).map((item) => item.trim()).filter(Boolean);
 const safeRequestId = (value: string | null | undefined) => value?.trim().match(/^[A-Za-z0-9._:-]{1,128}$/u)?.[0];
 const headerValue = (value: string | null | undefined) => value?.replace(/[\r\n]+/g, ' ').trim() || undefined;
 const isUniqueConstraintError = (error: unknown) => error instanceof Error && /unique constraint|constraint failed/iu.test(error.message);
@@ -63,11 +63,15 @@ const threadKey = (message: MailMessage) => {
   return value ? `rfc:${value.replace(/^<|>$/g, '').toLowerCase()}` : null;
 };
 
+const providerRecipients = (addresses: readonly MailAddress[]) => addresses.map(serializeAddress);
+const optionalProviderRecipients = (addresses: readonly MailAddress[]) => addresses.length ? providerRecipients(addresses) : undefined;
+
 const gatewayInput = (env: CloudflareEnv | undefined, message: MailMessage, idempotencyKey: string): OutboundMailInput => ({
   idempotencyKey,
   from: sender(env, message),
-  to: [message.toEmail.trim()],
-  cc: addresses(message.cc).length ? addresses(message.cc) : undefined,
+  to: providerRecipients(message.toAddresses ?? parseAddressList(message.toEmail)),
+  cc: optionalProviderRecipients(message.ccAddresses ?? parseAddressList(message.cc ?? '')),
+  bcc: optionalProviderRecipients(message.bccAddresses ?? parseAddressList(message.bcc ?? '')),
   subject: message.subject,
   text: message.body,
   replyTo: env?.OUTBOUND_FROM_EMAIL?.trim() ? [env.OUTBOUND_FROM_EMAIL.trim()] : [message.fromEmail.trim()],
@@ -218,8 +222,8 @@ export async function sendWorkspaceMessage(
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? 'injected' : outboundProviderName(env);
 
-  const message = createSentMessage({ id: messageId, from: session.profile, toEmail: input.toEmail, subject: input.subject,
-    body: input.body, cc: input.cc, messageId: input.messageId || localMessageId(messageId, env, session.profile.email),
+  const message = createSentMessage({ id: messageId, from: session.profile, to: input.to, toEmail: input.toEmail, subject: input.subject,
+    body: input.body, cc: input.cc, bcc: input.bcc, messageId: input.messageId || localMessageId(messageId, env, session.profile.email),
     inReplyTo: input.inReplyTo, references: input.references, deliveryStatus: 'submitting', deliveryAttempts: 0 });
   message.threadKey = threadKey(message);
   const timestamp = nowIso();

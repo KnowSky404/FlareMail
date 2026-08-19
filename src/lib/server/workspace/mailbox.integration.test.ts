@@ -78,6 +78,7 @@ function fixture() {
     'sent-1', 'sent', 'Ada', 'ada@example.test', 'Bob', 'bob@example.test',
     'Delivery report', 'sent preview', 'sent body', '2026-08-13T09:00:00.000Z', 1, 0
   );
+  database.query(`UPDATE workspace_messages SET cc = 'Legacy Copy <legacy-copy@example.test>' WHERE id = 'sent-1'`).run();
   database.query(`
     INSERT INTO email_messages (
       id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key,
@@ -162,6 +163,8 @@ describe('D1 mailbox pages', () => {
     expect(searched.messages.map(({ id }) => id)).toEqual(['inbox-z']);
     const inboundSearch = await loadMailboxPage(env, workspace, query('inbox', { query: 'carol@example.test' }));
     expect(inboundSearch.messages.map(({ id }) => id)).toEqual(['email:incoming-1']);
+    const legacyCcSearch = await loadMailboxPage(env, workspace, query('sent', { query: 'legacy-copy' }));
+    expect(legacyCcSearch.messages.map(({ id }) => id)).toEqual(['sent-1']);
     const unread = await loadMailboxPage(env, workspace, query('inbox', { filter: 'unread' }));
     expect(unread.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'inbox-z']);
     const starredDrafts = await loadMailboxPage(env, workspace, query('drafts', { filter: 'starred' }));

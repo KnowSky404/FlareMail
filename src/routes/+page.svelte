@@ -62,6 +62,7 @@
     createForwardComposeInput,
     createReplyComposeInput,
     isInboundMessageId,
+    serializeAddressList,
     type DeliveryDetail,
     type ComposeInput,
     type ComposeMode,
@@ -202,7 +203,17 @@
     activeMessages.filter((message) => {
       const matchesQuery =
         !normalizedSearchQuery ||
-        [message.toName, message.toEmail, message.subject, message.preview]
+        [
+          message.toName,
+          message.toEmail,
+          serializeAddressList(message.toAddresses ?? []),
+          serializeAddressList(message.ccAddresses ?? []),
+          serializeAddressList(message.bccAddresses ?? []),
+          message.cc,
+          message.bcc,
+          message.subject,
+          message.preview
+        ]
           .join('\n')
           .toLocaleLowerCase('zh-CN')
           .includes(normalizedSearchQuery);

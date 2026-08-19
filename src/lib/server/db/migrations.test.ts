@@ -103,7 +103,8 @@ describe('versioned D1 migrations', () => {
       '0007_outbound_contracts.sql',
       '0008_login_rate_limits.sql',
       '0009_inbound_ingest_claims.sql',
-      '0010_mailbox_archive_and_bulk.sql'
+      '0010_mailbox_archive_and_bulk.sql',
+      '0011_recipient_arrays.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -117,7 +118,7 @@ describe('versioned D1 migrations', () => {
       new Set([
         'id', 'user_id', 'folder', 'from_name', 'from_email', 'to_name', 'to_email', 'subject', 'preview', 'body',
         'sent_at', 'labels_json', 'is_read', 'is_starred', 'created_at', 'updated_at', 'message_id', 'in_reply_to',
-        'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key', 'provider_message_id',
+        'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'to_json', 'cc_json', 'bcc_json', 'dedupe_key', 'provider_message_id',
         'idempotency_key', 'archived_at'
       ])
     );
@@ -130,7 +131,7 @@ describe('versioned D1 migrations', () => {
     );
     expect(tableColumns(db, 'workspace_drafts')).toEqual(
       new Set([
-        'id', 'user_id', 'to_email', 'cc', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
+        'id', 'user_id', 'to_email', 'cc', 'to_json', 'cc_json', 'bcc_json', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
         'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key'
       ])
     );
@@ -168,7 +169,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 10 }
+      { schema_name: 'flaremail', schema_version: 11 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -254,6 +255,13 @@ describe('versioned D1 migrations', () => {
     ).get() as Record<string, string>;
     expect(workspaceInbound).toMatchObject({
       direction: 'inbound', text_body: 'Legacy body', thread_key: 'legacy:legacy-message-1', dedupe_key: 'legacy:legacy-message-1'
+    });
+
+    expect(db.query(`SELECT to_json FROM workspace_messages WHERE id = 'legacy-message-2'`).get()).toEqual({
+      to_json: '[{"name":"","email":"recipient@example.test"}]'
+    });
+    expect(db.query(`SELECT to_json FROM workspace_drafts WHERE id = 'legacy-draft-1'`).get()).toEqual({
+      to_json: '[{"name":"","email":"recipient@example.test"}]'
     });
 
     const session = db.query(

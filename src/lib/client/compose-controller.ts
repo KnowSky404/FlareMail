@@ -1,16 +1,18 @@
+import { parseAddressList } from '$lib/domain/mail';
 import type { ComposeInput, MailMessage } from '$lib/domain/mail';
 import { ComposeSaveSequence } from './compose-save-sequence';
 
 export function createEmptyComposeInput(): ComposeInput {
-  return { toEmail: '', cc: '', subject: '', body: '' };
+  return { to: [], cc: [], bcc: [], toEmail: '', subject: '', body: '' };
 }
 
 export function serializeComposeInput(input: ComposeInput | null) {
   if (!input) return '';
   return JSON.stringify({
     draftId: input.draftId?.trim() || null,
-    toEmail: input.toEmail.trim(),
-    cc: (input.cc ?? '').trim(),
+    to: parseAddressList(input.to ?? input.toEmail ?? ''),
+    cc: parseAddressList(input.cc ?? ''),
+    bcc: parseAddressList(input.bcc ?? ''),
     subject: input.subject,
     body: input.body,
     messageId: input.messageId ?? null,
@@ -35,14 +37,16 @@ export function withComposePersistence(
 }
 
 export function hasComposeContent(input: ComposeInput | null) {
-  return Boolean(input && (input.toEmail.trim() || (input.cc ?? '').trim() || input.subject.trim() || input.body.trim()));
+  return Boolean(input && (parseAddressList(input.to ?? input.toEmail ?? '').length || parseAddressList(input.cc ?? '').length || parseAddressList(input.bcc ?? '').length || input.subject.trim() || input.body.trim()));
 }
 
 export function composeInputFromSavedDraft(message: MailMessage): ComposeInput {
   return {
     draftId: message.id,
+    to: message.toAddresses ?? parseAddressList(message.toEmail),
+    cc: message.ccAddresses ?? parseAddressList(message.cc ?? ''),
+    bcc: message.bccAddresses ?? parseAddressList(message.bcc ?? ''),
     toEmail: message.toEmail,
-    cc: message.cc ?? '',
     subject: message.subject === '未命名草稿' ? '' : message.subject,
     body: message.body,
     messageId: message.messageId,

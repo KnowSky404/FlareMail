@@ -12,7 +12,13 @@
     Star,
     Trash2
   } from '@lucide/svelte';
-  import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/domain/mail';
+  import {
+    parseAddressList,
+    serializeAddressList,
+    type DeliveryDetail,
+    type InboundMessageDetail,
+    type MailMessage
+  } from '$lib/domain/mail';
   import { ConfirmDialog, DropdownMenu, StatusBadge } from '$lib/components/ui';
 
   let {
@@ -89,6 +95,15 @@
   const counterpartLabel = $derived(message?.folder === 'inbox' ? '发件人' : '收件人');
   const downloadHref = $derived(safeHref(rawDownloadHref));
   const deliveryStatus = $derived(message?.folder === 'sent' ? (message.deliveryStatus ?? 'submitted') : null);
+  const toSummary = $derived(message
+    ? serializeAddressList(message.toAddresses ?? [{ name: message.toName, email: message.toEmail }])
+    : '');
+  const ccSummary = $derived(message
+    ? serializeAddressList(message.ccAddresses ?? parseAddressList(message.cc ?? ''))
+    : '');
+  const bccSummary = $derived(message
+    ? serializeAddressList(message.bccAddresses ?? parseAddressList(message.bcc ?? ''))
+    : '');
 
   const deliveryLabel = (status: string | null) => {
     const labels: Record<string, string> = {
@@ -211,8 +226,9 @@
             </summary>
             <dl class="mt-2 grid max-w-xl grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
               <dt>发件人</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.fromName} &lt;{message.fromEmail}&gt;</dd>
-              <dt>收件人</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.toName} &lt;{message.toEmail}&gt;</dd>
-              {#if message.cc}<dt>抄送</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.cc}</dd>{/if}
+              <dt>收件人</dt><dd class="break-words text-[var(--fm-text-secondary)]">{toSummary}</dd>
+              {#if ccSummary}<dt>抄送</dt><dd class="break-words text-[var(--fm-text-secondary)]">{ccSummary}</dd>{/if}
+              {#if bccSummary}<dt>密送</dt><dd class="break-words text-[var(--fm-text-secondary)]">{bccSummary}</dd>{/if}
               {#if message.messageId}<dt>Message-ID</dt><dd class="truncate font-mono text-[var(--fm-text-secondary)]">{message.messageId}</dd>{/if}
             </dl>
           </details>

@@ -4,10 +4,13 @@ import type {
   MailboxFilter,
   MailboxSection
 } from '$lib/domain/mail';
+import { boundedUtf8 } from '$lib/domain/utf8';
 import { ApiError } from '$lib/server/http/api';
 
 export const defaultMailboxPageSize = 40;
 export const maxMailboxPageSize = 100;
+/** D1's maximum LIKE/GLOB pattern size, including both wildcard markers. */
+export const maxD1LikePatternBytes = 50;
 
 const folders = new Set<MailFolder>(['inbox', 'sent', 'drafts']);
 const filters = new Set<MailboxFilter>(['all', 'unread', 'starred']);
@@ -15,6 +18,20 @@ const deliveryStatuses = new Set<DeliveryStatus>([
   'draft', 'queued', 'submitting', 'submitted', 'sent', 'delivered', 'delayed',
   'bounced', 'failed', 'complained', 'suppressed'
 ]);
+
+/** Build the only LIKE pattern accepted by the pre-FTS fallback. */
+export function buildD1LikeSearchPattern(query: string): string {
+  const pattern = `%${query.toLocaleLowerCase()}%`;
+  if (!boundedUtf8(pattern, maxD1LikePatternBytes).ok) {
+    throw new ApiError(
+      400,
+      'QUERY_PATTERN_TOO_LARGE',
+      '搜索内容的 UTF-8 字节数超过当前搜索限制。',
+      { query: [`当前搜索最多支持 ${maxD1LikePatternBytes - 2} 个 UTF-8 字节。`] }
+    );
+  }
+  return pattern;
+}
 
 export interface MailboxCursor {
   version: 1;
@@ -98,6 +115,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
       query: ['最多输入 200 个字符。']
     });
   }
+  if (query) buildD1LikeSearchPattern(query);
 
   const rawLimit = params.get('limit');
   const limit = rawLimit === null ? defaultMailboxPageSize : Number(rawLimit);

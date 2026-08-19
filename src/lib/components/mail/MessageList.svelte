@@ -1,7 +1,7 @@
 <script lang="ts">
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { Button, Skeleton } from '$lib/components/ui';
-  import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
+  import { serializeAddressList, type MailboxSection, type MailMessage, type MailThread } from '$lib/domain/mail';
   import EmptyMailbox from './EmptyMailbox.svelte';
   import MessageListItem from './MessageListItem.svelte';
   import type { MailFilter } from './MailFilterBar.svelte';
@@ -91,6 +91,11 @@
         message.fromEmail,
         message.toName,
         message.toEmail,
+        serializeAddressList(message.toAddresses ?? []),
+        serializeAddressList(message.ccAddresses ?? []),
+        serializeAddressList(message.bccAddresses ?? []),
+        message.cc,
+        message.bcc,
         message.subject,
         message.preview
       ]

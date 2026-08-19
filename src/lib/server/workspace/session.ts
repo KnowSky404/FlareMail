@@ -54,6 +54,7 @@ export function getWorkspaceSessionCookieName(secure: boolean) {
 export async function getWorkspaceSession(env: CloudflareEnv | undefined, token?: string | null) {
   if (!token || !env?.DB) return null;
   try {
+    if (!(await hasWorkspaceCoreTables(env))) throw new WorkspaceAuthUnavailableError();
     const tokenHash = await hashSessionToken(token);
     const session = await loadD1WorkspaceContextByTokenHash(env!, tokenHash);
     if (session) await touchSession(env!.DB, session.id).run();
