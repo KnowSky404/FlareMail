@@ -114,11 +114,11 @@
       </div>
     </Panel>
 
-    <Panel title="发件身份" description="用于新邮件、回复和转发；生产外发由统一网关处理。">
+    <Panel title="工作区身份" description="用于界面显示与签名；实际外发地址由服务端投递配置决定。">
       <div class="identity-grid">
         <TextField
           id="profile-email"
-          label="发件邮箱"
+          label="显示邮箱"
           type="email"
           value={nextProfile.email}
           required

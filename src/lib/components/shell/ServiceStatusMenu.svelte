@@ -24,10 +24,10 @@
   <summary aria-label="查看工作区服务状态">
     {#if healthy}
       <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
-      <span>服务正常</span>
+      <span>已加载范围正常</span>
     {:else}
       <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
-      <span>{failedCount} 项需处理</span>
+      <span>{failedCount} 封已加载邮件需处理</span>
     {/if}
     <ChevronDown class="chevron" size={14} aria-hidden="true" />
   </summary>
@@ -40,8 +40,8 @@
     <dl>
       <div><dt>未读邮件</dt><dd>{unreadCount}</dd></div>
       <div><dt>草稿</dt><dd>{draftCount}</dd></div>
-      <div><dt>等待投递</dt><dd>{queuedCount}</dd></div>
-      <div><dt>投递失败</dt><dd class:danger={failedCount > 0}>{failedCount}</dd></div>
+      <div><dt>等待投递（已加载）</dt><dd>{queuedCount}</dd></div>
+      <div><dt>投递失败（已加载）</dt><dd class:danger={failedCount > 0}>{failedCount}</dd></div>
     </dl>
     <p>这里只显示安全的运行摘要，不展示凭据或 secret。</p>
   </div>

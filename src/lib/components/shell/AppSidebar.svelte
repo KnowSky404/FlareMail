@@ -18,7 +18,7 @@
 
   let {
     activeSection,
-    unreadCount,
+    inboxCount,
     sentCount,
     draftCount,
     pending = false,
@@ -26,7 +26,7 @@
     onSelectSection
   }: {
     activeSection: AppSection;
-    unreadCount: number;
+    inboxCount: number;
     sentCount: number;
     draftCount: number;
     pending?: boolean;
@@ -35,7 +35,7 @@
   } = $props();
 
   const navigation = $derived<NavigationItem[]>([
-    { id: 'inbox', label: '收件箱', count: unreadCount, icon: Inbox },
+    { id: 'inbox', label: '收件箱', count: inboxCount, icon: Inbox },
     { id: 'sent', label: '已发送', count: sentCount, icon: Send },
     { id: 'drafts', label: '草稿箱', count: draftCount, icon: FileText },
     { id: 'archive', label: '归档', count: 0, icon: Archive },

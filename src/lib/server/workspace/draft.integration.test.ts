@@ -38,14 +38,18 @@ describe('draft optimistic concurrency', () => {
     const created = await saveWorkspaceDraft(env, session, input());
     const current = created.message;
     const updated = await saveWorkspaceDraft(env, session, input({ draftId: current.id, expectedUpdatedAt: current.sentAt, body: 'Server version' }));
+    const consecutive = await saveWorkspaceDraft(env, session, input({ draftId: current.id, expectedUpdatedAt: updated.message.sentAt, body: 'Consecutive version' }));
+    expect(consecutive.message.sentAt > updated.message.sentAt).toBe(true);
+    expect(consecutive.message.body).toBe('Consecutive version');
     await expect(saveWorkspaceDraft(env, session, input({ draftId: current.id, expectedUpdatedAt: '2000-01-01T00:00:00.000Z', body: 'Stale local version' })))
       .rejects.toBeInstanceOf(DraftConflictError);
-    const overwritten = await saveWorkspaceDraft(env, session, input({ draftId: current.id, expectedUpdatedAt: updated.message.sentAt, body: 'Explicit overwrite', overwrite: true }));
+    const overwritten = await saveWorkspaceDraft(env, session, input({ draftId: current.id, expectedUpdatedAt: consecutive.message.sentAt, body: 'Explicit overwrite', overwrite: true }));
     expect(overwritten.message.body).toBe('Explicit overwrite');
     const copy = await saveWorkspaceDraft(env, session, input({ draftId: current.id, saveAsCopy: true, body: 'Copy' }));
     expect(copy.message.id).not.toBe(current.id);
-    database.query('DELETE FROM workspace_drafts WHERE id = ?').run(updated.message.id);
-    await expect(saveWorkspaceDraft(env, session, input({ draftId: updated.message.id, expectedUpdatedAt: updated.message.sentAt })))
+    expect((database.query('SELECT body FROM workspace_drafts WHERE id = ?').get(current.id) as { body: string }).body).toBe('Explicit overwrite');
+    database.query('DELETE FROM workspace_drafts WHERE id = ?').run(consecutive.message.id);
+    await expect(saveWorkspaceDraft(env, session, input({ draftId: consecutive.message.id, expectedUpdatedAt: consecutive.message.sentAt })))
       .rejects.toBeInstanceOf(DraftNotFoundError);
     void DB;
   });

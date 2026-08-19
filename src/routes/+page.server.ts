@@ -37,7 +37,6 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       dbBound,
       bucketBound,
       workspace: null,
-      mailboxPages: null,
       runtimeDiagnostics: null,
       schemaReady: false,
       totalMessages: 0,
@@ -62,15 +61,12 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       deliveryStatus: activeQuery.deliveryStatus
     });
     const workspace = loaded.workspace;
-    const mailboxPages = loaded.pages;
     const latest = workspace.activePage.messages[0] ?? null;
 
     return {
       dbBound,
       bucketBound,
       workspace,
-      snapshot: loaded.snapshot,
-      mailboxPages,
       runtimeDiagnostics: safeRuntimeDiagnostics(env),
       schemaReady: true,
       totalMessages: workspace.metrics.inboxCount + workspace.metrics.sentCount,
@@ -82,7 +78,6 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       dbBound,
       bucketBound,
       workspace: null,
-      mailboxPages: null,
       runtimeDiagnostics: null,
       schemaReady: false,
       totalMessages: 0,

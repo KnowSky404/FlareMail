@@ -14,14 +14,14 @@
 
   let {
     activeSection,
-    unreadCount,
+    inboxCount,
     draftCount,
     pending = false,
     onCompose,
     onSelectSection
   }: {
     activeSection: AppSection;
-    unreadCount: number;
+    inboxCount: number;
     draftCount: number;
     pending?: boolean;
     onCompose: () => void;
@@ -58,7 +58,7 @@
 <Drawer {open} title="FlareMail 导航" description="切换邮箱文件夹与设置" side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
     <nav class="mobile-nav-list" aria-label="移动端导航">
       <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
-        <Inbox size={19} aria-hidden="true" /><span>收件箱</span><small>{unreadCount || ''}</small>
+        <Inbox size={19} aria-hidden="true" /><span>收件箱</span><small>{inboxCount || ''}</small>
       </button>
       <button class:active={activeSection === 'sent'} type="button" onclick={() => select('sent')}>
         <Send size={19} aria-hidden="true" /><span>已发送</span>

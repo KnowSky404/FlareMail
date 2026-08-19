@@ -42,9 +42,11 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
 }
 
 export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱' | '归档') {
+  const folderValue = { 收件箱: 'inbox', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive' }[folder];
   const direct = page.getByRole('button', { name: folder, exact: true }).first();
   if (await direct.isVisible().catch(() => false)) {
     await direct.click();
+    await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
     return;
   }
   await page.getByRole('button', { name: '打开导航' }).click();
@@ -52,4 +54,5 @@ export async function openFolder(page: Page, folder: '收件箱' | '已发送' |
     .getByRole('button')
     .filter({ hasText: folder })
     .click();
+  await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
 }

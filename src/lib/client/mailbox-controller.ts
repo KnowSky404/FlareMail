@@ -1,16 +1,18 @@
 import {
   buildMailThreads,
   cloneMailbox,
+  cloneProfile,
   type MailboxSection,
   type MailMessage,
   type MailboxPage,
   type MailboxState,
   type MailThread,
   type MessagePatch,
-  type WorkspaceMetrics
+  type UserProfile,
+  type WorkspaceMetrics,
+  type WorkspaceSnapshot
 } from '$lib/domain/mail';
 import { LatestRequest } from './latest-request';
-import type { WorkspaceSnapshot } from './workspace-api';
 
 export type WorkspaceSection = MailboxSection | 'profile';
 
@@ -26,6 +28,61 @@ export type MailboxSnapshot = {
   mailboxPages: Partial<Record<MailboxSection, MailboxPage>> | null;
   metrics: WorkspaceMetrics;
 };
+
+export type WorkspaceViewState = MailboxSnapshot & {
+  profile: UserProfile;
+  activeSection: WorkspaceSection;
+  selectedMessageId: string | null;
+  selectedMessageIds: string[];
+  searchQuery: string;
+  mailFilter: MailFilter;
+  outboundSenderEmail: string | null;
+};
+
+export function createEmptyWorkspaceViewState(): WorkspaceViewState {
+  return {
+    profile: cloneProfile(),
+    mailbox: cloneMailbox(),
+    mailboxPages: null,
+    metrics: { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 },
+    activeSection: 'inbox',
+    selectedMessageId: null,
+    selectedMessageIds: [],
+    searchQuery: '',
+    mailFilter: 'all',
+    outboundSenderEmail: null
+  };
+}
+
+export function workspaceViewStateFromSnapshot(
+  snapshot: WorkspaceSnapshot,
+  options: { section?: WorkspaceSection; preferredMessageId?: string | null; clearMailView?: boolean } = {}
+): WorkspaceViewState {
+  const activeSection = options.section ?? snapshot.activeFolder;
+  const activePage = activeSection === 'profile' ? undefined : snapshot.mailboxPages[activeSection];
+  const preferredMessageId = options.preferredMessageId ?? null;
+  const selectedMessageId = activeSection === 'profile'
+    ? null
+    : activePage?.messages.some((message) => message.id === preferredMessageId)
+      ? preferredMessageId
+      : activePage?.messages[0]?.id ?? selectNextMessage(snapshot.mailbox, activeSection, preferredMessageId);
+
+  return {
+    ...mailboxSnapshotFromWorkspace(snapshot),
+    profile: { ...snapshot.profile },
+    activeSection,
+    selectedMessageId,
+    selectedMessageIds: [],
+    searchQuery: options.clearMailView ? '' : activePage?.query ?? '',
+    mailFilter: options.clearMailView ? 'all' : activePage?.filter ?? 'all',
+    outboundSenderEmail: snapshot.outboundSenderEmail
+  };
+}
+
+export function reconcileBulkSelection(selectedMessageIds: string[], messages: MailMessage[]) {
+  const validIds = new Set(messages.map((message) => message.id));
+  return [...new Set(selectedMessageIds)].filter((id) => validIds.has(id));
+}
 
 export function mailboxSnapshotFromWorkspace(snapshot: WorkspaceSnapshot): MailboxSnapshot {
   return {
@@ -106,17 +163,18 @@ export function mergeMailboxPage(snapshot: MailboxSnapshot, page: MailboxPage, a
   const byId = new Map(existing.map((message) => [message.id, message]));
   for (const message of page.messages) byId.set(message.id, message);
 
+  const mergedPage = { ...page, messages: sortMailboxMessages([...byId.values()]) };
   const nextMailbox = page.folder === 'archive'
     ? snapshot.mailbox
     : {
       ...snapshot.mailbox,
-      [page.folder]: sortMailboxMessages([...byId.values()])
+      [page.folder]: mergedPage.messages
     };
   return {
     mailbox: nextMailbox,
     mailboxPages: {
       ...(snapshot.mailboxPages ?? {}),
-      [page.folder]: page
+      [page.folder]: mergedPage
     },
     metrics: page.metrics ?? snapshot.metrics
   };

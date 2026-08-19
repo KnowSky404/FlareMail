@@ -189,17 +189,16 @@ describe('D1 mailbox pages', () => {
     const loaded = await loadWorkspaceSnapshot(env, workspace);
 
     expect(loaded.workspace.activeFolder).toBe('inbox');
-    expect(Object.keys(loaded.pages)).toEqual(['inbox']);
+    expect(Object.keys(loaded.workspace.mailboxPages)).toEqual(['inbox']);
     expect(loaded.workspace.mailbox.sent).toEqual([]);
     expect(loaded.workspace.mailbox.drafts).toEqual([]);
-    expect(loaded.workspace.activePage.cursor).toBeNull();
-    expect(loaded.workspace.activePage.status).toBeNull();
     expect(loaded.workspace.activePage.hasMore).toBe(false);
     expect(loaded.workspace.activePage.messages.find((message) => message.source === 'inbound')?.body).toBe('');
     expect(db.queries.filter((sql) => sql.includes('SELECT d.id'))).toHaveLength(0);
     expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(1);
     expect(db.queries.filter((sql) => sql.includes('SELECT COUNT(*)'))).toHaveLength(1);
     expect(db.queries.some((sql) => /\btext_body\b/u.test(sql))).toBe(false);
+    expect(loaded.workspace.outboundSenderEmail).toBeNull();
   });
 
   test('fresh-login snapshot exposes metrics and a usable next cursor for the active folder', async () => {
@@ -233,13 +232,20 @@ describe('D1 mailbox pages', () => {
     expect(nextPage.metrics).toBeUndefined();
   });
 
+  test('exposes the effective outbound sender separately from the workspace identity', async () => {
+    const { env, workspace } = fixture();
+    const loaded = await loadWorkspaceSnapshot({ ...env, OUTBOUND_FROM_EMAIL: 'mailer@example.test' }, workspace);
+    expect(loaded.workspace.profile.email).toBe('ada@example.test');
+    expect(loaded.workspace.outboundSenderEmail).toBe('mailer@example.test');
+  });
+
   test('loads sent on demand without preloading inbox or drafts pages', async () => {
     const { env, workspace } = fixture();
     const db = env.DB as unknown as TestD1;
     const loaded = await loadWorkspaceSnapshot(env, workspace, { activeFolder: 'sent' });
 
     expect(loaded.workspace.activeFolder).toBe('sent');
-    expect(Object.keys(loaded.pages)).toEqual(['sent']);
+    expect(Object.keys(loaded.workspace.mailboxPages)).toEqual(['sent']);
     expect(loaded.workspace.mailbox.inbox).toEqual([]);
     expect(loaded.workspace.mailbox.drafts).toEqual([]);
     expect(db.queries.filter((sql) => sql.includes('SELECT e.id AS email_id'))).toHaveLength(0);

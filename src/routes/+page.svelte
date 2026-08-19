@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, untrack } from 'svelte';
   import type { PageData } from './$types';
@@ -20,18 +20,22 @@
     createEmptyComposeInput,
     formatComposeSavedAt,
     hasComposeContent,
+    mergeSavedDraftMetadata,
     serializeComposeInput,
-    withComposeDraftId
+    withComposePersistence
   } from '$lib/client/compose-controller';
   import { DetailCacheController } from '$lib/client/detail-cache-controller';
   import {
     MailboxController,
+    createEmptyWorkspaceViewState,
     mergeMailboxPage,
     mergeMessageDelta,
     moveSelection,
+    reconcileBulkSelection,
     removeMessage,
     selectNextMessage,
     selectionCandidates,
+    workspaceViewStateFromSnapshot,
     type MailFilter,
     type WorkspaceSection
   } from '$lib/client/mailbox-controller';
@@ -55,7 +59,6 @@
     buildMailThreads,
     cloneMailbox,
     cloneProfile,
-    createComposeInputFromDraft,
     createForwardComposeInput,
     createReplyComposeInput,
     isInboundMessageId,
@@ -71,7 +74,6 @@
     type MailThread,
     type MessagePatch,
     type UserProfile,
-    type WorkspacePayload,
     type WorkspaceMetrics
   } from '$lib/domain/mail';
 
@@ -89,6 +91,7 @@
   let mailbox = $state<MailboxState>(cloneMailbox());
   let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 });
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
+  let outboundSenderEmail = $state<string | null>(null);
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let selectedMessageIds = $state<string[]>([]);
@@ -104,6 +107,7 @@
   let composeLiveInput = $state<ComposeInput | null>(null);
   let composeTouched = $state(false);
   let composeAutosavePending = $state(false);
+  let composeClosePending = $state(false);
   let composeAutosaveStatus = $state<ComposeAutosaveStatus>('idle');
   let composeAutosaveMessage = $state('自动保存会在停顿后触发。');
   let composeLastSavedSignature = $state('');
@@ -122,6 +126,8 @@
   let mailboxLoading = $state(false);
   let hydratedFromServer = $state(false);
   let appliedServerRevision = '';
+  let appliedWorkspaceIdentity = '';
+  let composeSavePromise: Promise<void> | null = null;
   const composeAutosave = new ComposeAutosaveController();
   const inboundDetailCache = new DetailCacheController<InboundMessageDetail>('加载原始邮件失败。', (snapshot) => {
     inboundDetails = snapshot.values;
@@ -147,6 +153,7 @@
     searchQuery = urlQuery;
     mailFilter = urlFilter;
     selectedMessageId = urlMessageId;
+    selectedMessageIds = [];
     mobileDetailOpen = Boolean(urlMessageId);
   });
 
@@ -155,12 +162,11 @@
     const revision = serverRevision;
     if (workspace && revision !== appliedServerRevision) {
       untrack(() => {
-        authenticated = true;
-        profile = workspace.profile;
-        mailbox = workspace.mailbox;
-        metrics = workspace.metrics;
-        mailboxPages = data.mailboxPages;
-        selectedMessageId = urlMessageId ?? workspace.activePage.messages[0]?.id ?? selectNextMessage(workspace.mailbox, urlSection, null);
+        applyWorkspaceSnapshot(workspace, {
+          section: urlSection,
+          preferredMessageId: urlMessageId,
+          resetUserScoped: Boolean(appliedWorkspaceIdentity && appliedWorkspaceIdentity !== workspace.profile.email)
+        });
         if (!hydratedFromServer) {
           banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
         }
@@ -285,14 +291,17 @@
       ? deliveryDetailErrors[selectedMessage.id] ?? ''
       : ''
   );
-  const composeBusy = $derived(pending || composeAutosavePending);
+  const composeBusy = $derived(pending || composeAutosavePending || composeClosePending);
 
   const clearComposeAutosaveTimer = () => {
     composeAutosave.clear();
   };
 
-  const withCurrentComposeDraftId = (input: ComposeInput) =>
-    withComposeDraftId(input, composeDraftId);
+  const withCurrentComposePersistence = (input: ComposeInput) =>
+    withComposePersistence(input, {
+      draftId: composeDraftId,
+      expectedUpdatedAt: composeLiveInput?.expectedUpdatedAt
+    });
 
   const resetComposeState = () => {
     clearComposeAutosaveTimer();
@@ -305,6 +314,8 @@
     composeLiveInput = null;
     composeTouched = false;
     composeAutosavePending = false;
+    composeClosePending = false;
+    composeSavePromise = null;
     composeAutosaveStatus = 'idle';
     composeAutosaveMessage = '自动保存会在停顿后触发。';
     composeLastSavedSignature = '';
@@ -376,7 +387,7 @@
     clearComposeAutosaveTimer();
 
     const input = composeLiveInput;
-    const signature = serializeComposeInput(input ? withCurrentComposeDraftId(input) : null);
+    const signature = serializeComposeInput(input ? withCurrentComposePersistence(input) : null);
 
     if (
       !composeOpen ||
@@ -384,6 +395,7 @@
       !input ||
       pending ||
       composeAutosavePending ||
+      composeClosePending ||
       !hasComposeContent(input) ||
       signature === composeLastSavedSignature
     ) {
@@ -412,41 +424,44 @@
     }
   });
 
-  function applyWorkspace(
-    workspace: WorkspacePayload,
+  function applyWorkspaceSnapshot(
+    workspace: import('$lib/domain/mail').WorkspaceSnapshot,
     options?: {
       section?: AppSection;
       preferredMessageId?: string | null;
       clearMailView?: boolean;
+      resetUserScoped?: boolean;
+      syncUrl?: boolean;
     }
   ) {
-    profile = workspace.profile;
-    mailbox = workspace.mailbox;
+    mailboxController.cancel();
+    if (options?.resetUserScoped) {
+      resetComposeState();
+      inboundDetailCache.reset();
+      deliveryDetailCache.reset();
+    }
+    const next = workspaceViewStateFromSnapshot(workspace, options);
+    profile = next.profile;
+    mailbox = next.mailbox;
+    metrics = next.metrics;
+    mailboxPages = next.mailboxPages;
+    outboundSenderEmail = next.outboundSenderEmail;
+    activeSection = next.activeSection;
+    selectedMessageId = next.selectedMessageId;
+    selectedMessageIds = next.selectedMessageIds;
+    searchQuery = next.searchQuery;
+    mailFilter = next.mailFilter;
+    mobileDetailOpen = false;
     authenticated = true;
+    appliedWorkspaceIdentity = workspace.profile.email;
 
-    if (options?.section) {
-      activeSection = options.section;
-    }
-
-    if (options?.clearMailView) {
-      searchQuery = '';
-      mailFilter = 'all';
-      mobileDetailOpen = false;
-    }
-
-    selectedMessageId = selectNextMessage(
-      workspace.mailbox,
-      options?.section ?? activeSection,
-      options?.preferredMessageId ?? selectedMessageId
-    );
-
-    if (options?.section) {
+    if (options?.syncUrl) {
       updateWorkspaceUrl(
         {
-          section: options.section,
-          query: options.clearMailView ? '' : undefined,
-          filter: options.clearMailView ? 'all' : undefined,
-          messageId: options.section === 'profile' ? null : selectedMessageId
+          section: next.activeSection,
+          query: next.searchQuery,
+          filter: next.mailFilter,
+          messageId: next.activeSection === 'profile' ? null : next.selectedMessageId
         },
         true
       );
@@ -454,27 +469,30 @@
   }
 
   function resetWorkspace() {
-    const initialProfile = cloneProfile();
-    const initialMailbox = cloneMailbox();
-
+    const initial = createEmptyWorkspaceViewState();
+    mailboxController.cancel();
     authenticated = false;
-    profile = initialProfile;
-    mailbox = initialMailbox;
-    activeSection = 'inbox';
-    selectedMessageId = initialMailbox.inbox[0]?.id ?? null;
-    selectedMessageIds = [];
-    mailboxPages = null;
-    metrics = { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 };
-    inboundDetails = {};
-    deliveryDetails = {};
-    inboundDetailErrors = {};
-    deliveryDetailErrors = {};
+    profile = initial.profile;
+    mailbox = initial.mailbox;
+    activeSection = initial.activeSection;
+    selectedMessageId = initial.selectedMessageId;
+    selectedMessageIds = initial.selectedMessageIds;
+    mailboxPages = initial.mailboxPages;
+    metrics = initial.metrics;
+    searchQuery = initial.searchQuery;
+    mailFilter = initial.mailFilter;
+    outboundSenderEmail = initial.outboundSenderEmail;
     mobileDetailOpen = false;
+    shortcutHelpOpen = false;
+    mailboxLoading = false;
     resetComposeState();
     inboundDetailCache.reset();
     deliveryDetailCache.reset();
     profileStatus = '';
     loginError = '';
+    hydratedFromServer = false;
+    appliedServerRevision = '';
+    appliedWorkspaceIdentity = '';
   }
 
   async function loadInboundDetail(message: MailMessage, force = false) {
@@ -506,12 +524,18 @@
       filter?: MailFilter;
       messageId?: string | null;
     },
-    replaceState = false
+    replaceHistory = false
   ) {
-    void goto(buildWorkspaceUrl(page.url, updates), { replaceState, noScroll: true, keepFocus: true });
+    const next = buildWorkspaceUrl(page.url, updates);
+    if (replaceHistory) {
+      replaceState(next, page.state);
+    } else {
+      pushState(next, page.state);
+    }
   }
 
   function setSection(section: AppSection, syncUrl = true) {
+    selectedMessageIds = [];
     activeSection = section;
     searchQuery = '';
     mailFilter = 'all';
@@ -544,11 +568,13 @@
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
+    if (authenticated && section === 'drafts') void mailboxController.refresh(section, '', 'all');
   }
 
   function handleSearchQueryChange(query: string) {
     searchQuery = query;
     selectedMessageId = null;
+    selectedMessageIds = [];
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query, messageId: null }, true);
   }
@@ -556,6 +582,7 @@
   function handleFilterChange(filter: MailFilter) {
     mailFilter = filter;
     selectedMessageId = null;
+    selectedMessageIds = [];
     mobileDetailOpen = false;
     updateWorkspaceUrl({ filter, messageId: null });
   }
@@ -564,6 +591,7 @@
     searchQuery = '';
     mailFilter = 'all';
     selectedMessageId = null;
+    selectedMessageIds = [];
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query: '', filter: 'all', messageId: null }, true);
   }
@@ -582,11 +610,15 @@
     mailbox = merged.mailbox;
     mailboxPages = merged.mailboxPages;
     metrics = merged.metrics;
+    const currentMessages = merged.mailboxPages?.[page.folder]?.messages ?? [];
+    if (activeSection === page.folder) {
+      selectedMessageIds = reconcileBulkSelection(selectedMessageIds, currentMessages);
+    }
     if (
       activeSection === page.folder &&
-      (!selectedMessageId || !page.messages.some((message) => message.id === selectedMessageId))
+      (!selectedMessageId || !currentMessages.some((message) => message.id === selectedMessageId))
     ) {
-      selectedMessageId = page.messages[0]?.id ?? null;
+      selectedMessageId = currentMessages[0]?.id ?? null;
     }
   }
 
@@ -611,8 +643,13 @@
     try {
       const selected = [...visibleThreads.flatMap((thread) => [thread.sectionLatestMessage]), ...visibleMessages]
         .filter((message, index, all) => selectedMessageIds.includes(message.id) && all.findIndex((candidate) => candidate.id === message.id) === index);
+      const validSelectedIds = selected.map((message) => message.id);
+      if (!validSelectedIds.length) {
+        selectedMessageIds = [];
+        return;
+      }
       const threadKeys = selected.map((message) => message.threadKey).filter((key): key is string => Boolean(key));
-      const result = await mutateMailbox(action, selectedMessageIds, threadKeys);
+      const result = await mutateMailbox(action, validSelectedIds, threadKeys);
       metrics = result.result.metrics;
       selectedMessageIds = [];
       await refreshWorkspace();
@@ -655,41 +692,55 @@
     composeOpen = true;
   }
 
-  async function closeCompose() {
+  async function closeCompose(latestInput?: ComposeInput) {
     clearComposeAutosaveTimer();
+    if (latestInput) composeLiveInput = withCurrentComposePersistence(latestInput);
+    composeClosePending = true;
     let savedBeforeClose = false;
 
-    const input = composeLiveInput ? withCurrentComposeDraftId(composeLiveInput) : null;
-    const signature = serializeComposeInput(input);
+    if (composeSavePromise) await composeSavePromise;
+    if (!composeOpen) return;
+    if (draftConflict) {
+      composeClosePending = false;
+      return;
+    }
 
-    if (
-      input &&
-      hasComposeContent(input) &&
-      signature !== composeLastSavedSignature &&
-      !pending &&
-      !composeAutosavePending
-    ) {
+    while (composeOpen) {
+      const input = composeLiveInput ? withCurrentComposePersistence(composeLiveInput) : null;
+      const signature = serializeComposeInput(input);
+      if (!input || !hasComposeContent(input) || signature === composeLastSavedSignature) break;
+
       composeAutosavePending = true;
       composeAutosaveStatus = 'saving';
       composeAutosaveMessage = '正在关闭前保存草稿...';
-
+      const save = composeAutosave.sequence.begin();
       try {
         const result = await persistDraft(input);
-
+        if (!save.isActive()) return;
         applyMessageDelta(result);
-        syncComposeDraftState(
-          result.message,
-          `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`
-        );
         savedBeforeClose = true;
+        if (save.isCurrent()) {
+          syncComposeDraftState(
+            result.message,
+            `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`
+          );
+        } else if (composeLiveInput) {
+          composeDraftId = result.message.id;
+          composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message);
+          composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id });
+        }
       } catch (error) {
+        if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
+          draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+          draftConflictLocalEditedAt = new Date().toISOString();
+        }
         composeAutosaveStatus = 'error';
         composeAutosaveMessage = error instanceof Error ? error.message : '关闭前自动保存失败。';
         banner = composeAutosaveMessage;
-        composeAutosavePending = false;
+        composeClosePending = false;
         return;
       } finally {
-        composeAutosavePending = false;
+        if (save.isActive()) composeAutosavePending = false;
       }
     }
 
@@ -713,10 +764,12 @@
         throw new Error('登录后未返回工作区数据。');
       }
 
-      applyWorkspace(result.workspace, {
+      applyWorkspaceSnapshot(result.workspace, {
         section: 'inbox',
-        preferredMessageId: result.workspace.mailbox.inbox[0]?.id ?? null,
-        clearMailView: true
+        preferredMessageId: result.workspace.activePage.messages[0]?.id ?? null,
+        clearMailView: true,
+        resetUserScoped: true,
+        syncUrl: true
       });
       banner = '已进入工作台。当前会话由 Cookie、SvelteKit API 和 D1 状态驱动。';
     } catch (error) {
@@ -732,6 +785,9 @@
     try {
       await deleteSession();
       resetWorkspace();
+      await goto(buildWorkspaceUrl(page.url, {
+        section: 'inbox', query: '', filter: 'all', messageId: null
+      }), { replaceState: true, noScroll: true, keepFocus: false });
       banner = '你已退出工作台。';
     } finally {
       pending = false;
@@ -761,7 +817,7 @@
     pending = true;
 
     try {
-      const result = await persistDraft(withCurrentComposeDraftId(input));
+      const result = await persistDraft(withCurrentComposePersistence(input));
 
       applyMessageDelta(result, {
         section: 'drafts',
@@ -783,14 +839,14 @@
     }
   }
 
-  async function autosaveDraft() {
+  async function performAutosaveDraft() {
     const liveInput = composeLiveInput;
 
     if (!liveInput || !composeOpen || draftConflict) {
       return;
     }
 
-    const input = withCurrentComposeDraftId(liveInput);
+    const input = withCurrentComposePersistence(liveInput);
     const signature = serializeComposeInput(input);
 
     if (!hasComposeContent(input) || signature === composeLastSavedSignature) {
@@ -805,8 +861,8 @@
     try {
       const result = await persistDraft(input);
 
-      applyMessageDelta(result);
       if (!save.isActive()) return;
+      applyMessageDelta(result);
       if (save.isCurrent()) {
         syncComposeDraftState(
           result.message,
@@ -814,11 +870,7 @@
         );
       } else {
         composeDraftId = result.message.id;
-        if (composeLiveInput) composeLiveInput = {
-          ...composeLiveInput,
-          draftId: result.message.id,
-          expectedUpdatedAt: result.message.sentAt
-        };
+        if (composeLiveInput) composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message);
         composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id });
         composeTouched = true;
         composeAutosaveStatus = 'dirty';
@@ -838,12 +890,23 @@
     }
   }
 
+  async function autosaveDraft() {
+    if (composeSavePromise) return composeSavePromise;
+    const operation = performAutosaveDraft();
+    composeSavePromise = operation;
+    try {
+      await operation;
+    } finally {
+      if (composeSavePromise === operation) composeSavePromise = null;
+    }
+  }
+
   async function sendMessage(input: ComposeInput) {
     clearComposeAutosaveTimer();
     pending = true;
 
     try {
-      const result = await submitMessage(withCurrentComposeDraftId(input), composeSubmissionId);
+      const result = await submitMessage(withCurrentComposePersistence(input), composeSubmissionId);
 
       deliveryDetails = Object.fromEntries(
         Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
@@ -1013,6 +1076,7 @@
       mailboxPages = removed.snapshot.mailboxPages;
       metrics = removed.snapshot.metrics;
       selectedMessageId = removed.selectedMessageId;
+      selectedMessageIds = selectedMessageIds.filter((id) => id !== result.removedId);
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
       }
@@ -1029,7 +1093,7 @@
   }
 
   function handleEditDraft(message: MailMessage) {
-    openCompose('draft', createComposeInputFromDraft(message));
+    openCompose('draft', composeInputFromSavedDraft(message));
     banner = '你正在继续编辑一封草稿。';
   }
 
@@ -1139,7 +1203,7 @@
   {:else}
     <div class="fm-app-shell">
       <AppTopbar
-        draftCount={mailbox.drafts.length}
+        draftCount={metrics.draftsCount}
         failedCount={failedCount}
         {pending}
         {profile}
@@ -1159,9 +1223,9 @@
       <div class:mobile-detail-nav-hidden={mobileDetailOpen}>
         <MobileNavigation
           activeSection={activeSection}
-          draftCount={mailbox.drafts.length}
+          draftCount={metrics.draftsCount}
+          inboxCount={metrics.inboxCount}
           {pending}
-          unreadCount={unreadCount}
           onCompose={() => {
             openCompose('new');
             banner = '正在写新邮件。';
@@ -1174,10 +1238,10 @@
         <div class="fm-workspace-shell">
           <AppSidebar
             activeSection={activeSection}
-            draftCount={mailbox.drafts.length}
+            draftCount={metrics.draftsCount}
+            inboxCount={metrics.inboxCount}
             {pending}
-            sentCount={mailbox.sent.length}
-            unreadCount={unreadCount}
+            sentCount={metrics.sentCount}
             onCompose={() => {
               openCompose('new');
               banner = '正在写新邮件。';
@@ -1289,10 +1353,12 @@
         autosaveMessage={composeAutosaveMessage}
         autosaveStatus={composeAutosaveStatus}
         draftId={composeDraftId}
+        expectedUpdatedAt={composeLiveInput?.expectedUpdatedAt}
         initialInput={composeInitialInput}
         mode={composeMode}
         pending={composeBusy}
         {profile}
+        senderEmail={outboundSenderEmail}
         onClose={closeCompose}
         onDiscard={discardCompose}
         draftConflict={draftConflict}
@@ -1302,7 +1368,7 @@
         onOverwriteServerDraft={overwriteServerDraft}
         onInputChange={(input) => {
           composeAutosave.changed();
-          const nextInput = withCurrentComposeDraftId(input);
+          const nextInput = withCurrentComposePersistence(input);
           const nextSignature = serializeComposeInput(nextInput);
 
           composeLiveInput = nextInput;

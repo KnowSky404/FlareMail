@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { cloneMailbox, type MailMessage, type MailboxPage, type MailboxState, type WorkspaceMetrics } from '$lib/domain/mail';
-import { MailboxController, mailboxSnapshotFromWorkspace, mergeMailboxPage, mergeMessageDelta, moveSelection, removeMessage, selectNextMessage } from './mailbox-controller';
+import {
+  MailboxController,
+  createEmptyWorkspaceViewState,
+  mailboxSnapshotFromWorkspace,
+  mergeMailboxPage,
+  mergeMessageDelta,
+  moveSelection,
+  reconcileBulkSelection,
+  removeMessage,
+  selectNextMessage,
+  workspaceViewStateFromSnapshot
+} from './mailbox-controller';
 
 const metrics: WorkspaceMetrics = { inboxCount: 1, sentCount: 0, draftsCount: 0, unreadCount: 1, starredCount: 0 };
 const message = (id: string, folder: MailMessage['folder'], sentAt: string): MailMessage => ({
@@ -39,9 +50,10 @@ describe('mailbox controller', () => {
       },
       metrics,
       activeFolder: 'inbox',
-      activePage: { ...page, cursor: null, status: null },
+      activePage: page,
       mailbox: { inbox: page.messages, sent: [], drafts: [] },
-      mailboxPages: { inbox: { ...page, cursor: null, status: null } }
+      mailboxPages: { inbox: page },
+      outboundSenderEmail: 'mailer@example.com'
     });
 
     expect(hydrated.mailbox.inbox).toHaveLength(1);
@@ -75,7 +87,43 @@ describe('mailbox controller', () => {
     }, true);
 
     expect(next.mailbox.inbox.map((item) => item.id)).toEqual(['first', 'second']);
+    expect(next.mailboxPages?.inbox?.messages.map((item) => item.id)).toEqual(['first', 'second']);
     expect(next.metrics).toEqual(metrics);
+  });
+
+  test('applies the complete login snapshot and clears prior view state', () => {
+    const page = makePage('inbox', [message('inbox', 'inbox', '2026-08-14T02:00:00.000Z')]);
+    const state = workspaceViewStateFromSnapshot({
+      profile: {
+        name: 'Owner', role: 'Owner', email: 'owner@example.com', company: '', location: '', timezone: 'UTC',
+        forwardingEnabled: false, signature: ''
+      },
+      metrics: { ...metrics, inboxCount: 45, sentCount: 3, draftsCount: 2 },
+      activeFolder: 'inbox',
+      activePage: { ...page, hasMore: true, nextCursor: 'next' },
+      mailbox: { inbox: page.messages, sent: [], drafts: [] },
+      mailboxPages: { inbox: { ...page, hasMore: true, nextCursor: 'next' } },
+      outboundSenderEmail: 'mailer@example.com'
+    }, { section: 'inbox', preferredMessageId: 'inbox', clearMailView: true });
+
+    expect(state.metrics).toMatchObject({ inboxCount: 45, sentCount: 3, draftsCount: 2 });
+    expect(state.mailboxPages?.inbox?.nextCursor).toBe('next');
+    expect(state.selectedMessageId).toBe('inbox');
+    expect(state.selectedMessageIds).toEqual([]);
+    expect(state.searchQuery).toBe('');
+    expect(state.mailFilter).toBe('all');
+    expect(state.outboundSenderEmail).toBe('mailer@example.com');
+  });
+
+  test('resets every user-scoped view field and reconciles selections on replacement', () => {
+    const empty = createEmptyWorkspaceViewState();
+    expect(empty).toMatchObject({
+      activeSection: 'inbox', selectedMessageId: null, selectedMessageIds: [], searchQuery: '', mailFilter: 'all',
+      mailboxPages: null, outboundSenderEmail: null
+    });
+    const first = message('first', 'inbox', '2026-08-14T02:00:00.000Z');
+    const second = message('second', 'inbox', '2026-08-14T01:00:00.000Z');
+    expect(reconcileBulkSelection(['first', 'stale', 'first'], [first, second])).toEqual(['first']);
   });
 
   test('applies a delta without changing unrelated folders and selects the result', () => {

@@ -118,6 +118,7 @@ export function createSentMessage(input: SentMessageInput): MailMessage {
 export function createComposeInputFromDraft(message: MailMessage): ComposeInput {
   return {
     draftId: message.folder === 'drafts' ? message.id : undefined,
+    expectedUpdatedAt: message.folder === 'drafts' ? message.sentAt : undefined,
     toEmail: message.toEmail,
     cc: message.cc ?? '',
     subject: message.subject === '未命名草稿' ? '' : message.subject,

@@ -23,6 +23,17 @@ export function withComposeDraftId(input: ComposeInput, draftId?: string) {
   return { ...input, draftId: draftId ?? input.draftId };
 }
 
+export function withComposePersistence(
+  input: ComposeInput,
+  persistence: Pick<ComposeInput, 'draftId' | 'expectedUpdatedAt'> | null
+) {
+  return {
+    ...input,
+    draftId: persistence?.draftId ?? input.draftId,
+    expectedUpdatedAt: persistence?.expectedUpdatedAt ?? input.expectedUpdatedAt
+  };
+}
+
 export function hasComposeContent(input: ComposeInput | null) {
   return Boolean(input && (input.toEmail.trim() || (input.cc ?? '').trim() || input.subject.trim() || input.body.trim()));
 }
@@ -39,6 +50,13 @@ export function composeInputFromSavedDraft(message: MailMessage): ComposeInput {
     references: message.references,
     expectedUpdatedAt: message.sentAt
   };
+}
+
+export function mergeSavedDraftMetadata(input: ComposeInput, message: MailMessage): ComposeInput {
+  return withComposePersistence(input, {
+    draftId: message.id,
+    expectedUpdatedAt: message.sentAt
+  });
 }
 
 export function formatComposeSavedAt(value: string) {

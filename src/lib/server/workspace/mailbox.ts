@@ -36,8 +36,8 @@ import type {
   MailboxPage,
   MailboxSection,
   MailboxState,
-  UserProfile,
-  WorkspaceMetrics
+  WorkspaceMetrics,
+  WorkspaceSnapshot
 } from '$lib/domain/mail';
 
 export function parseArchiveMailboxQuery(params: URLSearchParams): MailboxQuery {
@@ -48,20 +48,6 @@ export function parseArchiveMailboxQuery(params: URLSearchParams): MailboxQuery 
 }
 
 export { serializeWorkspace };
-
-export type WorkspaceSnapshotPage = MailboxPage & {
-  cursor: string | null;
-  status: DeliveryStatus | null;
-};
-
-export interface WorkspaceSnapshot {
-  profile: UserProfile;
-  metrics: WorkspaceMetrics;
-  activeFolder: MailboxSection;
-  activePage: WorkspaceSnapshotPage;
-  mailbox: MailboxState;
-  mailboxPages: Partial<Record<MailboxSection, WorkspaceSnapshotPage>>;
-}
 
 export interface WorkspaceSnapshotOptions {
   activeFolder?: MailboxSection;
@@ -186,7 +172,7 @@ export async function loadMailboxPage(
   workspace: WorkspaceContext,
   query: MailboxQuery,
   knownMetrics?: WorkspaceMetrics
-): Promise<WorkspaceSnapshotPage> {
+): Promise<MailboxPage> {
   const section = query.section ?? query.folder;
   const persistedFolder: MailFolder = query.folder;
   const repositoryQuery = {
@@ -240,8 +226,6 @@ export async function loadMailboxPage(
     query: query.query,
     filter: query.filter,
     deliveryStatus: query.deliveryStatus,
-    cursor: query.cursor ? encodeMailboxCursor(query.cursor) : null,
-    status: query.deliveryStatus,
     ...(metrics ? { metrics } : {})
   };
 }
@@ -302,7 +286,7 @@ export async function loadWorkspaceSnapshot(
   env: CloudflareEnv,
   workspace: WorkspaceContext,
   options: WorkspaceSnapshotOptions | number = {}
-): Promise<{ workspace: WorkspaceSnapshot; snapshot: WorkspaceSnapshot; pages: Partial<Record<MailboxSection, WorkspaceSnapshotPage>> }> {
+): Promise<{ workspace: WorkspaceSnapshot }> {
   const normalized = typeof options === 'number' ? { limit: options } : options;
   const activeFolder = normalized.activeFolder ?? 'inbox';
   const persistedFolder: MailFolder = activeFolder === 'archive' ? 'inbox' : activeFolder;
@@ -318,18 +302,15 @@ export async function loadWorkspaceSnapshot(
   }, metrics);
   const mailbox: MailboxState = { inbox: [], sent: [], drafts: [] };
   mailbox[persistedFolder] = page.messages;
-  const mailboxPages: Partial<Record<MailboxSection, WorkspaceSnapshotPage>> = { [activeFolder]: page };
+  const mailboxPages: Partial<Record<MailboxSection, MailboxPage>> = { [activeFolder]: page };
   const snapshot: WorkspaceSnapshot = {
     profile: workspace.profile,
     metrics,
     activeFolder,
     activePage: page,
     mailbox,
-    mailboxPages
+    mailboxPages,
+    outboundSenderEmail: env.OUTBOUND_FROM_EMAIL?.trim() || null
   };
-  return {
-    workspace: snapshot,
-    snapshot,
-    pages: mailboxPages
-  };
+  return { workspace: snapshot };
 }

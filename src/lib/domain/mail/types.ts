@@ -182,6 +182,15 @@ export interface MailboxPage {
   metrics?: WorkspaceMetrics;
 }
 
+/** The single workspace contract returned by SSR and session APIs. */
+export interface WorkspaceSnapshot extends WorkspacePayload {
+  activeFolder: MailboxSection;
+  activePage: MailboxPage;
+  mailboxPages: Partial<Record<MailboxSection, MailboxPage>>;
+  /** Effective envelope sender configured for outbound delivery. */
+  outboundSenderEmail: string | null;
+}
+
 export interface MailboxMessageSummary {
   id: string;
   folder: Exclude<MailFolder, 'drafts'>;

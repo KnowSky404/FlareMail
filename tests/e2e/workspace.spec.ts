@@ -1,5 +1,6 @@
 import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
+import type { Page } from '@playwright/test';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -10,6 +11,87 @@ async function signWebhook(id: string, timestamp: number, body: string) {
   const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}.${timestamp}.${body}`));
   return Buffer.from(digest).toString('base64');
 }
+
+type DraftSnapshot = { id: string; subject: string; body: string; sentAt: string };
+
+async function listDrafts(page: Page) {
+  const response = await page.request.get('/api/workspace/mailbox?folder=drafts&limit=40');
+  if (!response.ok()) throw new Error(`Draft list failed: ${response.status()} ${await response.text()}`);
+  return (await response.json() as { data: { page: { messages: DraftSnapshot[] } } }).data.page.messages;
+}
+
+async function updateServerDraft(page: Page, subject: string, body: string) {
+  const current = (await listDrafts(page)).find((draft) => draft.subject === subject);
+  expect(current, `missing draft ${subject}`).toBeTruthy();
+  const result = await page.evaluate(async ({ draft, nextBody }) => {
+    const response = await fetch('/api/workspace/drafts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        draftId: draft.id,
+        expectedUpdatedAt: draft.sentAt,
+        toEmail: 'draft-recipient@flaremail.test',
+        cc: '',
+        subject: draft.subject,
+        body: nextBody
+      })
+    });
+    return { ok: response.ok, status: response.status, body: await response.json() };
+  }, { draft: current!, nextBody: body });
+  expect(result.ok, JSON.stringify(result.body)).toBe(true);
+  return (result.body as { data: { message: DraftSnapshot } }).data.message;
+}
+
+async function openDraftEditor(page: Page, subject: string) {
+  await openFolder(page, '草稿箱');
+  const item = page.getByRole('listitem').filter({ hasText: subject });
+  await expect(item).toBeVisible();
+  await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
+  await page.getByRole('button', { name: '更多邮件操作' }).click();
+  await page.getByRole('menuitem', { name: '继续编辑草稿' }).click();
+  await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeVisible();
+}
+
+test('hydrates global metrics and pagination on fresh login, then purges state on logout', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
+  await login(page);
+  const navigation = page.getByRole('navigation', { name: '主导航' });
+  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).getByText('46', { exact: true })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: '已发送', exact: true }).getByText('1', { exact: true })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: '草稿箱', exact: true }).getByText('5', { exact: true })).toBeVisible();
+
+  const selected = page.getByLabel('选择E2E Inbox Welcome');
+  await selected.check();
+  await expect(page.getByLabel('批量邮件操作')).toContainText('已选 1 封');
+  await expect(page.getByRole('button', { name: '加载更多' })).toBeVisible();
+  await page.getByRole('button', { name: '加载更多' }).click();
+  await expect(page.getByText('E2E Bulk 45', { exact: true })).toBeVisible();
+  await expect(selected).toBeChecked();
+
+  await openFolder(page, '归档');
+  await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
+  await openFolder(page, '收件箱');
+  await page.getByLabel('选择E2E Inbox Welcome').check();
+  await page.getByLabel('搜索邮件').fill('E2E Inbox Welcome');
+  await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
+  await page.getByRole('button', { name: '清除搜索' }).click();
+  await page.getByLabel('选择E2E Inbox Welcome').check();
+  await page.getByRole('button', { name: '已加星标' }).click();
+  await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
+  await page.getByRole('button', { name: '全部' }).click();
+  await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/ }).first().click();
+  await expect(page).toHaveURL(/message=/u);
+
+  await page.getByRole('button', { name: '退出登录' }).click();
+  await expect(page.getByRole('heading', { name: '登录邮件工作台' })).toBeVisible();
+  await expect(page).not.toHaveURL(/message=|folder=sent|q=/u);
+  await login(page);
+  await expect(page.getByLabel('搜索邮件')).toHaveValue('');
+  await expect(page.getByRole('button', { name: '全部' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
+  await expect(page.getByRole('button', { name: '加载更多' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
 
 test('logs in, reads the seeded message, and persists a star', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
@@ -73,6 +155,84 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   await openFolder(page, '草稿箱');
   await expect(page.getByText('E2E autosaved draft', { exact: true }).first()).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('preserves the latest existing-draft edit while an autosave is in flight and closing', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop flow exercises deterministic request delay and close coordination.');
+  await login(page);
+  await openDraftEditor(page, 'E2E Existing Concurrent');
+
+  let releaseFirstSave!: () => void;
+  const firstSaveGate = new Promise<void>((resolve) => (releaseFirstSave = resolve));
+  let intercepted = 0;
+  await page.route('**/api/workspace/drafts', async (route) => {
+    if (route.request().method() === 'POST' && intercepted++ === 0) await firstSaveGate;
+    await route.continue();
+  });
+
+  const body = page.getByRole('textbox', { name: '正文', exact: true });
+  await body.fill('Older request snapshot');
+  await expect(page.getByRole('status').filter({ hasText: '正在自动保存草稿' })).toBeVisible();
+  await body.fill('Latest edit must survive close');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: '未保存的改动' })).toBeVisible();
+  await page.getByRole('button', { name: '保存并关闭' }).click();
+  releaseFirstSave();
+  await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeHidden({ timeout: 12_000 });
+  await page.unroute('**/api/workspace/drafts');
+
+  await page.reload();
+  await openDraftEditor(page, 'E2E Existing Concurrent');
+  await expect(page.getByRole('textbox', { name: '正文', exact: true })).toHaveValue('Latest edit must survive close');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('resolves draft conflicts by loading, copying, and explicitly overwriting', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop flow covers all three optimistic-concurrency actions.');
+  await login(page);
+
+  await openDraftEditor(page, 'E2E Conflict Load');
+  await updateServerDraft(page, 'E2E Conflict Load', 'Server body for load');
+  await page.getByRole('textbox', { name: '正文', exact: true }).fill('Stale local body for load');
+  await expect(page.getByRole('alert').filter({ hasText: '服务器版本已更新' })).toBeVisible({ timeout: 8_000 });
+  await page.getByRole('button', { name: '载入服务器版本' }).click();
+  await expect(page.getByRole('textbox', { name: '正文', exact: true })).toHaveValue('Server body for load');
+  await page.getByRole('button', { name: '取消' }).click();
+
+  await openDraftEditor(page, 'E2E Conflict Copy');
+  const originalCopyDraft = (await listDrafts(page)).find((draft) => draft.subject === 'E2E Conflict Copy')!;
+  await updateServerDraft(page, 'E2E Conflict Copy', 'Server body preserved on copy');
+  await page.getByRole('textbox', { name: '正文', exact: true }).fill('Local body saved as copy');
+  await expect(page.getByRole('alert').filter({ hasText: '服务器版本已更新' })).toBeVisible({ timeout: 8_000 });
+  await page.getByRole('button', { name: '另存为新草稿' }).click();
+  await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeHidden();
+  const afterCopy = await listDrafts(page);
+  expect(afterCopy.find((draft) => draft.id === originalCopyDraft.id)?.body).toBe('Server body preserved on copy');
+  expect(afterCopy.some((draft) => draft.id !== originalCopyDraft.id && draft.subject === 'E2E Conflict Copy' && draft.body === 'Local body saved as copy')).toBe(true);
+
+  await openDraftEditor(page, 'E2E Conflict Overwrite');
+  const originalOverwriteDraft = (await listDrafts(page)).find((draft) => draft.subject === 'E2E Conflict Overwrite')!;
+  await updateServerDraft(page, 'E2E Conflict Overwrite', 'Server body before overwrite');
+  await page.getByRole('textbox', { name: '正文', exact: true }).fill('Explicit local overwrite body');
+  await expect(page.getByRole('alert').filter({ hasText: '服务器版本已更新' })).toBeVisible({ timeout: 8_000 });
+  await page.getByRole('button', { name: '明确覆盖' }).click();
+  await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeHidden();
+  expect((await listDrafts(page)).find((draft) => draft.id === originalOverwriteDraft.id)?.body).toBe('Explicit local overwrite body');
+  const expectedConflicts = consoleErrors.filter((message) => message.includes('409 (Conflict)'));
+  expect(expectedConflicts).toHaveLength(3);
+  await assertNoConsoleErrors(consoleErrors.filter((message) => !message.includes('409 (Conflict)')));
+});
+
+test('continues an existing draft on mobile and persists its next version', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'This is the required mobile existing-draft persistence path.');
+  await login(page);
+  await openDraftEditor(page, 'E2E Mobile Existing');
+  await page.getByRole('textbox', { name: '正文', exact: true }).fill('Mobile existing draft next version');
+  await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
+  await page.reload();
+  await openDraftEditor(page, 'E2E Mobile Existing');
+  await expect(page.getByRole('textbox', { name: '正文', exact: true })).toHaveValue('Mobile existing draft next version');
   await assertNoConsoleErrors(consoleErrors);
 });
 

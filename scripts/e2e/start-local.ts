@@ -33,6 +33,34 @@ async function run(command: string, args: string[], env?: Record<string, string>
 }
 
 const sql = (value: string) => `'${value.replaceAll("'", "''")}'`;
+const bulkInboxSeed = Array.from({ length: 45 }, (_, index) => {
+  const ordinal = String(index + 1).padStart(2, '0');
+  const id = `e2e-bulk-${ordinal}`;
+  const sentAt = new Date(Date.parse(timestamp) - (index + 1) * 60_000).toISOString();
+  return `INSERT OR IGNORE INTO workspace_messages (
+    id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body,
+    sent_at, labels_json, is_read, is_starred, message_id, thread_key, direction, text_body,
+    html_body, cc, dedupe_key, created_at, updated_at
+  ) VALUES (
+    ${sql(id)}, ${sql(userId)}, 'inbox', 'Bulk Sender', 'bulk@flaremail.test', 'E2E Administrator',
+    ${sql(adminEmail)}, ${sql(`E2E Bulk ${ordinal}`)}, 'Paginated fixture', 'Paginated fixture body',
+    ${sql(sentAt)}, '[]', ${index % 2}, 0, ${sql(`<${id}@flaremail.test>`)}, ${sql(`legacy:${id}`)},
+    'inbound', 'Paginated fixture body', '', '', ${sql(`legacy:${id}`)}, ${sql(sentAt)}, ${sql(sentAt)}
+  );`;
+}).join('\n');
+const draftSubjects = [
+  'E2E Existing Concurrent',
+  'E2E Conflict Load',
+  'E2E Conflict Copy',
+  'E2E Conflict Overwrite',
+  'E2E Mobile Existing'
+];
+const draftSeed = draftSubjects.map((subject, index) => `INSERT OR IGNORE INTO workspace_drafts (
+  id, user_id, to_email, cc, subject, body, is_starred, created_at, updated_at
+) VALUES (
+  ${sql(`e2e-draft-${index + 1}`)}, ${sql(userId)}, 'draft-recipient@flaremail.test', '', ${sql(subject)},
+  ${sql(`Initial body for ${subject}`)}, 0, ${sql(timestamp)}, ${sql(timestamp)}
+);`).join('\n');
 
 await rm(persistTo, { recursive: true, force: true });
 await run('bun', ['run', 'build']);
@@ -67,6 +95,18 @@ INSERT OR IGNORE INTO workspace_messages (
   'This message is seeded in the isolated local D1 database.', '', '', ${sql(`legacy:${inboxId}`)},
   ${sql(timestamp)}, ${sql(timestamp)}
 );
+${bulkInboxSeed}
+INSERT OR IGNORE INTO workspace_messages (
+  id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body,
+  sent_at, labels_json, is_read, is_starred, message_id, thread_key, direction,
+  text_body, html_body, cc, dedupe_key, created_at, updated_at
+) VALUES (
+  'e2e-sent-message', ${sql(userId)}, 'sent', 'E2E Administrator', ${sql(adminEmail)},
+  'Recipient', 'recipient@flaremail.test', 'E2E Seeded Sent', 'Seeded sent preview', 'Seeded sent body',
+  ${sql(timestamp)}, '[]', 1, 0, '<e2e-sent-message@flaremail.test>', 'legacy:e2e-sent-message',
+  'outbound', 'Seeded sent body', '', '', 'legacy:e2e-sent-message', ${sql(timestamp)}, ${sql(timestamp)}
+);
+${draftSeed}
 `;
 
 await run('bunx', [

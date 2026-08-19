@@ -25,7 +25,10 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
   const currentRow = requestedId ? await findOwnedDraft(env.DB, session.userId, requestedId) : null;
   if (requestedId && !currentRow) throw new DraftNotFoundError();
 
-  const timestamp = new Date().toISOString();
+  const now = new Date().toISOString();
+  const timestamp = currentRow && now <= currentRow.updated_at
+    ? new Date(Date.parse(currentRow.updated_at) + 1).toISOString()
+    : now;
   const draft = createDraftMessage({ id: requestedId, from: session.profile, toEmail: input.toEmail, cc: input.cc,
     subject: input.subject, body: input.body, starred: Boolean(currentRow?.is_starred), updatedAt: timestamp,
     messageId: input.messageId, inReplyTo: input.inReplyTo, references: input.references });

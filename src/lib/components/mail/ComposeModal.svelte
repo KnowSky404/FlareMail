@@ -2,6 +2,7 @@
   import { validateComposeInput } from '$lib/domain/mail';
   import { Button, Dialog, TextArea, TextField } from '$lib/components/ui';
   import type { ComposeInput, ComposeMode, MailMessage, UserProfile } from '$lib/domain/mail';
+  import { withComposePersistence } from '$lib/client/compose-controller';
   import { onMount } from 'svelte';
 
   const createComposeState = (value: ComposeInput | null, fallbackDraftId?: string): ComposeInput =>
@@ -34,8 +35,10 @@
   let {
     initialInput = null,
     draftId = undefined,
+    expectedUpdatedAt = undefined,
     mode = 'new',
     profile,
+    senderEmail = null,
     pending = false,
     autosaveStatus = 'idle',
     autosaveMessage = '自动保存会在停顿后触发。',
@@ -54,10 +57,12 @@
     draftId?: string | undefined;
     mode?: ComposeMode;
     profile: UserProfile;
+    senderEmail?: string | null;
     pending?: boolean;
     autosaveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
     autosaveMessage?: string;
-    onClose: () => void;
+    expectedUpdatedAt?: string | undefined;
+    onClose: (input: ComposeInput) => void | Promise<void>;
     /** Optional discard path; the parent can clear the live compose state without autosaving. */
     onDiscard?: () => void;
     onInputChange?: (input: ComposeInput) => void;
@@ -87,8 +92,11 @@
   });
 
   $effect(() => {
-    if (draftId && input.draftId !== draftId) {
-      input = { ...input, draftId };
+    if (
+      (draftId && input.draftId !== draftId) ||
+      (expectedUpdatedAt && input.expectedUpdatedAt !== expectedUpdatedAt)
+    ) {
+      input = withComposePersistence(input, { draftId, expectedUpdatedAt });
     }
   });
 
@@ -139,12 +147,12 @@
       showCloseConfirm = true;
       return;
     }
-    onClose();
+    void onClose(input);
   }
 
   function saveAndClose() {
     showCloseConfirm = false;
-    onClose();
+    void onClose(input);
   }
 
   function discardAndClose() {
@@ -154,7 +162,7 @@
       return;
     }
     // Kept as a compatibility fallback. Parents that autosave in onClose should provide onDiscard.
-    onClose();
+    void onClose(input);
   }
 
   function handleShortcut(event: KeyboardEvent) {
@@ -183,8 +191,8 @@
 >
   <form class="flex min-h-[34rem] flex-col gap-5 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()}>
     <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)]">
-      <span>发件人：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
-      <span class="hidden shrink-0 sm:inline">纯文本邮件</span>
+      <span>工作区身份：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
+      <span class="hidden shrink-0 sm:inline">实际投递：{senderEmail ?? '尚未配置'} · 纯文本</span>
     </div>
 
     <div class="grid gap-4">

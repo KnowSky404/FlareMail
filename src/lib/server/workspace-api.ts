@@ -3,10 +3,9 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError } from '$lib/server/http/api';
 
 export type {
-  WorkspaceSnapshot,
-  WorkspaceSnapshotOptions,
-  WorkspaceSnapshotPage
+  WorkspaceSnapshotOptions
 } from '$lib/server/workspace/mailbox';
+export type { WorkspaceSnapshot } from '$lib/domain/mail';
 
 export function getRequestEnv(event: RequestEvent) {
   return event.platform?.env as CloudflareEnv | undefined;

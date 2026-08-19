@@ -1,31 +1,19 @@
 import { requestJson } from './api';
 import type {
   ComposeInput,
-  DeliveryStatus,
   DeliveryDetail,
   InboundMessageDetail,
   LoginInput,
   MailFolder,
   MailboxMutationAction,
   MailboxMutationResult,
-  MailboxSection,
   MailMessage,
   MailboxPage,
   MessagePatch,
   UserProfile,
-  WorkspacePayload
+  WorkspacePayload,
+  WorkspaceSnapshot
 } from '$lib/domain/mail';
-
-export type WorkspaceSnapshotPage = MailboxPage & {
-  cursor: string | null;
-  status: DeliveryStatus | null;
-};
-
-export type WorkspaceSnapshot = WorkspacePayload & {
-  activeFolder: MailboxSection;
-  activePage: WorkspaceSnapshotPage;
-  mailboxPages: Partial<Record<MailboxSection, WorkspaceSnapshotPage>>;
-};
 
 export type SessionResponse = {
   ok: boolean;
@@ -54,7 +42,7 @@ export function fetchDeliveryDetail(messageId: string, signal?: AbortSignal) {
 }
 
 export function fetchMailboxPage(params: URLSearchParams, signal?: AbortSignal) {
-  return requestJson<{ page: WorkspaceSnapshotPage }>(`/api/workspace/mailbox?${params}`, { signal });
+  return requestJson<{ page: MailboxPage }>(`/api/workspace/mailbox?${params}`, { signal });
 }
 
 export function createSession(input: LoginInput) {
