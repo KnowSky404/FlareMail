@@ -1,7 +1,7 @@
 import {
   buildMailThreads,
   cloneMailbox,
-  type MailFolder,
+  type MailboxSection,
   type MailMessage,
   type MailboxPage,
   type MailboxState,
@@ -10,8 +10,9 @@ import {
   type WorkspaceMetrics
 } from '$lib/domain/mail';
 import { LatestRequest } from './latest-request';
+import type { WorkspaceSnapshot } from './workspace-api';
 
-export type WorkspaceSection = MailFolder | 'profile';
+export type WorkspaceSection = MailboxSection | 'profile';
 
 export type MailFilter = 'all' | 'unread' | 'starred';
 
@@ -22,9 +23,17 @@ export type MessageDelta = {
 
 export type MailboxSnapshot = {
   mailbox: MailboxState;
-  mailboxPages: Partial<Record<MailFolder, MailboxPage>> | null;
+  mailboxPages: Partial<Record<MailboxSection, MailboxPage>> | null;
   metrics: WorkspaceMetrics;
 };
+
+export function mailboxSnapshotFromWorkspace(snapshot: WorkspaceSnapshot): MailboxSnapshot {
+  return {
+    mailbox: cloneMailbox(snapshot.mailbox),
+    mailboxPages: { ...snapshot.mailboxPages },
+    metrics: snapshot.metrics
+  };
+}
 
 export type MessageDeltaOptions = {
   currentSection: WorkspaceSection;
@@ -51,6 +60,8 @@ export function selectNextMessage(
     const list = nextMailbox.drafts;
     return list.find((message) => message.id === preferredMessageId)?.id ?? list[0]?.id ?? null;
   }
+
+  if (section === 'archive') return preferredMessageId;
 
   const threads = buildMailThreads(nextMailbox, section);
   const preferredThread = preferredMessageId
@@ -91,15 +102,18 @@ export function moveSelection(
 }
 
 export function mergeMailboxPage(snapshot: MailboxSnapshot, page: MailboxPage, append: boolean): MailboxSnapshot {
-  const existing = append ? snapshot.mailbox[page.folder] : [];
+  const existing = append ? snapshot.mailboxPages?.[page.folder]?.messages ?? [] : [];
   const byId = new Map(existing.map((message) => [message.id, message]));
   for (const message of page.messages) byId.set(message.id, message);
 
-  return {
-    mailbox: {
+  const nextMailbox = page.folder === 'archive'
+    ? snapshot.mailbox
+    : {
       ...snapshot.mailbox,
       [page.folder]: sortMailboxMessages([...byId.values()])
-    },
+    };
+  return {
+    mailbox: nextMailbox,
     mailboxPages: {
       ...(snapshot.mailboxPages ?? {}),
       [page.folder]: page
@@ -118,6 +132,21 @@ export function mergeMessageDelta(
     nextMailbox.drafts = nextMailbox.drafts.filter((item) => item.id !== options.removeDraftId);
   }
 
+  const section = options.section ?? options.currentSection;
+  if (section === 'archive') {
+    const page = snapshot.mailboxPages?.archive;
+    const nextMessages = page?.messages.map((item) => item.id === result.message.id ? result.message : item) ?? [];
+    return {
+      snapshot: {
+        mailbox: nextMailbox,
+        mailboxPages: page ? { ...(snapshot.mailboxPages ?? {}), archive: { ...page, messages: nextMessages } } : snapshot.mailboxPages,
+        metrics: result.metrics
+      },
+      selectedMessageId: options.preferredMessageId ?? options.currentSelectedMessageId,
+      section
+    };
+  }
+
   const folder = result.message.folder;
   const current = nextMailbox[folder];
   const index = current.findIndex((item) => item.id === result.message.id);
@@ -125,7 +154,6 @@ export function mergeMessageDelta(
   else current.push(result.message);
   nextMailbox[folder] = sortMailboxMessages(current);
 
-  const section = options.section ?? options.currentSection;
   return {
     snapshot: {
       mailbox: nextMailbox,
@@ -144,18 +172,21 @@ export function mergeMessageDelta(
 export function removeMessage(
   snapshot: MailboxSnapshot,
   removedId: string,
-  folder: MailFolder,
+  folder: MailboxSection,
   currentSection: WorkspaceSection,
   currentSelectedMessageId: string | null,
   metrics?: WorkspaceMetrics
 ) {
   const nextMailbox = cloneMailbox(snapshot.mailbox);
-  nextMailbox[folder] = nextMailbox[folder].filter((message) => message.id !== removedId);
+  if (folder !== 'archive') nextMailbox[folder] = nextMailbox[folder].filter((message) => message.id !== removedId);
   const section = currentSection === 'profile' ? folder : currentSection;
+  const currentPage = snapshot.mailboxPages?.[folder];
   return {
     snapshot: {
       mailbox: nextMailbox,
-      mailboxPages: snapshot.mailboxPages,
+      mailboxPages: currentPage
+        ? { ...(snapshot.mailboxPages ?? {}), [folder]: { ...currentPage, messages: currentPage.messages.filter((message) => message.id !== removedId) } }
+        : snapshot.mailboxPages,
       metrics: metrics ?? snapshot.metrics
     },
     selectedMessageId: selectNextMessage(nextMailbox, section, currentSelectedMessageId),
@@ -184,7 +215,7 @@ export class MailboxController {
     private readonly callbacks: MailboxControllerCallbacks
   ) {}
 
-  async refresh(folder: MailFolder, query: string, filter: MailFilter) {
+  async refresh(folder: MailboxSection, query: string, filter: MailFilter) {
     const request = this.request.begin();
     this.callbacks.onLoading(true);
     try {
@@ -203,7 +234,7 @@ export class MailboxController {
     return false;
   }
 
-  async loadMore(folder: MailFolder, query: string, filter: MailFilter, currentPage: MailboxPage | undefined) {
+  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined) {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return;
     const request = this.request.begin();
     this.callbacks.onLoading(true);

@@ -2,8 +2,10 @@ import type { CloudflareEnv } from './cloudflare';
 import { parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
 import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
+import { findUserInboundNotificationSettings } from '$lib/server/db/users';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
+import { isInboundNotificationEnabled } from './workspace/profile';
 
 export const DEFAULT_INBOUND_LIMITS = Object.freeze({
   rawBytes: 25 * 1024 * 1024,
@@ -258,8 +260,16 @@ export async function handleInboundEmail(
   }
 
   const followUpTasks = [
-    sendInboundNotification(env, { storageId, from: message.from, to: recipient, subject: parsed.subject || '(no subject)',
-      timestamp: date, snippet: parsed.snippet }).catch(() => {
+    (async () => {
+      // The owner is resolved from the addressed recipient and is checked
+      // again before dispatch. An unowned message never inherits another
+      // user's notification preference.
+      if (!ownerUserId) return { sent: false, reason: 'Inbound message has no workspace owner.' };
+      const owner = await findUserInboundNotificationSettings(env.DB, ownerUserId);
+      if (!owner || !isInboundNotificationEnabled(owner)) return { sent: false, reason: 'The owner disabled inbound notifications.' };
+      return sendInboundNotification(env, { storageId, from: message.from, to: recipient, subject: parsed.subject || '(no subject)',
+        timestamp: date, snippet: parsed.snippet });
+    })().catch(() => {
       safeLog('inbound_notification_failed', { correlationId, messageId: storageId });
       return null;
     }),

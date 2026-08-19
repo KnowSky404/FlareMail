@@ -22,7 +22,7 @@ export type {
 } from '$lib/server/workspace/shared';
 export type { WorkspaceContext, WorkspaceSession } from '$lib/server/workspace/shared';
 
-export { loadMailboxPage, loadWorkspaceSnapshot, serializeWorkspace } from '$lib/server/workspace/mailbox';
+export { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox, serializeWorkspace } from '$lib/server/workspace/mailbox';
 export {
   authenticateWorkspaceUser,
   clearSessionCookieOptions,

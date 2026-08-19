@@ -1,4 +1,4 @@
-import type { MailFolder } from '$lib/domain/mail';
+import type { MailboxSection } from '$lib/domain/mail';
 import type { MailFilter, WorkspaceSection } from './mailbox-controller';
 
 export type WorkspaceUrlState = {
@@ -19,7 +19,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
   const filter = url.searchParams.get('filter');
   return {
-    section: folder === 'sent' || folder === 'drafts' ? folder : folder === 'settings' ? 'profile' : 'inbox',
+    section: folder === 'sent' || folder === 'drafts' || folder === 'archive' ? folder : folder === 'settings' ? 'profile' : 'inbox',
     query: url.searchParams.get('q')?.slice(0, 200) ?? '',
     filter: filter === 'unread' || filter === 'starred' ? filter : 'all',
     messageId: url.searchParams.get('message')
@@ -45,6 +45,6 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
   return next;
 }
 
-export function folderFromSection(section: WorkspaceSection): MailFolder | null {
+export function folderFromSection(section: WorkspaceSection): MailboxSection | null {
   return section === 'profile' ? null : section;
 }

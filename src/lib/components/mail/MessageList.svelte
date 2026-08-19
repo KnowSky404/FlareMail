@@ -1,12 +1,12 @@
 <script lang="ts">
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { Button, Skeleton } from '$lib/components/ui';
-  import type { MailFolder, MailMessage, MailThread } from '$lib/domain/mail';
+  import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
   import EmptyMailbox from './EmptyMailbox.svelte';
   import MessageListItem from './MessageListItem.svelte';
   import type { MailFilter } from './MailFilterBar.svelte';
 
-  type AppSection = MailFolder | 'profile';
+  type AppSection = MailboxSection | 'profile';
   type ListItem = { kind: 'thread'; value: MailThread } | { kind: 'message'; value: MailMessage };
 
   let {
@@ -29,6 +29,9 @@
     onRefresh,
     onClearFilters,
     onLoadMore
+    , selectable = false,
+    selectedMessageIds = [],
+    onToggleSelect
   }: {
     activeSection: AppSection;
     messages?: MailMessage[];
@@ -49,12 +52,16 @@
     onRefresh?: () => void | Promise<void>;
     onClearFilters?: () => void;
     onLoadMore?: () => void | Promise<void>;
+    selectable?: boolean;
+    selectedMessageIds?: string[];
+    onToggleSelect?: (message: MailMessage) => void;
   } = $props();
 
   const sectionLabels: Record<AppSection, string> = {
     inbox: '收件箱',
     sent: '已发送',
     drafts: '草稿箱',
+    archive: '归档',
     profile: '邮件'
   };
 
@@ -154,11 +161,14 @@
       {#each visibleItems as item (itemKey(item))}
         {#if item.kind === 'thread'}
           <MessageListItem
-            activeSection={activeSection as MailFolder}
+            activeSection={activeSection}
             thread={item.value}
             selected={selectedThreadId === item.value.id}
             onSelect={(message) => handleSelect({ kind: 'thread', value: item.value })}
             onToggleStar={onToggleStar}
+            {selectable}
+            selectedForBulk={selectedMessageIds.includes(item.value.sectionLatestMessage.id)}
+            onToggleSelect={onToggleSelect}
           />
         {:else}
           <MessageListItem
@@ -167,6 +177,9 @@
             selected={selectedMessageId === item.value.id}
             onSelect={(message) => handleSelect({ kind: 'message', value: message })}
             onToggleStar={onToggleStar}
+            {selectable}
+            selectedForBulk={selectedMessageIds.includes(item.value.id)}
+            onToggleSelect={onToggleSelect}
           />
         {/if}
       {/each}

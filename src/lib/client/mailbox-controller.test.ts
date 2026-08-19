@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { cloneMailbox, type MailMessage, type MailboxPage, type MailboxState, type WorkspaceMetrics } from '$lib/domain/mail';
-import { MailboxController, mergeMailboxPage, mergeMessageDelta, moveSelection, removeMessage, selectNextMessage } from './mailbox-controller';
+import { MailboxController, mailboxSnapshotFromWorkspace, mergeMailboxPage, mergeMessageDelta, moveSelection, removeMessage, selectNextMessage } from './mailbox-controller';
 
 const metrics: WorkspaceMetrics = { inboxCount: 1, sentCount: 0, draftsCount: 0, unreadCount: 1, starredCount: 0 };
 const message = (id: string, folder: MailMessage['folder'], sentAt: string): MailMessage => ({
@@ -30,6 +30,25 @@ const message = (id: string, folder: MailMessage['folder'], sentAt: string): Mai
 const snapshot = (mailbox: MailboxState) => ({ mailbox, mailboxPages: null, metrics });
 
 describe('mailbox controller', () => {
+  test('hydrates the partial active-folder snapshot without inventing inactive pages', () => {
+    const page = makePage('inbox', [message('inbox', 'inbox', '2026-08-14T02:00:00.000Z')]);
+    const hydrated = mailboxSnapshotFromWorkspace({
+      profile: {
+        name: 'Owner', role: 'Owner', email: 'owner@example.com', company: '', location: '', timezone: 'UTC',
+        forwardingEnabled: false, signature: ''
+      },
+      metrics,
+      activeFolder: 'inbox',
+      activePage: { ...page, cursor: null, status: null },
+      mailbox: { inbox: page.messages, sent: [], drafts: [] },
+      mailboxPages: { inbox: { ...page, cursor: null, status: null } }
+    });
+
+    expect(hydrated.mailbox.inbox).toHaveLength(1);
+    expect(hydrated.mailbox.sent).toHaveLength(0);
+    expect(Object.keys(hydrated.mailboxPages ?? {})).toEqual(['inbox']);
+  });
+
   test('merges pages and keeps the metrics from the first page on load more', () => {
     const first = message('first', 'inbox', '2026-08-14T02:00:00.000Z');
     const second = message('second', 'inbox', '2026-08-14T01:00:00.000Z');

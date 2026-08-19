@@ -41,7 +41,7 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
   expect(consoleErrors, `browser console errors: ${consoleErrors.join('\n')}`).toEqual([]);
 }
 
-export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱') {
+export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱' | '归档') {
   const direct = page.getByRole('button', { name: folder, exact: true }).first();
   if (await direct.isVisible().catch(() => false)) {
     await direct.click();

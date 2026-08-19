@@ -1,13 +1,14 @@
 <script lang="ts">
   import FileText from '@lucide/svelte/icons/file-text';
+  import Archive from '@lucide/svelte/icons/archive';
   import Inbox from '@lucide/svelte/icons/inbox';
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
   import type { LucideIcon } from '@lucide/svelte';
-  import type { MailFolder } from '$lib/domain/mail';
+  import type { MailboxSection } from '$lib/domain/mail';
 
-  type AppSection = MailFolder | 'profile';
+  type AppSection = MailboxSection | 'profile';
   type NavigationItem = {
     id: AppSection;
     label: string;
@@ -37,6 +38,7 @@
     { id: 'inbox', label: '收件箱', count: unreadCount, icon: Inbox },
     { id: 'sent', label: '已发送', count: sentCount, icon: Send },
     { id: 'drafts', label: '草稿箱', count: draftCount, icon: FileText },
+    { id: 'archive', label: '归档', count: 0, icon: Archive },
     { id: 'profile', label: '设置', count: 0, icon: Settings }
   ]);
 </script>

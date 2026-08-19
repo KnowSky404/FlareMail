@@ -46,7 +46,8 @@
     retryDelivery,
     submitMessage,
     updateMessageFlags,
-    updateProfile
+    updateProfile,
+    mutateMailbox
   } from '$lib/client/workspace-api';
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl } from '$lib/client/workspace-url-controller';
@@ -63,7 +64,7 @@
     type ComposeMode,
     type InboundMessageDetail,
     type LoginInput,
-    type MailFolder,
+    type MailboxSection,
     type MailMessage,
     type MailboxState,
     type MailboxPage,
@@ -87,9 +88,10 @@
   let profile = $state<UserProfile>(cloneProfile());
   let mailbox = $state<MailboxState>(cloneMailbox());
   let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 });
-  let mailboxPages = $state<Partial<Record<MailFolder, MailboxPage>> | null>(null);
+  let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
+  let selectedMessageIds = $state<string[]>([]);
   let searchQuery = $state('');
   let mailFilter = $state<MailFilter>('all');
   let mobileDetailOpen = $state(false);
@@ -106,6 +108,7 @@
   let composeAutosaveMessage = $state('自动保存会在停顿后触发。');
   let composeLastSavedSignature = $state('');
   let draftConflict = $state<MailMessage | null>(null);
+  let draftConflictLocalEditedAt = $state<string | null>(null);
   let inboundDetails = $state<Record<string, InboundMessageDetail>>({});
   let deliveryDetails = $state<Record<string, DeliveryDetail>>({});
   let inboundDetailErrors = $state<Record<string, string>>({});
@@ -157,7 +160,7 @@
         mailbox = workspace.mailbox;
         metrics = workspace.metrics;
         mailboxPages = data.mailboxPages;
-        selectedMessageId = urlMessageId ?? selectNextMessage(workspace.mailbox, urlSection, null);
+        selectedMessageId = urlMessageId ?? workspace.activePage.messages[0]?.id ?? selectNextMessage(workspace.mailbox, urlSection, null);
         if (!hydratedFromServer) {
           banner = '工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。';
         }
@@ -175,10 +178,18 @@
     mailbox.sent.filter((message) => message.deliveryStatus === 'failed').length
   );
   const activeMessages = $derived(
-    activeSection === 'drafts' ? mailbox.drafts : []
+    activeSection === 'drafts'
+      ? mailbox.drafts
+      : activeSection === 'archive'
+        ? mailboxPages?.archive?.messages ?? []
+        : []
   );
   const activeThreads = $derived(
-    activeSection === 'inbox' || activeSection === 'sent' ? buildMailThreads(mailbox, activeSection) : []
+    activeSection === 'inbox' || activeSection === 'sent'
+      ? buildMailThreads(mailbox, activeSection)
+      : activeSection === 'archive'
+        ? buildMailThreads({ ...mailbox, inbox: activeMessages }, 'inbox')
+        : []
   );
   const normalizedSearchQuery = $derived(searchQuery.trim().toLocaleLowerCase('zh-CN'));
   const visibleMessages = $derived.by(() =>
@@ -298,6 +309,7 @@
     composeAutosaveMessage = '自动保存会在停顿后触发。';
     composeLastSavedSignature = '';
     draftConflict = null;
+    draftConflictLocalEditedAt = null;
   };
 
   const syncComposeDraftState = (message: MailMessage, statusMessage: string) => {
@@ -450,6 +462,14 @@
     mailbox = initialMailbox;
     activeSection = 'inbox';
     selectedMessageId = initialMailbox.inbox[0]?.id ?? null;
+    selectedMessageIds = [];
+    mailboxPages = null;
+    metrics = { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 };
+    inboundDetails = {};
+    deliveryDetails = {};
+    inboundDetailErrors = {};
+    deliveryDetailErrors = {};
+    mobileDetailOpen = false;
     resetComposeState();
     inboundDetailCache.reset();
     deliveryDetailCache.reset();
@@ -497,21 +517,26 @@
     mailFilter = 'all';
     mobileDetailOpen = false;
 
-    if (section === 'inbox' || section === 'sent') {
-      const threads = buildMailThreads(mailbox, section);
+    if (section === 'inbox' || section === 'sent' || section === 'archive') {
+      const threads = section === 'archive'
+        ? buildMailThreads({ ...mailbox, inbox: mailboxPages?.archive?.messages ?? [] }, 'inbox')
+        : buildMailThreads(mailbox, section);
       const currentThread = selectedMessageId
         ? threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
         : null;
 
-      selectedMessageId = selectNextMessage(
-        mailbox,
-        section,
-        currentThread?.sectionLatestMessage.id ?? selectedMessageId
-      );
+      selectedMessageId = section === 'archive'
+        ? currentThread?.sectionLatestMessage.id ?? threads[0]?.sectionLatestMessage.id ?? null
+        : selectNextMessage(
+            mailbox,
+            section,
+            currentThread?.sectionLatestMessage.id ?? selectedMessageId
+          );
 
       if (syncUrl) {
         updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
       }
+      if (authenticated) void mailboxController.refresh(section, '', 'all');
       return;
     }
 
@@ -557,6 +582,46 @@
     mailbox = merged.mailbox;
     mailboxPages = merged.mailboxPages;
     metrics = merged.metrics;
+    if (
+      activeSection === page.folder &&
+      (!selectedMessageId || !page.messages.some((message) => message.id === selectedMessageId))
+    ) {
+      selectedMessageId = page.messages[0]?.id ?? null;
+    }
+  }
+
+  function toggleBulkSelection(message: MailMessage) {
+    selectedMessageIds = selectedMessageIds.includes(message.id)
+      ? selectedMessageIds.filter((id) => id !== message.id)
+      : [...selectedMessageIds, message.id];
+  }
+
+  function selectAllVisible() {
+    const ids = activeSection === 'drafts' || activeSection === 'profile'
+      ? []
+      : visibleThreads.length
+        ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
+        : visibleMessages.map((message) => message.id);
+    selectedMessageIds = selectedMessageIds.length === ids.length ? [] : ids.slice(0, 100);
+  }
+
+  async function handleBulkMutation(action: import('$lib/domain/mail').MailboxMutationAction) {
+    if (!selectedMessageIds.length) return;
+    pending = true;
+    try {
+      const selected = [...visibleThreads.flatMap((thread) => [thread.sectionLatestMessage]), ...visibleMessages]
+        .filter((message, index, all) => selectedMessageIds.includes(message.id) && all.findIndex((candidate) => candidate.id === message.id) === index);
+      const threadKeys = selected.map((message) => message.threadKey).filter((key): key is string => Boolean(key));
+      const result = await mutateMailbox(action, selectedMessageIds, threadKeys);
+      metrics = result.result.metrics;
+      selectedMessageIds = [];
+      await refreshWorkspace();
+      banner = action === 'archive' ? '已归档所选邮件。' : action === 'unarchive' ? '已将所选邮件移回收件箱。' : '已更新所选邮件状态。';
+    } catch (error) {
+      banner = error instanceof Error ? error.message : '批量更新邮件失败。';
+    } finally {
+      pending = false;
+    }
   }
 
   const mailboxController = new MailboxController(fetchMailboxPage, {
@@ -581,6 +646,7 @@
     composeTouched = false;
     composeAutosavePending = false;
     draftConflict = null;
+    draftConflictLocalEditedAt = null;
     composeAutosaveStatus = initialInput?.draftId ? 'saved' : 'idle';
     composeAutosaveMessage = initialInput?.draftId
       ? '草稿内容已载入，继续编辑后会自动保存。'
@@ -707,6 +773,7 @@
     } catch (error) {
       if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
         draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+        draftConflictLocalEditedAt = new Date().toISOString();
         composeAutosaveStatus = 'error';
         composeAutosaveMessage = '服务器版本已更新，请选择如何处理冲突。';
       }
@@ -747,7 +814,11 @@
         );
       } else {
         composeDraftId = result.message.id;
-        if (composeLiveInput) composeLiveInput = { ...composeLiveInput, draftId: result.message.id };
+        if (composeLiveInput) composeLiveInput = {
+          ...composeLiveInput,
+          draftId: result.message.id,
+          expectedUpdatedAt: result.message.sentAt
+        };
         composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id });
         composeTouched = true;
         composeAutosaveStatus = 'dirty';
@@ -757,6 +828,7 @@
       if (save.isActive()) {
         if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
           draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+          draftConflictLocalEditedAt = new Date().toISOString();
         }
         composeAutosaveStatus = 'error';
         composeAutosaveMessage = error instanceof Error ? error.message : '自动保存失败。';
@@ -856,14 +928,17 @@
 
   function loadServerDraft() {
     if (!draftConflict) return;
+    composeInitialInput = composeInputFromSavedDraft(draftConflict);
     syncComposeDraftState(draftConflict, '已载入服务器版本。');
     draftConflict = null;
+    draftConflictLocalEditedAt = null;
   }
 
   async function saveDraftCopy() {
     const local = composeLiveInput;
     if (!local) return;
     draftConflict = null;
+    draftConflictLocalEditedAt = null;
     await saveDraft({ ...local, draftId: undefined, saveAsCopy: true });
   }
 
@@ -873,6 +948,7 @@
     const expectedUpdatedAt = draftConflict.sentAt;
     const draftId = draftConflict.id;
     draftConflict = null;
+    draftConflictLocalEditedAt = null;
     await saveDraft({ ...local, draftId, expectedUpdatedAt, overwrite: true });
   }
 
@@ -957,17 +1033,27 @@
     banner = '你正在继续编辑一封草稿。';
   }
 
-  function handleReplyMessage(message: MailMessage) {
-    const quotedBody =
-      isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? message.body : message.body;
+  async function handleReplyMessage(message: MailMessage) {
+    if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
+      if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
+        banner = '正文尚未载入，暂时无法引用回复。';
+        return;
+      }
+    }
+    const quotedBody = isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? '' : message.body;
 
     openCompose('reply', createReplyComposeInput(message, quotedBody));
     banner = `正在回复《${message.subject}》。`;
   }
 
-  function handleForwardMessage(message: MailMessage) {
-    const forwardedBody =
-      isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? message.body : message.body;
+  async function handleForwardMessage(message: MailMessage) {
+    if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
+      if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
+        banner = '正文尚未载入，暂时无法引用转发。';
+        return;
+      }
+    }
+    const forwardedBody = isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? '' : message.body;
 
     openCompose('forward', createForwardComposeInput(message, forwardedBody));
     banner = `正在转发《${message.subject}》。`;
@@ -1118,6 +1204,25 @@
                     onFilterChange={handleFilterChange}
                     onRefresh={refreshWorkspace}
                   />
+                  {#if activeSection !== 'drafts'}
+                    <div class="flex flex-wrap items-center gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2" aria-label="批量邮件操作">
+                      <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={selectAllVisible}>
+                        {selectedMessageIds.length ? '取消选择' : '选择当前页'}
+                      </button>
+                      {#if selectedMessageIds.length > 0}
+                        {#if activeSection === 'archive'}
+                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unarchive')}>移回收件箱</button>
+                        {:else if activeSection === 'inbox'}
+                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('archive')}>归档</button>
+                        {/if}
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('read')}>标记已读</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unread')}>标记未读</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('star')}>加星标</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unstar')}>取消星标</button>
+                        <span class="text-xs text-[var(--fm-text-muted)]">已选 {selectedMessageIds.length} 封</span>
+                      {/if}
+                    </div>
+                  {/if}
                   <MessageList
                     activeSection={activeSection}
                     messages={activeMessages}
@@ -1137,6 +1242,9 @@
                     onClearFilters={clearMailFilters}
                     onRefresh={refreshWorkspace}
                     onLoadMore={loadMoreMailbox}
+                    selectable={activeSection !== 'drafts'}
+                    selectedMessageIds={selectedMessageIds}
+                    onToggleSelect={toggleBulkSelection}
                   />
                 </section>
                 <section class="mail-detail-panel" aria-label="邮件详情">
@@ -1188,6 +1296,7 @@
         onClose={closeCompose}
         onDiscard={discardCompose}
         draftConflict={draftConflict}
+        localEditedAt={draftConflictLocalEditedAt}
         onLoadServerDraft={loadServerDraft}
         onSaveDraftCopy={saveDraftCopy}
         onOverwriteServerDraft={overwriteServerDraft}

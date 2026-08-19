@@ -19,6 +19,11 @@ export async function findUserById(db: D1Database, userId: string) {
   return db.prepare(`SELECT ${userSelect} FROM workspace_users WHERE id = ?`).bind(userId).first<WorkspaceUserRow>();
 }
 
+export async function findUserInboundNotificationSettings(db: D1Database, userId: string) {
+  return db.prepare(`SELECT id, forwarding_enabled FROM workspace_users WHERE id = ?`)
+    .bind(userId).first<{ id: string; forwarding_enabled: number }>();
+}
+
 export async function updateUserProfile(db: D1Database, userId: string, profile: ReturnType<typeof mapUserRowToProfile>) {
   await db.prepare(`
     UPDATE workspace_users SET name = ?, role = ?, email = ?, company = ?, location = ?, timezone = ?, forwarding_enabled = ?, signature = ?, updated_at = ?

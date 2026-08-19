@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Check, CircleAlert, CircleCheck, Clock3, Eye, ExternalLink, MousePointerClick, RefreshCw, Send, TriangleAlert } from '@lucide/svelte';
+  import { getDeliveryRetryEligibility } from '$lib/domain/mail';
   import type { DeliveryDetail, DeliveryEvent, DeliveryEventType, DeliveryStatus, MailMessage } from '$lib/domain/mail';
   import { StatusBadge } from '$lib/components/ui';
 
@@ -88,14 +89,17 @@
   const sortedEvents = $derived(
     [...(deliveryDetail?.events ?? [])].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   );
-  const retryable = $derived(
-    Boolean(
-      message?.folder === 'sent' &&
-        ((message.deliveryStatus && ['queued', 'submitting', 'submitted', 'delayed', 'failed'].includes(message.deliveryStatus)) ||
-          message.deliveryResultKind === 'temporary_failure' ||
-          message.deliveryResultKind === 'rate_limited')
-    )
+  const retryEligibility = $derived(
+    message?.folder === 'sent' && message.deliveryStatus
+      ? getDeliveryRetryEligibility({
+        status: message.deliveryStatus,
+        resultKind: message.deliveryResultKind,
+        idempotencyKey: message.deliveryIdempotencyKey,
+        attemptStartedAt: message.deliveryAttemptStartedAt
+      })
+      : null
   );
+  const retryable = $derived(Boolean(retryEligibility?.eligible));
 
   const statusTone = (status: string | null): 'success' | 'warning' | 'danger' | 'neutral' => {
     if (status === 'delivered' || status === 'sent') return 'success';

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createForwardComposeInput, createReplyComposeInput } from './compose';
-import { applyDeliveryEvent, transitionDeliveryStatus } from './delivery';
+import { applyDeliveryEvent, getDeliveryRetryEligibility, isDeliveryRetryable, transitionDeliveryStatus } from './delivery';
 import { buildMailThreads, getMailThreadKey } from './thread';
 import type { MailMessage } from './types';
 import { isValidEmail, sanitizeContentDisposition, sanitizeFilename, validateComposeInput } from './validation';
@@ -70,6 +70,35 @@ describe('compose domain', () => {
 });
 
 describe('delivery domain', () => {
+  test('shares conservative retry eligibility across every status and result kind', () => {
+    const now = '2026-08-19T12:00:00.000Z';
+    const retryableStatuses = new Set(['submitting', 'delayed', 'failed']);
+    const resultKinds = [null, 'accepted', 'queued', 'temporary_failure', 'permanent_failure', 'rate_limited'] as const;
+    const statuses = ['draft', 'queued', 'submitting', 'submitted', 'sent', 'delivered', 'delayed', 'bounced', 'failed', 'complained', 'suppressed'] as const;
+
+    for (const status of statuses) {
+      expect(isDeliveryRetryable(status)).toBe(retryableStatuses.has(status));
+      for (const resultKind of resultKinds) {
+        const eligibility = getDeliveryRetryEligibility({
+          status,
+          resultKind,
+          idempotencyKey: 'flaremail:send:user-1:request-1',
+          attemptStartedAt: '2026-08-19T11:59:00.000Z',
+          now
+        });
+        expect(eligibility.eligible).toBe(retryableStatuses.has(status) && !['accepted', 'queued'].includes(resultKind ?? ''));
+      }
+    }
+  });
+
+  test('requires a durable key and a current attempt age before retrying', () => {
+    const base = { status: 'failed' as const, resultKind: 'temporary_failure' as const, attemptStartedAt: '2026-08-19T11:59:00.000Z', now: '2026-08-19T12:00:00.000Z' };
+    expect(getDeliveryRetryEligibility(base).code).toBe('idempotency_key_missing');
+    expect(getDeliveryRetryEligibility({ ...base, idempotencyKey: 'key', attemptStartedAt: null }).code).toBe('attempt_age_missing');
+    expect(getDeliveryRetryEligibility({ ...base, idempotencyKey: 'key', attemptStartedAt: '2026-08-18T12:00:00.000Z' }).code).toBe('idempotency_window_expired');
+    expect(getDeliveryRetryEligibility({ ...base, idempotencyKey: 'key', attemptStartedAt: 'not-a-date' }).code).toBe('attempt_age_invalid');
+  });
+
   test('does not regress terminal delivery state or let engagement overwrite it', () => {
     const delivered = { status: 'delivered' as const, lastEvent: null, lastEventAt: null };
     expect(transitionDeliveryStatus('delivered', 'failed')).toBe('delivered');

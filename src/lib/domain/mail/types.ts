@@ -7,7 +7,17 @@
  */
 
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
+/** A persisted mail folder plus the user-facing archive section. */
+export type MailboxSection = MailFolder | 'archive';
 export type MailSource = 'workspace' | 'inbound';
+
+export type MailboxMutationAction = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar';
+
+export interface MailboxMutationRequest {
+  action: MailboxMutationAction;
+  ids?: string[];
+  threadKeys?: string[];
+}
 
 export type DeliveryStatus =
   | 'draft'
@@ -107,6 +117,10 @@ export interface MailMessage extends MailRfcHeaders {
   deliveryResponsePreview?: string;
   deliveryLastEvent?: DeliveryEventType | null;
   deliveryLastEventAt?: string | null;
+  deliveryIdempotencyKey?: string | null;
+  deliveryAttemptStartedAt?: string | null;
+  /** Non-null only when an inbox message is in the archive section. */
+  archivedAt?: string | null;
 }
 
 export interface MailboxState {
@@ -157,7 +171,7 @@ export interface WorkspacePayload {
 export type MailboxFilter = 'all' | 'unread' | 'starred';
 
 export interface MailboxPage {
-  folder: MailFolder;
+  folder: MailboxSection;
   messages: MailMessage[];
   nextCursor: string | null;
   hasMore: boolean;
@@ -166,6 +180,28 @@ export interface MailboxPage {
   filter: MailboxFilter;
   deliveryStatus: DeliveryStatus | null;
   metrics?: WorkspaceMetrics;
+}
+
+export interface MailboxMessageSummary {
+  id: string;
+  folder: Exclude<MailFolder, 'drafts'>;
+  source: MailSource;
+  threadKey: string | null;
+  read: boolean;
+  starred: boolean;
+  archivedAt: string | null;
+}
+
+export interface MailboxMovement {
+  id: string;
+  from: 'inbox' | 'archive';
+  to: 'inbox' | 'archive';
+}
+
+export interface MailboxMutationResult {
+  summaries: MailboxMessageSummary[];
+  metrics: WorkspaceMetrics;
+  movement: MailboxMovement[];
 }
 
 export interface DeliveryEvent {

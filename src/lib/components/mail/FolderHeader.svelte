@@ -3,9 +3,9 @@
   import { IconButton } from '$lib/components/ui';
   import MailFilterBar, { type MailFilter } from './MailFilterBar.svelte';
   import MailSearchBar from './MailSearchBar.svelte';
-  import type { MailFolder } from '$lib/domain/mail';
+  import type { MailboxSection } from '$lib/domain/mail';
 
-  type AppSection = MailFolder | 'profile';
+  type AppSection = MailboxSection | 'profile';
 
   let {
     activeSection,
@@ -35,6 +35,7 @@
     inbox: '收件箱',
     sent: '已发送',
     drafts: '草稿箱',
+    archive: '归档',
     profile: '个人资料'
   };
 

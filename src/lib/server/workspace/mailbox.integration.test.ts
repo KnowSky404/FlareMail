@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { SQLQueryBindings } from 'bun:sqlite';
-import { loadMailboxPage } from './mailbox';
+import { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox } from './mailbox';
 import type { WorkspaceContext } from './shared';
 
 class TestStatement {
@@ -23,12 +23,24 @@ class TestStatement {
   async first<T>() {
     return (this.database.query(this.sql).get(...this.bindings as SQLQueryBindings[]) ?? null) as T | null;
   }
+
+  async run() {
+    const result = this.database.query(this.sql).run(...this.bindings as SQLQueryBindings[]);
+    return { meta: { changes: Number(result.changes) } };
+  }
 }
 
 class TestD1 {
+  queries: string[] = [];
   constructor(private readonly database: Database) {}
   prepare(sql: string) {
+    this.queries.push(sql);
     return new TestStatement(this.database, sql) as unknown as D1PreparedStatement;
+  }
+
+  async batch(statements: D1PreparedStatement[]) {
+    for (const statement of statements) await (statement as unknown as TestStatement).run();
+    return [];
   }
 }
 
@@ -100,12 +112,14 @@ function fixture() {
   };
   return {
     env: { DB: new TestD1(database) as unknown as D1Database, BUCKET: {} as R2Bucket },
-    workspace
+    workspace,
+    database
   };
 }
 
 const query = (folder: 'inbox' | 'sent' | 'drafts', overrides: Record<string, unknown> = {}) => ({
   folder,
+  section: folder,
   cursor: null,
   limit: 40,
   query: '',
@@ -158,5 +172,99 @@ describe('D1 mailbox pages', () => {
       unreadCount: 2,
       starredCount: 2
     });
+  });
+
+  test('loads only the active inbox page, selects no inbound body, and computes metrics once', async () => {
+    const { env, workspace } = fixture();
+    const db = env.DB as unknown as TestD1;
+    const loaded = await loadWorkspaceSnapshot(env, workspace);
+
+    expect(loaded.workspace.activeFolder).toBe('inbox');
+    expect(Object.keys(loaded.pages)).toEqual(['inbox']);
+    expect(loaded.workspace.mailbox.sent).toEqual([]);
+    expect(loaded.workspace.mailbox.drafts).toEqual([]);
+    expect(loaded.workspace.activePage.cursor).toBeNull();
+    expect(loaded.workspace.activePage.status).toBeNull();
+    expect(loaded.workspace.activePage.hasMore).toBe(false);
+    expect(loaded.workspace.activePage.messages.find((message) => message.source === 'inbound')?.body).toBe('');
+    expect(db.queries.filter((sql) => sql.includes('SELECT d.id'))).toHaveLength(0);
+    expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(1);
+    expect(db.queries.filter((sql) => sql.includes('SELECT COUNT(*)'))).toHaveLength(1);
+    expect(db.queries.some((sql) => /\btext_body\b/u.test(sql))).toBe(false);
+  });
+
+  test('fresh-login snapshot exposes metrics and a usable next cursor for the active folder', async () => {
+    const { env, workspace, database } = fixture();
+    for (let index = 0; index < 45; index += 1) {
+      database.query(`
+        INSERT INTO workspace_messages (
+          id, user_id, folder, from_name, from_email, to_name, to_email,
+          subject, preview, body, sent_at, labels_json, is_read, is_starred
+        ) VALUES (?, 'user-1', 'inbox', 'Bulk', 'bulk@example.test', 'Ada', 'ada@example.test',
+          'Bulk subject', 'Bulk preview', 'Bulk body', ?, '[]', 1, 0)
+      `).run(`bulk-${index}`, new Date(1_800_000_000_000 - index).toISOString());
+    }
+
+    const loaded = await loadWorkspaceSnapshot(env, workspace);
+    const firstPage = loaded.workspace.activePage;
+    expect(loaded.workspace.metrics.inboxCount).toBe(48);
+    expect(firstPage.messages).toHaveLength(40);
+    expect(firstPage.hasMore).toBe(true);
+    expect(firstPage.nextCursor).not.toBeNull();
+
+    const nextPage = await loadMailboxPage(env, workspace, query('inbox', {
+      cursor: {
+        version: 1,
+        folder: 'inbox',
+        timestamp: firstPage.messages.at(-1)!.sentAt,
+        id: firstPage.messages.at(-1)!.id
+      }
+    }));
+    expect(nextPage.messages.length).toBeGreaterThan(0);
+    expect(nextPage.metrics).toBeUndefined();
+  });
+
+  test('loads sent on demand without preloading inbox or drafts pages', async () => {
+    const { env, workspace } = fixture();
+    const db = env.DB as unknown as TestD1;
+    const loaded = await loadWorkspaceSnapshot(env, workspace, { activeFolder: 'sent' });
+
+    expect(loaded.workspace.activeFolder).toBe('sent');
+    expect(Object.keys(loaded.pages)).toEqual(['sent']);
+    expect(loaded.workspace.mailbox.inbox).toEqual([]);
+    expect(loaded.workspace.mailbox.drafts).toEqual([]);
+    expect(db.queries.filter((sql) => sql.includes('SELECT e.id AS email_id'))).toHaveLength(0);
+    expect(db.queries.filter((sql) => sql.includes('SELECT d.id'))).toHaveLength(0);
+    expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(1);
+  });
+
+  test('archives and restores mixed inbound/workspace selections atomically', async () => {
+    const { env, workspace, database } = fixture();
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive',
+      messageIds: ['inbox-z', 'email:incoming-1', 'inbox-z']
+    });
+
+    expect(result.summaries).toHaveLength(2);
+    expect(result.movement.map((item) => item.id).sort()).toEqual(['email:incoming-1', 'inbox-z']);
+    expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).not.toBeNull();
+    expect((database.query(`SELECT archived_at FROM workspace_email_states WHERE user_id = 'user-1' AND email_message_id = 'incoming-1'`).get() as { archived_at: string | null }).archived_at).not.toBeNull();
+
+    const archivePage = await loadMailboxPage(env, workspace, query('inbox', { section: 'archive' }));
+    expect(archivePage.folder).toBe('archive');
+    expect(archivePage.messages.map(({ id }) => id).sort()).toEqual(['email:incoming-1', 'inbox-z']);
+
+    await mutateWorkspaceMailbox(env, workspace, { action: 'unarchive', messageIds: ['inbox-z', 'email:incoming-1'] });
+    const inboxPage = await loadMailboxPage(env, workspace, query('inbox'));
+    expect(inboxPage.messages.map(({ id }) => id).sort()).toEqual(['email:incoming-1', 'inbox-a', 'inbox-z']);
+  });
+
+  test('rejects a partially owned selection before issuing a mutation', async () => {
+    const { env, workspace, database } = fixture();
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive',
+      messageIds: ['inbox-z', 'not-owned']
+    })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+    expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).toBeNull();
   });
 });

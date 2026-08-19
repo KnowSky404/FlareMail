@@ -1,7 +1,8 @@
 import type {
   DeliveryStatus,
   MailFolder,
-  MailboxFilter
+  MailboxFilter,
+  MailboxSection
 } from '$lib/domain/mail';
 import { ApiError } from '$lib/server/http/api';
 
@@ -18,12 +19,14 @@ const deliveryStatuses = new Set<DeliveryStatus>([
 export interface MailboxCursor {
   version: 1;
   folder: MailFolder;
+  section?: MailboxSection;
   timestamp: string;
   id: string;
 }
 
 export interface MailboxQuery {
   folder: MailFolder;
+  section?: MailboxSection;
   cursor: MailboxCursor | null;
   limit: number;
   query: string;
@@ -43,7 +46,7 @@ export function encodeMailboxCursor(cursor: Omit<MailboxCursor, 'version'>): str
     .replace(/=+$/u, '');
 }
 
-export function decodeMailboxCursor(value: string, folder: MailFolder): MailboxCursor {
+export function decodeMailboxCursor(value: string, folder: MailFolder, section: MailboxSection = folder): MailboxCursor {
   try {
     const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
@@ -51,6 +54,7 @@ export function decodeMailboxCursor(value: string, folder: MailFolder): MailboxC
     if (
       parsed.version !== 1 ||
       parsed.folder !== folder ||
+      (parsed.section !== undefined && parsed.section !== section) ||
       typeof parsed.timestamp !== 'string' ||
       !isIsoTimestamp(parsed.timestamp) ||
       typeof parsed.id !== 'string' ||
@@ -66,12 +70,20 @@ export function decodeMailboxCursor(value: string, folder: MailFolder): MailboxC
 
 export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   const folderValue = params.get('folder') ?? 'inbox';
-  if (!folders.has(folderValue as MailFolder)) {
+  const sectionValue = params.get('section') ?? folderValue;
+  if (folderValue !== 'archive' && !folders.has(folderValue as MailFolder)) {
     throw new ApiError(400, 'INVALID_FOLDER', '邮件文件夹无效。', {
       folder: ['仅支持 inbox、sent 或 drafts。']
     });
   }
-  const folder = folderValue as MailFolder;
+  const section = sectionValue as MailboxSection;
+  if (!['inbox', 'sent', 'drafts', 'archive'].includes(section)) {
+    throw new ApiError(400, 'INVALID_SECTION', '邮件分区无效。');
+  }
+  const folder = section === 'archive' ? 'inbox' : folderValue as MailFolder;
+  if (section === 'archive' && folderValue !== 'archive' && folderValue !== 'inbox') {
+    throw new ApiError(400, 'INVALID_SECTION', '归档分区必须使用 inbox 或 archive 查询。');
+  }
 
   const filterValue = params.get('filter') ?? 'all';
   if (!filters.has(filterValue as MailboxFilter)) {
@@ -96,7 +108,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   }
 
   const statusValue = params.get('status');
-  if (statusValue && (folder !== 'sent' || !deliveryStatuses.has(statusValue as DeliveryStatus))) {
+  if (statusValue && (section !== 'sent' || !deliveryStatuses.has(statusValue as DeliveryStatus))) {
     throw new ApiError(400, 'INVALID_DELIVERY_STATUS', '投递状态筛选无效。', {
       status: ['投递状态仅适用于已发送邮件。']
     });
@@ -105,7 +117,8 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   const cursorValue = params.get('cursor');
   return {
     folder,
-    cursor: cursorValue ? decodeMailboxCursor(cursorValue, folder) : null,
+    cursor: cursorValue ? decodeMailboxCursor(cursorValue, folder, section) : null,
+    section,
     limit,
     query,
     filter: filterValue as MailboxFilter,

@@ -1,15 +1,16 @@
 <script lang="ts">
   import FileText from '@lucide/svelte/icons/file-text';
+  import Archive from '@lucide/svelte/icons/archive';
   import Inbox from '@lucide/svelte/icons/inbox';
   import Menu from '@lucide/svelte/icons/menu';
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
   import { Drawer } from '$lib/components/ui';
-  import type { MailFolder } from '$lib/domain/mail';
+  import type { MailboxSection } from '$lib/domain/mail';
   import BrandMark from './BrandMark.svelte';
 
-  type AppSection = MailFolder | 'profile';
+  type AppSection = MailboxSection | 'profile';
 
   let {
     activeSection,
@@ -33,6 +34,7 @@
     inbox: '收件箱',
     sent: '已发送',
     drafts: '草稿箱',
+    archive: '归档',
     profile: '设置'
   };
 
@@ -63,6 +65,9 @@
       </button>
       <button class:active={activeSection === 'drafts'} type="button" onclick={() => select('drafts')}>
         <FileText size={19} aria-hidden="true" /><span>草稿箱</span><small>{draftCount || ''}</small>
+      </button>
+      <button class:active={activeSection === 'archive'} type="button" onclick={() => select('archive')}>
+        <Archive size={19} aria-hidden="true" /><span>归档</span>
       </button>
       <button class:active={activeSection === 'profile'} type="button" onclick={() => select('profile')}>
         <Settings size={19} aria-hidden="true" /><span>设置</span>

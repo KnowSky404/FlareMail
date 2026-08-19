@@ -44,6 +44,23 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('archives and restores a selected mailbox message', async ({ page, consoleErrors }) => {
+  await login(page);
+  const label = page.getByLabel('选择E2E Inbox Welcome');
+  await expect(label).toBeVisible();
+  await label.check();
+  await page.getByRole('button', { name: '归档', exact: true }).last().click();
+  await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+  await openFolder(page, '归档');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await page.getByLabel('选择E2E Inbox Welcome').check();
+  await page.getByRole('button', { name: '移回收件箱', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: '已将所选邮件移回收件箱' })).toBeVisible();
+  await openFolder(page, '收件箱');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();

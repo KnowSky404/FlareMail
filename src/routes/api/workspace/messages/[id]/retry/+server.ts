@@ -3,6 +3,14 @@ import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/ser
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
 import { retryWorkspaceMessageDelivery } from '$lib/server/workspace';
 import { isOutboundGatewayError } from '$lib/server/outbound/gateway';
+import { DeliveryNotRetryableError } from '$lib/server/workspace/delivery';
+
+export function _mapDeliveryRetryError(error: unknown) {
+  if (error instanceof DeliveryNotRetryableError) {
+    return new ApiError(409, 'DELIVERY_NOT_RETRYABLE', '当前邮件已存在，但当前投递状态不允许普通重试。', undefined, { reason: error.reason });
+  }
+  return null;
+}
 
 export const POST: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
@@ -11,6 +19,8 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
     if (!result) throw new ApiError(404, 'DELIVERY_RETRY_NOT_AVAILABLE', '当前邮件不支持重试投递。');
     return apiSuccess(event, result);
   } catch (error) {
+    const retryError = _mapDeliveryRetryError(error);
+    if (retryError) throw retryError;
     if (isOutboundGatewayError(error) && error.kind === 'configuration') {
       throw new ApiError(503, 'OUTBOUND_UNAVAILABLE', '出站邮件服务尚未正确配置。');
     }

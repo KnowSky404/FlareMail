@@ -102,7 +102,8 @@ describe('versioned D1 migrations', () => {
       '0006_inbound_ownership.sql',
       '0007_outbound_contracts.sql',
       '0008_login_rate_limits.sql',
-      '0009_inbound_ingest_claims.sql'
+      '0009_inbound_ingest_claims.sql',
+      '0010_mailbox_archive_and_bulk.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -117,7 +118,7 @@ describe('versioned D1 migrations', () => {
         'id', 'user_id', 'folder', 'from_name', 'from_email', 'to_name', 'to_email', 'subject', 'preview', 'body',
         'sent_at', 'labels_json', 'is_read', 'is_starred', 'created_at', 'updated_at', 'message_id', 'in_reply_to',
         'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key', 'provider_message_id',
-        'idempotency_key'
+        'idempotency_key', 'archived_at'
       ])
     );
     expect(tableColumns(db, 'workspace_users')).toEqual(
@@ -163,8 +164,11 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_inbound_ingest_claims')).toEqual(
       new Set(['dedupe_key', 'storage_id', 'claim_token', 'raw_key', 'status', 'created_at', 'updated_at', 'completed_at'])
     );
+    expect(tableColumns(db, 'workspace_email_states')).toEqual(
+      new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
+    );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 9 }
+      { schema_name: 'flaremail', schema_version: 10 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -181,6 +185,8 @@ describe('versioned D1 migrations', () => {
         'idx_workspace_delivery_statuses_user_status'
       ])
     );
+    expect(indexNames(db, 'workspace_messages')).toContain('idx_workspace_messages_user_folder_archived');
+    expect(indexNames(db, 'workspace_email_states')).toContain('idx_workspace_email_states_user_archived');
     expect(indexNames(db, 'workspace_attachments')).toEqual(
       new Set(['idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id'])
     );

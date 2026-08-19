@@ -1,3 +1,4 @@
+import { getDeliveryRetryEligibility, type DeliveryRetryEligibilityCode } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { normalizeResendWebhookEvent, type NormalizedResendWebhookEvent } from '$lib/server/resend-webhook';
 import { getWorkspaceCapabilities, hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
@@ -21,6 +22,63 @@ export class DeliveryPersistenceError extends Error {
     super(message);
     this.name = 'DeliveryPersistenceError';
   }
+}
+
+export type PersistedDeliveryRetryFailure = DeliveryRetryEligibilityCode
+  | 'delivery_state_missing'
+  | 'message_idempotency_key_missing'
+  | 'message_idempotency_key_mismatch'
+  | 'attempt_not_started';
+
+export class DeliveryNotRetryableError extends Error {
+  readonly code = 'DELIVERY_NOT_RETRYABLE';
+
+  constructor(readonly reason: PersistedDeliveryRetryFailure, message: string) {
+    super(message);
+    this.name = 'DeliveryNotRetryableError';
+  }
+}
+
+export interface PersistedDeliveryRetryInput {
+  status: Parameters<typeof getDeliveryRetryEligibility>[0]['status'];
+  resultKind: Parameters<typeof getDeliveryRetryEligibility>[0]['resultKind'];
+  attempts: number;
+  idempotencyKey: string | null | undefined;
+  messageIdempotencyKey: string | null | undefined;
+  attemptStartedAt: string | null | undefined;
+  now?: string | number | Date;
+}
+
+/**
+ * Server-side final validation for a same-key retry. The domain helper owns
+ * status/result/age rules; this layer additionally verifies durable database
+ * invariants that a client cannot be trusted to provide.
+ */
+export function assertPersistedDeliveryRetryable(input: PersistedDeliveryRetryInput) {
+  if (!input.messageIdempotencyKey?.trim()) {
+    throw new DeliveryNotRetryableError('message_idempotency_key_missing', 'The persisted message idempotency key is missing.');
+  }
+  if (!input.idempotencyKey?.trim()) {
+    throw new DeliveryNotRetryableError('idempotency_key_missing', 'The persisted delivery idempotency key is missing.');
+  }
+  if (input.messageIdempotencyKey !== input.idempotencyKey) {
+    throw new DeliveryNotRetryableError('message_idempotency_key_mismatch', 'The persisted message and delivery idempotency keys do not match.');
+  }
+  if (!Number.isSafeInteger(input.attempts) || input.attempts < 1) {
+    throw new DeliveryNotRetryableError('attempt_not_started', 'The persisted delivery has no completed attempt to retry.');
+  }
+
+  const eligibility = getDeliveryRetryEligibility({
+    status: input.status,
+    resultKind: input.resultKind,
+    idempotencyKey: input.idempotencyKey,
+    attemptStartedAt: input.attemptStartedAt,
+    now: input.now
+  });
+  if (!eligibility.eligible) {
+    throw new DeliveryNotRetryableError(eligibility.code, eligibility.reason);
+  }
+  return eligibility;
 }
 
 export async function getWorkspaceMessageDeliveryDetail(env: CloudflareEnv | undefined, session: WorkspaceContext, messageId: string) {

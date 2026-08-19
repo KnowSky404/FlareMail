@@ -155,7 +155,7 @@ export async function findOwnedInboundMessage(
 export async function findOwnedInboundState(db: D1Database, userId: string, messageId: string) {
   return db.prepare(`
     SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
-      e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body,
+      e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
@@ -163,6 +163,6 @@ export async function findOwnedInboundState(db: D1Database, userId: string, mess
   `).bind(userId, messageId, userId).first<{
     email_id: string; from: string; to: string; subject: string; timestamp: string; snippet: string;
     message_id: string | null; in_reply_to: string | null; references: string | null; thread_key: string | null;
-    text_body: string; is_read: number; is_starred: number;
+    text_body: string; archived_at: string | null; is_read: number; is_starred: number;
   }>();
 }

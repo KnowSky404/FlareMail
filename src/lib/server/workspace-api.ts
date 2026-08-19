@@ -2,6 +2,12 @@ import type { RequestEvent } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError } from '$lib/server/http/api';
 
+export type {
+  WorkspaceSnapshot,
+  WorkspaceSnapshotOptions,
+  WorkspaceSnapshotPage
+} from '$lib/server/workspace/mailbox';
+
 export function getRequestEnv(event: RequestEvent) {
   return event.platform?.env as CloudflareEnv | undefined;
 }

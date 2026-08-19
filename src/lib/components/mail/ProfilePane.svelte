@@ -149,8 +149,8 @@
       <Switch
         id="profile-forwarding"
         checked={nextProfile.forwardingEnabled}
-        label="转发入站邮件"
-        description="将收到的邮件转发到已配置的通知地址。"
+        label="入站邮件通知"
+        description="收到新邮件后，向运行时配置的通知地址发送一条摘要通知；不会转发原始邮件。"
         disabled={pending}
         onchange={(checked) => (nextProfile.forwardingEnabled = checked)}
       />

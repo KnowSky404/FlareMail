@@ -110,6 +110,7 @@ export interface WorkspaceMessageRow {
   thread_key?: string | null;
   cc?: string;
   idempotency_key?: string | null;
+  archived_at?: string | null;
 }
 
 export interface WorkspaceDraftRow {
@@ -142,6 +143,7 @@ export interface WorkspaceInboundRow {
   references?: string | null;
   thread_key?: string | null;
   text_body?: string;
+  archived_at?: string | null;
 }
 
 export interface WorkspaceOutboundStatusRow {
@@ -157,6 +159,8 @@ export interface WorkspaceOutboundStatusRow {
   response_preview: string;
   last_event: DeliveryEventType | null;
   last_event_at: string | null;
+  idempotency_key?: string | null;
+  attempt_started_at?: string | null;
 }
 
 export interface WorkspaceOutboundReceiptRow {
@@ -243,10 +247,13 @@ export const mapWorkspaceMessageRow = (
   deliveryResponsePreview: row.folder === 'sent' ? outboundStatus?.response_preview ?? '' : '',
   deliveryLastEvent: row.folder === 'sent' ? outboundStatus?.last_event ?? null : null,
   deliveryLastEventAt: row.folder === 'sent' ? outboundStatus?.last_event_at ?? null : null,
+  deliveryIdempotencyKey: row.folder === 'sent' ? outboundStatus?.idempotency_key ?? null : null,
+  deliveryAttemptStartedAt: row.folder === 'sent' ? outboundStatus?.attempt_started_at ?? null : null,
   messageId: row.message_id ?? null,
   inReplyTo: row.in_reply_to ?? null,
   references: row.references ?? null,
   threadKey: row.thread_key ?? null,
+  archivedAt: row.archived_at ?? null,
   cc: row.cc ?? ''
 });
 
@@ -287,7 +294,8 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile): M
     messageId: row.message_id,
     inReplyTo: row.in_reply_to,
     references: row.references,
-    threadKey: row.thread_key
+    threadKey: row.thread_key,
+    archivedAt: row.archived_at ?? null
   };
 }
 

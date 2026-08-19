@@ -99,6 +99,37 @@ const environment = (failBatch = false) => {
   return { database, DB, BUCKET, env: { DB, BUCKET, OUTBOUND_PROVIDER: 'demo' } as unknown as import('./cloudflare').CloudflareEnv };
 };
 
+const captureResend = async <T>(action: () => Promise<T>) => {
+  const previousFetch = globalThis.fetch;
+  const requests: RequestInit[] = [];
+  globalThis.fetch = (async (_input, init) => {
+    requests.push(init ?? {});
+    return new Response(JSON.stringify({ id: 're_notification' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  }) as typeof fetch;
+  try {
+    return { requests, result: await action() };
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+};
+
+const notificationEnvironment = () => {
+  const test = environment();
+  test.env = {
+    ...test.env,
+    APP_ENV: 'test',
+    OUTBOUND_PROVIDER: 'resend',
+    RESEND_API_KEY: 'test-key',
+    OUTBOUND_FROM_EMAIL: 'mail@example.test',
+    INBOUND_NOTIFICATION_ENABLED: 'true',
+    NOTIFICATION_EMAIL: 'ops@example.test'
+  } as unknown as import('./cloudflare').CloudflareEnv;
+  return test;
+};
+
 describe('inbound email persistence', () => {
   test('stores raw, parsed metadata and attachment exactly once', async () => {
     const test = environment();
@@ -129,6 +160,48 @@ describe('inbound email persistence', () => {
     test.env.NOTIFICATION_EMAIL = 'ops@example.test';
     await handleInboundEmail(message().value, test.env);
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+  });
+
+  test('sends an inbound notification only when the resolved owner opted in', async () => {
+    const test = notificationEnvironment();
+    test.database.query(`UPDATE workspace_users SET forwarding_enabled = 1 WHERE id = 'user-1'`).run();
+    const captured = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'owner@example.test').value, test.env));
+    expect(captured.requests).toHaveLength(1);
+    const payload = JSON.parse(String(captured.requests[0]?.body)) as { to: string[]; tags: Array<{ name: string; value: string }>; text: string };
+    expect(payload.to).toEqual(['ops@example.test']);
+    expect(payload.tags).toContainEqual({ name: 'flaremail_kind', value: 'inbound_notification' });
+    expect(payload.text).toContain('A new inbound message was stored.');
+    expect(payload.text).not.toContain('The original email was forwarded.');
+  });
+
+  test('honors global and per-user notification switches without inheriting another owner setting', async () => {
+    const disabled = notificationEnvironment();
+    const disabledCapture = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'owner@example.test').value, disabled.env));
+    expect(disabledCapture.requests).toHaveLength(0);
+
+    const globalOff = notificationEnvironment();
+    globalOff.database.query(`UPDATE workspace_users SET forwarding_enabled = 1 WHERE id = 'user-1'`).run();
+    globalOff.env.INBOUND_NOTIFICATION_ENABLED = 'false';
+    const globalOffCapture = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'owner@example.test').value, globalOff.env));
+    expect(globalOffCapture.requests).toHaveLength(0);
+
+    const unknownOwner = notificationEnvironment();
+    const unknownCapture = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'unknown@example.test').value, unknownOwner.env));
+    expect(unknownCapture.requests).toHaveLength(0);
+
+    const multiUser = notificationEnvironment();
+    multiUser.database.query(`UPDATE workspace_users SET forwarding_enabled = 1 WHERE id = 'user-1'`).run();
+    multiUser.database.query(`INSERT INTO workspace_users
+      (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
+      VALUES ('user-2', 'second@example.test', 'Second', 'Member', 'second@example.test', '', '', 'UTC', 0, '', 0)`).run();
+    const firstOwner = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'owner@example.test').value, multiUser.env));
+    const secondOwner = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'second@example.test').value, multiUser.env));
+    expect(firstOwner.requests).toHaveLength(1);
+    expect(secondOwner.requests).toHaveLength(0);
+    expect(multiUser.database.query(`SELECT owner_user_id FROM email_messages ORDER BY created_at ASC`).all()).toEqual([
+      { owner_user_id: 'user-1' },
+      { owner_user_id: 'user-2' }
+    ]);
   });
 
   test('stores an unknown recipient without assigning readable ownership', async () => {

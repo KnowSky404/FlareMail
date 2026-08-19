@@ -1,49 +1,142 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { getWorkspaceCapabilities, hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
+import { ApiError } from '$lib/server/http/api';
+import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import {
   getMailboxMetrics,
   listDraftPage,
-  listInboundMessagePage,
   listWorkspaceMessagePage,
   mapPageDeliveryStatus
 } from '$lib/server/db/mailbox';
-import { listDrafts } from '$lib/server/db/drafts';
-import { listInboundMessages, listMessages } from '$lib/server/db/messages';
+import {
+  buildMailboxMutationStatements,
+  listOwnedMailboxMutationRows,
+  resolveOwnedMailboxThreadMessageIds
+} from '$lib/server/db/messages';
 import { findSessionJoin, findSessionJoinByTokenHash } from '$lib/server/db/sessions';
-import { listOutboundStatuses } from '$lib/server/db/deliveries';
 import {
   mapDraftRow,
   mapInboundRow,
   mapUserRowToProfile,
   mapWorkspaceMessageRow,
-  rowsToMailbox,
   serializeWorkspace,
   sortMessages,
-  type MailboxPage,
+  type WorkspaceInboundRow,
   type WorkspaceContext,
   type WorkspaceSession
 } from '$lib/server/workspace/shared';
-import { encodeMailboxCursor, type MailboxQuery } from '$lib/server/workspace/mailbox-query';
-import type { MailFolder, WorkspacePayload } from '$lib/domain/mail';
+import { encodeMailboxCursor, parseMailboxQuery, type MailboxQuery } from '$lib/server/workspace/mailbox-query';
+import type {
+  DeliveryStatus,
+  MailFolder,
+  MailboxFilter,
+  MailboxMessageSummary,
+  MailboxMovement,
+  MailboxMutationAction,
+  MailboxMutationResult,
+  MailboxPage,
+  MailboxSection,
+  MailboxState,
+  UserProfile,
+  WorkspaceMetrics
+} from '$lib/domain/mail';
+
+export function parseArchiveMailboxQuery(params: URLSearchParams): MailboxQuery {
+  const normalized = new URLSearchParams(params);
+  normalized.set('folder', 'inbox');
+  normalized.set('section', 'archive');
+  return parseMailboxQuery(normalized);
+}
 
 export { serializeWorkspace };
 
+export type WorkspaceSnapshotPage = MailboxPage & {
+  cursor: string | null;
+  status: DeliveryStatus | null;
+};
+
+export interface WorkspaceSnapshot {
+  profile: UserProfile;
+  metrics: WorkspaceMetrics;
+  activeFolder: MailboxSection;
+  activePage: WorkspaceSnapshotPage;
+  mailbox: MailboxState;
+  mailboxPages: Partial<Record<MailboxSection, WorkspaceSnapshotPage>>;
+}
+
+export interface WorkspaceSnapshotOptions {
+  activeFolder?: MailboxSection;
+  limit?: number;
+  query?: string;
+  filter?: MailboxFilter;
+  deliveryStatus?: DeliveryStatus | null;
+}
+
+const maxMailboxMutationIds = 100;
+
+export interface WorkspaceMailboxMutationInput {
+  action: MailboxMutationAction;
+  messageIds: string[];
+  threadKeys?: string[];
+}
+
+export async function mutateWorkspaceMailbox(
+  env: CloudflareEnv,
+  workspace: WorkspaceContext,
+  input: WorkspaceMailboxMutationInput
+): Promise<MailboxMutationResult> {
+  const directIds = [...new Set(input.messageIds.map((id) => id.trim()).filter(Boolean))];
+  const threadKeys = [...new Set((input.threadKeys ?? []).map((key) => key.trim()).filter(Boolean))];
+  const resolvedIds = threadKeys.length
+    ? await resolveOwnedMailboxThreadMessageIds(env.DB, workspace.userId, threadKeys)
+    : [];
+  const messageIds = [...new Set([...directIds, ...resolvedIds])];
+  if (messageIds.length === 0) throw new ApiError(400, 'MAILBOX_SELECTION_EMPTY', '请选择至少一封邮件。');
+  if (messageIds.length > maxMailboxMutationIds) {
+    throw new ApiError(400, 'MAILBOX_SELECTION_TOO_LARGE', `一次最多操作 ${maxMailboxMutationIds} 封邮件。`);
+  }
+
+  const rows = await listOwnedMailboxMutationRows(env.DB, workspace.userId, messageIds);
+  const owned = new Map(rows.map((row) => [row.id, row]));
+  if (rows.length !== messageIds.length || messageIds.some((id) => !owned.has(id))) {
+    throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于当前账号。');
+  }
+  if ((input.action === 'archive' || input.action === 'unarchive') && rows.some((row) => row.folder !== 'inbox')) {
+    throw new ApiError(400, 'MAILBOX_ACTION_INVALID', '只有收件箱邮件支持归档操作。');
+  }
+
+  const timestamp = new Date().toISOString();
+  const statements = buildMailboxMutationStatements(env.DB, workspace.userId, messageIds, input.action, timestamp);
+  await env.DB.batch(statements);
+  const summaries: MailboxMessageSummary[] = rows.map((row) => ({
+    id: row.id,
+    folder: row.folder,
+    source: row.source,
+    threadKey: row.thread_key,
+    read: input.action === 'read' ? true : input.action === 'unread' ? false : Boolean(row.is_read),
+    starred: input.action === 'star' ? true : input.action === 'unstar' ? false : Boolean(row.is_starred),
+    archivedAt: input.action === 'archive' ? row.archived_at ?? timestamp : input.action === 'unarchive' ? null : row.archived_at
+  }));
+  const movement: MailboxMovement[] = [];
+  for (const row of rows) {
+    if (input.action === 'archive' && !row.archived_at) movement.push({ id: row.id, from: 'inbox', to: 'archive' });
+    if (input.action === 'unarchive' && row.archived_at) movement.push({ id: row.id, from: 'archive', to: 'inbox' });
+  }
+  return {
+    summaries,
+    metrics: await getMailboxMetrics(env.DB, workspace.userId),
+    movement
+  };
+}
+
 async function loadSessionRow(
   env: CloudflareEnv,
-  sessionRow: NonNullable<Awaited<ReturnType<typeof findSessionJoin>>>,
-  capabilities: Awaited<ReturnType<typeof getWorkspaceCapabilities>>
+  sessionRow: NonNullable<Awaited<ReturnType<typeof findSessionJoin>>>
 ): Promise<WorkspaceSession> {
-  const profile = mapUserRowToProfile(sessionRow);
-  const [messageRows, draftRows, inboundRows, outboundRows] = await Promise.all([
-    listMessages(env.DB, sessionRow.id),
-    capabilities.drafts ? listDrafts(env.DB, sessionRow.id) : Promise.resolve({ results: [] }),
-    listInboundMessages(env.DB, sessionRow.id, sessionRow.login_email, sessionRow.email, capabilities),
-    listOutboundStatuses(env.DB, sessionRow.id, capabilities)
-  ]);
+  const context = mapSessionRow(sessionRow);
+  const snapshot = await loadWorkspaceSnapshot(env, context);
   return {
-    id: sessionRow.session_id, userId: sessionRow.id, profile,
-    mailbox: rowsToMailbox(messageRows.results ?? [], draftRows.results ?? [], inboundRows.results ?? [], outboundRows.results ?? [], profile),
-    incomingSequence: sessionRow.incoming_sequence, createdAt: sessionRow.created_at, updatedAt: sessionRow.updated_at, storage: 'd1'
+    ...context,
+    mailbox: snapshot.workspace.mailbox
   };
 }
 
@@ -71,18 +164,16 @@ export async function loadD1WorkspaceContextByTokenHash(env: CloudflareEnv, toke
   return sessionRow ? mapSessionRow(sessionRow) : null;
 }
 
-export async function loadD1Session(env: CloudflareEnv, sessionId: string, capabilities?: Awaited<ReturnType<typeof getWorkspaceCapabilities>>): Promise<WorkspaceSession | null> {
-  capabilities ??= await getWorkspaceCapabilities(env);
+export async function loadD1Session(env: CloudflareEnv, sessionId: string, _capabilities?: unknown): Promise<WorkspaceSession | null> {
   const sessionRow = await findSessionJoin(env.DB, sessionId);
   if (!sessionRow) return null;
-  return loadSessionRow(env, sessionRow, capabilities);
+  return loadSessionRow(env, sessionRow);
 }
 
-export async function loadD1SessionByTokenHash(env: CloudflareEnv, tokenHash: string, capabilities?: Awaited<ReturnType<typeof getWorkspaceCapabilities>>): Promise<WorkspaceSession | null> {
-  capabilities ??= await getWorkspaceCapabilities(env);
+export async function loadD1SessionByTokenHash(env: CloudflareEnv, tokenHash: string, _capabilities?: unknown): Promise<WorkspaceSession | null> {
   const sessionRow = await findSessionJoinByTokenHash(env.DB, tokenHash);
   if (!sessionRow) return null;
-  return loadSessionRow(env, sessionRow, capabilities);
+  return loadSessionRow(env, sessionRow);
 }
 
 export async function refreshD1Session(env: CloudflareEnv | undefined, sessionId: string) {
@@ -93,10 +184,14 @@ export async function refreshD1Session(env: CloudflareEnv | undefined, sessionId
 export async function loadMailboxPage(
   env: CloudflareEnv,
   workspace: WorkspaceContext,
-  query: MailboxQuery
-): Promise<MailboxPage> {
+  query: MailboxQuery,
+  knownMetrics?: WorkspaceMetrics
+): Promise<WorkspaceSnapshotPage> {
+  const section = query.section ?? query.folder;
+  const persistedFolder: MailFolder = query.folder;
   const repositoryQuery = {
-    folder: query.folder,
+    folder: persistedFolder,
+    section,
     timestamp: query.cursor?.timestamp,
     cursorId: query.cursor?.id,
     limit: query.limit + 1,
@@ -104,33 +199,39 @@ export async function loadMailboxPage(
     filter: query.filter,
     deliveryStatus: query.deliveryStatus
   };
-  const metricsPromise = query.cursor ? Promise.resolve<Awaited<ReturnType<typeof getMailboxMetrics>> | undefined>(undefined) : getMailboxMetrics(env.DB, workspace.userId);
+  const metricsPromise = query.cursor
+    ? Promise.resolve<WorkspaceMetrics | undefined>(undefined)
+    : knownMetrics
+      ? Promise.resolve(knownMetrics)
+      : getMailboxMetrics(env.DB, workspace.userId);
   let messages;
-  if (query.folder === 'drafts') {
+  if (section === 'drafts') {
     const page = await listDraftPage(env.DB, workspace.userId, repositoryQuery);
     messages = (page.results ?? []).map((row) => mapDraftRow(row, workspace.profile));
-  } else if (query.folder === 'sent') {
+  } else if (section === 'sent') {
     const page = await listWorkspaceMessagePage(env.DB, workspace.userId, repositoryQuery);
     messages = (page.results ?? []).map((row) => mapWorkspaceMessageRow(row, mapPageDeliveryStatus(row)));
   } else {
     const [workspacePage, inboundPage] = await Promise.all([
       listWorkspaceMessagePage(env.DB, workspace.userId, repositoryQuery),
-      listInboundMessagePage(env.DB, workspace.userId, repositoryQuery)
+      listInboundMessageSummaryPage(env.DB, workspace.userId, repositoryQuery)
     ]);
     messages = sortMessages([
       ...(workspacePage.results ?? []).map((row) => mapWorkspaceMessageRow(row)),
-      ...(inboundPage.results ?? []).map((row) => mapInboundRow(row, workspace.profile))
+      ...(inboundPage.results ?? []).map((row) => ({ ...mapInboundRow(row, workspace.profile), body: '' }))
     ]);
   }
 
   const hasMore = messages.length > query.limit;
   const visible = messages.slice(0, query.limit);
   const last = visible.at(-1);
+  const metrics = await metricsPromise;
   return {
-    folder: query.folder,
+    folder: section,
     messages: visible,
     nextCursor: hasMore && last ? encodeMailboxCursor({
-      folder: query.folder,
+      folder: persistedFolder,
+      section,
       timestamp: last.sentAt,
       id: last.id
     }) : null,
@@ -139,35 +240,96 @@ export async function loadMailboxPage(
     query: query.query,
     filter: query.filter,
     deliveryStatus: query.deliveryStatus,
-    ...(await metricsPromise ? { metrics: await metricsPromise } : {})
+    cursor: query.cursor ? encodeMailboxCursor(query.cursor) : null,
+    status: query.deliveryStatus,
+    ...(metrics ? { metrics } : {})
   };
+}
+
+interface MailboxSummaryQuery {
+  section?: MailboxSection;
+  timestamp?: string;
+  cursorId?: string;
+  limit: number;
+  query: string;
+  filter: MailboxFilter;
+}
+
+async function listInboundMessageSummaryPage(
+  db: D1Database,
+  userId: string,
+  input: MailboxSummaryQuery
+) {
+  const conditions = [
+    'e.owner_user_id = ?',
+    's.deleted_at IS NULL',
+    input.section === 'archive' ? 's.archived_at IS NOT NULL' : 'COALESCE(s.archived_at, NULL) IS NULL',
+    input.filter === 'unread'
+      ? 'COALESCE(s.is_read, 0) = 0'
+      : input.filter === 'starred'
+        ? 'COALESCE(s.is_starred, 0) = 1'
+        : '1 = 1'
+  ];
+  const bindings: unknown[] = [userId];
+  if (input.query) {
+    const pattern = `%${input.query.toLocaleLowerCase()}%`;
+    conditions.push(`(
+      lower(e.subject) LIKE ? OR lower(e.snippet) LIKE ? OR
+      lower(e."from") LIKE ? OR lower(e."to") LIKE ?
+    )`);
+    bindings.push(pattern, pattern, pattern, pattern);
+  }
+  if (input.timestamp && input.cursorId) {
+    conditions.push(`(e."timestamp" < ? OR (e."timestamp" = ? AND ('email:' || e.id) < ?))`);
+    bindings.push(input.timestamp, input.timestamp, input.cursorId);
+  }
+  bindings.push(input.limit);
+
+  return db.prepare(`
+    SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
+      e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
+      COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
+    FROM email_messages AS e
+    LEFT JOIN workspace_email_states AS s
+      ON s.user_id = ? AND s.email_message_id = e.id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC
+    LIMIT ?
+  `).bind(userId, ...bindings).all<WorkspaceInboundRow>();
 }
 
 export async function loadWorkspaceSnapshot(
   env: CloudflareEnv,
   workspace: WorkspaceContext,
-  limit = 40
-): Promise<{ workspace: WorkspacePayload; pages: Record<MailFolder, MailboxPage> }> {
-  const folders: MailFolder[] = ['inbox', 'sent', 'drafts'];
-  const loaded = await Promise.all(folders.map((folder) => loadMailboxPage(env, workspace, {
-    folder,
+  options: WorkspaceSnapshotOptions | number = {}
+): Promise<{ workspace: WorkspaceSnapshot; snapshot: WorkspaceSnapshot; pages: Partial<Record<MailboxSection, WorkspaceSnapshotPage>> }> {
+  const normalized = typeof options === 'number' ? { limit: options } : options;
+  const activeFolder = normalized.activeFolder ?? 'inbox';
+  const persistedFolder: MailFolder = activeFolder === 'archive' ? 'inbox' : activeFolder;
+  const metrics = await getMailboxMetrics(env.DB, workspace.userId);
+  const page = await loadMailboxPage(env, workspace, {
+    folder: persistedFolder,
+    section: activeFolder,
     cursor: null,
-    limit,
-    query: '',
-    filter: 'all',
-    deliveryStatus: null
-  })));
-  const pages = Object.fromEntries(loaded.map((page) => [page.folder, page])) as Record<MailFolder, MailboxPage>;
+    limit: normalized.limit ?? 40,
+    query: normalized.query ?? '',
+    filter: normalized.filter ?? 'all',
+    deliveryStatus: normalized.deliveryStatus ?? null
+  }, metrics);
+  const mailbox: MailboxState = { inbox: [], sent: [], drafts: [] };
+  mailbox[persistedFolder] = page.messages;
+  const mailboxPages: Partial<Record<MailboxSection, WorkspaceSnapshotPage>> = { [activeFolder]: page };
+  const snapshot: WorkspaceSnapshot = {
+    profile: workspace.profile,
+    metrics,
+    activeFolder,
+    activePage: page,
+    mailbox,
+    mailboxPages
+  };
   return {
-    workspace: {
-      profile: workspace.profile,
-      mailbox: {
-        inbox: pages.inbox.messages,
-        sent: pages.sent.messages,
-        drafts: pages.drafts.messages
-      },
-      metrics: pages.inbox.metrics ?? { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 }
-    },
-    pages
+    workspace: snapshot,
+    snapshot,
+    pages: mailboxPages
   };
 }

@@ -1,4 +1,4 @@
-import type { DeliveryStatus, MailFolder, MailboxFilter, WorkspaceMetrics } from '$lib/domain/mail';
+import type { DeliveryStatus, MailFolder, MailboxFilter, MailboxSection, WorkspaceMetrics } from '$lib/domain/mail';
 import type {
   WorkspaceDraftRow,
   WorkspaceInboundRow,
@@ -8,6 +8,7 @@ import type {
 
 export interface MailboxRepositoryQuery {
   folder: MailFolder;
+  section?: MailboxSection;
   timestamp?: string;
   cursorId?: string;
   limit: number;
@@ -17,6 +18,7 @@ export interface MailboxRepositoryQuery {
 }
 
 export interface WorkspaceMessagePageRow extends WorkspaceMessageRow {
+  archived_at: string | null;
   delivery_status: WorkspaceOutboundStatusRow['status'] | null;
   delivery_attempts: number | null;
   delivery_delivered_at: string | null;
@@ -28,6 +30,8 @@ export interface WorkspaceMessagePageRow extends WorkspaceMessageRow {
   delivery_response_preview: string | null;
   delivery_last_event: WorkspaceOutboundStatusRow['last_event'] | null;
   delivery_last_event_at: string | null;
+  delivery_idempotency_key: string | null;
+  delivery_attempt_started_at: string | null;
 }
 
 const searchPattern = (query: string) => `%${query.toLocaleLowerCase()}%`;
@@ -46,6 +50,8 @@ export async function listWorkspaceMessagePage(
   const conditions = [
     'm.user_id = ?',
     'm.folder = ?',
+    input.folder === 'inbox' && input.section === 'archive' ? 'm.archived_at IS NOT NULL' :
+      input.folder === 'inbox' ? 'm.archived_at IS NULL' : '1 = 1',
     flagPredicate(input.filter, 'm.is_read', 'm.is_starred')
   ];
   const bindings: unknown[] = [userId, input.folder];
@@ -70,7 +76,7 @@ export async function listWorkspaceMessagePage(
   return db.prepare(`
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
-      m.subject, m.preview, m.body, m.sent_at, m.labels_json, m.is_read, m.is_starred,
+      m.subject, m.preview, m.body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
       m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.idempotency_key,
       ds.status AS delivery_status,
       ds.attempts AS delivery_attempts,
@@ -82,7 +88,9 @@ export async function listWorkspaceMessagePage(
       r.remote_status AS delivery_remote_status,
       r.response_preview AS delivery_response_preview,
       r.last_event AS delivery_last_event,
-      r.last_event_at AS delivery_last_event_at
+      r.last_event_at AS delivery_last_event_at,
+      ds.idempotency_key AS delivery_idempotency_key,
+      (SELECT MAX(a.started_at) FROM workspace_delivery_attempts AS a WHERE a.message_id = m.id) AS delivery_attempt_started_at
     FROM workspace_messages AS m
     LEFT JOIN workspace_delivery_statuses AS ds
       ON ds.user_id = m.user_id AND ds.message_id = m.id
@@ -102,12 +110,13 @@ export async function listInboundMessagePage(
   const conditions = [
     'e.owner_user_id = ?',
     's.deleted_at IS NULL',
+    input.section === 'archive' ? 's.archived_at IS NOT NULL' : 'COALESCE(s.archived_at, NULL) IS NULL',
     flagPredicate(input.filter, 'COALESCE(s.is_read, 0)', 'COALESCE(s.is_starred, 0)')
   ];
   const bindings: unknown[] = [userId];
   if (input.query) {
     conditions.push(`(
-      lower(e.subject) LIKE ? OR lower(e.snippet) LIKE ? OR lower(e.text_body) LIKE ? OR
+      lower(e.subject) LIKE ? OR lower(e.snippet) LIKE ? OR
       lower(e."from") LIKE ? OR lower(e."to") LIKE ?
     )`);
     bindings.push(...Array(5).fill(searchPattern(input.query)));
@@ -120,7 +129,7 @@ export async function listInboundMessagePage(
 
   return db.prepare(`
     SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
-      e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body,
+      e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
@@ -167,11 +176,11 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
     SELECT
       (
         SELECT COUNT(*) FROM workspace_messages
-        WHERE user_id = ? AND folder = 'inbox'
+        WHERE user_id = ? AND folder = 'inbox' AND archived_at IS NULL
       ) + (
         SELECT COUNT(*) FROM email_messages AS e
         LEFT JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id
-        WHERE e.owner_user_id = ? AND s.deleted_at IS NULL
+        WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.archived_at IS NULL
       ) AS inbox_count,
       (
         SELECT COUNT(*) FROM workspace_messages
@@ -182,11 +191,11 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
       ) AS drafts_count,
       (
         SELECT COUNT(*) FROM workspace_messages
-        WHERE user_id = ? AND folder = 'inbox' AND is_read = 0
+        WHERE user_id = ? AND folder = 'inbox' AND archived_at IS NULL AND is_read = 0
       ) + (
         SELECT COUNT(*) FROM email_messages AS e
         LEFT JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id
-        WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND COALESCE(s.is_read, 0) = 0
+        WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.archived_at IS NULL AND COALESCE(s.is_read, 0) = 0
       ) AS unread_count,
       (
         SELECT COUNT(*) FROM workspace_messages WHERE user_id = ? AND is_starred = 1
@@ -232,6 +241,8 @@ export function mapPageDeliveryStatus(row: WorkspaceMessagePageRow): WorkspaceOu
     remote_status: row.delivery_remote_status,
     response_preview: row.delivery_response_preview ?? '',
     last_event: row.delivery_last_event,
-    last_event_at: row.delivery_last_event_at
+    last_event_at: row.delivery_last_event_at,
+    idempotency_key: row.delivery_idempotency_key,
+    attempt_started_at: row.delivery_attempt_started_at
   };
 }

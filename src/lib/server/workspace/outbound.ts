@@ -31,7 +31,11 @@ import {
   type WorkspaceContext
 } from '$lib/server/workspace/shared';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
-import { reconcilePendingResendEvents } from '$lib/server/workspace/delivery';
+import {
+  assertPersistedDeliveryRetryable,
+  DeliveryNotRetryableError,
+  reconcilePendingResendEvents
+} from '$lib/server/workspace/delivery';
 
 export interface OutboundSubmissionOptions {
   requestId?: string | null;
@@ -245,15 +249,28 @@ export async function retryWorkspaceMessageDelivery(
   if (session.storage !== 'd1' || !env || !(await hasWorkspaceCoreTables(env))) {
     throw new Error('Workspace storage is unavailable for outbound retry.');
   }
-  const delivery = await findDeliveryStatus(env.DB, session.userId, messageId);
   const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
-  const message = row ? mapWorkspaceMessageRow(row) : null;
-  if (!message || message.folder !== 'sent' || message.source !== 'workspace') return null;
-  if (!delivery?.idempotency_key) throw new Error('The persisted idempotency key is missing.');
-  if (!['failed', 'delayed', 'submitting'].includes(delivery.status)) return null;
-  const attemptStartedAt = delivery.attempt_started_at ?? delivery.last_event_at ?? null;
-  if (attemptStartedAt && Date.now() - Date.parse(attemptStartedAt) >= 24 * 60 * 60 * 1000) {
-    throw new OutboundGatewayError('idempotency_expired', 'Provider idempotency window expired; review the provider dashboard before resending.', { retryable: false });
+  if (!row) return null;
+  const message = mapWorkspaceMessageRow(row);
+  if (message.folder !== 'sent' || message.source !== 'workspace') return null;
+  const delivery = await findDeliveryStatus(env.DB, session.userId, messageId);
+  if (!delivery) {
+    throw new DeliveryNotRetryableError('delivery_state_missing', 'The persisted delivery state is missing.');
+  }
+  try {
+    assertPersistedDeliveryRetryable({
+      status: delivery.status,
+      resultKind: delivery.result_kind,
+      attempts: delivery.attempts,
+      idempotencyKey: delivery.idempotency_key,
+      messageIdempotencyKey: row.idempotency_key,
+      attemptStartedAt: delivery.attempt_started_at ?? delivery.last_event_at
+    });
+  } catch (error) {
+    if (error instanceof DeliveryNotRetryableError && error.reason === 'idempotency_window_expired') {
+      throw new OutboundGatewayError('idempotency_expired', 'Provider idempotency window expired; review the provider dashboard before resending.', { retryable: false });
+    }
+    throw error;
   }
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? delivery.provider || 'injected' : outboundProviderName(env);

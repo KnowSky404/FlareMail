@@ -45,6 +45,7 @@
     onSaveDraft,
     onSend,
     draftConflict = null,
+    localEditedAt = null,
     onLoadServerDraft,
     onSaveDraftCopy,
     onOverwriteServerDraft
@@ -63,6 +64,7 @@
     onSaveDraft: (input: ComposeInput) => void | Promise<void>;
     onSend: (input: ComposeInput) => void | Promise<void>;
     draftConflict?: MailMessage | null;
+    localEditedAt?: string | null;
     onLoadServerDraft?: () => void;
     onSaveDraftCopy?: () => void | Promise<void>;
     onOverwriteServerDraft?: () => void | Promise<void>;
@@ -252,7 +254,7 @@
     {#if draftConflict}
       <div class="grid gap-2 rounded-[var(--radius-md)] border border-[var(--fm-warning)]/40 bg-[var(--fm-warning-soft)] px-3 py-3 text-sm text-[var(--fm-text)]" role="alert">
         <strong>服务器版本已更新</strong>
-        <span class="text-xs text-[var(--fm-text-secondary)]">你的本地编辑仍然保留。请选择载入服务器版本、另存副本，或明确覆盖服务器版本。</span>
+        <span class="text-xs text-[var(--fm-text-secondary)]">本地编辑时间：{localEditedAt ? new Date(localEditedAt).toLocaleString('zh-CN') : '刚刚'}；服务器版本：{draftConflict.sentAt ? new Date(draftConflict.sentAt).toLocaleString('zh-CN') : '未知'}。你的本地编辑仍然保留。</span>
         <div class="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onclick={() => onLoadServerDraft?.()}>载入服务器版本</Button>
           <Button variant="outline" size="sm" onclick={() => onSaveDraftCopy?.()}>另存为新草稿</Button>

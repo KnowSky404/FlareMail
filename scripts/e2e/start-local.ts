@@ -43,7 +43,7 @@ await run('bunx', [
 const { hashPassword, PASSWORD_HASH_ITERATIONS } = await import('../../src/lib/server/auth/password');
 const credentialHash = await hashPassword(adminPassword);
 const seed = `
-INSERT INTO workspace_users (
+INSERT OR IGNORE INTO workspace_users (
   id, login_email, name, role, email, company, location, timezone,
   forwarding_enabled, signature, incoming_sequence, credential_hash,
   credential_iterations, credential_updated_at, created_at, updated_at
@@ -52,9 +52,9 @@ INSERT INTO workspace_users (
   'FlareMail E2E', '', 'UTC', 1, '', 0, ${sql(credentialHash)}, ${PASSWORD_HASH_ITERATIONS},
   ${sql(timestamp)}, ${sql(timestamp)}, ${sql(timestamp)}
 );
-INSERT INTO workspace_settings (user_id, theme, settings_json, created_at, updated_at)
+INSERT OR IGNORE INTO workspace_settings (user_id, theme, settings_json, created_at, updated_at)
 VALUES (${sql(userId)}, 'system', '{}', ${sql(timestamp)}, ${sql(timestamp)});
-INSERT INTO workspace_messages (
+INSERT OR IGNORE INTO workspace_messages (
   id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body,
   sent_at, labels_json, is_read, is_starred, message_id, thread_key, direction,
   text_body, html_body, cc, dedupe_key, created_at, updated_at

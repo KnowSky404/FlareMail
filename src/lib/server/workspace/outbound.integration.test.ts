@@ -86,6 +86,28 @@ describe('outbound workspace persistence', () => {
     const envWithoutProvider = { ...env, OUTBOUND_PROVIDER: undefined };
     const replayWhileUnconfigured = await sendWorkspaceMessage(envWithoutProvider, duplicateSession, input, { requestId: 'compose-1' });
     expect(replayWhileUnconfigured.message.id).toBe(first.message.id);
+
+    await expect(retryWorkspaceMessageDelivery(env, session, first.message.id, { gateway: new FakeOutboundGateway() }))
+      .rejects.toMatchObject({ code: 'DELIVERY_NOT_RETRYABLE', reason: 'status_not_retryable' });
+  });
+
+  test('does not reveal or retry a message owned by another user', async () => {
+    const { env, session } = setup();
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Private', body: 'Body' }, {
+      requestId: 'private', gateway: new FakeOutboundGateway({ providerMessageId: 're_private' })
+    });
+    const otherSession = { ...session, userId: 'user-2' };
+    expect(await retryWorkspaceMessageDelivery(env, otherSession, sent.message.id, { gateway: new FakeOutboundGateway() })).toBeNull();
+  });
+
+  test('rejects a message whose persisted message and delivery keys diverge', async () => {
+    const { env, database, session } = setup();
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Key', body: 'Body' }, {
+      requestId: 'key-mismatch', gateway: new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'outcome unknown') })
+    });
+    database.query(`UPDATE workspace_messages SET idempotency_key = 'flaremail:send:user-1:tampered' WHERE id = ?`).run(sent.message.id);
+    await expect(retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway: new FakeOutboundGateway() }))
+      .rejects.toMatchObject({ code: 'DELIVERY_NOT_RETRYABLE', reason: 'message_idempotency_key_mismatch' });
   });
 
   test('requires a client idempotency key when no persisted draft identifies the logical send', async () => {

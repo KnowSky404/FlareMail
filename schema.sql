@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS workspace_messages (
   dedupe_key TEXT,
   provider_message_id TEXT,
   idempotency_key TEXT,
+  archived_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -117,6 +118,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_messages_dedupe_key ON workspace
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_messages_idempotency_key ON workspace_messages(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_provider_message_id ON workspace_messages(provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_cursor ON workspace_messages(user_id, folder, sent_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_archived ON workspace_messages(user_id, folder, archived_at, sent_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_attachments (
   id TEXT PRIMARY KEY,
@@ -165,6 +167,7 @@ CREATE TABLE IF NOT EXISTS workspace_email_states (
   is_read INTEGER NOT NULL DEFAULT 0,
   is_starred INTEGER NOT NULL DEFAULT 0,
   deleted_at TEXT,
+  archived_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   UNIQUE(user_id, email_message_id)
@@ -172,6 +175,8 @@ CREATE TABLE IF NOT EXISTS workspace_email_states (
 
 CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_updated_at
   ON workspace_email_states(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_archived
+  ON workspace_email_states(user_id, archived_at, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_settings (
   user_id TEXT PRIMARY KEY,

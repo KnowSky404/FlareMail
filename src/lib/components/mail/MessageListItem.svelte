@@ -12,9 +12,9 @@
     XCircle
   } from '@lucide/svelte';
   import { StatusBadge } from '$lib/components/ui';
-  import type { MailFolder, MailMessage, MailThread } from '$lib/domain/mail';
+  import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
 
-  type AppSection = MailFolder | 'profile';
+  type AppSection = MailboxSection | 'profile';
 
   let {
     activeSection,
@@ -22,7 +22,10 @@
     thread = null,
     selected = false,
     onSelect,
-    onToggleStar
+    onToggleStar,
+    selectable = false,
+    selectedForBulk = false,
+    onToggleSelect
   }: {
     activeSection: AppSection;
     message?: MailMessage | null;
@@ -30,6 +33,9 @@
     selected?: boolean;
     onSelect?: (message: MailMessage, thread?: MailThread) => void | Promise<void>;
     onToggleStar?: (message: MailMessage, event?: MouseEvent) => void | Promise<void>;
+    selectable?: boolean;
+    selectedForBulk?: boolean;
+    onToggleSelect?: (message: MailMessage) => void;
   } = $props();
 
   const itemMessage = $derived(thread?.sectionLatestMessage ?? thread?.latestMessage ?? message);
@@ -95,6 +101,19 @@
     role="listitem"
   >
     {#if selected}<span class="absolute inset-y-0 left-0 w-[3px] bg-[var(--fm-brand-orange)]" aria-hidden="true"></span>{/if}
+    {#if selectable}
+      <label class="grid min-h-11 min-w-11 shrink-0 place-items-center">
+        <span class="sr-only">选择{itemSubject}</span>
+        <input
+          class="size-4 accent-[var(--fm-primary)]"
+          type="checkbox"
+          checked={selectedForBulk}
+          aria-label={`选择${itemSubject}`}
+          onclick={(event) => event.stopPropagation()}
+          onchange={() => itemMessage && onToggleSelect?.(itemMessage)}
+        />
+      </label>
+    {/if}
     <button
       type="button"
       class="flex min-h-[72px] min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fm-focus)]"

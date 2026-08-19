@@ -1,11 +1,11 @@
 import type { PageServerLoad } from './$types';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import type { MailFolder, MailboxFilter, MailboxPage, WorkspacePayload } from '$lib/domain/mail';
-import { loadMailboxPage } from '$lib/server/workspace';
+import type { MailboxSection } from '$lib/domain/mail';
+import { loadWorkspaceSnapshot } from '$lib/server/workspace';
 import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
 import { parseBoolean } from '$lib/server/config/env';
 
-const mailFolders: MailFolder[] = ['inbox', 'sent', 'drafts'];
+const mailFolders: MailboxSection[] = ['inbox', 'sent', 'drafts', 'archive'];
 
 function safeRuntimeDiagnostics(env: CloudflareEnv) {
   const provider = env.OUTBOUND_PROVIDER?.trim().toLowerCase() ?? '';
@@ -22,8 +22,8 @@ function safeRuntimeDiagnostics(env: CloudflareEnv) {
   };
 }
 
-function requestedFolder(value: string | null): MailFolder {
-  return mailFolders.includes(value as MailFolder) ? value as MailFolder : 'inbox';
+function requestedFolder(value: string | null): MailboxSection {
+  return mailFolders.includes(value as MailboxSection) ? value as MailboxSection : 'inbox';
 }
 
 export const load: PageServerLoad = async ({ platform, locals, url }) => {
@@ -48,36 +48,32 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
 
   try {
     const activeFolder = requestedFolder(url.searchParams.get('folder'));
-    const pages = await Promise.all(mailFolders.map((folder) => {
-      const params = new URLSearchParams({ folder, limit: '40' });
-      if (folder === activeFolder) {
-        const query = url.searchParams.get('q');
-        const filter = url.searchParams.get('filter');
-        const status = url.searchParams.get('status');
-        if (query) params.set('q', query);
-        if (filter) params.set('filter', filter);
-        if (status) params.set('status', status);
-      }
-      return loadMailboxPage(env, context, parseMailboxQuery(params));
-    }));
-    const mailboxPages = Object.fromEntries(pages.map((page) => [page.folder, page])) as Record<MailFolder, MailboxPage>;
-    const mailbox = {
-      inbox: mailboxPages.inbox.messages,
-      sent: mailboxPages.sent.messages,
-      drafts: mailboxPages.drafts.messages
-    };
-    const metrics = mailboxPages.inbox.metrics ?? { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 };
-    const workspace: WorkspacePayload = { profile: context.profile, mailbox, metrics };
-    const latest = mailbox.inbox[0] ?? mailbox.sent[0] ?? null;
+    const params = new URLSearchParams({ limit: '40', folder: activeFolder });
+    for (const key of ['q', 'filter', 'status']) {
+      const value = url.searchParams.get(key);
+      if (value) params.set(key, value);
+    }
+    const activeQuery = parseMailboxQuery(params);
+    const loaded = await loadWorkspaceSnapshot(env, context, {
+      activeFolder,
+      limit: activeQuery.limit,
+      query: activeQuery.query,
+      filter: activeQuery.filter,
+      deliveryStatus: activeQuery.deliveryStatus
+    });
+    const workspace = loaded.workspace;
+    const mailboxPages = loaded.pages;
+    const latest = workspace.activePage.messages[0] ?? null;
 
     return {
       dbBound,
       bucketBound,
       workspace,
+      snapshot: loaded.snapshot,
       mailboxPages,
       runtimeDiagnostics: safeRuntimeDiagnostics(env),
       schemaReady: true,
-      totalMessages: metrics.inboxCount + metrics.sentCount,
+      totalMessages: workspace.metrics.inboxCount + workspace.metrics.sentCount,
       lastSubject: latest?.subject ?? null,
       lastTimestamp: latest?.sentAt ?? null
     };
