@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import type { SQLQueryBindings } from 'bun:sqlite';
 import { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox } from './mailbox';
 import type { WorkspaceContext } from './shared';
+import { parseMailSearchQuery } from '$lib/domain/mail';
 
 class TestStatement {
   private bindings: unknown[] = [];
@@ -125,16 +126,21 @@ function fixture() {
   };
 }
 
-const query = (folder: 'inbox' | 'sent' | 'drafts', overrides: Record<string, unknown> = {}) => ({
-  folder,
-  section: folder,
-  cursor: null,
-  limit: 40,
-  query: '',
-  filter: 'all' as const,
-  deliveryStatus: null,
-  ...overrides
-});
+const query = (folder: 'inbox' | 'sent' | 'drafts', overrides: Record<string, unknown> = {}) => {
+  const result = {
+    folder,
+    section: folder,
+    cursor: null,
+    limit: 40,
+    query: '',
+    search: null as ReturnType<typeof parseMailSearchQuery> | null,
+    filter: 'all' as const,
+    deliveryStatus: null,
+    ...overrides
+  };
+  result.search = result.query ? parseMailSearchQuery(result.query) : null;
+  return result;
+};
 
 describe('D1 mailbox pages', () => {
   test('merges inbound and workspace messages with a stable opaque cursor', async () => {
@@ -169,6 +175,46 @@ describe('D1 mailbox pages', () => {
     expect(unread.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'inbox-z']);
     const starredDrafts = await loadMailboxPage(env, workspace, query('drafts', { filter: 'starred' }));
     expect(starredDrafts.messages.map(({ id }) => id)).toEqual(['draft-1']);
+  });
+
+  test('executes advanced FTS filters with bounded snippets, totals and owner isolation', async () => {
+    const { env, workspace, database } = fixture();
+    database.query(`UPDATE workspace_messages SET labels_json = '["Operations"]', bcc_json = '[{"name":"Hidden","email":"secret@example.test"}]' WHERE id = 'inbox-z'`).run();
+    database.query(`INSERT INTO workspace_attachments (id, user_id, message_id, filename, content_type, size, r2_key)
+      VALUES ('attachment-z', 'user-1', 'inbox-z', 'incident.txt', 'text/plain', 12, 'fixtures/incident.txt')`).run();
+    database.query(`INSERT INTO workspace_messages
+      (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at)
+      VALUES ('foreign-incident', 'user-2', 'inbox', 'Zed', 'zed@example.test', 'Other', 'other@example.test', 'Alpha incident', 'private', 'private', '2026-08-13T14:00:00.000Z')`).run();
+
+    const page = await loadMailboxPage(env, workspace, query('inbox', {
+      query: 'from:zed@example.test subject:incident label:Operations is:unread has:attachment after:2026-08-12'
+    }));
+    expect(page.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+    expect(page.searchTotal).toBe(1);
+    expect(page.searchHitFields).toEqual(['from', 'subject', 'label', 'state', 'attachment', 'date']);
+    expect(page.messages[0]?.searchSnippet).toContain(String.fromCharCode(57344));
+    expect(page.messages[0]?.searchHitFields).toEqual(page.searchHitFields);
+
+    const bccSearch = await loadMailboxPage(env, workspace, query('inbox', { query: 'secret@example.test' }));
+    expect(bccSearch.messages).toEqual([]);
+
+    database.query(`UPDATE workspace_drafts SET subject = 'Updated roadmap', body = 'FTS trigger refresh' WHERE id = 'draft-1'`).run();
+    const draftSearch = await loadMailboxPage(env, workspace, query('drafts', { query: 'subject:roadmap status:draft' }));
+    expect(draftSearch.messages.map(({ id }) => id)).toEqual(['draft-1']);
+  });
+
+  test('combines FTS with delivery, archive and trash state filters', async () => {
+    const { env, workspace } = fixture();
+    const delivered = await loadMailboxPage(env, workspace, query('sent', { query: 'report status:delivered' }));
+    expect(delivered.messages.map(({ id }) => id)).toEqual(['sent-1']);
+
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['inbox-z'] });
+    const archived = await loadMailboxPage(env, workspace, query('inbox', { query: 'incident is:archived' }));
+    expect(archived.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+
+    await mutateWorkspaceMailbox(env, workspace, { action: 'trash', messageIds: ['inbox-z'] });
+    const trashed = await loadMailboxPage(env, workspace, query('inbox', { query: 'incident is:trash' }));
+    expect(trashed.messages.map(({ id }) => id)).toEqual(['inbox-z']);
   });
 
   test('joins delivery state without per-message queries and returns global metrics', async () => {

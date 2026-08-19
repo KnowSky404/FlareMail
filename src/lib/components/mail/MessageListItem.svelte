@@ -43,8 +43,26 @@
   const isUnread = $derived(Boolean(thread ? thread.unreadCount > 0 : itemMessage && !itemMessage.read));
   const isStarred = $derived(Boolean(itemMessage?.starred));
   const itemSubject = $derived(thread?.subject || itemMessage?.subject || '（无主题）');
-  const itemPreview = $derived(thread?.preview || itemMessage?.preview || '');
+  const itemPreview = $derived(itemMessage?.searchSnippet || thread?.preview || itemMessage?.preview || '');
   const itemCount = $derived(thread?.messageCount ?? 1);
+
+  const hitFieldLabels = {
+    all: '全文', from: '发件人', to: '收件人', cc: '抄送', subject: '主题', label: '标签',
+    state: '状态', attachment: '附件', date: '日期', status: '投递'
+  } as const;
+
+  function highlightedParts(value: string) {
+    const open = String.fromCharCode(57344);
+    const close = String.fromCharCode(57345);
+    const parts: Array<{ text: string; highlighted: boolean }> = [];
+    let highlighted = false;
+    for (const segment of value.split(new RegExp(`(${open}|${close})`, 'u'))) {
+      if (segment === open) highlighted = true;
+      else if (segment === close) highlighted = false;
+      else if (segment) parts.push({ text: segment, highlighted });
+    }
+    return parts;
+  }
 
   const counterpart = $derived(
     thread?.counterpartLabel ||
@@ -141,7 +159,22 @@
         <span class="mt-0.5 flex min-w-0 items-center gap-1 text-xs leading-4 text-[var(--fm-text-muted)]">
           {#if isDraft}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">草稿</span>{/if}
           {#if itemMessage.labels.includes('attachment')}<Paperclip class="size-3 shrink-0" aria-label="含附件" />{/if}
-          <span class="truncate">{isDraft && !itemMessage.toEmail ? '尚未填写收件人' : itemPreview || '暂无预览'}</span>
+          {#if itemMessage.searchHitFields?.length}
+            <span class="shrink-0 rounded bg-[var(--fm-primary-soft)] px-1 py-0.5 text-[10px] font-medium text-[var(--fm-primary)]">
+              {itemMessage.searchHitFields.map((field) => hitFieldLabels[field]).join(' · ')}
+            </span>
+          {/if}
+          <span class="truncate">
+            {#if isDraft && !itemMessage.toEmail}
+              尚未填写收件人
+            {:else if itemPreview}
+              {#each highlightedParts(itemPreview) as part}
+                {#if part.highlighted}<mark class="rounded bg-[var(--fm-warning-soft)] px-0.5 text-inherit">{part.text}</mark>{:else}{part.text}{/if}
+              {/each}
+            {:else}
+              暂无预览
+            {/if}
+          </span>
         </span>
       </span>
       <span class="flex shrink-0 flex-col items-end justify-center gap-1">

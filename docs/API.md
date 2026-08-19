@@ -103,6 +103,22 @@ rows and change `archived_at`; they never rewrite `folder` to manufacture an
 archive folder. The response returns affected summaries, movement information,
 updated metrics, and the server-resolved IDs.
 
+## Mailbox search
+
+`GET /api/workspace/mailbox` accepts `q`/`query` and executes the normalized
+query through the owner-scoped D1 FTS5 projection. Free text and the following
+operators are supported: `from:`, `to:`, `cc:`, `subject:`, `is:unread`,
+`is:starred`, `is:archived`, `is:trash`, `has:attachment`, `after:YYYY-MM-DD`,
+`before:YYYY-MM-DD`, `status:` and `label:`. Quotes group spaces. Unknown
+operators, malformed quotes, dates and statuses return
+`INVALID_SEARCH_QUERY`; no user input is interpolated as SQL or as an FTS
+column name.
+
+Search pages keep the normal opaque timestamp/id cursor. The first page also
+returns `searchTotal` and `searchHitFields`; each result can include a bounded
+`searchSnippet` whose private-use delimiters are rendered as text highlights,
+never as HTML. BCC, raw MIME, attachment bytes and secrets are not searchable.
+
 ## Delivery retry
 
 Retry is available only when the persisted delivery state is retryable

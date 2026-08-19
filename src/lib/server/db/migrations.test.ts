@@ -107,7 +107,8 @@ describe('versioned D1 migrations', () => {
       '0011_recipient_arrays.sql',
       '0012_body_objects.sql',
       '0013_trash.sql',
-      '0014_inbound_metadata.sql'
+      '0014_inbound_metadata.sql',
+      '0015_search_fts.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -139,6 +140,13 @@ describe('versioned D1 migrations', () => {
         'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id', 'deleted_at'
       ])
     );
+    expect(tableColumns(db, 'workspace_search_documents')).toEqual(new Set([
+      'id', 'user_id', 'entity_kind', 'entity_id', 'from_text', 'to_text', 'cc_text',
+      'subject_text', 'body_text', 'labels_text', 'indexed_at'
+    ]));
+    expect(tableColumns(db, 'workspace_search_fts')).toEqual(new Set([
+      'from_text', 'to_text', 'cc_text', 'subject_text', 'body_text', 'labels_text'
+    ]));
     expect(tableColumns(db, 'workspace_sessions')).toEqual(
       new Set(['id', 'user_id', 'created_at', 'updated_at', 'token_hash', 'expires_at', 'revoked_at', 'last_seen_at'])
     );
@@ -173,7 +181,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 14 }
+      { schema_name: 'flaremail', schema_version: 15 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -195,6 +203,7 @@ describe('versioned D1 migrations', () => {
     expect(indexNames(db, 'workspace_email_states')).toContain('idx_workspace_email_states_user_archived');
     expect(indexNames(db, 'workspace_email_states')).toContain('idx_workspace_email_states_user_trash');
     expect(indexNames(db, 'workspace_drafts')).toContain('idx_workspace_drafts_user_trash');
+    expect(indexNames(db, 'workspace_search_documents')).toContain('idx_workspace_search_documents_owner');
     expect(indexNames(db, 'workspace_attachments')).toEqual(
       new Set(['idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id'])
     );
@@ -279,6 +288,15 @@ describe('versioned D1 migrations', () => {
     expect(db.query(`SELECT to_json FROM workspace_drafts WHERE id = 'legacy-draft-1'`).get()).toEqual({
       to_json: '[{"name":"","email":"recipient@example.test"}]'
     });
+    expect(db.query(`SELECT entity_kind, entity_id FROM workspace_search_documents ORDER BY entity_kind, entity_id`).all())
+      .toEqual([
+        { entity_kind: 'draft', entity_id: 'legacy-draft-1' },
+        { entity_kind: 'inbound', entity_id: 'legacy-email-1' },
+        { entity_kind: 'message', entity_id: 'legacy-message-1' },
+        { entity_kind: 'message', entity_id: 'legacy-message-2' }
+      ]);
+    expect(db.query(`SELECT COUNT(*) AS count FROM workspace_search_fts WHERE workspace_search_fts MATCH 'legacy'`).get())
+      .toEqual({ count: 3 });
 
     const session = db.query(
       `SELECT token_hash, expires_at, last_seen_at FROM workspace_sessions WHERE id = 'legacy-session-1'`

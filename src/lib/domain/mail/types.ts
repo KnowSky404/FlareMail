@@ -12,6 +12,7 @@ export type MailFolder = 'inbox' | 'sent' | 'drafts';
 /** A persisted mail folder plus the user-facing archive section. */
 export type MailboxSection = MailFolder | 'archive';
 export type MailSource = 'workspace' | 'inbound';
+export type MailSearchHitField = 'all' | 'from' | 'to' | 'cc' | 'subject' | 'label' | 'state' | 'attachment' | 'date' | 'status';
 
 export type MailboxMutationAction = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar' | 'trash';
 
@@ -149,6 +150,9 @@ export interface MailMessage extends MailRfcHeaders {
   deliveryAttemptStartedAt?: string | null;
   /** Non-null only when an inbox message is in the archive section. */
   archivedAt?: string | null;
+  /** Safe plain text with private-use highlight delimiters from FTS5. */
+  searchSnippet?: string;
+  searchHitFields?: MailSearchHitField[];
 }
 
 export interface MailboxState {
@@ -230,6 +234,9 @@ export interface MailboxPage {
   query: string;
   filter: MailboxFilter;
   deliveryStatus: DeliveryStatus | null;
+  /** Exact match count for the first page of a server-side search. */
+  searchTotal?: number;
+  searchHitFields?: MailSearchHitField[];
   metrics?: WorkspaceMetrics;
 }
 

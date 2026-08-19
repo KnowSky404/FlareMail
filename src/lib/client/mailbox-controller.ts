@@ -174,11 +174,18 @@ export function moveSelection(
 }
 
 export function mergeMailboxPage(snapshot: MailboxSnapshot, page: MailboxPage, append: boolean): MailboxSnapshot {
-  const existing = append ? snapshot.mailboxPages?.[page.folder]?.messages ?? [] : [];
+  const previousPage = snapshot.mailboxPages?.[page.folder];
+  const existing = append ? previousPage?.messages ?? [] : [];
   const byId = new Map(existing.map((message) => [message.id, message]));
   for (const message of page.messages) byId.set(message.id, message);
 
-  const mergedPage = { ...page, messages: sortMailboxMessages([...byId.values()]) };
+  const mergedPage = {
+    ...page,
+    ...(append && page.searchTotal === undefined && previousPage?.searchTotal !== undefined
+      ? { searchTotal: previousPage.searchTotal, searchHitFields: previousPage.searchHitFields }
+      : {}),
+    messages: sortMailboxMessages([...byId.values()])
+  };
   const nextMailbox = page.folder === 'archive'
     ? snapshot.mailbox
     : {

@@ -146,6 +146,26 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('runs advanced owner-scoped FTS search with highlighted persisted results', async ({ page, consoleErrors }) => {
+  await login(page);
+  const query = 'from:html-sender@flaremail.test subject:"E2E HTML Safety" has:attachment';
+  await page.getByLabel('搜索邮件').fill(query);
+  const result = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
+  await expect(result).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toHaveCount(0);
+  await expect(page.getByText('1 个结果', { exact: true })).toBeVisible();
+  await expect(result).toContainText('发件人 · 主题 · 附件');
+  await expect(result.locator('mark')).not.toHaveCount(0);
+  await expect(page).toHaveURL(/q=from%3Ahtml-sender/u);
+
+  await page.reload();
+  await expect(page.getByLabel('搜索邮件')).toHaveValue(query);
+  await expect(result).toBeVisible();
+  await page.getByRole('button', { name: '清除搜索' }).click();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('reads sanitized HTML with reversible remote-image consent and a private display report', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name === 'narrow', 'Desktop and mobile cover the safe HTML reader interaction.');
   const remoteRequests: string[] = [];

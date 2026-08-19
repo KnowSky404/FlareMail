@@ -55,14 +55,16 @@ describe('mailbox query contract', () => {
     expect(() => buildD1LikeSearchPattern('e\u0301'.repeat(17))).toThrow(ApiError);
   });
 
-  test('returns a stable localized typed error before repository execution', () => {
+  test('routes long Unicode input to FTS and returns stable parser errors before repository execution', () => {
+    expect(parseMailboxQuery(new URLSearchParams(`q=${encodeURIComponent('中'.repeat(17))}`)).search?.terms)
+      .toEqual(['中'.repeat(17)]);
     try {
-      parseMailboxQuery(new URLSearchParams(`q=${encodeURIComponent('中'.repeat(17))}`));
+      parseMailboxQuery(new URLSearchParams(`q=${encodeURIComponent('unknown:value')}`));
       throw new Error('expected query to be rejected');
     } catch (error) {
       expect(error).toBeInstanceOf(ApiError);
-      expect(error).toMatchObject({ status: 400, code: 'QUERY_PATTERN_TOO_LARGE' });
-      expect((error as ApiError).fieldErrors).toEqual({ query: ['当前搜索最多支持 48 个 UTF-8 字节。'] });
+      expect(error).toMatchObject({ status: 400, code: 'INVALID_SEARCH_QUERY' });
+      expect((error as ApiError).fieldErrors).toEqual({ query: ['搜索表达式包含不支持的操作符。'] });
     }
   });
 });

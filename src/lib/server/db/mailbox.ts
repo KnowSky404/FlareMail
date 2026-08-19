@@ -1,5 +1,5 @@
-import type { DeliveryStatus, MailFolder, MailboxFilter, MailboxSection, WorkspaceMetrics } from '$lib/domain/mail';
-import { buildD1LikeSearchPattern } from '$lib/server/workspace/mailbox-query';
+import type { DeliveryStatus, MailFolder, MailboxFilter, MailboxSection, MailSearchQuery, WorkspaceMetrics } from '$lib/domain/mail';
+import { buildFtsSearchPlan } from '$lib/server/search/fts';
 import type {
   WorkspaceDraftRow,
   WorkspaceMessageRow,
@@ -13,6 +13,7 @@ export interface MailboxRepositoryQuery {
   cursorId?: string;
   limit: number;
   query: string;
+  search: MailSearchQuery | null;
   filter: MailboxFilter;
   deliveryStatus: DeliveryStatus | null;
 }
@@ -45,23 +46,45 @@ export async function listWorkspaceMessagePage(
   userId: string,
   input: MailboxRepositoryQuery
 ) {
+  const searchPlan = input.search ? buildFtsSearchPlan(input.search) : null;
+  const wantsTrash = input.search?.filters.is.includes('trash') ?? false;
+  const wantsArchive = input.search?.filters.is.includes('archived') ?? false;
   const conditions = [
     'm.user_id = ?',
     'm.folder = ?',
-    'm.deleted_at IS NULL',
-    input.folder === 'inbox' && input.section === 'archive' ? 'm.archived_at IS NOT NULL' :
+    wantsTrash ? 'm.deleted_at IS NOT NULL' : 'm.deleted_at IS NULL',
+    wantsArchive ? 'm.archived_at IS NOT NULL' :
+      wantsTrash ? '1 = 1' :
+      input.folder === 'inbox' && input.section === 'archive' ? 'm.archived_at IS NOT NULL' :
       input.folder === 'inbox' ? 'm.archived_at IS NULL' : '1 = 1',
     flagPredicate(input.filter, 'm.is_read', 'm.is_starred')
   ];
   const bindings: unknown[] = [userId, input.folder];
-  if (input.query) {
-    conditions.push(`(
-      lower(m.subject) LIKE ? OR lower(m.preview) LIKE ? OR lower(m.body) LIKE ? OR
-      lower(m.from_name) LIKE ? OR lower(m.from_email) LIKE ? OR
-      lower(m.to_name) LIKE ? OR lower(m.to_email) LIKE ? OR
-      lower(m.cc) LIKE ? OR lower(m.to_json) LIKE ? OR lower(m.cc_json) LIKE ? OR lower(m.bcc_json) LIKE ?
-    )`);
-    bindings.push(...Array(11).fill(buildD1LikeSearchPattern(input.query)));
+  if (searchPlan?.expression) {
+    conditions.push('workspace_search_fts MATCH ?');
+    bindings.push(searchPlan.expression);
+  }
+  if (input.search) {
+    for (const value of input.search.filters.is) {
+      if (value === 'unread') conditions.push('m.is_read = 0');
+      if (value === 'starred') conditions.push('m.is_starred = 1');
+      if (value === 'archived') conditions.push("m.folder = 'inbox'");
+    }
+    if (input.search.filters.hasAttachment) {
+      conditions.push('EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = m.user_id AND search_attachment.message_id = m.id)');
+    }
+    for (const value of input.search.filters.after) {
+      conditions.push('m.sent_at >= ?');
+      bindings.push(`${value}T00:00:00.000Z`);
+    }
+    for (const value of input.search.filters.before) {
+      conditions.push('m.sent_at < ?');
+      bindings.push(`${value}T00:00:00.000Z`);
+    }
+    if (input.search.filters.status.length) {
+      conditions.push(`ds.status IN (${input.search.filters.status.map(() => '?').join(', ')})`);
+      bindings.push(...input.search.filters.status);
+    }
   }
   if (input.timestamp && input.cursorId) {
     conditions.push('(m.sent_at < ? OR (m.sent_at = ? AND m.id < ?))');
@@ -73,11 +96,22 @@ export async function listWorkspaceMessagePage(
   }
   bindings.push(input.limit);
 
-  return db.prepare(`
+  const searchJoins = input.search ? `
+    JOIN workspace_search_documents AS search_document
+      ON search_document.user_id = m.user_id AND search_document.entity_kind = 'message' AND search_document.entity_id = m.id
+    ${searchPlan?.expression ? 'JOIN workspace_search_fts ON workspace_search_fts.rowid = search_document.id' : ''}` : '';
+  const searchSnippet = input.search
+    ? searchPlan?.expression
+      ? `snippet(workspace_search_fts, -1, char(57344), char(57345), ' … ', 16)`
+      : `substr(search_document.subject_text, 1, 160)`
+    : `NULL`;
+
+  const pageSelect = `
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
       m.subject, m.preview, '' AS body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
       m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key, m.body_object_id, m.deleted_at,
+      ${searchSnippet} AS search_snippet,
       ds.status AS delivery_status,
       ds.attempts AS delivery_attempts,
       ds.delivered_at AS delivery_delivered_at,
@@ -92,14 +126,17 @@ export async function listWorkspaceMessagePage(
       ds.idempotency_key AS delivery_idempotency_key,
       (SELECT MAX(a.started_at) FROM workspace_delivery_attempts AS a WHERE a.message_id = m.id) AS delivery_attempt_started_at
     FROM workspace_messages AS m
+    ${searchJoins}
     LEFT JOIN workspace_delivery_statuses AS ds
       ON ds.user_id = m.user_id AND ds.message_id = m.id
     LEFT JOIN workspace_outbound_receipts AS r
       ON r.user_id = m.user_id AND r.message_id = m.id
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY m.sent_at DESC, m.id DESC
-    LIMIT ?
-  `).bind(...bindings).all<WorkspaceMessagePageRow>();
+    WHERE ${conditions.join(' AND ')}`;
+  const pageSql = input.search
+    ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
+       ORDER BY search_rows.sent_at DESC, search_rows.id DESC LIMIT ?`
+    : `${pageSelect} ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`;
+  return db.prepare(pageSql).bind(...bindings).all<WorkspaceMessagePageRow>();
 }
 
 export async function listDraftPage(
@@ -107,19 +144,36 @@ export async function listDraftPage(
   userId: string,
   input: MailboxRepositoryQuery
 ) {
+  const searchPlan = input.search ? buildFtsSearchPlan(input.search) : null;
+  const wantsTrash = input.search?.filters.is.includes('trash') ?? false;
   const conditions = [
     'd.user_id = ?',
-    'd.deleted_at IS NULL',
+    wantsTrash ? 'd.deleted_at IS NOT NULL' : 'd.deleted_at IS NULL',
     input.filter === 'starred' ? 'd.is_starred = 1' : '1 = 1'
   ];
   const bindings: unknown[] = [userId];
   if (input.filter === 'unread') conditions.push('1 = 0');
-  if (input.query) {
-    conditions.push(`(
-      lower(d.subject) LIKE ? OR lower(d.body) LIKE ? OR lower(d.to_email) LIKE ? OR lower(d.cc) LIKE ? OR
-      lower(d.to_json) LIKE ? OR lower(d.cc_json) LIKE ? OR lower(d.bcc_json) LIKE ?
-    )`);
-    bindings.push(...Array(7).fill(buildD1LikeSearchPattern(input.query)));
+  if (searchPlan?.expression) {
+    conditions.push('workspace_search_fts MATCH ?');
+    bindings.push(searchPlan.expression);
+  }
+  if (input.search) {
+    for (const value of input.search.filters.is) {
+      if (value === 'unread' || value === 'archived') conditions.push('1 = 0');
+      if (value === 'starred') conditions.push('d.is_starred = 1');
+    }
+    if (input.search.filters.hasAttachment) {
+      conditions.push('EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = d.user_id AND search_attachment.message_id = d.id)');
+    }
+    for (const value of input.search.filters.after) {
+      conditions.push('d.updated_at >= ?');
+      bindings.push(`${value}T00:00:00.000Z`);
+    }
+    for (const value of input.search.filters.before) {
+      conditions.push('d.updated_at < ?');
+      bindings.push(`${value}T00:00:00.000Z`);
+    }
+    if (input.search.filters.status.length && !input.search.filters.status.includes('draft')) conditions.push('1 = 0');
   }
   if (input.timestamp && input.cursorId) {
     conditions.push('(d.updated_at < ? OR (d.updated_at = ? AND d.id < ?))');
@@ -127,14 +181,28 @@ export async function listDraftPage(
   }
   bindings.push(input.limit);
 
-  return db.prepare(`
+  const searchJoins = input.search ? `
+    JOIN workspace_search_documents AS search_document
+      ON search_document.user_id = d.user_id AND search_document.entity_kind = 'draft' AND search_document.entity_id = d.id
+    ${searchPlan?.expression ? 'JOIN workspace_search_fts ON workspace_search_fts.rowid = search_document.id' : ''}` : '';
+  const searchSnippet = input.search
+    ? searchPlan?.expression
+      ? `snippet(workspace_search_fts, -1, char(57344), char(57345), ' … ', 16)`
+      : `substr(search_document.subject_text, 1, 160)`
+    : `NULL`;
+
+  const pageSelect = `
     SELECT d.id, d.to_email, d.cc, d.to_json, d.cc_json, d.bcc_json, d.subject, '' AS body, d.is_starred, d.created_at, d.updated_at,
-      d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key, d.body_object_id, d.deleted_at
+      d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key, d.body_object_id, d.deleted_at,
+      ${searchSnippet} AS search_snippet
     FROM workspace_drafts AS d
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY d.updated_at DESC, d.id DESC
-    LIMIT ?
-  `).bind(...bindings).all<WorkspaceDraftRow>();
+    ${searchJoins}
+    WHERE ${conditions.join(' AND ')}`;
+  const pageSql = input.search
+    ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
+       ORDER BY search_rows.updated_at DESC, search_rows.id DESC LIMIT ?`
+    : `${pageSelect} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?`;
+  return db.prepare(pageSql).bind(...bindings).all<WorkspaceDraftRow>();
 }
 
 export async function getMailboxMetrics(db: D1Database, userId: string): Promise<WorkspaceMetrics> {

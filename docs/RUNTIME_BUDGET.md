@@ -23,6 +23,13 @@ record the evidence.
   D1 stores the pointer, byte counts, digest, and bounded projections.
 - Mailbox list and SSR queries do not select body columns. Owned body routes
   perform lazy R2 reads and integrity checks.
+- FTS5 indexes only bounded projections: 8 KiB from, 16 KiB To/CC, 4 KiB
+  subject, 64 KiB body text and 16 KiB labels per document. The projection
+  excludes BCC, raw MIME, attachment bytes, secrets and full R2 bodies.
+- Advanced search binds one parser-generated FTS expression and uses fixed
+  relational predicates for flags, dates, attachment existence and delivery
+  status. The first page computes an exact result total outside the FTS
+  `snippet()` query; later pages retain that total without another count.
 - R2 orphan deletion is disabled in ordinary maintenance runs. Apply mode also
   requires a separately reviewed manifest and only recognizes repository-owned
   key shapes.
@@ -46,6 +53,8 @@ should use an isolated preview Worker and preview D1/R2 resources, then:
 4. test login (successful and rejected), an SSR mailbox request, and inbound
    MIME fixtures at approximately 1 MiB, 5 MiB, and near the configured limit;
 5. separately observe D1, R2, parser, and Resend failure outcomes.
+6. run `bun run search:index -- --mode verify --json` and record projection
+   counts; use a reviewed rebuild only if drift is reported.
 
 The application emits structured, non-sensitive phase timing events. They may
 contain a correlation ID, byte/count totals, status code, and duration only;

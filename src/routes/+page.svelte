@@ -160,6 +160,7 @@
   let profileStatus = $state('');
   let pending = $state(false);
   let mailboxLoading = $state(false);
+  let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let composeSavePromise: Promise<void> | null = null;
   const composeAutosave = new ComposeAutosaveController();
   const inboundDetailCache = new DetailCacheController<InboundMessageDetail>('加载原始邮件失败。', (snapshot) => {
@@ -270,50 +271,29 @@
   );
   const activeThreads = $derived(
     activeSection === 'inbox' || activeSection === 'sent'
-      ? buildMailThreads(mailbox, activeSection)
+      ? searchQuery.trim()
+        ? buildMailThreads(activeSection === 'inbox' ? { ...mailbox, sent: [] } : { ...mailbox, inbox: [] }, activeSection)
+        : buildMailThreads(mailbox, activeSection)
       : activeSection === 'archive'
         ? buildMailThreads({ ...mailbox, inbox: activeMessages }, 'inbox')
         : []
   );
-  const normalizedSearchQuery = $derived(searchQuery.trim().toLocaleLowerCase('zh-CN'));
   const visibleMessages = $derived.by(() =>
     activeMessages.filter((message) => {
-      const matchesQuery =
-        !normalizedSearchQuery ||
-        [
-          message.toName,
-          message.toEmail,
-          serializeAddressList(message.toAddresses ?? []),
-          serializeAddressList(message.ccAddresses ?? []),
-          serializeAddressList(message.bccAddresses ?? []),
-          message.cc,
-          message.bcc,
-          message.subject,
-          message.preview
-        ]
-          .join('\n')
-          .toLocaleLowerCase('zh-CN')
-          .includes(normalizedSearchQuery);
       const matchesFilter =
         mailFilter === 'all' ||
         (mailFilter === 'unread' && !message.read) ||
         (mailFilter === 'starred' && message.starred);
-      return matchesQuery && matchesFilter;
+      return matchesFilter;
     })
   );
   const visibleThreads = $derived.by(() =>
     activeThreads.filter((thread) => {
-      const matchesQuery =
-        !normalizedSearchQuery ||
-        [thread.counterpartLabel, thread.subject, thread.preview]
-          .join('\n')
-          .toLocaleLowerCase('zh-CN')
-          .includes(normalizedSearchQuery);
       const matchesFilter =
         mailFilter === 'all' ||
         (mailFilter === 'unread' && thread.unreadCount > 0) ||
         (mailFilter === 'starred' && thread.messages.some((message) => message.starred));
-      return matchesQuery && matchesFilter;
+      return matchesFilter;
     })
   );
   const selectedThread = $derived.by(() => {
@@ -693,6 +673,7 @@
   }
 
   function setSection(section: AppSection, syncUrl = true) {
+    clearMailboxRefreshTimer();
     selectedMessageIds = [];
     activeSection = section;
     searchQuery = '';
@@ -738,12 +719,36 @@
     if (authenticated && section === 'drafts') void mailboxController.refresh(section, '', 'all');
   }
 
+  function clearMailboxRefreshTimer() {
+    if (mailboxRefreshTimer !== undefined) {
+      clearTimeout(mailboxRefreshTimer);
+      mailboxRefreshTimer = undefined;
+    }
+  }
+
+  function scheduleMailboxRefresh(
+    folder: AppSection,
+    query: string,
+    filter: MailFilter,
+    delayMs = 250
+  ) {
+    clearMailboxRefreshTimer();
+    if (!authenticated || folder === 'profile' || folder === 'trash') return;
+    mailboxRefreshTimer = setTimeout(() => {
+      mailboxRefreshTimer = undefined;
+      if (authenticated && activeSection === folder) {
+        void mailboxController.refresh(folder, query, filter);
+      }
+    }, delayMs);
+  }
+
   function handleSearchQueryChange(query: string) {
     searchQuery = query;
     selectedMessageId = null;
     selectedMessageIds = [];
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query, messageId: null }, true);
+    scheduleMailboxRefresh(activeSection, query, mailFilter);
   }
 
   function handleFilterChange(filter: MailFilter) {
@@ -752,6 +757,7 @@
     selectedMessageIds = [];
     mobileDetailOpen = false;
     updateWorkspaceUrl({ filter, messageId: null });
+    scheduleMailboxRefresh(activeSection, searchQuery, filter, 0);
   }
 
   function clearMailFilters() {
@@ -761,6 +767,7 @@
     selectedMessageIds = [];
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query: '', filter: 'all', messageId: null }, true);
+    scheduleMailboxRefresh(activeSection, '', 'all', 0);
   }
 
   async function refreshWorkspace() {
@@ -1512,6 +1519,8 @@
     document.addEventListener('keydown', handleShortcut);
     return () => {
       document.removeEventListener('keydown', handleShortcut);
+      clearMailboxRefreshTimer();
+      mailboxController.cancel();
       shortcuts.dispose();
       toastController.reset();
     };
@@ -1612,7 +1621,9 @@
                 <section class="mail-list-panel" aria-label="邮件列表">
                   <FolderHeader
                     activeSection={activeSection}
-                    count={activeSection === 'drafts' || activeSection === 'trash' ? activeMessages.length : activeThreads.length}
+                    count={searchQuery.trim() && activeSection !== 'trash'
+                      ? mailboxPages?.[activeSection]?.searchTotal ?? 0
+                      : activeSection === 'drafts' || activeSection === 'trash' ? activeMessages.length : activeThreads.length}
                     unreadCount={activeSection === 'inbox' ? unreadCount : 0}
                     query={searchQuery}
                     filter={mailFilter}

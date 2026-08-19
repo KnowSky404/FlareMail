@@ -118,6 +118,8 @@ export interface WorkspaceMessageRow {
   archived_at?: string | null;
   deleted_at?: string | null;
   body_object_id?: string | null;
+  search_snippet?: string | null;
+  search_total?: number;
 }
 
 export interface WorkspaceDraftRow {
@@ -139,6 +141,8 @@ export interface WorkspaceDraftRow {
   idempotency_key: string | null;
   body_object_id?: string | null;
   deleted_at?: string | null;
+  search_snippet?: string | null;
+  search_total?: number;
 }
 
 export interface WorkspaceInboundRow {
@@ -158,6 +162,8 @@ export interface WorkspaceInboundRow {
   body_object_id?: string | null;
   archived_at?: string | null;
   deleted_at?: string | null;
+  search_snippet?: string | null;
+  search_total?: number;
 }
 
 export interface WorkspaceOutboundStatusRow {
@@ -235,7 +241,8 @@ export const mapUserRowToProfile = (row: WorkspaceUserRow): UserProfile => ({
 
 export const mapWorkspaceMessageRow = (
   row: WorkspaceMessageRow,
-  outboundStatus?: WorkspaceOutboundStatusRow
+  outboundStatus?: WorkspaceOutboundStatusRow,
+  searchHitFields: MailMessage['searchHitFields'] = []
 ): MailMessage => {
   const storedToAddresses = parseAddressJson(row.to_json);
   const storedCcAddresses = parseAddressJson(row.cc_json);
@@ -274,6 +281,8 @@ export const mapWorkspaceMessageRow = (
   references: row.references ?? null,
   threadKey: row.thread_key ?? null,
   archivedAt: row.archived_at ?? null,
+  searchSnippet: row.search_snippet ?? undefined,
+  searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined,
   cc: serializeAddressList(ccAddresses) || (row.cc ?? ''),
   bcc: serializeAddressList(bccAddresses),
   toAddresses,
@@ -282,10 +291,11 @@ export const mapWorkspaceMessageRow = (
   });
 };
 
-export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailMessage => {
+export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile, searchHitFields: MailMessage['searchHitFields'] = []): MailMessage => {
   const storedToAddresses = parseAddressJson(row.to_json);
   const storedCcAddresses = parseAddressJson(row.cc_json);
-  return createDraftMessage({
+  return {
+    ...createDraftMessage({
     id: row.id,
     from: profile,
     to: storedToAddresses.length ? storedToAddresses : parseAddressList(row.to_email),
@@ -298,11 +308,14 @@ export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailM
     updatedAt: row.updated_at || row.created_at,
     messageId: row.message_id,
     inReplyTo: row.in_reply_to,
-    references: row.references
-  });
+      references: row.references
+    }),
+    searchSnippet: row.search_snippet ?? undefined,
+    searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined
+  };
 };
 
-export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile): MailMessage {
+export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, searchHitFields: MailMessage['searchHitFields'] = []): MailMessage {
   const sender = parseAddress(row.from);
   const recipient = parseAddress(row.to || profile.email);
   const snippet = row.snippet.trim() || '原始邮件已写入 R2，后续可以补充正文解析与预览。';
@@ -325,7 +338,9 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile): M
     inReplyTo: row.in_reply_to,
     references: row.references,
     threadKey: row.thread_key,
-    archivedAt: row.archived_at ?? null
+    archivedAt: row.archived_at ?? null,
+    searchSnippet: row.search_snippet ?? undefined,
+    searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined
   };
 }
 

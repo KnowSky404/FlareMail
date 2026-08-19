@@ -101,7 +101,12 @@ CI 将 unit、integration 和 remaining test collection 按不重叠文件集合
 
 ```bash
 bun run maintenance -- --config wrangler.toml
+bun run search:index -- --mode verify --json
 ```
+
+邮件搜索使用 owner-scoped D1 FTS5，支持 `from:`、`to:`、`cc:`、`subject:`、
+`is:`、`has:attachment`、`after:`、`before:`、`status:` 与 `label:`。索引校验
+默认只读且只访问本地 D1；重建必须显式加 `--mode rebuild --apply`。
 
 ## 部署安全
 

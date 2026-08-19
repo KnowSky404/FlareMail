@@ -1,6 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError } from '$lib/server/http/api';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
+import { buildFtsSearchPlan } from '$lib/server/search/fts';
 import {
   getMailboxMetrics,
   listDraftPage,
@@ -13,7 +14,6 @@ import {
   resolveOwnedMailboxThreadMessageIds
 } from '$lib/server/db/messages';
 import { findSessionJoin, findSessionJoinByTokenHash } from '$lib/server/db/sessions';
-import { buildD1LikeSearchPattern } from '$lib/server/workspace/mailbox-query';
 import {
   mapDraftRow,
   mapInboundRow,
@@ -37,9 +37,11 @@ import type {
   MailboxPage,
   MailboxSection,
   MailboxState,
+  MailSearchQuery,
   WorkspaceMetrics,
   WorkspaceSnapshot
 } from '$lib/domain/mail';
+import { parseMailSearchQuery } from '$lib/domain/mail';
 
 export function parseArchiveMailboxQuery(params: URLSearchParams): MailboxQuery {
   const normalized = new URLSearchParams(params);
@@ -183,6 +185,7 @@ export async function loadMailboxPage(
     cursorId: query.cursor?.id,
     limit: query.limit + 1,
     query: query.query,
+    search: query.search,
     filter: query.filter,
     deliveryStatus: query.deliveryStatus
   };
@@ -192,21 +195,26 @@ export async function loadMailboxPage(
       ? Promise.resolve(knownMetrics)
       : getMailboxMetrics(env.DB, workspace.userId);
   let messages;
+  const searchHitFields = query.search ? buildFtsSearchPlan(query.search).hitFields : [];
+  let searchTotal = 0;
   if (section === 'drafts') {
     const page = await listDraftPage(env.DB, workspace.userId, repositoryQuery);
-    messages = (page.results ?? []).map((row) => mapDraftRow(row, workspace.profile));
+    messages = (page.results ?? []).map((row) => mapDraftRow(row, workspace.profile, searchHitFields));
+    searchTotal = Number(page.results?.[0]?.search_total ?? 0);
   } else if (section === 'sent') {
     const page = await listWorkspaceMessagePage(env.DB, workspace.userId, repositoryQuery);
-    messages = (page.results ?? []).map((row) => mapWorkspaceMessageRow(row, mapPageDeliveryStatus(row)));
+    messages = (page.results ?? []).map((row) => mapWorkspaceMessageRow(row, mapPageDeliveryStatus(row), searchHitFields));
+    searchTotal = Number(page.results?.[0]?.search_total ?? 0);
   } else {
     const [workspacePage, inboundPage] = await Promise.all([
       listWorkspaceMessagePage(env.DB, workspace.userId, repositoryQuery),
       listInboundMessageSummaryPage(env.DB, workspace.userId, repositoryQuery)
     ]);
     messages = sortMessages([
-      ...(workspacePage.results ?? []).map((row) => mapWorkspaceMessageRow(row)),
-      ...(inboundPage.results ?? []).map((row) => ({ ...mapInboundRow(row, workspace.profile), body: '' }))
+      ...(workspacePage.results ?? []).map((row) => mapWorkspaceMessageRow(row, undefined, searchHitFields)),
+      ...(inboundPage.results ?? []).map((row) => ({ ...mapInboundRow(row, workspace.profile, searchHitFields), body: '' }))
     ]);
+    searchTotal = Number(workspacePage.results?.[0]?.search_total ?? 0) + Number(inboundPage.results?.[0]?.search_total ?? 0);
   }
 
   const hasMore = messages.length > query.limit;
@@ -227,6 +235,7 @@ export async function loadMailboxPage(
     query: query.query,
     filter: query.filter,
     deliveryStatus: query.deliveryStatus,
+    ...(query.search && !query.cursor ? { searchTotal, searchHitFields } : {}),
     ...(metrics ? { metrics } : {})
   };
 }
@@ -237,6 +246,7 @@ interface MailboxSummaryQuery {
   cursorId?: string;
   limit: number;
   query: string;
+  search: MailSearchQuery | null;
   filter: MailboxFilter;
 }
 
@@ -245,10 +255,15 @@ async function listInboundMessageSummaryPage(
   userId: string,
   input: MailboxSummaryQuery
 ) {
+  const searchPlan = input.search ? buildFtsSearchPlan(input.search) : null;
+  const wantsTrash = input.search?.filters.is.includes('trash') ?? false;
+  const wantsArchive = input.search?.filters.is.includes('archived') ?? false;
   const conditions = [
     'e.owner_user_id = ?',
-    's.deleted_at IS NULL',
-    input.section === 'archive' ? 's.archived_at IS NOT NULL' : 'COALESCE(s.archived_at, NULL) IS NULL',
+    wantsTrash ? 's.deleted_at IS NOT NULL' : 's.deleted_at IS NULL',
+    wantsArchive ? 's.archived_at IS NOT NULL' :
+      wantsTrash ? '1 = 1' :
+      input.section === 'archive' ? 's.archived_at IS NOT NULL' : 'COALESCE(s.archived_at, NULL) IS NULL',
     input.filter === 'unread'
       ? 'COALESCE(s.is_read, 0) = 0'
       : input.filter === 'starred'
@@ -256,13 +271,27 @@ async function listInboundMessageSummaryPage(
         : '1 = 1'
   ];
   const bindings: unknown[] = [userId];
-  if (input.query) {
-    const pattern = buildD1LikeSearchPattern(input.query);
-    conditions.push(`(
-      lower(e.subject) LIKE ? OR lower(e.snippet) LIKE ? OR
-      lower(e."from") LIKE ? OR lower(e."to") LIKE ?
-    )`);
-    bindings.push(pattern, pattern, pattern, pattern);
+  if (searchPlan?.expression) {
+    conditions.push('workspace_search_fts MATCH ?');
+    bindings.push(searchPlan.expression);
+  }
+  if (input.search) {
+    for (const value of input.search.filters.is) {
+      if (value === 'unread') conditions.push('COALESCE(s.is_read, 0) = 0');
+      if (value === 'starred') conditions.push('COALESCE(s.is_starred, 0) = 1');
+    }
+    if (input.search.filters.hasAttachment) {
+      conditions.push('EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = e.owner_user_id AND search_attachment.message_id = e.id)');
+    }
+    for (const value of input.search.filters.after) {
+      conditions.push('e."timestamp" >= ?');
+      bindings.push(`${value}T00:00:00.000Z`);
+    }
+    for (const value of input.search.filters.before) {
+      conditions.push('e."timestamp" < ?');
+      bindings.push(`${value}T00:00:00.000Z`);
+    }
+    if (input.search.filters.status.length) conditions.push('1 = 0');
   }
   if (input.timestamp && input.cursorId) {
     conditions.push(`(e."timestamp" < ? OR (e."timestamp" = ? AND ('email:' || e.id) < ?))`);
@@ -270,17 +299,31 @@ async function listInboundMessageSummaryPage(
   }
   bindings.push(input.limit);
 
-  return db.prepare(`
+  const searchJoins = input.search ? `
+    JOIN workspace_search_documents AS search_document
+      ON search_document.user_id = e.owner_user_id AND search_document.entity_kind = 'inbound' AND search_document.entity_id = e.id
+    ${searchPlan?.expression ? 'JOIN workspace_search_fts ON workspace_search_fts.rowid = search_document.id' : ''}` : '';
+  const searchSnippet = input.search
+    ? searchPlan?.expression
+      ? `snippet(workspace_search_fts, -1, char(57344), char(57345), ' … ', 16)`
+      : `substr(search_document.subject_text, 1, 160)`
+    : `NULL`;
+
+  const pageSelect = `
     SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
       e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
-      COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
+      COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
+      ${searchSnippet} AS search_snippet
     FROM email_messages AS e
+    ${searchJoins}
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC
-    LIMIT ?
-  `).bind(userId, ...bindings).all<WorkspaceInboundRow>();
+    WHERE ${conditions.join(' AND ')}`;
+  const pageSql = input.search
+    ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
+       ORDER BY search_rows."timestamp" DESC, ('email:' || search_rows.email_id) DESC LIMIT ?`
+    : `${pageSelect} ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC LIMIT ?`;
+  return db.prepare(pageSql).bind(userId, ...bindings).all<WorkspaceInboundRow>();
 }
 
 export async function loadWorkspaceSnapshot(
@@ -298,6 +341,7 @@ export async function loadWorkspaceSnapshot(
     cursor: null,
     limit: normalized.limit ?? 40,
     query: normalized.query ?? '',
+    search: normalized.query ? parseMailSearchQuery(normalized.query) : null,
     filter: normalized.filter ?? 'all',
     deliveryStatus: normalized.deliveryStatus ?? null
   }, metrics);

@@ -74,6 +74,8 @@ describe('mailbox controller', () => {
       query: '',
       filter: 'all',
       deliveryStatus: null,
+      searchTotal: 2,
+      searchHitFields: ['all'],
       metrics
     }, false);
     const next = mergeMailboxPage(initial, {
@@ -89,6 +91,8 @@ describe('mailbox controller', () => {
 
     expect(next.mailbox.inbox.map((item) => item.id)).toEqual(['first', 'second']);
     expect(next.mailboxPages?.inbox?.messages.map((item) => item.id)).toEqual(['first', 'second']);
+    expect(next.mailboxPages?.inbox?.searchTotal).toBe(2);
+    expect(next.mailboxPages?.inbox?.searchHitFields).toEqual(['all']);
     expect(next.metrics).toEqual(metrics);
   });
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { Button, Skeleton } from '$lib/components/ui';
-  import { serializeAddressList, type MailboxSection, type MailMessage, type MailThread } from '$lib/domain/mail';
+  import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
   import EmptyMailbox from './EmptyMailbox.svelte';
   import MessageListItem from './MessageListItem.svelte';
   import type { MailFilter } from './MailFilterBar.svelte';
@@ -74,7 +74,6 @@
   });
 
   const visibleItems = $derived.by(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
     return sourceItems.filter((item) => {
       const message = item.kind === 'thread' ? item.value.sectionLatestMessage : item.value;
       const thread = item.kind === 'thread' ? item.value : null;
@@ -83,27 +82,7 @@
         (filter === 'unread' && (thread ? thread.unreadCount > 0 : !message.read)) ||
         (filter === 'starred' && (thread ? thread.messages.some((entry) => entry.starred) : message.starred));
       if (!matchesFilter) return false;
-      if (!normalizedQuery) return true;
-      const haystack = [
-        thread?.counterpartLabel,
-        thread?.subject,
-        thread?.preview,
-        message.fromName,
-        message.fromEmail,
-        message.toName,
-        message.toEmail,
-        serializeAddressList(message.toAddresses ?? []),
-        serializeAddressList(message.ccAddresses ?? []),
-        serializeAddressList(message.bccAddresses ?? []),
-        message.cc,
-        message.bcc,
-        message.subject,
-        message.preview
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLocaleLowerCase();
-      return haystack.includes(normalizedQuery);
+      return true;
     });
   });
 

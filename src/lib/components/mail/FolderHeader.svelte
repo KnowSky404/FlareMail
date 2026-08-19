@@ -41,7 +41,7 @@
   };
 
   const heading = $derived(title || sectionLabels[activeSection]);
-  const countLabel = $derived(`${count} 封`);
+  const countLabel = $derived(query.trim() ? `${count} 个结果` : `${count} 封`);
 </script>
 
 <header class="border-b border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-3 sm:px-5">

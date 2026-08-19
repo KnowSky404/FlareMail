@@ -2,8 +2,10 @@ import type {
   DeliveryStatus,
   MailFolder,
   MailboxFilter,
-  MailboxSection
+  MailboxSection,
+  MailSearchQuery
 } from '$lib/domain/mail';
+import { parseMailSearchQuery, SearchQueryParseError } from '$lib/domain/mail';
 import { boundedUtf8 } from '$lib/domain/utf8';
 import { ApiError } from '$lib/server/http/api';
 
@@ -47,6 +49,7 @@ export interface MailboxQuery {
   cursor: MailboxCursor | null;
   limit: number;
   query: string;
+  search: MailSearchQuery | null;
   filter: MailboxFilter;
   deliveryStatus: DeliveryStatus | null;
 }
@@ -115,7 +118,27 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
       query: ['最多输入 200 个字符。']
     });
   }
-  if (query) buildD1LikeSearchPattern(query);
+  let search: MailSearchQuery | null = null;
+  if (query) {
+    try {
+      search = parseMailSearchQuery(query);
+    } catch (error) {
+      if (!(error instanceof SearchQueryParseError)) throw error;
+      const messages: Record<SearchQueryParseError['code'], string> = {
+        input_too_large: '搜索表达式过长。',
+        too_many_tokens: '搜索条件过多。',
+        malformed_quotes: '搜索表达式中的引号不完整。',
+        unknown_operator: '搜索表达式包含不支持的操作符。',
+        missing_value: '搜索操作符缺少值。',
+        invalid_value: '搜索操作符的值无效。',
+        invalid_date: '日期必须使用 YYYY-MM-DD 格式。',
+        invalid_status: '投递状态无效。'
+      };
+      throw new ApiError(400, 'INVALID_SEARCH_QUERY', messages[error.code], {
+        query: [messages[error.code]]
+      });
+    }
+  }
 
   const rawLimit = params.get('limit');
   const limit = rawLimit === null ? defaultMailboxPageSize : Number(rawLimit);
@@ -139,6 +162,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
     section,
     limit,
     query,
+    search,
     filter: filterValue as MailboxFilter,
     deliveryStatus: statusValue as DeliveryStatus | null
   };
