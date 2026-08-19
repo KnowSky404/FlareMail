@@ -10,6 +10,7 @@ import {
 import type {
   ComposeInput,
   DraftMessageInput,
+  MailAttachmentSummary,
   MailMessage,
   SentMessageInput,
   UserProfile
@@ -244,14 +245,19 @@ export function hasDistinctReplyAllRecipients(message: MailMessage, options: Rep
     serializeAddressList(parseAddressList(reply.cc)) !== serializeAddressList(parseAddressList(replyAll.cc));
 }
 
-export function createForwardComposeInput(message: MailMessage, forwardedBody = message.body): ComposeInput {
+export function createForwardComposeInput(
+  message: MailMessage,
+  forwardedBody = message.body,
+  forwardAttachmentCandidates: MailAttachmentSummary[] = []
+): ComposeInput {
   return {
     to: [],
     cc: [],
     bcc: [],
     toEmail: '',
     subject: prefixedSubject('Fwd', message.subject),
-    body: `Hi,\n\n转发给你参考。\n\n---------- 转发邮件 ----------\n发件人: ${message.fromName} <${message.fromEmail}>\n收件人: ${message.toName} <${message.toEmail}>\n时间: ${message.sentAt}\n主题: ${message.subject}\n\n${forwardedBody}`
+    body: `Hi,\n\n转发给你参考。\n\n---------- 转发邮件 ----------\n发件人: ${message.fromName} <${message.fromEmail}>\n收件人: ${message.toName} <${message.toEmail}>\n时间: ${message.sentAt}\n主题: ${message.subject}\n\n${forwardedBody}`,
+    forwardAttachmentCandidates
   };
 }
 

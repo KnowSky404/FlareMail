@@ -9,6 +9,7 @@ class Statement {
   constructor(private readonly db: Database, private readonly sql: string) {}
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this as unknown as D1PreparedStatement; }
   async first<T>() { return (this.db.query(this.sql).get(...this.values) as T | null) ?? null; }
+  async all<T>() { return { success: true, results: this.db.query(this.sql).all(...this.values) as T[] }; }
   async run() { this.db.query(this.sql).run(...this.values); return { success: true, meta: { changes: Number((this.db.query('SELECT changes() AS changes').get() as { changes: number }).changes) } }; }
 }
 

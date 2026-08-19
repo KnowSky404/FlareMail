@@ -20,7 +20,11 @@ class D1 {
 }
 class Bucket {
   readonly objects = new Set<string>();
-  async delete(key: string) { this.objects.delete(key); }
+  failDelete = false;
+  async delete(key: string) {
+    if (this.failDelete) throw new Error('delete unavailable');
+    this.objects.delete(key);
+  }
 }
 
 const databases: Database[] = [];
@@ -81,5 +85,29 @@ describe('workspace trash', () => {
     const result = await emptyWorkspaceTrash(env, session);
     expect(result.deleted).toBe(2);
     expect(result.metrics.trashCount).toBe(0);
+  });
+
+  test('persists and retries R2 cleanup after the owned D1 deletion commits', async () => {
+    const { db, DB, bucket } = fixture();
+    bucket.objects.add('sent/att-1');
+    bucket.objects.add('body/sent-1');
+    bucket.failDelete = true;
+    const env = { DB, BUCKET: bucket } as never;
+    await moveWorkspaceMessageToTrash(env, session, 'sent-1');
+    const result = await permanentlyDeleteWorkspaceTrash(env, session, 'sent-1');
+    expect(result).toMatchObject({ deletedId: 'sent-1', idempotent: false, cleanupPending: true });
+    expect(db.query(`SELECT id FROM workspace_messages WHERE id = 'sent-1'`).get()).toBeNull();
+    expect(db.query(`SELECT id FROM workspace_attachments WHERE message_id = 'sent-1'`).get()).toBeNull();
+    expect(bucket.objects.has('sent/att-1')).toBe(true);
+    expect(db.query(`SELECT COUNT(*) AS count FROM workspace_r2_cleanup_queue WHERE entity_id = 'sent-1'`).get())
+      .toEqual({ count: 2 });
+
+    bucket.failDelete = false;
+    expect(await permanentlyDeleteWorkspaceTrash(env, session, 'sent-1')).toMatchObject({
+      deletedId: 'sent-1', idempotent: true
+    });
+    expect(bucket.objects.has('sent/att-1')).toBe(false);
+    expect(db.query(`SELECT COUNT(*) AS count FROM workspace_r2_cleanup_queue WHERE entity_id = 'sent-1'`).get())
+      .toEqual({ count: 0 });
   });
 });

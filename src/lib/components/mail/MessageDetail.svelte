@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Inbox } from '@lucide/svelte';
-  import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/domain/mail';
+  import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
   import { EmptyState } from '$lib/components/ui';
   import AttachmentList from './AttachmentList.svelte';
   import DeliveryTimeline from './DeliveryTimeline.svelte';
@@ -18,6 +18,7 @@
     deliveryDetailError = '',
     deliveryDetailPending = false,
     workspaceBody = null,
+    workspaceAttachments = [],
     workspaceBodyError = '',
     workspaceBodyPending = false,
     pending = false,
@@ -49,6 +50,7 @@
     deliveryDetailError?: string;
     deliveryDetailPending?: boolean;
     workspaceBody?: string | null;
+    workspaceAttachments?: MailAttachmentSummary[];
     workspaceBodyError?: string;
     workspaceBodyPending?: boolean;
     pending?: boolean;
@@ -140,6 +142,12 @@
         {#if isInbound}
           <div class="mt-8">
             <AttachmentList attachments={inboundDetail?.attachments ?? []} loading={inboundDetailPending} error={inboundDetailError} />
+          </div>
+        {/if}
+
+        {#if isSent && workspaceAttachments.length > 0}
+          <div class="mt-8">
+            <AttachmentList attachments={workspaceAttachments} loading={workspaceBodyPending} error={workspaceBodyError} />
           </div>
         {/if}
 

@@ -52,4 +52,17 @@ describe('compose controller', () => {
     expect(merged.expectedUpdatedAt).toBe('2026-08-19T10:00:01.000Z');
     expect(merged.bodyRevision).toBe('body-object-2');
   });
+
+  test('treats attachments as content and preserves their optimistic revision in draft metadata', () => {
+    const attachment = { id: 'attachment-1', filename: 'evidence.txt', contentType: 'text/plain', size: 8, inline: false };
+    const input = { ...createEmptyComposeInput(), attachments: [attachment], attachmentRevision: 3 };
+    expect(hasComposeContent(input)).toBe(true);
+    expect(serializeComposeInput(input)).toContain('attachment-1');
+    expect(composeInputFromSavedDraft(savedDraft(), null, [attachment], 3)).toMatchObject({
+      attachments: [attachment], attachmentRevision: 3
+    });
+    expect(mergeSavedDraftMetadata({ ...input, body: 'local' }, savedDraft(), null, [attachment], 4)).toMatchObject({
+      body: 'local', attachments: [attachment], attachmentRevision: 4
+    });
+  });
 });

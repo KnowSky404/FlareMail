@@ -4,6 +4,7 @@ import { deleteBodyObjectRow, insertBodyObject, markBodyObjectDeletePending } fr
 import { prepareBodyObject, projectBody, putBodyObject } from '$lib/server/body';
 import { findOwnedDraft, insertDraft, overwriteDraft, updateDraftIfVersion } from '$lib/server/db/drafts';
 import { createDraftMessage, mapDraftRow, serializeDraftForInsert, type ComposeInput, type WorkspaceContext } from '$lib/server/workspace/shared';
+import { draftAttachmentSnapshot } from '$lib/server/workspace/attachment';
 
 export class DraftConflictError extends Error {
   readonly code = 'DRAFT_CONFLICT';
@@ -34,6 +35,14 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
   const requestedId = input.saveAsCopy ? undefined : input.draftId;
   const currentRow = requestedId ? await findOwnedDraft(env.DB, session.userId, requestedId) : null;
   if (requestedId && !currentRow) throw new DraftNotFoundError();
+  if (
+    currentRow
+    && input.attachmentRevision !== undefined
+    && Number(currentRow.attachment_revision ?? 0) !== input.attachmentRevision
+    && !input.overwrite
+  ) {
+    throw new DraftConflictError(mapDraftRow(currentRow, session.profile));
+  }
   const currentBodyRevision = currentRow?.body_object_id ?? null;
   const requestedBodyRevision = input.bodyRevision?.trim() || null;
   const preserveCanonicalBody = Boolean(
@@ -124,9 +133,12 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
     }
   }
 
+  const attachmentSnapshot = await draftAttachmentSnapshot(env.DB, session.userId, draft.id);
   return {
     message: draft,
     metrics: await getMailboxMetrics(env.DB, session.userId),
-    bodyRevision: serialized.bodyObjectId
+    bodyRevision: serialized.bodyObjectId,
+    attachments: attachmentSnapshot.attachments,
+    attachmentRevision: attachmentSnapshot.attachmentRevision
   };
 }

@@ -5,6 +5,7 @@ import { findOwnedDraft } from '$lib/server/db/drafts';
 import { findOwnedWorkspaceMessage } from '$lib/server/db/messages';
 import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
+import { listAttachmentsForEntity } from '$lib/server/db/attachments';
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
@@ -15,7 +16,21 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   const draft = message ? null : await findOwnedDraft(env.DB, session.userId, id);
   if (!message && !draft) throw new ApiError(404, 'MESSAGE_NOT_FOUND', '邮件不存在。');
   const pointer = message?.body_object_id ?? draft?.body_object_id ?? null;
-  if (!pointer) return apiSuccess(event, { body: message?.body ?? draft?.body ?? '' });
+  const attachments = message
+    ? (await listAttachmentsForEntity(env.DB, session.userId, 'message', id)).map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.filename,
+        contentType: attachment.content_type,
+        size: attachment.size,
+        inline: attachment.disposition === 'inline',
+        contentId: attachment.content_id,
+        disposition: attachment.disposition,
+        state: attachment.state,
+        sha256: attachment.sha256,
+        downloadUrl: `/api/workspace/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachment.id)}`
+      }))
+    : [];
+  if (!pointer) return apiSuccess(event, { body: message?.body ?? draft?.body ?? '', attachments });
   if (!env.BUCKET) throw new ApiError(503, 'BODY_STORAGE_UNAVAILABLE', '正文存储服务暂不可用。');
   const object = await findBodyObject(env.DB, pointer, session.userId, message ? 'workspace_message' : 'draft', id);
   if (!object) throw new ApiError(404, 'BODY_OBJECT_NOT_FOUND', '正文对象不存在。');
@@ -24,5 +39,5 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   catch { throw new ApiError(409, 'BODY_OBJECT_INTEGRITY', '正文完整性校验失败。'); }
   // Raw HTML is intentionally not exposed through the general body API. The
   // HTML reader uses a separately sanitized, sandboxed representation.
-  return apiSuccess(event, { body: body.textBody });
+  return apiSuccess(event, { body: body.textBody, attachments });
 });

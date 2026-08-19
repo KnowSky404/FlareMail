@@ -105,8 +105,8 @@ const MAX_PREVIEW_LENGTH = 400;
 // the Workers isolate limit for JSON/base64 copies made during serialization.
 export const MAX_OUTBOUND_ATTACHMENT_COUNT = 10;
 export const MAX_OUTBOUND_ATTACHMENT_BYTES = 8 * 1024 * 1024;
-export const MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES = 20 * 1024 * 1024;
-export const MAX_OUTBOUND_ATTACHMENT_JSON_BYTES = 32 * 1024 * 1024;
+export const MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES = 12 * 1024 * 1024;
+export const MAX_OUTBOUND_ATTACHMENT_JSON_BYTES = 20 * 1024 * 1024;
 const MAX_OUTBOUND_CONTENT_ID_LENGTH = 128;
 const MIME_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
 

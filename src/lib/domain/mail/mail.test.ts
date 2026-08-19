@@ -101,12 +101,16 @@ describe('compose domain', () => {
       references: '<root@example.com>'
     });
     const reply = createReplyComposeInput(source);
-    const forward = createForwardComposeInput(source);
+    const forward = createForwardComposeInput(source, source.body, [{
+      id: 'attachment-1', filename: 'source.txt', contentType: 'text/plain', size: 6,
+      inline: false, downloadUrl: '/api/workspace/messages/source/attachments/attachment-1'
+    }]);
     expect(reply.inReplyTo).toBe('<current@example.com>');
     expect(reply.references).toBe('<root@example.com> <current@example.com>');
     expect(forward.inReplyTo).toBeUndefined();
     expect(forward.references).toBeUndefined();
     expect(forward.body).not.toContain('CC:');
+    expect(forward.forwardAttachmentCandidates).toMatchObject([{ filename: 'source.txt', size: 6 }]);
   });
 
   test('Reply All prefers Reply-To, excludes self, dedupes recipients and never copies BCC', () => {

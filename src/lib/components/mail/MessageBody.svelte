@@ -53,8 +53,8 @@
     {#if hasHtml}
       <div class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[var(--fm-border)] pb-3">
         <div class="inline-flex rounded-[var(--radius-md)] border border-[var(--fm-border)] p-0.5" role="group" aria-label="正文格式">
-          <button class="min-h-11 rounded-[calc(var(--radius-md)-2px)] px-3 text-xs font-medium sm:min-h-9" class:bg-[var(--fm-primary)]={view === 'text'} class:text-white={view === 'text'} type="button" aria-pressed={view === 'text'} onclick={() => (view = 'text')}>纯文本</button>
-          <button class="min-h-11 rounded-[calc(var(--radius-md)-2px)] px-3 text-xs font-medium sm:min-h-9" class:bg-[var(--fm-primary)]={view === 'html'} class:text-white={view === 'html'} type="button" aria-pressed={view === 'html'} onclick={() => (view = 'html')}>安全 HTML</button>
+          <button class={`min-h-11 rounded-[calc(var(--radius-md)-2px)] px-3 text-xs font-medium sm:min-h-9 ${view === 'text' ? 'bg-[var(--fm-primary)] text-[var(--fm-text-inverse)]' : ''}`} type="button" aria-pressed={view === 'text'} onclick={() => (view = 'text')}>纯文本</button>
+          <button class={`min-h-11 rounded-[calc(var(--radius-md)-2px)] px-3 text-xs font-medium sm:min-h-9 ${view === 'html' ? 'bg-[var(--fm-primary)] text-[var(--fm-text-inverse)]' : ''}`} type="button" aria-pressed={view === 'html'} onclick={() => (view = 'html')}>安全 HTML</button>
         </div>
         <div class="flex flex-wrap items-center gap-1.5">
           {#if printUrl}

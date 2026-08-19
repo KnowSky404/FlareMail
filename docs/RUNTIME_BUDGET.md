@@ -21,6 +21,12 @@ record the evidence.
   memory ceiling. The bounded JSON request reader also caps observed bytes.
 - Canonical large bodies are stored in R2 with a 32 MiB encoded-envelope cap;
   D1 stores the pointer, byte counts, digest, and bounded projections.
+- Outbound attachments are streamed individually to R2 with a per-file 8 MiB
+  limit, a 10-file limit, and a 12 MiB raw total. Send/retry reads and hashes
+  the owned objects before building Resend's Base64 JSON payload. The 12 MiB
+  total stays below Resend's 40 MB encoded-email cap and leaves isolate-memory
+  headroom for the byte and Base64 copies; preview measurements must still
+  cover the upper bound before production enablement.
 - Mailbox list and SSR queries do not select body columns. Owned body routes
   perform lazy R2 reads and integrity checks.
 - FTS5 indexes only bounded projections: 8 KiB from, 16 KiB To/CC, 4 KiB
@@ -53,7 +59,9 @@ should use an isolated preview Worker and preview D1/R2 resources, then:
 4. test login (successful and rejected), an SSR mailbox request, and inbound
    MIME fixtures at approximately 1 MiB, 5 MiB, and near the configured limit;
 5. separately observe D1, R2, parser, and Resend failure outcomes.
-6. run `bun run search:index -- --mode verify --json` and record projection
+6. upload files near the 8 MiB per-file and 12 MiB total outbound limits, then
+   record R2 put, integrity-read, serialization, and provider-call timings;
+7. run `bun run search:index -- --mode verify --json` and record projection
    counts; use a reviewed rebuild only if drift is reported.
 
 The application emits structured, non-sensitive phase timing events. They may

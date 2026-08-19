@@ -3,7 +3,7 @@ import type { WorkspaceDraftRow } from '$lib/server/workspace/shared';
 export async function listDrafts(db: D1Database, userId: string) {
   return db.prepare(`
     SELECT id, to_email, cc, to_json, cc_json, bcc_json, subject, body, is_starred, created_at, updated_at,
-      message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id
+      message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id, attachment_revision
     FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC, created_at DESC
   `).bind(userId).all<WorkspaceDraftRow>();
 }
@@ -11,7 +11,7 @@ export async function listDrafts(db: D1Database, userId: string) {
 export async function findOwnedDraft(db: D1Database, userId: string, draftId: string) {
   return db.prepare(`
     SELECT id, to_email, cc, to_json, cc_json, bcc_json, subject, body, is_starred, created_at, updated_at,
-      message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id
+      message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id, attachment_revision
     FROM workspace_drafts WHERE user_id = ? AND id = ?
   `).bind(userId, draftId).first<WorkspaceDraftRow>();
 }
@@ -74,4 +74,27 @@ export function updateDraftStarred(db: D1Database, userId: string, draftId: stri
 
 export function deleteDraft(db: D1Database, userId: string, draftId: string) {
   return db.prepare(`DELETE FROM workspace_drafts WHERE user_id = ? AND id = ?`).bind(userId, draftId);
+}
+
+/**
+ * Turn a stale attachment revision into a CHECK failure so a D1 batch rolls
+ * back instead of committing a sent message without its attachments. Version
+ * zero is intentionally invalid (`schema_version >= 1`) and the INSERT is a
+ * no-op when the owned draft still has the expected revision.
+ */
+export function assertDraftAttachmentRevision(db: D1Database, userId: string, draftId: string, expectedRevision: number) {
+  return db.prepare(`
+    INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    SELECT '__draft_attachment_revision_guard__', 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE NOT EXISTS (
+      SELECT 1 FROM workspace_drafts
+      WHERE id = ? AND user_id = ? AND attachment_revision = ?
+    )
+  `).bind(draftId, userId, expectedRevision);
+}
+
+export async function findDraftAttachmentRevision(db: D1Database, userId: string, draftId: string) {
+  return db.prepare(`
+    SELECT attachment_revision FROM workspace_drafts WHERE user_id = ? AND id = ?
+  `).bind(userId, draftId).first<{ attachment_revision: number }>();
 }

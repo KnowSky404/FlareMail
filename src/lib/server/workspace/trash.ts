@@ -73,6 +73,43 @@ async function resourceKeys(db: D1Database, userId: string, row: TrashRow) {
   return [...new Set(keys.filter(Boolean))];
 }
 
+function enqueueR2Cleanup(db: D1Database, userId: string, entityId: string, key: string) {
+  const now = new Date().toISOString();
+  return db.prepare(`
+    INSERT INTO workspace_r2_cleanup_queue
+      (id, owner_user_id, entity_id, r2_key, reason, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'trash_delete', ?, ?)
+    ON CONFLICT(r2_key) DO NOTHING
+  `).bind(crypto.randomUUID(), userId, entityId, key, now, now);
+}
+
+async function pendingR2CleanupKeys(db: D1Database, userId: string, entityId: string) {
+  const result = await db.prepare(`
+    SELECT r2_key FROM workspace_r2_cleanup_queue
+    WHERE owner_user_id = ? AND entity_id = ? AND reason = 'trash_delete'
+    ORDER BY created_at ASC, id ASC
+  `).bind(userId, entityId).all<{ r2_key: string }>();
+  return (result.results ?? []).map((row) => row.r2_key);
+}
+
+async function cleanQueuedR2Keys(
+  env: CloudflareEnv | undefined,
+  db: D1Database,
+  userId: string,
+  entityId: string,
+  keys: string[]
+) {
+  if (!keys.length || !env?.BUCKET) return keys.length > 0;
+  const results = await Promise.allSettled(keys.map(async (key) => {
+    await env.BUCKET!.delete(key);
+    await db.prepare(`
+      DELETE FROM workspace_r2_cleanup_queue
+      WHERE owner_user_id = ? AND entity_id = ? AND r2_key = ?
+    `).bind(userId, entityId, key).run();
+  }));
+  return results.some((item) => item.status === 'rejected');
+}
+
 async function optionalOwnedCleanupStatements(db: D1Database, userId: string, entityId: string) {
   const names = await db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('workspace_fts', 'workspace_labels', 'workspace_outbox')`).all<{ name: string }>();
   const statements: D1PreparedStatement[] = [];
@@ -147,7 +184,7 @@ export async function restoreWorkspaceTrash(env: CloudflareEnv | undefined, sess
   return { restoredId: id, originalFolder: current.message.archivedAt ? 'archive' : current.message.folder, idempotent: false, metrics: await getMailboxMetrics(db, session.userId) };
 }
 
-type PermanentDeleteResult = { deletedId: string; idempotent: boolean; metrics: Awaited<ReturnType<typeof getMailboxMetrics>> };
+type PermanentDeleteResult = { deletedId: string; idempotent: boolean; cleanupPending?: boolean; metrics: Awaited<ReturnType<typeof getMailboxMetrics>> };
 type PermanentDeleteResultWithoutMetrics = Omit<PermanentDeleteResult, 'metrics'>;
 
 export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, id: string): Promise<PermanentDeleteResult>;
@@ -161,13 +198,15 @@ export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undef
   if (!current) {
     const active = await findTrashRow(db, session.userId, id, true);
     if (active) throw new ApiError(409, 'TRASH_ITEM_NOT_TRASHED', '只能永久删除已移入回收站的项目。', undefined, undefined, false);
-    return result({ deletedId: id, idempotent: true });
+    const cleanupKeys = await pendingR2CleanupKeys(db, session.userId, id);
+    const cleanupPending = await cleanQueuedR2Keys(env, db, session.userId, id, cleanupKeys);
+    return result({ deletedId: id, idempotent: true, ...(cleanupPending ? { cleanupPending: true } : {}) });
   }
   const keys = await resourceKeys(db, session.userId, current);
   if (keys.length && !env?.BUCKET) throw new ApiError(503, 'R2_UNAVAILABLE', '文件存储服务暂不可用。');
-  for (const key of keys) await env!.BUCKET.delete(key);
   const entityId = current.kind === 'inbound' ? id.slice(6) : id;
   const statements = [
+    ...keys.map((key) => enqueueR2Cleanup(db, session.userId, id, key)),
     db.prepare('DELETE FROM workspace_attachments WHERE user_id = ? AND message_id = ?').bind(session.userId, entityId),
     db.prepare('DELETE FROM mail_body_objects WHERE owner_user_id = ? AND entity_id = ?').bind(session.userId, entityId),
     db.prepare('DELETE FROM workspace_delivery_attempts WHERE user_id = ? AND message_id = ?').bind(session.userId, entityId),
@@ -183,7 +222,12 @@ export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undef
   } else if (current.kind === 'draft') statements.push(db.prepare('DELETE FROM workspace_drafts WHERE user_id = ? AND id = ?').bind(session.userId, id));
   else statements.push(db.prepare('DELETE FROM workspace_messages WHERE user_id = ? AND id = ?').bind(session.userId, id));
   await db.batch(statements);
-  return result({ deletedId: id, idempotent: false });
+  const cleanupPending = await cleanQueuedR2Keys(env, db, session.userId, id, keys);
+  return result({
+    deletedId: id,
+    idempotent: false,
+    ...(cleanupPending ? { cleanupPending: true } : {})
+  });
 }
 
 export async function emptyWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext) {

@@ -69,7 +69,8 @@ Otherwise it returns HTTP `503` with a typed safe error and correlation ID.
 ## Draft concurrency
 
 `GET /api/workspace/drafts/:id` returns the current owned draft with its full
-text body and an opaque `bodyRevision`. Draft writes include `expectedUpdatedAt`,
+text body, an opaque `bodyRevision`, visible attachment lifecycle summaries, and an integer
+`attachmentRevision`. Draft writes include `expectedUpdatedAt`,
 the version observed by the editor, and echo `bodyRevision` after a canonical
 body write. A client must present that revision before changing a tiered body;
 an edit based only on a list projection returns `DRAFT_BODY_RELOAD_REQUIRED`.
@@ -79,6 +80,38 @@ HTTP `409` with a typed `DRAFT_CONFLICT` error containing only `draftId` and
 `updatedAt`. The client keeps the local edit visible and explicitly fetches the
 owned current draft if the user chooses the server version; error envelopes do
 not reflect a mail body.
+
+## Outbound attachments
+
+Attachment bytes never enter the compose JSON or D1. The browser computes a
+SHA-256 digest, then sends the raw request body to
+`PUT /api/workspace/drafts/:draftId/attachments/:attachmentId` with `filename`,
+`size`, and `attachmentRevision` query parameters plus `Content-Type` and
+`X-FlareMail-SHA256` headers. The Worker streams that body to a server-generated
+`outbound/v1/...` R2 key that contains no user filename. The response returns
+the next attachment revision and the complete visible lifecycle summary list.
+`failed` and interrupted `uploading` rows remain visible after refresh so the
+client can retry or remove them; `delete_pending` rows are hidden and do not
+block sending while maintenance completes cleanup.
+
+`PATCH` on the same route accepts `{ filename, attachmentRevision }`; `DELETE`
+accepts `attachmentRevision` in the query. Every operation checks draft owner,
+uses optimistic concurrency, sanitizes the display filename, and keeps failed
+or interrupted objects in a bounded cleanup lifecycle. Limits are 10 files,
+8 MiB per file, and 12 MiB total raw bytes. The total leaves headroom below
+Resend's 40 MB post-Base64 message limit and the Worker serialization budget.
+The server validates a present `Content-Length` and always wraps the request
+stream in a byte-counting transform, so chunked or misleading uploads abort as
+soon as they exceed the declared per-file limit.
+
+A draft send must present the current `attachmentRevision`. Before persistence,
+the server reloads every ready R2 object and verifies its size and SHA-256. The
+sent message insert, attachment relation transfer, and draft deletion then run
+in one guarded D1 batch. Provider failure or an unknown result does not delete
+the attachment: same-key delivery retries reload and verify the same persisted
+objects. `GET /api/workspace/messages/:id/body` includes sent attachment
+summaries, and the owned attachment route forces safe download headers after a
+fresh integrity check.
 
 ## Mailbox mutations
 
@@ -147,8 +180,12 @@ workspace messages, drafts, and inbound messages. Each item includes its
 archive state. `DELETE /api/workspace/trash/:id` permanently deletes only an
 owned trash item. Permanent deletion removes delivery status, attempts,
 events, receipts, attachment/body metadata, and their owned R2 objects. The
-operation is ownership-preflighted and safe to retry; if R2 is unavailable the
-D1 rows remain intact.
+operation is ownership-preflighted and safe to retry. It commits the owned D1
+deletion before deleting R2 objects, so a storage failure cannot leave live D1
+pointers to missing data. The same D1 transaction records every object in
+`workspace_r2_cleanup_queue`; successful deletes remove those records, while
+`cleanupPending: true` means the API can retry them idempotently and the
+reviewed maintenance path retains a durable fallback.
 
 `POST /api/workspace/trash` with `{ "action": "empty" }` permanently deletes
 all owned trash items up to the bounded batch size. Expired trash is reported

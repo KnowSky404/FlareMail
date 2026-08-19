@@ -23,6 +23,12 @@ async function listDrafts(page: Page) {
   return (await response.json() as { data: { page: { messages: DraftSnapshot[] } } }).data.page.messages;
 }
 
+async function readDraft(page: Page, draftId: string) {
+  const response = await page.request.get(`/api/workspace/drafts/${encodeURIComponent(draftId)}`);
+  if (!response.ok()) throw new Error(`Draft detail failed: ${response.status()} ${await response.text()}`);
+  return (await response.json() as { data: { message: DraftSnapshot } }).data.message;
+}
+
 async function updateServerDraft(page: Page, subject: string, body: string) {
   const current = (await listDrafts(page)).find((draft) => draft.subject === subject);
   expect(current, `missing draft ${subject}`).toBeTruthy();
@@ -98,7 +104,7 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   await page.getByLabel('选择E2E Inbox Welcome').check();
   await page.getByRole('button', { name: '已加星标' }).click();
   await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
-  await page.getByRole('button', { name: '全部' }).click();
+  await page.getByRole('button', { name: '全部', exact: true }).click();
   await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/ }).first().click();
   await expect(page).toHaveURL(/message=/u);
 
@@ -107,7 +113,7 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   await expect(page).not.toHaveURL(/message=|folder=sent|q=/u);
   await login(page);
   await expect(page.getByLabel('搜索邮件')).toHaveValue('');
-  await expect(page.getByRole('button', { name: '全部' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: '全部', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
   await expect(page.getByRole('button', { name: '加载更多' })).toBeVisible();
   await assertNoConsoleErrors(consoleErrors);
@@ -132,7 +138,7 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
     await addStar.click();
     await expect(removeStar).toBeVisible();
     if (testInfo.project.name === 'desktop') {
-      await expect(page.getByRole('status')).toContainText('已加入星标邮件');
+      await expect(page.getByRole('status').filter({ hasText: '已加入星标邮件' })).toBeVisible();
     }
   }
   if (testInfo.project.name !== 'desktop') {
@@ -346,6 +352,51 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('uploads, restores, edits, sends and downloads outbound attachments', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop path covers the complete attachment lifecycle once.');
+  await login(page);
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  const subject = 'E2E outbound attachments';
+  await page.getByLabel('收件人').fill('attachment-recipient@flaremail.test');
+  await page.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
+  await page.getByRole('textbox', { name: '正文', exact: true }).fill('Two files enter; one verified file is sent.');
+  await page.getByLabel('选择附件').setInputFiles([
+    { name: 'keep.txt', mimeType: 'text/plain', buffer: Buffer.from('kept attachment bytes') },
+    { name: 'discard.txt', mimeType: 'text/plain', buffer: Buffer.from('discarded attachment bytes') }
+  ]);
+  await expect(page.getByLabel('附件名称 keep.txt')).toHaveValue('keep.txt', { timeout: 12_000 });
+  await expect(page.getByLabel('附件名称 discard.txt')).toHaveValue('discard.txt');
+  await expect(page.getByRole('list', { name: '附件上传状态' })).toHaveCount(0);
+
+  await page.reload();
+  await openDraftEditor(page, subject);
+  await expect(page.getByLabel('附件名称 keep.txt')).toHaveValue('keep.txt');
+  await page.getByRole('button', { name: '删除附件 discard.txt' }).click();
+  await expect(page.getByLabel('附件名称 discard.txt')).toHaveCount(0);
+  await page.getByLabel('附件名称 keep.txt').fill('renamed-evidence.txt');
+  await page.getByRole('button', { name: '重命名', exact: true }).click();
+  await expect(page.getByLabel('附件名称 renamed-evidence.txt')).toHaveValue('renamed-evidence.txt');
+  await page.getByRole('button', { name: '发送邮件' }).click();
+
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
+  const download = detail.getByRole('link', { name: '下载附件 renamed-evidence.txt' });
+  await expect(download).toBeVisible({ timeout: 10_000 });
+  const href = await download.getAttribute('href');
+  expect(href).toBeTruthy();
+  const response = await page.request.get(href!);
+  expect(response.ok(), await response.text()).toBe(true);
+  expect(await response.body()).toEqual(Buffer.from('kept attachment bytes'));
+
+  await detail.getByRole('button', { name: '转发', exact: true }).click();
+  const forwardDialog = page.getByRole('dialog', { name: '转发邮件' });
+  await expect(forwardDialog.getByText('原邮件有 1 个附件，默认不包含。')).toBeVisible();
+  await forwardDialog.getByRole('button', { name: '包含原附件', exact: true }).click();
+  await expect(forwardDialog.getByLabel('附件名称 renamed-evidence.txt')).toHaveValue('renamed-evidence.txt', { timeout: 12_000 });
+  await expect(forwardDialog.getByText('原邮件有 1 个附件，默认不包含。')).toHaveCount(0);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('persists To CC and BCC chips as canonical recipient arrays', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
@@ -438,8 +489,10 @@ test('resolves draft conflicts by loading, copying, and explicitly overwriting',
   await page.getByRole('button', { name: '另存为新草稿' }).click();
   await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeHidden();
   const afterCopy = await listDrafts(page);
-  expect(afterCopy.find((draft) => draft.id === originalCopyDraft.id)?.body).toBe('Server body preserved on copy');
-  expect(afterCopy.some((draft) => draft.id !== originalCopyDraft.id && draft.subject === 'E2E Conflict Copy' && draft.body === 'Local body saved as copy')).toBe(true);
+  expect((await readDraft(page, originalCopyDraft.id)).body).toBe('Server body preserved on copy');
+  const copiedDraft = afterCopy.find((draft) => draft.id !== originalCopyDraft.id && draft.subject === 'E2E Conflict Copy');
+  expect(copiedDraft).toBeTruthy();
+  expect((await readDraft(page, copiedDraft!.id)).body).toBe('Local body saved as copy');
 
   await openDraftEditor(page, 'E2E Conflict Overwrite');
   const originalOverwriteDraft = (await listDrafts(page)).find((draft) => draft.subject === 'E2E Conflict Overwrite')!;
@@ -448,7 +501,7 @@ test('resolves draft conflicts by loading, copying, and explicitly overwriting',
   await expect(page.getByRole('alert').filter({ hasText: '服务器版本已更新' })).toBeVisible({ timeout: 8_000 });
   await page.getByRole('button', { name: '明确覆盖' }).click();
   await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeHidden();
-  expect((await listDrafts(page)).find((draft) => draft.id === originalOverwriteDraft.id)?.body).toBe('Explicit local overwrite body');
+  expect((await readDraft(page, originalOverwriteDraft.id)).body).toBe('Explicit local overwrite body');
   const expectedConflicts = consoleErrors.filter((message) => message.includes('409 (Conflict)'));
   expect(expectedConflicts).toHaveLength(3);
   await assertNoConsoleErrors(consoleErrors.filter((message) => !message.includes('409 (Conflict)')));

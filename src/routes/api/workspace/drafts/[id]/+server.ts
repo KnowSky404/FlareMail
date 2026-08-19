@@ -5,6 +5,7 @@ import { findOwnedDraft } from '$lib/server/db/drafts';
 import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
 import { mapDraftRow } from '$lib/server/workspace/shared';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
+import { draftAttachmentSnapshot } from '$lib/server/workspace/attachment';
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
@@ -27,5 +28,11 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     }
   }
 
-  return apiSuccess(event, { message, bodyRevision: row.body_object_id ?? null });
+  const attachmentSnapshot = await draftAttachmentSnapshot(env.DB, session.userId, id);
+  return apiSuccess(event, {
+    message,
+    bodyRevision: row.body_object_id ?? null,
+    attachments: attachmentSnapshot.attachments,
+    attachmentRevision: attachmentSnapshot.attachmentRevision
+  });
 });

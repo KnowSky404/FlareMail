@@ -1,6 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { getWorkspaceCapabilities, hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import { deleteDraft, findOwnedDraft } from '$lib/server/db/drafts';
+import { assertDraftAttachmentSet, listAttachmentsForEntity, transferDraftAttachmentsToMessage, type StoredAttachmentRow } from '$lib/server/db/attachments';
 import { deleteBodyObjectRow, insertBodyObject, markBodyObjectDeletePending, findBodyObject } from '$lib/server/db/body';
 import {
   findDeliveryStatus,
@@ -16,6 +17,7 @@ import {
   OutboundGatewayError,
   isOutboundGatewayError,
   type OutboundMailGateway,
+  type OutboundMailAttachment,
   type OutboundMailInput
 } from '$lib/server/outbound/gateway';
 import { createOutboundGateway, outboundProviderName } from '$lib/server/outbound/provider';
@@ -70,7 +72,50 @@ const threadKey = (message: MailMessage) => {
 const providerRecipients = (addresses: readonly MailAddress[]) => addresses.map(serializeAddress);
 const optionalProviderRecipients = (addresses: readonly MailAddress[]) => addresses.length ? providerRecipients(addresses) : undefined;
 
-const gatewayInput = (env: CloudflareEnv | undefined, message: MailMessage, idempotencyKey: string, body?: CanonicalBody): OutboundMailInput => ({
+const hex = (buffer: ArrayBuffer) => [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+async function loadOutboundAttachments(
+  env: CloudflareEnv,
+  userId: string,
+  relationType: 'draft' | 'message',
+  entityId: string
+): Promise<{ rows: StoredAttachmentRow[]; provider: OutboundMailAttachment[] }> {
+  if (!env.BUCKET) throw new OutboundGatewayError('configuration', 'Outbound attachment storage is unavailable.', { retryable: false });
+  const rows = await listAttachmentsForEntity(env.DB, userId, relationType, entityId, { includeNonReady: true });
+  if (rows.some((row) => row.state === 'uploading' || row.state === 'failed')) {
+    throw new OutboundGatewayError('client_error', 'Wait for every attachment upload to finish before sending.', { retryable: false });
+  }
+  const readyRows = rows.filter((row) => row.state === 'ready');
+  const provider: OutboundMailAttachment[] = [];
+  for (const row of readyRows) {
+    if (!row.sha256) throw new OutboundGatewayError('configuration', 'Outbound attachment metadata is incomplete.', { retryable: false });
+    const object = await env.BUCKET.get(row.r2_key);
+    if (!object || object.size !== row.size) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment integrity verification failed.', { retryable: false });
+    }
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    const digest = hex(await crypto.subtle.digest('SHA-256', bytes));
+    if (digest !== row.sha256) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment integrity verification failed.', { retryable: false });
+    }
+    provider.push({
+      filename: row.filename,
+      bytes,
+      contentType: row.content_type,
+      contentId: row.content_id ?? undefined,
+      disposition: row.disposition
+    });
+  }
+  return { rows: readyRows, provider };
+}
+
+const gatewayInput = (
+  env: CloudflareEnv | undefined,
+  message: MailMessage,
+  idempotencyKey: string,
+  body?: CanonicalBody,
+  attachments?: OutboundMailAttachment[]
+): OutboundMailInput => ({
   idempotencyKey,
   from: sender(env, message),
   to: providerRecipients(message.toAddresses ?? parseAddressList(message.toEmail)),
@@ -85,7 +130,8 @@ const gatewayInput = (env: CloudflareEnv | undefined, message: MailMessage, idem
     ['In-Reply-To', headerValue(message.inReplyTo)],
     ['References', headerValue(message.references)]
   ].filter((entry): entry is [string, string] => Boolean(entry[1]))),
-  tags: [{ name: 'flaremail_kind', value: 'workspace' }]
+  tags: [{ name: 'flaremail_kind', value: 'workspace' }],
+  attachments: attachments?.length ? attachments : undefined
 });
 
 const resultKind = (status: DeliveryStatus, error?: OutboundGatewayError): DeliveryResultKind => {
@@ -144,7 +190,8 @@ async function submitPersistedMessage(
   attempts: number,
   gateway: OutboundMailGateway,
   provider: string,
-  body?: CanonicalBody
+  body?: CanonicalBody,
+  attachments?: OutboundMailAttachment[]
 ) {
   const startedAt = nowIso();
   const attemptNumber = attempts + 1;
@@ -159,7 +206,7 @@ async function submitPersistedMessage(
   console.log(JSON.stringify({ event: 'outbound_phase', phase: 'd1_attempt_persist', durationMs: Date.now() - d1StartedAt }));
 
   try {
-    const result = await gateway.send(gatewayInput(env, message, idempotencyKey, body));
+    const result = await gateway.send(gatewayInput(env, message, idempotencyKey, body, attachments));
     const completedAt = nowIso();
     const state = statusPayload({ session, messageId: message.id, idempotencyKey, provider, status: 'submitted',
       attempts: attemptNumber, providerMessageId: result.providerMessageId, remoteTimestamp: completedAt });
@@ -229,6 +276,17 @@ export async function sendWorkspaceMessage(
   const provider = options.gateway ? 'injected' : outboundProviderName(env);
 
   const existingDraft = draftId && capabilities.drafts ? await findOwnedDraft(env.DB, session.userId, draftId) : null;
+  const draftAttachments = existingDraft
+    ? await loadOutboundAttachments(env, session.userId, 'draft', existingDraft.id)
+    : { rows: [], provider: [] };
+  const attachmentRevision = Number(existingDraft?.attachment_revision ?? 0);
+  if (
+    existingDraft
+    && (draftAttachments.rows.length > 0 || input.attachmentRevision !== undefined)
+    && input.attachmentRevision !== attachmentRevision
+  ) {
+    throw new DraftConflictError(mapDraftRow(existingDraft, session.profile));
+  }
   let canonicalBody: CanonicalBody = { version: 1, textBody: input.body, htmlBody: '' };
   if (existingDraft?.body_object_id) {
     const requestedBodyRevision = input.bodyRevision?.trim() || null;
@@ -250,6 +308,7 @@ export async function sendWorkspaceMessage(
     body: canonicalBody.textBody, cc: input.cc, bcc: input.bcc, messageId: input.messageId || localMessageId(messageId, env, session.profile.email),
     inReplyTo: input.inReplyTo, references: input.references, deliveryStatus: 'submitting', deliveryAttempts: 0 });
   message.threadKey = threadKey(message);
+  if (draftAttachments.rows.length) message.labels = [...message.labels, 'Attachment'];
   const timestamp = nowIso();
   const bodyObject = await prepareBodyObject('workspace_message', message.id, canonicalBody.textBody, canonicalBody.htmlBody);
   if (bodyObject && !env.BUCKET) throw new Error('BODY_STORAGE_UNAVAILABLE');
@@ -258,6 +317,14 @@ export async function sendWorkspaceMessage(
   const serialized = serializeMessageForInsert(session.userId, { ...message, body: bodyObject ? projected.textBody : canonicalBody.textBody, preview: projected.snippet }, idempotencyKey);
   serialized.bodyObjectId = bodyObject?.id ?? null;
   const statements: D1PreparedStatement[] = [];
+  if (existingDraft) {
+    statements.push(assertDraftAttachmentSet(env.DB, {
+      userId: session.userId,
+      draftId: existingDraft.id,
+      expectedRevision: attachmentRevision,
+      attachmentIds: draftAttachments.rows.map((row) => row.id)
+    }));
+  }
   if (existingDraft?.body_object_id && existingDraft.body_object_id !== bodyObject?.id) {
     statements.push(markBodyObjectDeletePending(env.DB, existingDraft.body_object_id, new Date(Date.now() + 86_400_000).toISOString(), timestamp));
   }
@@ -266,8 +333,18 @@ export async function sendWorkspaceMessage(
     r2_key: bodyObject.key, size_bytes: bodyObject.sizeBytes, sha256: bodyObject.sha256,
     text_bytes: bodyObject.textBytes, html_bytes: bodyObject.htmlBytes, createdAt: timestamp
   }));
-  if (draftId && capabilities.drafts) statements.push(deleteDraft(env.DB, session.userId, draftId));
   statements.push(insertMessage(env.DB, serialized));
+  if (existingDraft && draftAttachments.rows.length) {
+    statements.push(transferDraftAttachmentsToMessage(env.DB, {
+      userId: session.userId,
+      draftId: existingDraft.id,
+      messageId: message.id,
+      attachmentIds: draftAttachments.rows.map((row) => row.id),
+      expectedRevision: attachmentRevision,
+      updatedAt: timestamp
+    }));
+  }
+  if (draftId && capabilities.drafts) statements.push(deleteDraft(env.DB, session.userId, draftId));
   try {
     await env.DB.batch(statements);
   } catch (error) {
@@ -285,10 +362,26 @@ export async function sendWorkspaceMessage(
       await deleteBodyObjectRow(env.DB, bodyObject.id).run().catch(() => undefined);
       await env.BUCKET.delete(bodyObject.key).catch(() => undefined);
     }
+    if (existingDraft) {
+      const latest = await findOwnedDraft(env.DB, session.userId, existingDraft.id);
+      if (latest && Number(latest.attachment_revision ?? 0) !== attachmentRevision) {
+        throw new DraftConflictError(mapDraftRow(latest, session.profile));
+      }
+    }
     throw error;
   }
 
-  await submitPersistedMessage(env, session, message, idempotencyKey, 0, gateway, provider, bodyObject?.body);
+  await submitPersistedMessage(
+    env,
+    session,
+    message,
+    idempotencyKey,
+    0,
+    gateway,
+    provider,
+    bodyObject?.body,
+    draftAttachments.provider
+  );
   return refreshedResult(env, session, message.id);
 }
 
@@ -333,6 +426,17 @@ export async function retryWorkspaceMessageDelivery(
     if (!object) throw new Error('BODY_OBJECT_NOT_FOUND');
     body = await readBodyObject(env.BUCKET, object.r2_key, object.size_bytes, object.sha256);
   }
-  await submitPersistedMessage(env, session, message, delivery.idempotency_key, delivery.attempts, gateway, provider, body);
+  const attachments = await loadOutboundAttachments(env, session.userId, 'message', messageId);
+  await submitPersistedMessage(
+    env,
+    session,
+    message,
+    delivery.idempotency_key,
+    delivery.attempts,
+    gateway,
+    provider,
+    body,
+    attachments.provider
+  );
   return refreshedResult(env, session, message.id);
 }

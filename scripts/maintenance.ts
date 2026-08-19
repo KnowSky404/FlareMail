@@ -35,6 +35,8 @@ type MaintenanceReport = {
     orphaned: number | null;
     deleted: number;
     metadataDeleted: number;
+    expiredAttachmentRows: number;
+    cleanupQueueRows: number;
     skippedUnsafeDeletes: number;
     keys: string[];
     note?: string;
@@ -119,7 +121,9 @@ export function maintenanceSql(cutoffs: { sessions: string; webhookEvents: strin
     staleSubmittingCandidates: `SELECT COUNT(*) AS count FROM workspace_delivery_attempts WHERE status = 'submitting' AND completed_at IS NULL AND datetime(started_at) <= datetime('now', '-15 minutes')`,
     approachingExpiryCandidates: `SELECT COUNT(*) AS count FROM workspace_delivery_attempts WHERE status IN ('submitting', 'delayed', 'failed') AND datetime(started_at) > datetime('now', '-24 hours') AND datetime(started_at) <= datetime('now', '-23 hours')`,
     expiredReviewCandidates: `SELECT COUNT(*) AS count FROM workspace_delivery_attempts WHERE status IN ('submitting', 'delayed', 'failed') AND datetime(started_at) <= datetime('now', '-24 hours')`,
-    references: `SELECT raw_key AS key FROM email_messages WHERE raw_key <> '' UNION SELECT r2_key AS key FROM workspace_attachments WHERE r2_key <> '' UNION SELECT r2_key AS key FROM mail_body_objects WHERE state = 'active' OR (state = 'delete_pending' AND (delete_after IS NULL OR datetime(delete_after) > datetime('now')))`,
+    expiredAttachmentKeys: `SELECT r2_key AS key FROM workspace_attachments WHERE state IN ('uploading', 'failed', 'delete_pending') AND delete_after IS NOT NULL AND datetime(delete_after) <= datetime('now')`,
+    cleanupQueueKeys: `SELECT r2_key AS key FROM workspace_r2_cleanup_queue`,
+    references: `SELECT raw_key AS key FROM email_messages WHERE raw_key <> '' UNION SELECT r2_key AS key FROM workspace_attachments WHERE r2_key <> '' AND (state = 'ready' OR (state IN ('uploading', 'failed', 'delete_pending') AND (delete_after IS NULL OR datetime(delete_after) > datetime('now')))) UNION SELECT r2_key AS key FROM mail_body_objects WHERE state = 'active' OR (state = 'delete_pending' AND (delete_after IS NULL OR datetime(delete_after) > datetime('now')))`,
     apply: `DELETE FROM workspace_sessions WHERE (revoked_at IS NOT NULL AND datetime(revoked_at) <= datetime(${sessionCutoff})) OR (expires_at IS NOT NULL AND datetime(expires_at) <= datetime(${sessionCutoff})); DELETE FROM workspace_outbound_events WHERE datetime(created_at) <= datetime(${webhookCutoff}); DELETE FROM workspace_inbound_ingest_claims WHERE status = 'processing' AND datetime(updated_at) <= datetime('now', '-15 minutes');`
   };
 }
@@ -186,18 +190,31 @@ export function orphanKeys(objects: R2Object[], references: Set<string>) {
 }
 
 export function isManagedR2Key(key: string) {
-  return /^(?:inbound\/\d{4}-\d{2}-\d{2}\/[A-Za-z0-9_-]+(?:\/message\.eml|\/attachments\/[A-Za-z0-9_-]+\/[^/]+)|body\/v1\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+-[a-f0-9]{64}\.json)$/u.test(key);
+  const uuid = '[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}';
+  return new RegExp(`^(?:inbound\\/\\d{4}-\\d{2}-\\d{2}\\/[A-Za-z0-9_-]+(?:\\/message\\.eml|\\/attachments\\/[A-Za-z0-9_-]+\\/[^/]+)|outbound\\/v1\\/\\d{4}-\\d{2}-\\d{2}\\/${uuid}\\/${uuid}\\.bin|body\\/v1\\/[A-Za-z0-9_-]+\\/[A-Za-z0-9_-]+\\/[A-Za-z0-9_-]+-[a-f0-9]{64}\\.json)$`, 'u').test(key);
 }
 
-export function bodyMetadataDeleteSql(keys: string[]) {
+export function metadataDeleteSql(keys: string[]) {
+  const managedKeys = [...new Set(keys.filter((key) => isManagedR2Key(key)))];
   const bodyKeys = [...new Set(keys.filter((key) => /^body\/v1\//u.test(key) && isManagedR2Key(key)))];
+  const attachmentKeys = [...new Set(keys.filter((key) => /^outbound\/v1\//u.test(key) && isManagedR2Key(key)))];
   const statements: string[] = [];
   for (let index = 0; index < bodyKeys.length; index += 50) {
     const values = bodyKeys.slice(index, index + 50).map(sqlLiteral).join(', ');
     statements.push(`DELETE FROM mail_body_objects WHERE state = 'delete_pending' AND r2_key IN (${values})`);
   }
+  for (let index = 0; index < attachmentKeys.length; index += 50) {
+    const values = attachmentKeys.slice(index, index + 50).map(sqlLiteral).join(', ');
+    statements.push(`DELETE FROM workspace_attachments WHERE state IN ('uploading', 'failed', 'delete_pending') AND r2_key IN (${values})`);
+  }
+  for (let index = 0; index < managedKeys.length; index += 50) {
+    const values = managedKeys.slice(index, index + 50).map(sqlLiteral).join(', ');
+    statements.push(`DELETE FROM workspace_r2_cleanup_queue WHERE r2_key IN (${values})`);
+  }
   return statements;
 }
+
+export const bodyMetadataDeleteSql = metadataDeleteSql;
 
 async function runWrangler(args: string[], remote: boolean) {
   const child = Bun.spawn(['bun', 'x', 'wrangler', ...args], {
@@ -286,7 +303,9 @@ function reportOutput(report: MaintenanceReport, json: boolean) {
   console.log(`Inbound claims: ${report.staleClaims.candidates} stale candidate(s), ${report.staleClaims.deleted} deleted.`);
   console.log(`Delivery review: ${report.deliveryReview.staleSubmitting} stale submitting, ${report.deliveryReview.approachingExpiry} approaching expiry, ${report.deliveryReview.expiredReviewRequired} expired review-required.`);
   if (report.r2.objects === null) console.log(`R2: inventory unavailable (${report.r2.note ?? 'no inventory'}).`);
-  else console.log(`R2: ${report.r2.objects} object(s), ${report.r2.orphaned} orphan(s), ${report.r2.deleted} deleted, ${report.r2.metadataDeleted} body metadata row(s) deleted.`);
+  else console.log(`R2: ${report.r2.objects} object(s), ${report.r2.orphaned} orphan(s), ${report.r2.deleted} deleted, ${report.r2.metadataDeleted} metadata row(s) deleted.`);
+  console.log(`Outbound attachments: ${report.r2.expiredAttachmentRows} expired failed/delete-pending row(s).`);
+  console.log(`R2 cleanup queue: ${report.r2.cleanupQueueRows} durable retry row(s).`);
   if (report.r2.keys.length > 0) console.log(`R2 orphan keys: ${report.r2.keys.join(', ')}`);
   if (report.r2.skippedUnsafeDeletes > 0) console.log(`R2 skipped ${report.r2.skippedUnsafeDeletes} unmanaged object(s).`);
 }
@@ -298,7 +317,7 @@ export async function runMaintenance(options: MaintenanceOptions) {
     trash: cutoffIso(new Date(), options.trashRetentionDays)
   };
   const sql = maintenanceSql(cutoffs);
-  const [sessionCount, webhookCount, trashCount, staleClaimCount, staleSubmittingCount, approachingExpiryCount, expiredReviewCount, referencesResult, r2Inventory] = await Promise.all([
+  const [sessionCount, webhookCount, trashCount, staleClaimCount, staleSubmittingCount, approachingExpiryCount, expiredReviewCount, referencesResult, expiredAttachmentResult, cleanupQueueResult, r2Inventory] = await Promise.all([
     executeD1(options, sql.sessionCandidates),
     executeD1(options, sql.webhookCandidates),
     executeD1(options, sql.trashCandidates),
@@ -307,9 +326,13 @@ export async function runMaintenance(options: MaintenanceOptions) {
     executeD1(options, sql.approachingExpiryCandidates),
     executeD1(options, sql.expiredReviewCandidates),
     executeD1(options, sql.references),
+    executeD1(options, sql.expiredAttachmentKeys),
+    executeD1(options, sql.cleanupQueueKeys),
     listR2Objects(options)
   ]);
   const references = referencedKeys(referencesResult);
+  const expiredAttachmentKeys = referencedKeys(expiredAttachmentResult);
+  const cleanupQueueKeys = referencedKeys(cleanupQueueResult);
   const orphaned = r2Inventory.inventory === 'unavailable' ? [] : orphanKeys(r2Inventory.objects, references);
   const applyD1 = options.apply
     ? await Promise.all([
@@ -321,8 +344,14 @@ export async function runMaintenance(options: MaintenanceOptions) {
   const r2DeleteResult = options.apply && r2Inventory.inventory !== 'unavailable'
     ? await deleteR2Objects(options, orphaned)
     : { deleted: 0, skippedUnsafeDeletes: 0, deletedKeys: [] };
-  const bodyMetadataDeletes = options.apply
-    ? await Promise.all(bodyMetadataDeleteSql(r2DeleteResult.deletedKeys).map((statement) => executeD1(options, statement, true)))
+  const inventoryKeys = new Set(r2Inventory.objects.map((object) => object.key));
+  const deletedKeys = new Set(r2DeleteResult.deletedKeys);
+  const reconciledLifecycleKeys = r2Inventory.inventory === 'unavailable'
+    ? []
+    : [...new Set([...expiredAttachmentKeys, ...cleanupQueueKeys])]
+      .filter((key) => !inventoryKeys.has(key) || deletedKeys.has(key));
+  const metadataDeletes = options.apply
+    ? await Promise.all(metadataDeleteSql([...r2DeleteResult.deletedKeys, ...reconciledLifecycleKeys]).map((statement) => executeD1(options, statement, true)))
     : [];
   const report: MaintenanceReport = {
     mode: options.apply ? 'apply' : 'dry-run',
@@ -343,7 +372,9 @@ export async function runMaintenance(options: MaintenanceOptions) {
       objects: r2Inventory.inventory === 'unavailable' ? null : r2Inventory.objects.length,
       orphaned: r2Inventory.inventory === 'unavailable' ? null : orphaned.length,
       deleted: r2DeleteResult.deleted,
-      metadataDeleted: d1Changes(bodyMetadataDeletes),
+      metadataDeleted: d1Changes(metadataDeletes),
+      expiredAttachmentRows: expiredAttachmentKeys.size,
+      cleanupQueueRows: cleanupQueueKeys.size,
       skippedUnsafeDeletes: r2DeleteResult.skippedUnsafeDeletes,
       keys: orphaned.map((object) => object.key),
       ...(r2Inventory.note ? { note: r2Inventory.note } : {})

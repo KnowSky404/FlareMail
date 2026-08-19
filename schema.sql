@@ -145,11 +145,35 @@ CREATE TABLE IF NOT EXISTS workspace_attachments (
   content_id TEXT,
   r2_key TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  relation_type TEXT NOT NULL DEFAULT 'inbound' CHECK (relation_type IN ('inbound', 'draft', 'message')),
+  state TEXT NOT NULL DEFAULT 'ready' CHECK (state IN ('uploading', 'ready', 'failed', 'delete_pending')),
+  sha256 TEXT,
+  disposition TEXT NOT NULL DEFAULT 'attachment' CHECK (disposition IN ('attachment', 'inline')),
+  updated_at TEXT NOT NULL DEFAULT '',
+  delete_after TEXT,
   UNIQUE(message_id, r2_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_attachments_user_message ON workspace_attachments(user_id, message_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_attachments_content_id ON workspace_attachments(message_id, content_id) WHERE content_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_workspace_attachments_user_relation
+  ON workspace_attachments(user_id, relation_type, message_id, state, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_attachments_cleanup
+  ON workspace_attachments(state, delete_after)
+  WHERE state IN ('uploading', 'failed', 'delete_pending');
+
+CREATE TABLE IF NOT EXISTS workspace_r2_cleanup_queue (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  r2_key TEXT NOT NULL UNIQUE,
+  reason TEXT NOT NULL CHECK (reason IN ('trash_delete')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_r2_cleanup_queue_owner_entity
+  ON workspace_r2_cleanup_queue(owner_user_id, entity_id, created_at);
 
 CREATE TABLE IF NOT EXISTS workspace_drafts (
   id TEXT PRIMARY KEY,
@@ -169,6 +193,7 @@ CREATE TABLE IF NOT EXISTS workspace_drafts (
   idempotency_key TEXT,
   body_object_id TEXT,
   deleted_at TEXT,
+  attachment_revision INTEGER NOT NULL DEFAULT 0 CHECK (attachment_revision >= 0),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );

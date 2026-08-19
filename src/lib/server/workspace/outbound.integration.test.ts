@@ -5,7 +5,7 @@ import { FakeOutboundGateway, OutboundGatewayError } from '$lib/server/outbound/
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound';
 import { getWorkspaceMessageDeliveryDetail } from './delivery';
-import { saveWorkspaceDraft, DraftBodyReloadRequiredError } from './draft';
+import { saveWorkspaceDraft, DraftBodyReloadRequiredError, DraftConflictError } from './draft';
 import type { WorkspaceSession } from './shared';
 
 class TestStatement {
@@ -28,7 +28,7 @@ class TestD1 {
 }
 
 class TestBucket {
-  private readonly objects = new Map<string, Uint8Array>();
+  readonly objects = new Map<string, Uint8Array>();
   async put(key: string, value: Uint8Array) { this.objects.set(key, new Uint8Array(value)); }
   async get(key: string) {
     const value = this.objects.get(key);
@@ -210,5 +210,75 @@ describe('outbound workspace persistence', () => {
       body: edited
     }, { gateway: editedGateway });
     expect(editedGateway.sent[0]?.text).toBe(edited);
+  });
+
+  test('atomically transfers verified draft attachments and reuses them on same-key retry', async () => {
+    const { env, database, session } = setup();
+    const draft = await saveWorkspaceDraft(env, session, {
+      toEmail: 'alice@example.net', subject: 'Attached', body: 'See attachment.'
+    });
+    const attachmentId = '019d1234-5678-4abc-8def-0123456789ab';
+    const key = `outbound/v1/2026-08-19/${attachmentId}/019d1234-5678-4abc-8def-1123456789ab.bin`;
+    const attachmentBytes = new TextEncoder().encode('verified attachment');
+    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', attachmentBytes))]
+      .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    await env.BUCKET.put(key, attachmentBytes);
+    database.query(`INSERT INTO workspace_attachments
+      (id, user_id, message_id, filename, content_type, size, inline, content_id, r2_key, relation_type, state, sha256, disposition, updated_at)
+      VALUES (?, 'user-1', ?, 'evidence.txt', 'text/plain', ?, 0, NULL, ?, 'draft', 'ready', ?, 'attachment', '2026-08-19T00:00:00.000Z')`)
+      .run(attachmentId, draft.message.id, attachmentBytes.byteLength, key, sha256);
+    database.query(`UPDATE workspace_drafts SET attachment_revision = 1 WHERE id = ?`).run(draft.message.id);
+
+    await expect(sendWorkspaceMessage(env, session, {
+      draftId: draft.message.id, attachmentRevision: 0, toEmail: 'alice@example.net', subject: 'Attached', body: 'See attachment.'
+    }, { gateway: new FakeOutboundGateway() })).rejects.toBeInstanceOf(DraftConflictError);
+    expect(database.query(`SELECT id FROM workspace_drafts WHERE id = ?`).get(draft.message.id)).not.toBeNull();
+
+    const firstGateway = new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'outcome unknown') });
+    const sent = await sendWorkspaceMessage(env, session, {
+      draftId: draft.message.id, attachmentRevision: 1, toEmail: 'alice@example.net', subject: 'Attached', body: 'See attachment.'
+    }, { gateway: firstGateway });
+    expect(firstGateway.sent[0]?.attachments?.[0]).toMatchObject({ filename: 'evidence.txt', contentType: 'text/plain' });
+    expect([...firstGateway.sent[0]!.attachments![0]!.bytes]).toEqual([...attachmentBytes]);
+    expect(sent.message.labels).toContain('Attachment');
+    expect(database.query(`SELECT relation_type, message_id, state FROM workspace_attachments WHERE id = ?`).get(attachmentId))
+      .toEqual({ relation_type: 'message', message_id: sent.message.id, state: 'ready' });
+    expect(database.query(`SELECT id FROM workspace_drafts WHERE id = ?`).get(draft.message.id)).toBeNull();
+    expect((env.BUCKET as unknown as TestBucket).objects.has(key)).toBe(true);
+
+    const retryGateway = new FakeOutboundGateway({ providerMessageId: 're_attachment_retry' });
+    const retried = await retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway: retryGateway });
+    expect(retried?.message.deliveryStatus).toBe('submitted');
+    expect([...retryGateway.sent[0]!.attachments![0]!.bytes]).toEqual([...attachmentBytes]);
+    expect(retryGateway.sent[0]?.idempotencyKey).toBe(`flaremail:send:${sent.message.id}`);
+  });
+
+  test('sends without logically removed attachments while their cleanup pointer remains durable', async () => {
+    const { env, database, session } = setup();
+    const draft = await saveWorkspaceDraft(env, session, {
+      toEmail: 'alice@example.net', subject: 'Removed attachment', body: 'No attachment remains.'
+    });
+    const attachmentId = '019d1234-5678-4abc-8def-2123456789ab';
+    const key = `outbound/v1/2026-08-19/${attachmentId}/019d1234-5678-4abc-8def-3123456789ab.bin`;
+    database.query(`INSERT INTO workspace_attachments
+      (id, user_id, message_id, filename, content_type, size, inline, content_id, r2_key, relation_type, state, disposition, updated_at, delete_after)
+      VALUES (?, 'user-1', ?, 'removed.txt', 'text/plain', 1, 0, NULL, ?, 'draft', 'delete_pending', 'attachment',
+        '2026-08-19T00:00:00.000Z', '2026-08-20T00:00:00.000Z')`)
+      .run(attachmentId, draft.message.id, key);
+    database.query(`UPDATE workspace_drafts SET attachment_revision = 1 WHERE id = ?`).run(draft.message.id);
+    const gateway = new FakeOutboundGateway({ providerMessageId: 're_without_removed' });
+
+    const sent = await sendWorkspaceMessage(env, session, {
+      draftId: draft.message.id,
+      attachmentRevision: 1,
+      toEmail: 'alice@example.net',
+      subject: 'Removed attachment',
+      body: 'No attachment remains.'
+    }, { gateway });
+
+    expect(gateway.sent[0]?.attachments).toBeUndefined();
+    expect(sent.message.labels).not.toContain('Attachment');
+    expect(database.query(`SELECT state, r2_key FROM workspace_attachments WHERE id = ?`).get(attachmentId))
+      .toEqual({ state: 'delete_pending', r2_key: key });
   });
 });

@@ -19,8 +19,9 @@ R2 object contents, or access tokens to logs.
 ## Maintenance CLI
 
 The maintenance command is read-only by default. It reports expired/revoked
-sessions, stale inbound claims, delivery review windows, old `workspace_outbound_events`, and R2 objects that are not
-referenced by `email_messages.raw_key` or `workspace_attachments.r2_key`:
+sessions, stale inbound claims, delivery review windows, old `workspace_outbound_events`, durable
+`workspace_r2_cleanup_queue` retries, and R2 objects that are not referenced by
+live mail/body/attachment metadata:
 
 ```bash
 bun scripts/maintenance.ts --config wrangler.toml
@@ -51,8 +52,14 @@ bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest 
 bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest /secure/reviewed-r2-inventory.json --apply
 ```
 
-`--apply` deletes only managed `inbound/YYYY-MM-DD/<id>/...` keys that are
-unreferenced. Other key shapes are reported and skipped. The command never
+`--apply` deletes only unreferenced managed `inbound/YYYY-MM-DD/<id>/...`,
+`body/v1/...`, and `outbound/v1/YYYY-MM-DD/<uuid>/<uuid>.bin` keys. Expired
+`uploading`/`failed`/`delete_pending` outbound rows stop protecting their objects; after a
+reviewed R2 delete, their matching metadata rows and durable cleanup-queue rows
+are removed. Queue entries whose objects are absent from the reviewed manifest
+are also reconciled. Active and
+not-yet-expired rows remain references. Other key shapes are reported and
+skipped. The command never
 executes a remote operation unless `--remote` is supplied, and never executes
 any deletion unless `--apply` is supplied.
 
@@ -116,7 +123,10 @@ do not edit `0001` through `0010`. A stale claim report is
 read-only by default. Review the claim age and D1/R2 evidence before using the
 explicit `--apply` path to remove stale processing claims. Migration
 `0015_search_fts.sql` adds the rebuildable FTS projection, virtual index and
-canonical-row synchronization triggers.
+canonical-row synchronization triggers. Migration
+`0016_outbound_attachments.sql` adds draft/message attachment relations,
+upload/ready/failure/delete-pending states, SHA-256 metadata, cleanup deadlines,
+and the draft attachment revision used by guarded sends.
 
 The maintenance report also lists stale submitting attempts, attempts within
 one hour of the Resend 24-hour idempotency expiry, and expired attempts that

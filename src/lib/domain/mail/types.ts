@@ -84,6 +84,9 @@ export interface MailAttachmentSummary {
   inline: boolean;
   contentId?: string | null;
   downloadUrl?: string;
+  disposition?: 'attachment' | 'inline';
+  state?: 'uploading' | 'ready' | 'failed' | 'delete_pending';
+  sha256?: string | null;
 }
 
 export interface MailTechnicalHeader {
@@ -309,6 +312,12 @@ export interface ComposeInput extends MailRfcHeaders {
   bcc?: MailAddressInput[] | string;
   /** Legacy payload fields retained for old drafts and clients. */
   toEmail?: string;
+  /** Metadata only. Attachment bytes are always uploaded directly to R2. */
+  attachments?: MailAttachmentSummary[];
+  /** Client-only source choices shown before original forward attachments are re-uploaded. */
+  forwardAttachmentCandidates?: MailAttachmentSummary[];
+  /** Optimistic concurrency token for the draft attachment relation. */
+  attachmentRevision?: number;
   subject: string;
   body: string;
 }

@@ -97,7 +97,7 @@
 
   type ComposeAutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
   type DraftConflictInfo = Pick<MailMessage, 'id' | 'sentAt'>;
-  type WorkspaceBodyDetail = { body: string };
+  type WorkspaceBodyDetail = { body: string; attachments: NonNullable<ComposeInput['attachments']> };
 
   let { data }: { data: PageData } = $props();
   const serverWorkspace = $derived(data.workspace);
@@ -392,8 +392,8 @@
 
   const withCurrentComposePersistence = (input: ComposeInput) =>
     withComposePersistence(input, {
-      draftId: composeDraftId,
-      expectedUpdatedAt: composeLiveInput?.expectedUpdatedAt
+      draftId: input.draftId ?? composeDraftId,
+      expectedUpdatedAt: input.expectedUpdatedAt ?? composeLiveInput?.expectedUpdatedAt
     });
 
   const resetComposeState = () => {
@@ -416,8 +416,14 @@
     draftConflictLocalEditedAt = null;
   };
 
-  const syncComposeDraftState = (message: MailMessage, statusMessage: string, bodyRevision?: string | null) => {
-    const nextInput = composeInputFromSavedDraft(message, bodyRevision);
+  const syncComposeDraftState = (
+    message: MailMessage,
+    statusMessage: string,
+    bodyRevision?: string | null,
+    attachments: ComposeInput['attachments'] = [],
+    attachmentRevision = 0
+  ) => {
+    const nextInput = composeInputFromSavedDraft(message, bodyRevision, attachments, attachmentRevision);
 
     composeDraftId = message.id;
     composeLiveInput = nextInput;
@@ -912,11 +918,19 @@
           syncComposeDraftState(
             result.message,
             `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`,
-            result.bodyRevision
+            result.bodyRevision,
+            result.attachments,
+            result.attachmentRevision
           );
         } else if (composeLiveInput) {
           composeDraftId = result.message.id;
-          composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message, result.bodyRevision);
+          composeLiveInput = mergeSavedDraftMetadata(
+            composeLiveInput,
+            result.message,
+            result.bodyRevision,
+            result.attachments,
+            result.attachmentRevision
+          );
           composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id, bodyRevision: result.bodyRevision ?? undefined });
         }
       } catch (error) {
@@ -1063,11 +1077,21 @@
         syncComposeDraftState(
           result.message,
           `已自动保存于 ${formatComposeSavedAt(result.message.sentAt)}。`,
-          result.bodyRevision
+          result.bodyRevision,
+          result.attachments,
+          result.attachmentRevision
         );
       } else {
         composeDraftId = result.message.id;
-        if (composeLiveInput) composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message, result.bodyRevision);
+        if (composeLiveInput) {
+          composeLiveInput = mergeSavedDraftMetadata(
+            composeLiveInput,
+            result.message,
+            result.bodyRevision,
+            result.attachments,
+            result.attachmentRevision
+          );
+        }
         composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id, bodyRevision: result.bodyRevision ?? undefined });
         composeTouched = true;
         composeAutosaveStatus = 'dirty';
@@ -1099,6 +1123,37 @@
     }
   }
 
+  async function prepareComposeAttachments(input: ComposeInput) {
+    clearComposeAutosaveTimer();
+    if (composeSavePromise) await composeSavePromise;
+    composeAutosavePending = true;
+    composeAutosaveStatus = 'saving';
+    composeAutosaveMessage = '正在保存草稿并准备附件上传...';
+    try {
+      const result = await persistDraft(withCurrentComposePersistence(input));
+      applyMessageDelta(result);
+      syncComposeDraftState(
+        result.message,
+        `草稿已准备好接收附件。`,
+        result.bodyRevision,
+        result.attachments,
+        result.attachmentRevision
+      );
+      return composeLiveInput!;
+    } catch (error) {
+      const conflict = draftConflictFromError(error);
+      if (conflict) {
+        draftConflict = conflict;
+        draftConflictLocalEditedAt = new Date().toISOString();
+      }
+      composeAutosaveStatus = 'error';
+      composeAutosaveMessage = error instanceof Error ? error.message : '准备附件上传失败。';
+      throw error;
+    } finally {
+      composeAutosavePending = false;
+    }
+  }
+
   async function sendMessage(input: ComposeInput) {
     clearComposeAutosaveTimer();
     pending = true;
@@ -1112,6 +1167,9 @@
       deliveryDetailErrors = Object.fromEntries(
         Object.entries(deliveryDetailErrors).filter(([id]) => id !== result.message.id)
       );
+      // A sent message may reuse its draft id. Drop the draft body snapshot so
+      // the sent detail reloads transferred attachment metadata.
+      workspaceBodyCache.invalidate(result.message.id);
 
       applyMessageDelta(result, {
         section: 'sent',
@@ -1197,9 +1255,9 @@
     if (!draftConflict) return;
     const conflict = draftConflict;
     try {
-      const { message, bodyRevision } = await fetchDraftDetail(conflict.id);
-      composeInitialInput = composeInputFromSavedDraft(message, bodyRevision);
-      syncComposeDraftState(message, '已载入服务器版本。', bodyRevision);
+      const { message, bodyRevision, attachments, attachmentRevision } = await fetchDraftDetail(conflict.id);
+      composeInitialInput = composeInputFromSavedDraft(message, bodyRevision, attachments, attachmentRevision);
+      syncComposeDraftState(message, '已载入服务器版本。', bodyRevision, attachments, attachmentRevision);
       draftConflict = null;
       draftConflictLocalEditedAt = null;
     } catch (error) {
@@ -1348,7 +1406,11 @@
       inboundDetailCache.invalidate(message.id);
       deliveryDetailCache.invalidate(message.id);
       workspaceBodyCache.invalidate(message.id);
-      notify('项目已永久删除。', 'warning');
+      notify(
+        result.cleanupPending ? '项目已永久删除；对象存储清理将在维护任务中重试。' : '项目已永久删除。',
+        'warning',
+        { persistent: Boolean(result.cleanupPending) }
+      );
     } catch (error) {
       notifyError(error, '永久删除失败。');
     } finally {
@@ -1382,7 +1444,12 @@
   async function handleEditDraft(message: MailMessage) {
     try {
       const current = await fetchDraftDetail(message.id);
-      openCompose('draft', composeInputFromSavedDraft(current.message, current.bodyRevision));
+      openCompose('draft', composeInputFromSavedDraft(
+        current.message,
+        current.bodyRevision,
+        current.attachments,
+        current.attachmentRevision
+      ));
       notify('你正在继续编辑一封草稿。');
     } catch (error) {
       notifyError(error, '载入草稿失败。');
@@ -1453,7 +1520,10 @@
       ? inboundDetails[message.id]?.body ?? ''
       : workspaceBodies[message.id]?.body ?? message.body;
 
-    openCompose('forward', createForwardComposeInput(message, forwardedBody));
+    const forwardAttachmentCandidates = isInboundMessageId(message.id)
+      ? inboundDetails[message.id]?.attachments ?? []
+      : workspaceBodies[message.id]?.attachments ?? [];
+    openCompose('forward', createForwardComposeInput(message, forwardedBody, forwardAttachmentCandidates));
     notify(`正在转发《${message.subject}》。`);
   }
 
@@ -1692,6 +1762,7 @@
                     inboundDetailError={selectedInboundDetailError}
                     inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
                     workspaceBody={selectedWorkspaceBody}
+                    workspaceAttachments={selectedMessage ? workspaceBodies[selectedMessage.id]?.attachments ?? [] : []}
                     workspaceBodyError={selectedWorkspaceBodyError}
                     workspaceBodyPending={workspaceBodyPendingId === selectedMessage?.id}
                     {pending}
@@ -1742,6 +1813,7 @@
         onLoadServerDraft={loadServerDraft}
         onSaveDraftCopy={saveDraftCopy}
         onOverwriteServerDraft={overwriteServerDraft}
+        onPrepareAttachments={prepareComposeAttachments}
         onInputChange={(input) => {
           composeAutosave.changed();
           const nextInput = withCurrentComposePersistence(input);

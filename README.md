@@ -8,11 +8,11 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 
 - Cloudflare Email Routing 入站：一次性读取 raw stream、大小限制、SHA-256 去重、RFC threading、MIME/中文/附件解析。
 - D1/R2 持久化：入站原文与附件、用户归属、已读/星标、归档、批量邮箱操作、草稿、已发送、投递状态和事件时间线。
-- Resend 出站：稳定幂等键、`reply_to`/RFC headers、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
+- Resend 出站：稳定幂等键、`reply_to`/RFC headers、R2 流式附件上传与完整性校验、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
-- 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、附件/原文下载、纯文本写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
-- 版本化 D1 migration：`migrations/0001` 至 `0010`，包括 D1 原子登录限速、schema metadata、inbound ingest claim 和 append-only mailbox archive 字段，并由 `schema.sql` 保存最新结构快照。
+- 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
+- 版本化 D1 migration：`migrations/0001` 至 `0016`，包括登录限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5 与出站附件生命周期，并由 `schema.sql` 保存最新结构快照。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
 - 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention 与 orphan 报告。
 - 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖桌面、移动端与 320px 窄屏。
@@ -95,7 +95,7 @@ Wrangler 远程命令继承当前 OAuth keyring 或 `CLOUDFLARE_API_TOKEN` 环�
 
 `test:e2e`/`test:a11y` 不读取生产配置、不调用真实 Resend，也不会访问远程 D1/R2。若 Playwright 未自动找到 Chromium，可显式设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`。
 
-CI 将 unit、integration 和 remaining test collection 按不重叠文件集合运行；`bun test src scripts` 是本地聚合全量命令。
+CI 与本地统一以 `bun test` 运行完整的 `src/` 与 `scripts/` 测试集合，避免新增测试文件遗漏出门禁。
 
 运维清理默认仅生成报告；只有显式 `--remote` 才访问远程资源，只有再加 `--apply` 才执行经过范围保护的删除：
 

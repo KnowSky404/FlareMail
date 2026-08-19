@@ -108,7 +108,8 @@ describe('versioned D1 migrations', () => {
       '0012_body_objects.sql',
       '0013_trash.sql',
       '0014_inbound_metadata.sql',
-      '0015_search_fts.sql'
+      '0015_search_fts.sql',
+      '0016_outbound_attachments.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -137,7 +138,7 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_drafts')).toEqual(
       new Set([
         'id', 'user_id', 'to_email', 'cc', 'to_json', 'cc_json', 'bcc_json', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
-        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id', 'deleted_at'
+        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id', 'deleted_at', 'attachment_revision'
       ])
     );
     expect(tableColumns(db, 'workspace_search_documents')).toEqual(new Set([
@@ -165,9 +166,13 @@ describe('versioned D1 migrations', () => {
     );
     expect(tableColumns(db, 'workspace_attachments')).toEqual(
       new Set([
-        'id', 'user_id', 'message_id', 'filename', 'content_type', 'size', 'inline', 'content_id', 'r2_key', 'created_at'
+        'id', 'user_id', 'message_id', 'filename', 'content_type', 'size', 'inline', 'content_id', 'r2_key', 'created_at',
+        'relation_type', 'state', 'sha256', 'disposition', 'updated_at', 'delete_after'
       ])
     );
+    expect(tableColumns(db, 'workspace_r2_cleanup_queue')).toEqual(new Set([
+      'id', 'owner_user_id', 'entity_id', 'r2_key', 'reason', 'created_at', 'updated_at'
+    ]));
     expect(tableColumns(db, 'workspace_settings')).toEqual(
       new Set(['user_id', 'theme', 'settings_json', 'created_at', 'updated_at'])
     );
@@ -181,7 +186,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 15 }
+      { schema_name: 'flaremail', schema_version: 16 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -205,7 +210,10 @@ describe('versioned D1 migrations', () => {
     expect(indexNames(db, 'workspace_drafts')).toContain('idx_workspace_drafts_user_trash');
     expect(indexNames(db, 'workspace_search_documents')).toContain('idx_workspace_search_documents_owner');
     expect(indexNames(db, 'workspace_attachments')).toEqual(
-      new Set(['idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id'])
+      new Set([
+        'idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id',
+        'idx_workspace_attachments_user_relation', 'idx_workspace_attachments_cleanup'
+      ])
     );
     expect(tableColumns(db, 'mail_body_objects')).toEqual(new Set([
       'id', 'owner_user_id', 'entity_type', 'entity_id', 'r2_key', 'size_bytes', 'sha256',

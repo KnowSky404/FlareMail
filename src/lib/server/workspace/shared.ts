@@ -143,6 +143,7 @@ export interface WorkspaceDraftRow {
   deleted_at?: string | null;
   search_snippet?: string | null;
   search_total?: number;
+  attachment_revision?: number;
 }
 
 export interface WorkspaceInboundRow {

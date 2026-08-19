@@ -38,6 +38,9 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
       throw new ApiError(503, 'OUTBOUND_UNAVAILABLE', '出站邮件服务尚未正确配置。');
     }
     if (isOutboundGatewayError(error) && error.kind === 'client_error') {
+      if (/attachment/iu.test(error.message)) {
+        throw new ApiError(409, 'ATTACHMENT_NOT_READY', '请等待所有附件上传完成后再发送。');
+      }
       throw new ApiError(400, 'IDEMPOTENCY_KEY_REQUIRED', '新邮件必须提供有效的 Idempotency-Key。');
     }
     if (isOutboundGatewayError(error) && error.kind === 'idempotency_conflict') {
