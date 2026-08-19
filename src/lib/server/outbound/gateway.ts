@@ -1,3 +1,6 @@
+import { MAIL_LIMITS, sanitizeFilename } from '$lib/domain/mail/validation';
+import { utf8ByteLength } from '$lib/domain/utf8';
+
 /**
  * The only provider-facing contract used by outbound application services.
  *
@@ -9,6 +12,17 @@
 export type OutboundMailTag = {
   name: string;
   value: string;
+};
+
+/** Bytes are owned by the caller and must already have passed its integrity checks. */
+export type OutboundMailAttachment = {
+  filename: string;
+  bytes: Uint8Array;
+  contentType?: string;
+  /** Resend's content_id is the CID value referenced by inline HTML. */
+  contentId?: string;
+  /** Inline is represented to Resend by content_id; the REST API has no separate disposition field. */
+  disposition?: 'attachment' | 'inline';
 };
 
 export type OutboundMailInput = {
@@ -24,6 +38,7 @@ export type OutboundMailInput = {
   replyTo?: string[];
   headers?: Record<string, string>;
   tags?: OutboundMailTag[];
+  attachments?: OutboundMailAttachment[];
 };
 
 export type OutboundMailResult = {
@@ -86,6 +101,14 @@ const DEFAULT_API_BASE_URL = 'https://api.resend.com';
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 const MAX_PREVIEW_LENGTH = 400;
+// Keep substantial headroom below Resend's 40 MB post-Base64 email limit and
+// the Workers isolate limit for JSON/base64 copies made during serialization.
+export const MAX_OUTBOUND_ATTACHMENT_COUNT = 10;
+export const MAX_OUTBOUND_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+export const MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES = 20 * 1024 * 1024;
+export const MAX_OUTBOUND_ATTACHMENT_JSON_BYTES = 32 * 1024 * 1024;
+const MAX_OUTBOUND_CONTENT_ID_LENGTH = 128;
+const MIME_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
 
 const compact = (value: string) => value.replace(/\s+/g, ' ').trim().slice(0, MAX_PREVIEW_LENGTH);
 
@@ -127,11 +150,68 @@ function validateInput(input: OutboundMailInput) {
   if (!input.text?.trim() && !input.html?.trim()) {
     throw new OutboundGatewayError('configuration', 'Outbound mail requires text or html content.');
   }
+  validateAttachments(input.attachments);
   return key;
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let result = '';
+  // Keep chunks below argument/string limits while preserving Base64 groups.
+  const chunkSize = 0x7ffe; // 32766, divisible by 3
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    let binary = '';
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    for (const byte of chunk) binary += String.fromCharCode(byte);
+    result += btoa(binary);
+  }
+  return result;
+}
+
+function validateAttachments(attachments: OutboundMailAttachment[] | undefined) {
+  if (attachments === undefined) return;
+  if (!Array.isArray(attachments) || attachments.length > MAX_OUTBOUND_ATTACHMENT_COUNT) {
+    throw new OutboundGatewayError('configuration', `Outbound mail supports at most ${MAX_OUTBOUND_ATTACHMENT_COUNT} attachments.`);
+  }
+  let totalBytes = 0;
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment.filename !== 'string' || !attachment.filename.trim()) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment filename is required.');
+    }
+    const filename = sanitizeFilename(attachment.filename);
+    if (
+      !filename ||
+      attachment.filename.length > MAIL_LIMITS.filename ||
+      utf8ByteLength(filename) > MAIL_LIMITS.filename
+    ) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment filename is invalid.');
+    }
+    if (!(attachment.bytes instanceof Uint8Array)) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment bytes are invalid.');
+    }
+    if (attachment.bytes.byteLength > MAX_OUTBOUND_ATTACHMENT_BYTES) {
+      throw new OutboundGatewayError('configuration', `Each outbound attachment must be at most ${MAX_OUTBOUND_ATTACHMENT_BYTES} bytes.`);
+    }
+    totalBytes += attachment.bytes.byteLength;
+    if (totalBytes > MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES) {
+      throw new OutboundGatewayError('configuration', `Outbound attachments must total at most ${MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES} bytes.`);
+    }
+    if (attachment.contentType !== undefined && (typeof attachment.contentType !== 'string' || !attachment.contentType.trim() || !MIME_TYPE_PATTERN.test(attachment.contentType.trim().toLowerCase()))) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment MIME type is invalid.');
+    }
+    if (attachment.contentId !== undefined && (typeof attachment.contentId !== 'string' || !attachment.contentId.trim() || attachment.contentId.length > MAX_OUTBOUND_CONTENT_ID_LENGTH || /[\u0000\r\n]/u.test(attachment.contentId))) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment content id is invalid.');
+    }
+    if (attachment.disposition !== undefined && attachment.disposition !== 'attachment' && attachment.disposition !== 'inline') {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment disposition is invalid.');
+    }
+    if (attachment.disposition === 'inline' && !attachment.contentId?.trim()) {
+      throw new OutboundGatewayError('configuration', 'Inline outbound attachments require a content id.');
+    }
+  }
+}
+
 function buildResendBody(input: OutboundMailInput) {
-  return Object.fromEntries(
+  const body = Object.fromEntries(
     Object.entries({
       from: input.from,
       to: input.to,
@@ -142,9 +222,16 @@ function buildResendBody(input: OutboundMailInput) {
       html: input.html,
       reply_to: input.replyTo,
       headers: input.headers,
-      tags: input.tags
+      tags: input.tags,
+      attachments: input.attachments?.map((attachment) => ({
+        filename: sanitizeFilename(attachment.filename),
+        content: bytesToBase64(attachment.bytes),
+        ...(attachment.contentType ? { content_type: attachment.contentType.trim().toLowerCase() } : {}),
+        ...(attachment.contentId ? { content_id: attachment.contentId.trim() } : {})
+      }))
     }).filter(([, value]) => value !== undefined)
   );
+  return body;
 }
 
 const looksLikePayloadMismatch = (message: string) =>
@@ -191,6 +278,10 @@ export class ResendOutboundGateway implements OutboundMailGateway {
     options.signal?.addEventListener('abort', forwardAbort, { once: true });
     if (options.signal?.aborted) controller.abort(options.signal.reason);
 
+    const requestBody = JSON.stringify(buildResendBody(input));
+    if (utf8ByteLength(requestBody) > MAX_OUTBOUND_ATTACHMENT_JSON_BYTES) {
+      throw new OutboundGatewayError('configuration', `Outbound attachment payload must be smaller than ${MAX_OUTBOUND_ATTACHMENT_JSON_BYTES} serialized bytes.`);
+    }
     let response: Response;
     try {
       response = await this.fetchImpl(this.endpoint, {
@@ -200,7 +291,7 @@ export class ResendOutboundGateway implements OutboundMailGateway {
           'Content-Type': 'application/json',
           'Idempotency-Key': idempotencyKey
         },
-        body: JSON.stringify(buildResendBody(input)),
+        body: requestBody,
         signal: controller.signal
       });
     } catch (error) {

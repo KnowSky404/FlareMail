@@ -3,6 +3,9 @@ import {
   FakeOutboundGateway,
   OutboundGatewayError,
   ResendOutboundGateway,
+  MAX_OUTBOUND_ATTACHMENT_BYTES,
+  MAX_OUTBOUND_ATTACHMENT_COUNT,
+  MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES,
   type OutboundMailInput
 } from './gateway';
 
@@ -64,6 +67,45 @@ describe('ResendOutboundGateway', () => {
       headers: { 'X-Thread-Id': '<thread@example.com>' },
       tags: [{ name: 'environment', value: 'test' }]
     });
+  });
+
+  test('serializes owned bytes as Base64 attachments and preserves recipient arrays and idempotency', async () => {
+    let request: RequestInit | undefined;
+    const gateway = new ResendOutboundGateway({
+      apiKey: 're_test_secret',
+      fetch: async (_url, init) => { request = init; return jsonResponse({ id: 're_attachment' }); }
+    });
+    await gateway.send(input({
+      to: ['to@example.net'], cc: ['cc@example.net'], bcc: ['bcc@example.net'],
+      attachments: [
+        { filename: '../你好.txt', bytes: new TextEncoder().encode('hello'), contentType: 'Text/Plain' },
+        { filename: 'logo.png', bytes: new Uint8Array([0, 1, 255]), contentType: 'image/png', contentId: 'logo-cid', disposition: 'inline' }
+      ]
+    }));
+    expect(new Headers(request?.headers).get('Idempotency-Key')).toBe('delivery:message-123');
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      to: ['to@example.net'], cc: ['cc@example.net'], bcc: ['bcc@example.net'],
+      attachments: [
+        { filename: '你好.txt', content: 'aGVsbG8=', content_type: 'text/plain' },
+        { filename: 'logo.png', content: 'AAH/', content_type: 'image/png', content_id: 'logo-cid' }
+      ]
+    });
+  });
+
+  test('rejects attachment limits and malformed metadata before provider fetch', async () => {
+    let calls = 0;
+    const gateway = new ResendOutboundGateway({ apiKey: 're_test_secret', fetch: async () => { calls += 1; return jsonResponse({ id: 'unexpected' }); } });
+    const cases: OutboundMailInput[] = [
+      input({ attachments: Array.from({ length: MAX_OUTBOUND_ATTACHMENT_COUNT + 1 }, (_, i) => ({ filename: `${i}.bin`, bytes: new Uint8Array() })) }),
+      input({ attachments: [{ filename: 'large.bin', bytes: new Uint8Array(MAX_OUTBOUND_ATTACHMENT_BYTES + 1) }] }),
+      input({ attachments: [{ filename: 'total.bin', bytes: new Uint8Array(MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES + 1) }] }),
+      input({ attachments: [{ filename: 'bad\r\nname.txt', bytes: new Uint8Array([1]), contentType: 'not-a-mime' }] }),
+      input({ attachments: [{ filename: 'ok.txt', bytes: new Uint8Array([1]), contentId: 'bad\ncontent-id' }] }),
+      input({ attachments: [{ filename: '你'.repeat(100), bytes: new Uint8Array([1]) }] }),
+      input({ attachments: [{ filename: 'inline.png', bytes: new Uint8Array([1]), disposition: 'inline' }] })
+    ];
+    for (const candidate of cases) await expect(gateway.send(candidate)).rejects.toMatchObject({ kind: 'configuration' });
+    expect(calls).toBe(0);
   });
 
   test('requires a stable idempotency key and reuses it on retries', async () => {
@@ -196,6 +238,14 @@ describe('FakeOutboundGateway', () => {
     expect(result).toEqual({ status: 'submitted', providerMessageId: 'fake-fixed', remoteStatus: 202 });
     expect(gateway.sent).toHaveLength(1);
     expect(gateway.sent[0]?.replyTo).toEqual(['reply@example.com']);
+  });
+
+  test('records an independent safe copy of attachment bytes', async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const gateway = new FakeOutboundGateway();
+    await gateway.send(input({ attachments: [{ filename: 'a.bin', bytes }] }));
+    bytes[0] = 9;
+    expect(gateway.sent[0]?.attachments?.[0]?.bytes).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   test('can inject a typed failure for retry tests', async () => {
