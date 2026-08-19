@@ -4,7 +4,7 @@ export async function listDrafts(db: D1Database, userId: string) {
   return db.prepare(`
     SELECT id, to_email, cc, to_json, cc_json, bcc_json, subject, body, is_starred, created_at, updated_at,
       message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id
-    FROM workspace_drafts WHERE user_id = ? ORDER BY updated_at DESC, created_at DESC
+    FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC, created_at DESC
   `).bind(userId).all<WorkspaceDraftRow>();
 }
 

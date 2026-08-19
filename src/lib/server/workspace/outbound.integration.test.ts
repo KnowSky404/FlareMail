@@ -44,7 +44,7 @@ const setup = () => {
   const database = new Database(':memory:');
   database.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
   database.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
-    VALUES ('flaremail', 12, '2026-08-19T00:00:00.000Z')`).run();
+    VALUES ('flaremail', 13, '2026-08-19T00:00:00.000Z')`).run();
   database.query(`INSERT INTO workspace_users
     (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '-- Owner', 0)`).run();

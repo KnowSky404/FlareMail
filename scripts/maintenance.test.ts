@@ -17,6 +17,7 @@ describe('maintenance CLI safety helpers', () => {
     expect(options.remote).toBe(false);
     expect(options.apply).toBe(false);
     expect(options.r2Manifest).toBeNull();
+    expect(options.trashRetentionDays).toBe(30);
   });
 
   test('builds bounded, escaped cleanup SQL', () => {
@@ -29,6 +30,7 @@ describe('maintenance CLI safety helpers', () => {
     expect(sql.staleClaimCandidates).toContain('workspace_inbound_ingest_claims');
     expect(sql.expiredReviewCandidates).toContain('24 hours');
     expect(sql.apply).not.toContain('DROP');
+    expect(sql.trashCandidates).toContain('deleted_at');
   });
 
   test('parses D1 counts, changes and referenced keys without exposing rows', () => {

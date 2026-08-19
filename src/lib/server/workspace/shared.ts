@@ -116,6 +116,7 @@ export interface WorkspaceMessageRow {
   bcc_json?: string | null;
   idempotency_key?: string | null;
   archived_at?: string | null;
+  deleted_at?: string | null;
   body_object_id?: string | null;
 }
 
@@ -137,6 +138,7 @@ export interface WorkspaceDraftRow {
   thread_key: string | null;
   idempotency_key: string | null;
   body_object_id?: string | null;
+  deleted_at?: string | null;
 }
 
 export interface WorkspaceInboundRow {
@@ -155,6 +157,7 @@ export interface WorkspaceInboundRow {
   text_body?: string;
   body_object_id?: string | null;
   archived_at?: string | null;
+  deleted_at?: string | null;
 }
 
 export interface WorkspaceOutboundStatusRow {

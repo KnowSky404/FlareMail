@@ -32,7 +32,7 @@ export async function listOwnedMailboxMutationRows(
     const result = await db.prepare(`
       SELECT id, 'workspace' AS source, folder, thread_key, is_read, is_starred, archived_at
       FROM workspace_messages
-      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND id IN (${placeholders(workspaceIds)})
+      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND deleted_at IS NULL AND id IN (${placeholders(workspaceIds)})
     `).bind(userId, ...workspaceIds).all<OwnedMailboxMutationRow>();
     rows.push(...(result.results ?? []));
   }
@@ -61,7 +61,7 @@ export async function resolveOwnedMailboxThreadMessageIds(
   const threadPlaceholders = placeholders(threadKeys);
   const workspaceRows = await db.prepare(`
     SELECT id FROM workspace_messages
-    WHERE user_id = ? AND folder = 'inbox' AND thread_key IN (${threadPlaceholders})
+    WHERE user_id = ? AND folder = 'inbox' AND deleted_at IS NULL AND thread_key IN (${threadPlaceholders})
   `).bind(userId, ...threadKeys).all<{ id: string }>();
   ids.push(...(workspaceRows.results ?? []).map((row) => row.id));
   const inboundRows = await db.prepare(`
@@ -141,8 +141,8 @@ export function buildMailboxMutationStatements(
 export async function listMessages(db: D1Database, userId: string) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred,
-      message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id
-    FROM workspace_messages WHERE user_id = ? AND (folder <> 'inbox' OR archived_at IS NULL)
+      message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at
+    FROM workspace_messages WHERE user_id = ? AND deleted_at IS NULL AND (folder <> 'inbox' OR archived_at IS NULL)
     ORDER BY sent_at DESC, created_at DESC
   `).bind(userId).all<WorkspaceMessageRow>();
 }
@@ -174,7 +174,7 @@ export function insertMessage(db: D1Database, payload: ReturnType<typeof import(
 export async function findMessageByIdempotencyKey(db: D1Database, userId: string, idempotencyKey: string) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
-      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id
+      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at
     FROM workspace_messages WHERE user_id = ? AND idempotency_key = ?
   `).bind(userId, idempotencyKey).first<WorkspaceMessageRow>();
 }
@@ -182,7 +182,7 @@ export async function findMessageByIdempotencyKey(db: D1Database, userId: string
 export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, messageId: string) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
-      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id
+      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at
     FROM workspace_messages WHERE user_id = ? AND id = ?
   `).bind(userId, messageId).first<WorkspaceMessageRow>();
 }

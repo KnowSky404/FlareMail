@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS workspace_messages (
   provider_message_id TEXT,
   idempotency_key TEXT,
   archived_at TEXT,
+  deleted_at TEXT,
   body_object_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -124,6 +125,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_messages_idempotency_key ON work
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_provider_message_id ON workspace_messages(provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_cursor ON workspace_messages(user_id, folder, sent_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_archived ON workspace_messages(user_id, folder, archived_at, sent_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_trash ON workspace_messages(user_id, deleted_at, sent_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_attachments (
   id TEXT PRIMARY KEY,
@@ -159,6 +161,7 @@ CREATE TABLE IF NOT EXISTS workspace_drafts (
   thread_key TEXT,
   idempotency_key TEXT,
   body_object_id TEXT,
+  deleted_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -168,6 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_updated_at
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_drafts_idempotency_key ON workspace_drafts(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_drafts_thread_key ON workspace_drafts(user_id, thread_key, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_trash ON workspace_drafts(user_id, deleted_at, updated_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS mail_body_objects (
   id TEXT PRIMARY KEY,
@@ -205,6 +209,8 @@ CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_updated_at
   ON workspace_email_states(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_archived
   ON workspace_email_states(user_id, archived_at, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_trash
+  ON workspace_email_states(user_id, deleted_at, updated_at DESC, email_message_id);
 
 CREATE TABLE IF NOT EXISTS workspace_settings (
   user_id TEXT PRIMARY KEY,

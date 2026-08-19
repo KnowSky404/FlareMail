@@ -117,6 +117,28 @@ window before sending. A business rejection returns a typed conflict/error
 response; an expired attempt requires delivery review rather than silently
 creating a new provider idempotency key.
 
+## Trash
+
+`DELETE /api/workspace/messages/:id` is a soft delete. It keeps the owned
+message, draft, or inbound state and records its deletion time; repeated
+requests are idempotent. Normal mailbox lists and counts exclude these rows.
+
+`GET /api/workspace/trash?limit=100` returns one ownership-scoped list across
+workspace messages, drafts, and inbound messages. Each item includes its
+`deletedAt` and `originalFolder` (`inbox`, `archive`, `sent`, or `drafts`).
+
+`POST /api/workspace/trash/:id` restores an item to the persisted folder and
+archive state. `DELETE /api/workspace/trash/:id` permanently deletes only an
+owned trash item. Permanent deletion removes delivery status, attempts,
+events, receipts, attachment/body metadata, and their owned R2 objects. The
+operation is ownership-preflighted and safe to retry; if R2 is unavailable the
+D1 rows remain intact.
+
+`POST /api/workspace/trash` with `{ "action": "empty" }` permanently deletes
+all owned trash items up to the bounded batch size. Expired trash is reported
+by `scripts/maintenance.ts --trash-retention-days 30` in dry-run mode; the
+maintenance command does not perform remote destructive trash cleanup.
+
 ## Evidence boundary
 
 Unit, D1 integration, isolated Playwright, and axe checks use local/fake

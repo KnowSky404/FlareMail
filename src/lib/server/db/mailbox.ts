@@ -48,6 +48,7 @@ export async function listWorkspaceMessagePage(
   const conditions = [
     'm.user_id = ?',
     'm.folder = ?',
+    'm.deleted_at IS NULL',
     input.folder === 'inbox' && input.section === 'archive' ? 'm.archived_at IS NOT NULL' :
       input.folder === 'inbox' ? 'm.archived_at IS NULL' : '1 = 1',
     flagPredicate(input.filter, 'm.is_read', 'm.is_starred')
@@ -76,7 +77,7 @@ export async function listWorkspaceMessagePage(
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
       m.subject, m.preview, '' AS body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
-      m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key, m.body_object_id,
+      m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key, m.body_object_id, m.deleted_at,
       ds.status AS delivery_status,
       ds.attempts AS delivery_attempts,
       ds.delivered_at AS delivery_delivered_at,
@@ -108,6 +109,7 @@ export async function listDraftPage(
 ) {
   const conditions = [
     'd.user_id = ?',
+    'd.deleted_at IS NULL',
     input.filter === 'starred' ? 'd.is_starred = 1' : '1 = 1'
   ];
   const bindings: unknown[] = [userId];
@@ -127,7 +129,7 @@ export async function listDraftPage(
 
   return db.prepare(`
     SELECT d.id, d.to_email, d.cc, d.to_json, d.cc_json, d.bcc_json, d.subject, '' AS body, d.is_starred, d.created_at, d.updated_at,
-      d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key, d.body_object_id
+      d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key, d.body_object_id, d.deleted_at
     FROM workspace_drafts AS d
     WHERE ${conditions.join(' AND ')}
     ORDER BY d.updated_at DESC, d.id DESC
@@ -140,7 +142,7 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
     SELECT
       (
         SELECT COUNT(*) FROM workspace_messages
-        WHERE user_id = ? AND folder = 'inbox' AND archived_at IS NULL
+        WHERE user_id = ? AND folder = 'inbox' AND deleted_at IS NULL AND archived_at IS NULL
       ) + (
         SELECT COUNT(*) FROM email_messages AS e
         LEFT JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id
@@ -148,23 +150,23 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
       ) AS inbox_count,
       (
         SELECT COUNT(*) FROM workspace_messages
-        WHERE user_id = ? AND folder = 'sent'
+        WHERE user_id = ? AND folder = 'sent' AND deleted_at IS NULL
       ) AS sent_count,
       (
-        SELECT COUNT(*) FROM workspace_drafts WHERE user_id = ?
+        SELECT COUNT(*) FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NULL
       ) AS drafts_count,
       (
         SELECT COUNT(*) FROM workspace_messages
-        WHERE user_id = ? AND folder = 'inbox' AND archived_at IS NULL AND is_read = 0
+        WHERE user_id = ? AND folder = 'inbox' AND deleted_at IS NULL AND archived_at IS NULL AND is_read = 0
       ) + (
         SELECT COUNT(*) FROM email_messages AS e
         LEFT JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id
         WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.archived_at IS NULL AND COALESCE(s.is_read, 0) = 0
       ) AS unread_count,
       (
-        SELECT COUNT(*) FROM workspace_messages WHERE user_id = ? AND is_starred = 1
+        SELECT COUNT(*) FROM workspace_messages WHERE user_id = ? AND deleted_at IS NULL AND is_starred = 1
       ) + (
-        SELECT COUNT(*) FROM workspace_drafts WHERE user_id = ? AND is_starred = 1
+        SELECT COUNT(*) FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NULL AND is_starred = 1
       ) + (
         SELECT COUNT(*) FROM email_messages AS e
         JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id

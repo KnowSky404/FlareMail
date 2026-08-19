@@ -105,7 +105,8 @@ describe('versioned D1 migrations', () => {
       '0009_inbound_ingest_claims.sql',
       '0010_mailbox_archive_and_bulk.sql',
       '0011_recipient_arrays.sql',
-      '0012_body_objects.sql'
+      '0012_body_objects.sql',
+      '0013_trash.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -120,7 +121,7 @@ describe('versioned D1 migrations', () => {
         'id', 'user_id', 'folder', 'from_name', 'from_email', 'to_name', 'to_email', 'subject', 'preview', 'body',
         'sent_at', 'labels_json', 'is_read', 'is_starred', 'created_at', 'updated_at', 'message_id', 'in_reply_to',
         'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'to_json', 'cc_json', 'bcc_json', 'dedupe_key', 'provider_message_id',
-        'idempotency_key', 'archived_at', 'body_object_id'
+        'idempotency_key', 'archived_at', 'deleted_at', 'body_object_id'
       ])
     );
     expect(tableColumns(db, 'workspace_users')).toEqual(
@@ -133,7 +134,7 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_drafts')).toEqual(
       new Set([
         'id', 'user_id', 'to_email', 'cc', 'to_json', 'cc_json', 'bcc_json', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
-        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id'
+        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id', 'deleted_at'
       ])
     );
     expect(tableColumns(db, 'workspace_sessions')).toEqual(
@@ -170,7 +171,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 12 }
+      { schema_name: 'flaremail', schema_version: 13 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -188,7 +189,10 @@ describe('versioned D1 migrations', () => {
       ])
     );
     expect(indexNames(db, 'workspace_messages')).toContain('idx_workspace_messages_user_folder_archived');
+    expect(indexNames(db, 'workspace_messages')).toContain('idx_workspace_messages_user_trash');
     expect(indexNames(db, 'workspace_email_states')).toContain('idx_workspace_email_states_user_archived');
+    expect(indexNames(db, 'workspace_email_states')).toContain('idx_workspace_email_states_user_trash');
+    expect(indexNames(db, 'workspace_drafts')).toContain('idx_workspace_drafts_user_trash');
     expect(indexNames(db, 'workspace_attachments')).toEqual(
       new Set(['idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id'])
     );
