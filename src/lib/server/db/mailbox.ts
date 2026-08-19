@@ -169,17 +169,30 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
         SELECT COUNT(*) FROM email_messages AS e
         JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id
         WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.is_starred = 1
-      ) AS starred_count
+      ) AS starred_count,
+      (SELECT COUNT(*) FROM workspace_delivery_statuses WHERE user_id = ? AND status IN ('queued', 'submitting')) AS queued_count,
+      (SELECT COUNT(*) FROM workspace_delivery_statuses WHERE user_id = ? AND status = 'delayed') AS delayed_count,
+      (SELECT COUNT(*) FROM workspace_delivery_statuses WHERE user_id = ? AND status IN ('failed', 'suppressed')) AS failed_count,
+      (SELECT COUNT(*) FROM workspace_delivery_statuses WHERE user_id = ? AND status = 'bounced') AS bounced_count,
+      (SELECT COUNT(*) FROM workspace_delivery_statuses WHERE user_id = ? AND status = 'complained') AS complained_count,
+      (SELECT COUNT(*) FROM workspace_delivery_statuses WHERE user_id = ? AND status = 'submitting' AND datetime(COALESCE(last_event_at, updated_at, created_at)) <= datetime('now', '-15 minutes')) AS stale_delivery_count
   `).bind(
     userId, userId, userId, userId, userId,
     userId, userId, userId, userId, userId,
-    userId, userId
+    userId, userId, userId, userId, userId,
+    userId, userId, userId
   ).first<{
     inbox_count: number;
     sent_count: number;
     drafts_count: number;
     unread_count: number;
     starred_count: number;
+    queued_count: number;
+    delayed_count: number;
+    failed_count: number;
+    bounced_count: number;
+    complained_count: number;
+    stale_delivery_count: number;
   }>();
 
   return {
@@ -187,7 +200,13 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
     sentCount: Number(row?.sent_count ?? 0),
     draftsCount: Number(row?.drafts_count ?? 0),
     unreadCount: Number(row?.unread_count ?? 0),
-    starredCount: Number(row?.starred_count ?? 0)
+    starredCount: Number(row?.starred_count ?? 0),
+    queuedCount: Number(row?.queued_count ?? 0),
+    delayedCount: Number(row?.delayed_count ?? 0),
+    failedCount: Number(row?.failed_count ?? 0),
+    bouncedCount: Number(row?.bounced_count ?? 0),
+    complainedCount: Number(row?.complained_count ?? 0),
+    staleDeliveryCount: Number(row?.stale_delivery_count ?? 0)
   };
 }
 

@@ -1,41 +1,67 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { validateCsrfOrigin } from '$lib/server/auth/csrf';
 import { validateEnvironment } from '$lib/server/config/env';
+import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import {
   getWorkspaceSession,
   workspaceSessionCookieNames
 } from '$lib/server/workspace';
 import { WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { ApiError, apiFailure } from '$lib/server/http/api';
+import { ApiError, apiFailure, classifyRuntimeError, getRequestId, runtimeUnavailableState } from '$lib/server/http/api';
 
-const setSecurityHeaders = (response: Response, secure: boolean) => {
+const setSecurityHeaders = (response: Response, secure: boolean, requestId?: string) => {
   response.headers.set('referrer-policy', 'no-referrer');
   response.headers.set('x-content-type-options', 'nosniff');
   response.headers.set('x-frame-options', 'DENY');
   response.headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   response.headers.set('cross-origin-opener-policy', 'same-origin');
+  if (requestId) response.headers.set('x-request-id', requestId);
   if (secure) response.headers.set('strict-transport-security', 'max-age=63072000; includeSubDomains; preload');
   return response;
 };
 
 export const handle: Handle = async ({ event, resolve }) => {
+  const requestId = getRequestId(event);
   const env = event.platform?.env as CloudflareEnv | undefined;
+  const isHealth = event.url.pathname === '/api/health';
+  const isApi = event.url.pathname.startsWith('/api/');
+  const secure = event.url.protocol === 'https:';
+  const failApi = (error: ApiError) => setSecurityHeaders(apiFailure(event, error), secure);
+  const markUnavailable = (error: unknown) => {
+    event.locals.runtimeState = runtimeUnavailableState(error, requestId);
+  };
   const environment = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
-  if (!environment.ok && event.url.pathname !== '/api/health') {
-    return new Response('Service configuration is incomplete.', { status: 503 });
+  if (!environment.ok && !isHealth) {
+    const error = new ApiError(503, 'CONFIG_INVALID', '服务配置尚未完成。', undefined, undefined, false);
+    markUnavailable(error);
+    if (isApi) return failApi(error);
   }
+  let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
   const sessionToken = workspaceSessionCookieNames
     .map((name) => event.cookies.get(name))
     .find((value): value is string => Boolean(value)) ?? null;
-  let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
-  try {
-    session = await getWorkspaceSession(env, sessionToken);
-  } catch (error) {
-    if (error instanceof WorkspaceAuthUnavailableError && event.url.pathname !== '/api/health') {
-      return setSecurityHeaders(new Response('Authentication storage is unavailable.', { status: 503 }), event.url.protocol === 'https:');
+
+  if (!isHealth && environment.ok) {
+    try {
+      if (!env?.DB) {
+        const error = new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
+        markUnavailable(error);
+        if (isApi) return failApi(error);
+      } else if (!(await hasWorkspaceCoreTables(env))) {
+        const error = new ApiError(503, 'SCHEMA_NOT_READY', '服务数据结构尚未就绪。');
+        markUnavailable(error);
+        if (isApi) return failApi(error);
+      } else {
+        session = await getWorkspaceSession(env, sessionToken);
+      }
+    } catch (error) {
+      const classified = error instanceof WorkspaceAuthUnavailableError
+        ? new ApiError(503, 'AUTHENTICATION_UNAVAILABLE', '认证存储暂时不可用。')
+        : classifyRuntimeError(error);
+      markUnavailable(classified);
+      if (isApi) return failApi(classified);
     }
-    throw error;
   }
 
   event.locals.workspaceSessionToken = sessionToken;
@@ -50,16 +76,46 @@ export const handle: Handle = async ({ event, resolve }) => {
       return setSecurityHeaders(apiFailure(
         event,
         new ApiError(403, 'CSRF_ORIGIN_REJECTED', '请求来源验证失败。')
-      ), event.url.protocol === 'https:');
+      ), secure, requestId);
     }
   }
 
   try {
-    return setSecurityHeaders(await resolve(event), event.url.protocol === 'https:');
+    return setSecurityHeaders(await resolve(event), secure, requestId);
   } catch (error) {
     if (error instanceof ApiError) {
-      return setSecurityHeaders(apiFailure(event, error), event.url.protocol === 'https:');
+      return failApi(error);
+    }
+    if (isApi) {
+      const classified = classifyRuntimeError(error);
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'api_request_failed',
+        requestId,
+        method: event.request.method,
+        path: event.url.pathname,
+        code: classified.code,
+        errorName: error instanceof Error ? error.name : 'UnknownError'
+      }));
+      return failApi(classified);
     }
     throw error;
   }
+};
+
+export const handleError: HandleServerError = ({ error, event, status }) => {
+  const requestId = getRequestId(event);
+  console.error(JSON.stringify({
+    level: 'error',
+    event: 'request_failed',
+    requestId,
+    method: event.request.method,
+    path: event.url.pathname,
+    status,
+    errorName: error instanceof Error ? error.name : 'UnknownError'
+  }));
+  return {
+    message: '服务器暂时无法完成请求。',
+    requestId
+  };
 };

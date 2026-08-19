@@ -126,6 +126,40 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('uses global service metrics and exposes typed API errors with a request ID', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop topbar exposes the service summary.');
+  await login(page);
+
+  const serviceStatus = page.locator('details').filter({ hasText: '全局状态正常' });
+  const serviceSummary = page.getByText('全局状态正常', { exact: true });
+  await expect(serviceSummary).toBeVisible();
+  await serviceSummary.click();
+  await expect(serviceStatus).toContainText('指标覆盖整个工作区');
+  await expect(serviceStatus).toContainText('长时间提交中');
+
+  const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  await page.route('**/api/workspace/messages/*/flags', async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      headers: { 'x-request-id': 'runtime-toast-e2e' },
+      body: JSON.stringify({
+        ok: false,
+        error: { code: 'D1_UNAVAILABLE', message: '模拟运行时故障。', retryable: true },
+        requestId: 'runtime-toast-e2e'
+      })
+    });
+  });
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await detail.getByRole('button', { name: /(?:加星|取消星标)/u }).click();
+  const errorToast = page.getByRole('alert').filter({ hasText: '模拟运行时故障' });
+  await expect(errorToast).toContainText('详情 ID：runtime-toast-e2e');
+  await errorToast.getByRole('button', { name: '关闭通知' }).click();
+  await expect(errorToast).toBeHidden();
+  await assertNoConsoleErrors(consoleErrors.filter((message) => !message.includes('503')));
+});
+
 test('archives and restores a selected mailbox message', async ({ page, consoleErrors }) => {
   await login(page);
   const label = page.getByLabel('选择E2E Inbox Welcome');

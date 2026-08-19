@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { validateEnvironment } from '$lib/server/config/env';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
+import { getRequestId } from '$lib/server/http/api';
 import type { RequestHandler } from './$types';
 
 const REQUIRED_TABLES = [
@@ -20,12 +21,25 @@ const REQUIRED_TABLES = [
   'workspace_outbound_events',
   'workspace_inbound_ingest_claims',
   'workspace_delivery_attempts',
+  'mail_body_objects',
   'workspace_schema_metadata'
 ] as const;
-export const GET: RequestHandler = async ({ platform }) => {
+export const GET: RequestHandler = async (event) => {
+  const requestId = getRequestId(event);
+  const { platform } = event;
   const env = platform?.env as CloudflareEnv | undefined;
   const validation = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
+  if (!validation.ok) {
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'health_check_failed',
+      requestId,
+      code: 'CONFIG_INVALID',
+      diagnostics: validation.errors.map(({ code }) => code)
+    }));
+  }
   let schemaReady = false;
+  let schemaCode: 'D1_UNAVAILABLE' | 'SCHEMA_NOT_READY' = 'D1_UNAVAILABLE';
 
   if (env?.DB) {
     try {
@@ -36,15 +50,32 @@ export const GET: RequestHandler = async ({ platform }) => {
       `).bind(...REQUIRED_TABLES).all<{ name: string }>();
       const version = await env.DB.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?').bind('flaremail').first<{ schema_version: number }>();
       schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && version?.schema_version === FLAREMAIL_SCHEMA_VERSION;
+      schemaCode = 'SCHEMA_NOT_READY';
     } catch {
       schemaReady = false;
+      schemaCode = 'D1_UNAVAILABLE';
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'health_check_failed',
+        requestId,
+        code: schemaCode
+      }));
     }
   }
 
   const ok = validation.ok && schemaReady;
+  const errorCode = !validation.ok ? 'CONFIG_INVALID' : schemaCode;
   return json({
     ok,
     version: env?.APP_VERSION ?? 'development',
-    timestamp: new Date().toISOString()
-  }, { status: ok ? 200 : 503 });
+    timestamp: new Date().toISOString(),
+    requestId,
+    ...(ok ? {} : {
+      error: {
+        code: errorCode,
+        message: errorCode === 'CONFIG_INVALID' ? '服务配置尚未完成。' : errorCode === 'D1_UNAVAILABLE' ? '工作区数据服务暂时不可用。' : '服务数据结构尚未就绪。',
+        retryable: errorCode !== 'CONFIG_INVALID'
+      }
+    })
+  }, { status: ok ? 200 : 503, headers: { 'cache-control': 'no-store', 'x-request-id': requestId } });
 };

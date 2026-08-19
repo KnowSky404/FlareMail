@@ -156,6 +156,12 @@ export interface WorkspaceMetrics {
   inboxCount: number;
   sentCount: number;
   draftsCount: number;
+  queuedCount: number;
+  delayedCount: number;
+  failedCount: number;
+  bouncedCount: number;
+  complainedCount: number;
+  staleDeliveryCount: number;
 }
 
 export interface UserProfile {
@@ -347,7 +353,13 @@ export function getMailboxMetrics(mailbox: MailboxState): WorkspaceMetrics {
       mailbox.drafts.filter((message) => message.starred).length,
     inboxCount: mailbox.inbox.length,
     sentCount: mailbox.sent.length,
-    draftsCount: mailbox.drafts.length
+    draftsCount: mailbox.drafts.length,
+    queuedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'queued' || message.deliveryStatus === 'submitting').length,
+    delayedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'delayed').length,
+    failedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'failed' || message.deliveryStatus === 'suppressed').length,
+    bouncedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'bounced').length,
+    complainedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'complained').length,
+    staleDeliveryCount: 0
   };
 }
 

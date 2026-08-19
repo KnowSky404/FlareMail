@@ -172,7 +172,19 @@ describe('D1 mailbox pages', () => {
   });
 
   test('joins delivery state without per-message queries and returns global metrics', async () => {
-    const { env, workspace } = fixture();
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, last_event_at) VALUES
+        ('queued-global', 'user-1', 'queued', datetime('now')),
+        ('submitting-fresh', 'user-1', 'submitting', datetime('now')),
+        ('submitting-stale', 'user-1', 'submitting', datetime('now', '-20 minutes')),
+        ('delayed-global', 'user-1', 'delayed', datetime('now')),
+        ('failed-global', 'user-1', 'failed', datetime('now')),
+        ('suppressed-global', 'user-1', 'suppressed', datetime('now')),
+        ('bounced-global', 'user-1', 'bounced', datetime('now')),
+        ('complained-global', 'user-1', 'complained', datetime('now')),
+        ('foreign-failed', 'user-2', 'failed', datetime('now'))
+    `);
     const page = await loadMailboxPage(env, workspace, query('sent', { deliveryStatus: 'delivered' }));
     expect(page.messages).toHaveLength(1);
     expect(page.messages[0].deliveryStatus).toBe('delivered');
@@ -182,7 +194,13 @@ describe('D1 mailbox pages', () => {
       sentCount: 1,
       draftsCount: 1,
       unreadCount: 2,
-      starredCount: 2
+      starredCount: 2,
+      queuedCount: 3,
+      delayedCount: 1,
+      failedCount: 2,
+      bouncedCount: 1,
+      complainedCount: 1,
+      staleDeliveryCount: 1
     });
   });
 

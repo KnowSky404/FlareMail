@@ -12,6 +12,11 @@ contains `activeFolder`, `mailboxPages`, and `metrics`.
 - `activeFolder` is `inbox`, `sent`, `drafts`, or `archive`.
 - Only the active folder's first page is loaded during the initial snapshot.
 - `metrics` is fetched once for the snapshot and is not repeated per folder.
+- `metrics` contains global mailbox counts plus global outbound aggregates:
+  `queuedCount`, `delayedCount`, `failedCount`, `bouncedCount`,
+  `complainedCount`, and `staleDeliveryCount`. These values cover the owned
+  workspace, not only the currently loaded page. A submission is stale after
+  15 minutes in `submitting` state.
 - Changing folder requests that folder's page lazily. `archive` is a mailbox
   section backed by inbox rows with `archived_at`, not a persisted `folder`
   value.
@@ -30,6 +35,36 @@ return stored inbound, sent, or draft bodies. Inbound text is loaded through
 the owned message detail route. Workspace sent text is loaded through
 `GET /api/workspace/messages/:id/body`; the response never contains raw HTML.
 Ownership is checked on every list and detail path.
+
+## Response and runtime errors
+
+Authenticated JSON routes use one correlation ID in the response body and the
+`X-Request-ID` header:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "D1_UNAVAILABLE",
+    "message": "工作区数据服务暂时不可用。",
+    "retryable": true
+  },
+  "requestId": "correlation-id"
+}
+```
+
+Runtime failures are classified as `CONFIG_INVALID`,
+`AUTHENTICATION_UNAVAILABLE`, `SCHEMA_NOT_READY`, `D1_UNAVAILABLE`,
+`R2_UNAVAILABLE`, `NETWORK_FAILURE`, or `INTERNAL_ERROR`. Server logs contain
+the correlation ID and safe classification metadata, never request bodies,
+mail content, bindings, credentials, or raw exception messages. HTML page loads
+return a typed unavailable view with retry and the read-only health link; they
+do not turn a storage or schema failure into the login page.
+
+`GET /api/health` is the unauthenticated readiness endpoint. It returns HTTP
+`200` only when production configuration is valid, every required table exists,
+and `workspace_schema_metadata` equals the exact application schema version.
+Otherwise it returns HTTP `503` with a typed safe error and correlation ID.
 
 ## Draft concurrency
 
