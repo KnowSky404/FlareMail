@@ -1,25 +1,26 @@
-export interface CloudflareEnv {
-  DB: D1Database;
-  BUCKET: R2Bucket;
-  APP_ENV?: 'development' | 'preview' | 'test' | 'production';
-  APP_ORIGIN?: string;
-  APP_VERSION?: string;
-  ALLOW_FAKE_SERVICES?: string;
-  OUTBOUND_PROVIDER?: 'demo' | 'fake' | 'resend';
-  OUTBOUND_FROM_EMAIL?: string;
-  OUTBOUND_FROM_NAME?: string;
-  AUTO_REPLY_ENABLED?: string;
-  AUTO_REPLY_SUBJECT_PREFIX?: string;
-  AUTO_REPLY_TEXT?: string;
-  INBOUND_NOTIFICATION_ENABLED?: string;
-  NOTIFICATION_EMAIL?: string;
-  NOTIFICATION_SUBJECT_PREFIX?: string;
-  RESEND_API_KEY?: string;
-  RESEND_API_BASE_URL?: string;
-  RESEND_TIMEOUT_MS?: string;
-  RESEND_WEBHOOK_SECRET?: string;
-  INBOUND_MAX_RAW_BYTES?: string;
-  INBOUND_MAX_ATTACHMENT_COUNT?: string;
-  INBOUND_MAX_ATTACHMENT_BYTES?: string;
-  INBOUND_MAX_ATTACHMENT_TOTAL_BYTES?: string;
+/**
+ * Wrangler's generated binding/runtime contract is authoritative. These
+ * optional fields are deployment-only vars/secrets intentionally absent from
+ * the public local wrangler.toml template and are kept as a narrow extension.
+ */
+declare global {
+  interface CloudflareEnv {
+    APP_ORIGIN?: string;
+    APP_VERSION?: string;
+    RESEND_API_KEY?: string;
+    RESEND_API_BASE_URL?: string;
+    RESEND_TIMEOUT_MS?: string;
+    RESEND_WEBHOOK_SECRET?: string;
+  }
 }
+
+type GeneratedCloudflareEnv = globalThis.CloudflareEnv;
+type FlexibleGeneratedCloudflareEnv = {
+  [Key in keyof GeneratedCloudflareEnv]?: GeneratedCloudflareEnv[Key] extends string
+    ? string
+    : GeneratedCloudflareEnv[Key];
+};
+
+/** Keep D1/R2 required while allowing isolated tests and secret-only deploy vars. */
+export type CloudflareEnv = Omit<FlexibleGeneratedCloudflareEnv, 'DB' | 'BUCKET'> &
+  Pick<GeneratedCloudflareEnv, 'DB' | 'BUCKET'>;

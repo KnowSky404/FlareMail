@@ -19,7 +19,7 @@
     "test:e2e": "playwright test",
     "test:a11y": "playwright test --project=mobile --project=narrow --grep 'horizontal overflow|touch targets|accessible'",
     "runtime:fixtures": "bun scripts/runtime-fixtures.ts",
-    "cf:typegen": "XDG_CONFIG_HOME=/tmp wrangler types --env-interface CloudflareEnv",
+    "cf:typegen": "XDG_CONFIG_HOME=/tmp wrangler types worker-configuration.d.ts --env-interface CloudflareEnv",
     "db:migrate:local": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --local --config wrangler.toml",
     "db:migrate:remote": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --remote --config wrangler.deploy.toml",
     "auth:bootstrap:local": "bun ./scripts/bootstrap-admin.ts",

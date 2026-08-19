@@ -23,6 +23,7 @@ jobs:
       - name: full test coverage (remaining collection)
         run: bun run test:remaining
       - run: bun run check
+      - run: bun run cf:typegen -- --check
       - run: bun run build
 
   e2e:

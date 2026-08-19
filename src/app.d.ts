@@ -1,6 +1,6 @@
 /// <reference types="@sveltejs/kit" />
 /// <reference types="@sveltejs/adapter-cloudflare" />
-/// <reference types="@cloudflare/workers-types" />
+/// <reference path="../worker-configuration.d.ts" />
 
 import type { CloudflareEnv } from './lib/server/cloudflare';
 import type { WorkspaceContext } from './lib/server/workspace';
