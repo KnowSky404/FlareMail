@@ -357,7 +357,10 @@
       mobileDetailOpen = false;
     }
     selectedMessageId = merged.selectedMessageId;
-    if (options?.section) updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
+    if (options?.section) {
+      mobileDetailOpen = options.section !== 'profile' && Boolean(selectedMessageId);
+      updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
+    }
   }
 
   const describeDeliveryState = (message: MailMessage) =>
