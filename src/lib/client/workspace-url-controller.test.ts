@@ -17,5 +17,6 @@ describe('workspace URL controller', () => {
       messageId: 'message-1'
     });
     expect(readWorkspaceUrl(next)).toEqual({ section: 'sent', query: 'invoice', filter: 'starred', messageId: 'message-1' });
+    expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=trash'))).toEqual({ section: 'trash', query: '', filter: 'all', messageId: null });
   });
 });

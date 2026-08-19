@@ -42,6 +42,23 @@ async function updateServerDraft(page: Page, subject: string, body: string) {
   return (result.body as { data: { message: DraftSnapshot } }).data.message;
 }
 
+async function createDraft(page: Page, subject: string, body: string) {
+  const result = await page.evaluate(async ({ nextSubject, nextBody }) => {
+    const response = await fetch('/api/workspace/drafts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [{ name: 'Trash Fixture', email: 'trash-fixture@flaremail.test' }],
+        subject: nextSubject,
+        body: nextBody
+      })
+    });
+    return { ok: response.ok, status: response.status, payload: await response.json() };
+  }, { nextSubject: subject, nextBody: body });
+  expect(result.ok, JSON.stringify(result.payload)).toBe(true);
+  return (result.payload as { data: { message: DraftSnapshot } }).data.message;
+}
+
 async function openDraftEditor(page: Page, subject: string) {
   await openFolder(page, '草稿箱');
   const item = page.getByRole('listitem').filter({ hasText: subject });
@@ -174,6 +191,47 @@ test('archives and restores a selected mailbox message', async ({ page, consoleE
   await expect(page.getByRole('status').filter({ hasText: '已将所选邮件移回收件箱' })).toBeVisible();
   await openFolder(page, '收件箱');
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('moves a draft to trash, persists across refresh, restores, and permanently deletes', async ({ page, consoleErrors }) => {
+  await login(page);
+  const subject = `E2E Trash Lifecycle ${Date.now()}`;
+  await createDraft(page, subject, 'Trash lifecycle body.');
+
+  const moveToTrash = async () => {
+    await openFolder(page, '草稿箱');
+    const item = page.getByRole('listitem').filter({ hasText: subject });
+    await expect(item).toBeVisible();
+    await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
+    await page.getByRole('button', { name: '更多邮件操作' }).click();
+    await page.getByRole('menuitem', { name: '移入垃圾箱' }).click();
+    await page.getByRole('dialog', { name: '移入垃圾箱？' }).getByRole('button', { name: '移入垃圾箱' }).click();
+    await expect(page.getByRole('status').filter({ hasText: '已移入垃圾箱' })).toBeVisible();
+  };
+
+  await moveToTrash();
+  await page.getByRole('status').filter({ hasText: '已移入垃圾箱' }).getByRole('button', { name: '撤销' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '已撤销移入垃圾箱' })).toBeVisible();
+
+  await moveToTrash();
+  await openFolder(page, '垃圾箱');
+  await expect(page.getByRole('listitem').filter({ hasText: subject })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await expect(page).toHaveURL(/folder=trash/u);
+  const persistedItem = page.getByRole('listitem').filter({ hasText: subject });
+  await expect(persistedItem).toBeVisible();
+  await persistedItem.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
+  await page.getByRole('button', { name: '恢复', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: '已恢复到草稿箱' })).toBeVisible();
+
+  await moveToTrash();
+  await openFolder(page, '垃圾箱');
+  await page.getByRole('listitem').filter({ hasText: subject }).getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
+  await page.getByRole('button', { name: '永久删除', exact: true }).click();
+  await page.getByRole('dialog', { name: '永久删除此项目？' }).getByRole('button', { name: '永久删除' }).click();
+  await expect(page.getByRole('listitem').filter({ hasText: subject })).toHaveCount(0);
   await assertNoConsoleErrors(consoleErrors);
 });
 

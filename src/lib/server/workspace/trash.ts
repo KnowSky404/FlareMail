@@ -2,6 +2,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError } from '$lib/server/http/api';
 import { mapDraftRow, mapInboundRow, mapWorkspaceMessageRow, type WorkspaceContext, type WorkspaceDraftRow, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 import type { MailMessage } from '$lib/domain/mail';
+import { getMailboxMetrics } from '$lib/server/db/mailbox';
 
 type TrashKind = 'workspace' | 'draft' | 'inbound';
 type TrashRow = {
@@ -101,7 +102,8 @@ export async function listWorkspaceTrash(env: CloudflareEnv | undefined, session
   rows.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt) || b.id.localeCompare(a.id));
   return {
     items: rows.slice(0, bounded).map(({ id, kind, deletedAt, message }) => ({ id, kind, deletedAt, originalFolder: message.archivedAt ? 'archive' : message.folder, message })),
-    hasMore: rows.length > bounded
+    hasMore: rows.length > bounded,
+    metrics: await getMailboxMetrics(db, session.userId)
   };
 }
 
@@ -133,7 +135,8 @@ export async function restoreWorkspaceTrash(env: CloudflareEnv | undefined, sess
     return {
       restoredId: id,
       originalFolder: active.message.archivedAt ? 'archive' : active.message.folder,
-      idempotent: true
+      idempotent: true,
+      metrics: await getMailboxMetrics(db, session.userId)
     };
   }
   if (current.kind === 'inbound') await db.prepare('UPDATE workspace_email_states SET deleted_at = NULL, updated_at = ? WHERE user_id = ? AND email_message_id = ? AND deleted_at IS NOT NULL').bind(new Date().toISOString(), session.userId, id.slice(6)).run();
@@ -141,16 +144,24 @@ export async function restoreWorkspaceTrash(env: CloudflareEnv | undefined, sess
     const table = current.kind === 'draft' ? 'workspace_drafts' : 'workspace_messages';
     await db.prepare(`UPDATE ${table} SET deleted_at = NULL, updated_at = ? WHERE user_id = ? AND id = ? AND deleted_at IS NOT NULL`).bind(new Date().toISOString(), session.userId, id).run();
   }
-  return { restoredId: id, originalFolder: current.message.archivedAt ? 'archive' : current.message.folder, idempotent: false };
+  return { restoredId: id, originalFolder: current.message.archivedAt ? 'archive' : current.message.folder, idempotent: false, metrics: await getMailboxMetrics(db, session.userId) };
 }
 
-export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, id: string) {
+type PermanentDeleteResult = { deletedId: string; idempotent: boolean; metrics: Awaited<ReturnType<typeof getMailboxMetrics>> };
+type PermanentDeleteResultWithoutMetrics = Omit<PermanentDeleteResult, 'metrics'>;
+
+export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, id: string): Promise<PermanentDeleteResult>;
+export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, id: string, includeMetrics: false): Promise<PermanentDeleteResultWithoutMetrics>;
+export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, id: string, includeMetrics = true): Promise<PermanentDeleteResult | PermanentDeleteResultWithoutMetrics> {
   const db = requireD1(env, session);
+  const result = async (value: PermanentDeleteResultWithoutMetrics) => includeMetrics
+    ? { ...value, metrics: await getMailboxMetrics(db, session.userId) }
+    : value;
   const current = await findTrashRow(db, session.userId, id);
   if (!current) {
     const active = await findTrashRow(db, session.userId, id, true);
     if (active) throw new ApiError(409, 'TRASH_ITEM_NOT_TRASHED', '只能永久删除已移入回收站的项目。', undefined, undefined, false);
-    return { deletedId: id, idempotent: true };
+    return result({ deletedId: id, idempotent: true });
   }
   const keys = await resourceKeys(db, session.userId, current);
   if (keys.length && !env?.BUCKET) throw new ApiError(503, 'R2_UNAVAILABLE', '文件存储服务暂不可用。');
@@ -172,7 +183,7 @@ export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undef
   } else if (current.kind === 'draft') statements.push(db.prepare('DELETE FROM workspace_drafts WHERE user_id = ? AND id = ?').bind(session.userId, id));
   else statements.push(db.prepare('DELETE FROM workspace_messages WHERE user_id = ? AND id = ?').bind(session.userId, id));
   await db.batch(statements);
-  return { deletedId: id, idempotent: false };
+  return result({ deletedId: id, idempotent: false });
 }
 
 export async function emptyWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext) {
@@ -181,9 +192,9 @@ export async function emptyWorkspaceTrash(env: CloudflareEnv | undefined, sessio
   if (result.hasMore) throw new ApiError(413, 'TRASH_TOO_LARGE', '回收站项目过多，请分批清空。', undefined, undefined, false);
   let deleted = 0;
   for (const item of result.items) {
-    await permanentlyDeleteWorkspaceTrash(env, session, item.id);
+    await permanentlyDeleteWorkspaceTrash(env, session, item.id, false);
     deleted += 1;
   }
   void db;
-  return { deleted };
+  return { deleted, metrics: await getMailboxMetrics(db, session.userId) };
 }

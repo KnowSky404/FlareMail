@@ -78,6 +78,8 @@ describe('workspace trash', () => {
     const env = { DB, BUCKET: bucket } as never;
     await moveWorkspaceMessageToTrash(env, session, 'sent-1');
     await moveWorkspaceMessageToTrash(env, session, 'draft-1');
-    expect(await emptyWorkspaceTrash(env, session)).toEqual({ deleted: 2 });
+    const result = await emptyWorkspaceTrash(env, session);
+    expect(result.deleted).toBe(2);
+    expect(result.metrics.trashCount).toBe(0);
   });
 });

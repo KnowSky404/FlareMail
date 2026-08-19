@@ -54,14 +54,15 @@ export async function listOwnedMailboxMutationRows(
 export async function resolveOwnedMailboxThreadMessageIds(
   db: D1Database,
   userId: string,
-  threadKeys: string[]
+  threadKeys: string[],
+  includeSent = false
 ): Promise<string[]> {
   if (!threadKeys.length) return [];
   const ids: string[] = [];
   const threadPlaceholders = placeholders(threadKeys);
   const workspaceRows = await db.prepare(`
     SELECT id FROM workspace_messages
-    WHERE user_id = ? AND folder = 'inbox' AND deleted_at IS NULL AND thread_key IN (${threadPlaceholders})
+    WHERE user_id = ? AND folder ${includeSent ? "IN ('inbox', 'sent')" : "= 'inbox'"} AND deleted_at IS NULL AND thread_key IN (${threadPlaceholders})
   `).bind(userId, ...threadKeys).all<{ id: string }>();
   ids.push(...(workspaceRows.results ?? []).map((row) => row.id));
   const inboundRows = await db.prepare(`
@@ -87,14 +88,16 @@ function inboundMutationStatement(
   const archiveExpression = action === 'archive'
     ? 'COALESCE(s.archived_at, ?)'
     : action === 'unarchive' ? 'NULL' : 's.archived_at';
+  const deletedExpression = action === 'trash' ? '?' : 'NULL';
   const bindings: unknown[] = [crypto.randomUUID(), userId];
   if (action === 'archive') bindings.push(timestamp);
+  if (action === 'trash') bindings.push(timestamp);
   bindings.push(timestamp, timestamp, userId, userId, inboundId);
   return db.prepare(`
     INSERT INTO workspace_email_states (
       id, user_id, email_message_id, is_read, is_starred, archived_at, deleted_at, created_at, updated_at
     )
-    SELECT ?, ?, e.id, ${readExpression}, ${starredExpression}, ${archiveExpression}, NULL, ?, ?
+    SELECT ?, ?, e.id, ${readExpression}, ${starredExpression}, ${archiveExpression}, ${deletedExpression}, ?, ?
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
@@ -103,7 +106,7 @@ function inboundMutationStatement(
       is_read = excluded.is_read,
       is_starred = excluded.is_starred,
       archived_at = excluded.archived_at,
-      deleted_at = NULL,
+      deleted_at = excluded.deleted_at,
       updated_at = excluded.updated_at
   `).bind(...bindings);
 }
@@ -123,15 +126,17 @@ export function buildMailboxMutationStatements(
       action === 'read' ? 'is_read = 1' : action === 'unread' ? 'is_read = 0' : '',
       action === 'star' ? 'is_starred = 1' : action === 'unstar' ? 'is_starred = 0' : '',
       action === 'archive' || action === 'unarchive' ? `archived_at = ${archiveExpression}` : '',
+      action === 'trash' ? 'deleted_at = COALESCE(deleted_at, ?)' : '',
       'updated_at = ?'
     ].filter(Boolean);
     const bindings: unknown[] = [];
     if (action === 'archive') bindings.push(timestamp);
+    if (action === 'trash') bindings.push(timestamp);
     bindings.push(timestamp, userId, ...workspaceIds);
     statements.push(db.prepare(`
       UPDATE workspace_messages
       SET ${setParts.join(', ')}
-      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND id IN (${placeholders(workspaceIds)})
+      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND deleted_at IS NULL AND id IN (${placeholders(workspaceIds)})
     `).bind(...bindings));
   }
   statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp)));

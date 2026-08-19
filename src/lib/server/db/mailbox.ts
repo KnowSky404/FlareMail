@@ -156,6 +156,13 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
         SELECT COUNT(*) FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NULL
       ) AS drafts_count,
       (
+        SELECT COUNT(*) FROM workspace_messages WHERE user_id = ? AND deleted_at IS NOT NULL
+      ) + (
+        SELECT COUNT(*) FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NOT NULL
+      ) + (
+        SELECT COUNT(*) FROM workspace_email_states WHERE user_id = ? AND deleted_at IS NOT NULL
+      ) AS trash_count,
+      (
         SELECT COUNT(*) FROM workspace_messages
         WHERE user_id = ? AND folder = 'inbox' AND deleted_at IS NULL AND archived_at IS NULL AND is_read = 0
       ) + (
@@ -182,11 +189,13 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
     userId, userId, userId, userId, userId,
     userId, userId, userId, userId, userId,
     userId, userId, userId, userId, userId,
-    userId, userId, userId
+    userId, userId, userId, userId, userId,
+    userId
   ).first<{
     inbox_count: number;
     sent_count: number;
     drafts_count: number;
+    trash_count: number;
     unread_count: number;
     starred_count: number;
     queued_count: number;
@@ -201,6 +210,7 @@ export async function getMailboxMetrics(db: D1Database, userId: string): Promise
     inboxCount: Number(row?.inbox_count ?? 0),
     sentCount: Number(row?.sent_count ?? 0),
     draftsCount: Number(row?.drafts_count ?? 0),
+    trashCount: Number(row?.trash_count ?? 0),
     unreadCount: Number(row?.unread_count ?? 0),
     starredCount: Number(row?.starred_count ?? 0),
     queuedCount: Number(row?.queued_count ?? 0),

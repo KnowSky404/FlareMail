@@ -193,6 +193,7 @@ describe('D1 mailbox pages', () => {
       inboxCount: 3,
       sentCount: 1,
       draftsCount: 1,
+      trashCount: 0,
       unreadCount: 2,
       starredCount: 2,
       queuedCount: 3,
@@ -302,6 +303,19 @@ describe('D1 mailbox pages', () => {
       messageIds: ['inbox-z', 'not-owned']
     })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
     expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).toBeNull();
+  });
+
+  test('moves an owned mixed selection to trash and updates global metrics', async () => {
+    const { env, workspace, database } = fixture();
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'trash',
+      messageIds: ['inbox-z', 'email:incoming-1']
+    });
+
+    expect((database.query(`SELECT deleted_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { deleted_at: string | null }).deleted_at).not.toBeNull();
+    expect((database.query(`SELECT deleted_at FROM workspace_email_states WHERE user_id = 'user-1' AND email_message_id = 'incoming-1'`).get() as { deleted_at: string | null }).deleted_at).not.toBeNull();
+    expect(result.metrics.trashCount).toBe(2);
+    expect((await loadMailboxPage(env, workspace, query('inbox'))).messages.map(({ id }) => id)).not.toContain('inbox-z');
   });
 
   test.each([

@@ -5,10 +5,11 @@
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import type { LucideIcon } from '@lucide/svelte';
   import type { MailboxSection } from '$lib/domain/mail';
 
-  type AppSection = MailboxSection | 'profile';
+  type AppSection = MailboxSection | 'trash' | 'profile';
   type NavigationItem = {
     id: AppSection;
     label: string;
@@ -21,6 +22,7 @@
     inboxCount,
     sentCount,
     draftCount,
+    trashCount,
     pending = false,
     onCompose,
     onSelectSection
@@ -29,6 +31,7 @@
     inboxCount: number;
     sentCount: number;
     draftCount: number;
+    trashCount: number;
     pending?: boolean;
     onCompose: () => void;
     onSelectSection: (section: AppSection) => void;
@@ -39,6 +42,7 @@
     { id: 'sent', label: '已发送', count: sentCount, icon: Send },
     { id: 'drafts', label: '草稿箱', count: draftCount, icon: FileText },
     { id: 'archive', label: '归档', count: 0, icon: Archive },
+    { id: 'trash', label: '垃圾箱', count: trashCount, icon: Trash2 },
     { id: 'profile', label: '设置', count: 0, icon: Settings }
   ]);
 </script>

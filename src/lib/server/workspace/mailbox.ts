@@ -74,7 +74,7 @@ export async function mutateWorkspaceMailbox(
   const directIds = [...new Set(input.messageIds.map((id) => id.trim()).filter(Boolean))];
   const threadKeys = [...new Set((input.threadKeys ?? []).map((key) => key.trim()).filter(Boolean))];
   const resolvedIds = threadKeys.length
-    ? await resolveOwnedMailboxThreadMessageIds(env.DB, workspace.userId, threadKeys)
+    ? await resolveOwnedMailboxThreadMessageIds(env.DB, workspace.userId, threadKeys, input.action === 'trash')
     : [];
   const messageIds = [...new Set([...directIds, ...resolvedIds])];
   if (messageIds.length === 0) throw new ApiError(400, 'MAILBOX_SELECTION_EMPTY', '请选择至少一封邮件。');

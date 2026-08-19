@@ -4,7 +4,7 @@ import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
 import { mutateWorkspaceMailbox } from '$lib/server/workspace';
 
-const actions = new Set<MailboxMutationAction>(['archive', 'unarchive', 'read', 'unread', 'star', 'unstar']);
+const actions = new Set<MailboxMutationAction>(['archive', 'unarchive', 'read', 'unread', 'star', 'unstar', 'trash']);
 
 export const POST: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);

@@ -13,7 +13,7 @@ export type MailFolder = 'inbox' | 'sent' | 'drafts';
 export type MailboxSection = MailFolder | 'archive';
 export type MailSource = 'workspace' | 'inbound';
 
-export type MailboxMutationAction = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar';
+export type MailboxMutationAction = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar' | 'trash';
 
 export interface MailboxMutationRequest {
   action: MailboxMutationAction;
@@ -156,12 +156,29 @@ export interface WorkspaceMetrics {
   inboxCount: number;
   sentCount: number;
   draftsCount: number;
+  trashCount: number;
   queuedCount: number;
   delayedCount: number;
   failedCount: number;
   bouncedCount: number;
   complainedCount: number;
   staleDeliveryCount: number;
+}
+
+export type TrashItemKind = 'workspace' | 'draft' | 'inbound';
+
+export interface TrashItem {
+  id: string;
+  kind: TrashItemKind;
+  deletedAt: string;
+  originalFolder: MailboxSection;
+  message: MailMessage;
+}
+
+export interface TrashListResult {
+  items: TrashItem[];
+  hasMore: boolean;
+  metrics: WorkspaceMetrics;
 }
 
 export interface UserProfile {
@@ -354,6 +371,7 @@ export function getMailboxMetrics(mailbox: MailboxState): WorkspaceMetrics {
     inboxCount: mailbox.inbox.length,
     sentCount: mailbox.sent.length,
     draftsCount: mailbox.drafts.length,
+    trashCount: 0,
     queuedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'queued' || message.deliveryStatus === 'submitting').length,
     delayedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'delayed').length,
     failedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'failed' || message.deliveryStatus === 'suppressed').length,

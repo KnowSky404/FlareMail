@@ -10,6 +10,7 @@ import type {
   MailMessage,
   MailboxPage,
   MessagePatch,
+  TrashListResult,
   UserProfile,
   WorkspacePayload,
   WorkspaceSnapshot
@@ -25,7 +26,9 @@ export type SessionResponse = {
 export type WorkspaceResponse = { ok: boolean; workspace?: WorkspacePayload; error?: string; profile?: UserProfile; metrics?: WorkspacePayload['metrics'] };
 
 export type MessageResponse = { ok: boolean; message: MailMessage; metrics: WorkspacePayload['metrics']; bodyRevision?: string | null; error?: string };
-export type DeleteResponse = WorkspaceResponse & { removedId: string; folder: MailFolder };
+export type DeleteResponse = { removedId: string; folder: MailFolder; metrics: WorkspacePayload['metrics'] };
+export type RestoreTrashResponse = { restoredId: string; originalFolder: import('$lib/domain/mail').MailboxSection; idempotent: boolean; metrics: WorkspacePayload['metrics'] };
+export type PermanentDeleteResponse = { deletedId: string; idempotent: boolean; metrics: WorkspacePayload['metrics'] };
 
 export function fetchInboundDetail(messageId: string, signal?: AbortSignal) {
   return requestJson<{ ok: boolean; detail: InboundMessageDetail; error?: string }>(
@@ -118,4 +121,29 @@ export function deleteMessage(messageId: string) {
     `/api/workspace/messages/${encodeURIComponent(messageId)}`,
     { method: 'DELETE' }
   );
+}
+
+export function fetchTrash(signal?: AbortSignal) {
+  return requestJson<TrashListResult>('/api/workspace/trash?limit=500', { signal });
+}
+
+export function restoreTrashItem(messageId: string) {
+  return requestJson<RestoreTrashResponse>(
+    `/api/workspace/trash/${encodeURIComponent(messageId)}`,
+    { method: 'POST' }
+  );
+}
+
+export function permanentlyDeleteTrashItem(messageId: string) {
+  return requestJson<PermanentDeleteResponse>(
+    `/api/workspace/trash/${encodeURIComponent(messageId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+export function emptyTrash() {
+  return requestJson<{ deleted: number; metrics: WorkspacePayload['metrics'] }>('/api/workspace/trash', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'empty' })
+  });
 }

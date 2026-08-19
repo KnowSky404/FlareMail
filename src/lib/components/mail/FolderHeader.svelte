@@ -5,7 +5,7 @@
   import MailSearchBar from './MailSearchBar.svelte';
   import type { MailboxSection } from '$lib/domain/mail';
 
-  type AppSection = MailboxSection | 'profile';
+  type AppSection = MailboxSection | 'trash' | 'profile';
 
   let {
     activeSection,
@@ -36,6 +36,7 @@
     sent: '已发送',
     drafts: '草稿箱',
     archive: '归档',
+    trash: '垃圾箱',
     profile: '个人资料'
   };
 

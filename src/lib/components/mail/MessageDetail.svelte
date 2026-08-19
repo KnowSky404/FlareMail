@@ -28,12 +28,15 @@
     onToggleStar,
     onToggleRead,
     onRemove,
+    onRestore,
+    onPermanentDelete,
     onReloadInboundDetail,
     onReloadDeliveryDetail,
     onRetryDelivery,
     onSelectThreadMessage,
     onBack,
-    showBack = false
+    showBack = false,
+    trashMode = false
   }: {
     message?: MailMessage | null;
     threadMessages?: MailMessage[];
@@ -55,12 +58,15 @@
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
+    onRestore?: (message: MailMessage) => void | Promise<void>;
+    onPermanentDelete?: (message: MailMessage) => void | Promise<void>;
     onReloadInboundDetail?: (message: MailMessage) => void | Promise<void>;
     onReloadDeliveryDetail?: (message: MailMessage) => void | Promise<void>;
     onRetryDelivery?: (message: MailMessage) => void | Promise<void>;
     onSelectThreadMessage?: (message: MailMessage) => void | Promise<void>;
     onBack?: () => void;
     showBack?: boolean;
+    trashMode?: boolean;
   } = $props();
 
   const visibleBody = $derived(
@@ -100,6 +106,9 @@
     {onToggleStar}
     {onToggleRead}
     {onRemove}
+    {onRestore}
+    {onPermanentDelete}
+    {trashMode}
     {onReloadInboundDetail}
     {onReloadDeliveryDetail}
     {onRetryDelivery}
@@ -124,7 +133,7 @@
           </div>
         {/if}
 
-        {#if isSent}
+        {#if isSent && !trashMode}
           <div class="mt-8">
             <DeliveryTimeline message={message} {deliveryDetail} loading={deliveryDetailPending} error={deliveryDetailError} {pending} onReload={onReloadDeliveryDetail} onRetry={onRetryDelivery} />
           </div>

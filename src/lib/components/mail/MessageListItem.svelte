@@ -14,7 +14,7 @@
   import { StatusBadge } from '$lib/components/ui';
   import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
 
-  type AppSection = MailboxSection | 'profile';
+  type AppSection = MailboxSection | 'trash' | 'profile';
 
   let {
     activeSection,
@@ -39,7 +39,7 @@
   } = $props();
 
   const itemMessage = $derived(thread?.sectionLatestMessage ?? thread?.latestMessage ?? message);
-  const isDraft = $derived(activeSection === 'drafts');
+  const isDraft = $derived(itemMessage?.folder === 'drafts');
   const isUnread = $derived(Boolean(thread ? thread.unreadCount > 0 : itemMessage && !itemMessage.read));
   const isStarred = $derived(Boolean(itemMessage?.starred));
   const itemSubject = $derived(thread?.subject || itemMessage?.subject || '（无主题）');
@@ -48,7 +48,9 @@
 
   const counterpart = $derived(
     thread?.counterpartLabel ||
-      (isDraft ? itemMessage?.toEmail || '收件人未填写' : itemMessage?.fromName || itemMessage?.fromEmail || '未知发件人')
+      (isDraft || itemMessage?.folder === 'sent'
+        ? itemMessage?.toName || itemMessage?.toEmail || '收件人未填写'
+        : itemMessage?.fromName || itemMessage?.fromEmail || '未知发件人')
   );
 
   const formatDate = (value?: string) => {
@@ -151,16 +153,18 @@
         {#if itemMessage.source === 'inbound'}<Mail class="hidden size-3.5 text-[var(--fm-text-muted)] sm:block" aria-hidden="true" />{/if}
       </span>
     </button>
-    <button
-      type="button"
-      class="mr-1 grid min-h-11 min-w-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] transition-colors hover:bg-[var(--fm-surface)] hover:text-[var(--fm-brand-orange)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
-      aria-label={isStarred ? '取消星标' : '加星标'}
-      aria-pressed={isStarred}
-      title={isStarred ? '取消星标' : '加星标'}
-      onclick={handleStar}
-    >
-      <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)] text-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />
-    </button>
+    {#if activeSection !== 'trash'}
+      <button
+        type="button"
+        class="mr-1 grid min-h-11 min-w-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] transition-colors hover:bg-[var(--fm-surface)] hover:text-[var(--fm-brand-orange)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
+        aria-label={isStarred ? '取消星标' : '加星标'}
+        aria-pressed={isStarred}
+        title={isStarred ? '取消星标' : '加星标'}
+        onclick={handleStar}
+      >
+        <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)] text-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />
+      </button>
+    {/if}
     <ChevronRight class="mr-2 hidden size-4 shrink-0 text-[var(--fm-text-muted)] sm:block" aria-hidden="true" />
   </article>
 {:else}

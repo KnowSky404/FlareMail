@@ -14,6 +14,7 @@
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
+  import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
   import { ClientApiError } from '$lib/client/api';
   import {
@@ -45,12 +46,16 @@
     createSession,
     deleteMessage,
     deleteSession,
+    emptyTrash,
     fetchDeliveryDetail,
     fetchDraftDetail,
     fetchInboundDetail,
     fetchMailboxPage,
     fetchMessageBody,
+    fetchTrash,
+    permanentlyDeleteTrashItem,
     persistDraft,
+    restoreTrashItem,
     retryDelivery,
     submitMessage,
     updateMessageFlags,
@@ -59,6 +64,7 @@
   } from '$lib/client/workspace-api';
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
+  import { TrashController } from '$lib/client/trash-controller';
   import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl } from '$lib/client/workspace-url-controller';
   import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
   import {
@@ -82,6 +88,7 @@
     type MailboxPage,
     type MailThread,
     type MessagePatch,
+    type TrashItem,
     type UserProfile,
     type WorkspaceMetrics
   } from '$lib/domain/mail';
@@ -108,9 +115,15 @@
   let authenticated = $state(false);
   let profile = $state<UserProfile>(cloneProfile());
   let mailbox = $state<MailboxState>(cloneMailbox());
-  let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0,
+  let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
     queuedCount: 0, delayedCount: 0, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0 });
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
+  let trashItems = $state<TrashItem[]>([]);
+  let trashHasMore = $state(false);
+  let trashLoading = $state(false);
+  let trashLoaded = $state(false);
+  let trashError = $state('');
+  let emptyTrashConfirmOpen = $state(false);
   let outboundSenderEmail = $state<string | null>(null);
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
@@ -167,6 +180,23 @@
   const shortcuts = new WorkspaceShortcutController();
   const toastController = new ToastController((messages) => (toastMessages = messages));
   const workspaceSnapshotController = new WorkspaceSnapshotController();
+  const trashController = new TrashController(fetchTrash, {
+    onResult: (result) => {
+      trashItems = result.items;
+      trashHasMore = result.hasMore;
+      trashLoaded = true;
+      trashError = '';
+      metrics = result.metrics;
+      if (activeSection === 'trash' && (!selectedMessageId || !result.items.some((item) => item.id === selectedMessageId))) {
+        selectedMessageId = result.items[0]?.id ?? null;
+      }
+    },
+    onLoading: (loading) => (trashLoading = loading),
+    onError: (message) => {
+      trashLoaded = true;
+      trashError = message;
+    }
+  });
 
   const notify = (message: string, tone: ToastTone = 'info', options: {
     requestId?: string;
@@ -219,7 +249,9 @@
     metrics.delayedCount + metrics.failedCount + metrics.bouncedCount + metrics.complainedCount + metrics.staleDeliveryCount > 0
   );
   const activeMessages = $derived(
-    activeSection === 'drafts'
+    activeSection === 'trash'
+      ? trashItems.map((item) => item.message)
+      : activeSection === 'drafts'
       ? mailbox.drafts
       : activeSection === 'archive'
         ? mailboxPages?.archive?.messages ?? []
@@ -274,7 +306,7 @@
     })
   );
   const selectedThread = $derived.by(() => {
-    if (activeSection === 'drafts' || activeSection === 'profile') {
+    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile') {
       return null;
     }
 
@@ -288,7 +320,7 @@
   });
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
-    if (activeSection === 'drafts') {
+    if (activeSection === 'drafts' || activeSection === 'trash') {
       const list = visibleMessages;
 
       if (!list.length) {
@@ -313,6 +345,7 @@
   const selectedThreadMessages = $derived(selectedThread?.messages ?? (selectedMessage ? [selectedMessage] : []));
   const selectedReplyAllAvailable = $derived(Boolean(
     selectedMessage &&
+      activeSection !== 'trash' &&
       selectedMessage.folder !== 'drafts' &&
       hasDistinctReplyAllRecipients(selectedMessage, { selfEmail: profile.email })
   ));
@@ -352,6 +385,12 @@
       : ''
   );
   const composeBusy = $derived(pending || composeAutosavePending || composeClosePending);
+
+  $effect(() => {
+    if (authenticated && activeSection === 'trash' && !trashLoaded && !trashLoading) {
+      void trashController.load();
+    }
+  });
 
   const clearComposeAutosaveTimer = () => {
     composeAutosave.clear();
@@ -515,6 +554,11 @@
       inboundDetailCache.reset();
       deliveryDetailCache.reset();
       workspaceBodyCache.reset();
+      trashController.cancel();
+      trashItems = [];
+      trashHasMore = false;
+      trashLoaded = false;
+      trashError = '';
     }
     const next = workspaceViewStateFromSnapshot(workspace, options);
     profile = next.profile;
@@ -547,6 +591,7 @@
   function resetWorkspace() {
     const initial = createEmptyWorkspaceViewState();
     mailboxController.cancel();
+    trashController.cancel();
     authenticated = false;
     profile = initial.profile;
     mailbox = initial.mailbox;
@@ -561,6 +606,12 @@
     mobileDetailOpen = false;
     shortcutHelpOpen = false;
     mailboxLoading = false;
+    trashItems = [];
+    trashHasMore = false;
+    trashLoading = false;
+    trashLoaded = false;
+    trashError = '';
+    emptyTrashConfirmOpen = false;
     resetComposeState();
     inboundDetailCache.reset();
     deliveryDetailCache.reset();
@@ -657,6 +708,15 @@
       return;
     }
 
+    if (section === 'trash') {
+      selectedMessageId = trashItems.some((item) => item.id === selectedMessageId)
+        ? selectedMessageId
+        : trashItems[0]?.id ?? null;
+      if (syncUrl) updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
+      if (authenticated) void trashController.load();
+      return;
+    }
+
     selectedMessageId = selectNextMessage(mailbox, section, selectedMessageId);
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
@@ -690,6 +750,11 @@
   }
 
   async function refreshWorkspace() {
+    if (activeSection === 'trash') {
+      const refreshed = await trashController.load();
+      if (refreshed) notify('垃圾箱已刷新。', 'success');
+      return;
+    }
     const refreshed = await mailboxController.refresh(
       activeSection === 'profile' ? 'inbox' : activeSection,
       searchQuery,
@@ -722,7 +787,7 @@
   }
 
   function selectAllVisible() {
-    const ids = activeSection === 'drafts' || activeSection === 'profile'
+    const ids = activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile'
       ? []
       : visibleThreads.length
         ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
@@ -744,6 +809,7 @@
       const threadKeys = selected.map((message) => message.threadKey).filter((key): key is string => Boolean(key));
       const result = await mutateMailbox(action, validSelectedIds, threadKeys);
       metrics = result.result.metrics;
+      if (action === 'trash') trashLoaded = false;
       selectedMessageIds = [];
       await refreshWorkspace();
       notify(
@@ -751,6 +817,8 @@
           ? '已归档所选邮件。'
           : action === 'unarchive'
             ? '已将所选邮件移回收件箱。'
+            : action === 'trash'
+              ? '已将所选会话移入垃圾箱。'
             : '已更新所选邮件状态。',
         'success'
       );
@@ -768,7 +836,7 @@
   });
 
   async function loadMoreMailbox() {
-    if (activeSection === 'profile') return;
+    if (activeSection === 'profile' || activeSection === 'trash') return;
     await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection]);
   }
 
@@ -1141,7 +1209,7 @@
     mobileDetailOpen = true;
     updateWorkspaceUrl({ messageId: message.id });
 
-    if (message.folder === 'inbox' && !message.read) {
+    if (activeSection !== 'trash' && message.folder === 'inbox' && !message.read) {
       await patchMessage(message, { read: true });
     }
 
@@ -1196,6 +1264,7 @@
       mailbox = removed.snapshot.mailbox;
       mailboxPages = removed.snapshot.mailboxPages;
       metrics = removed.snapshot.metrics;
+      trashLoaded = false;
       selectedMessageId = removed.selectedMessageId;
       selectedMessageIds = selectedMessageIds.filter((id) => id !== result.removedId);
       if (composeInitialInput?.draftId === message.id) {
@@ -1203,15 +1272,87 @@
       }
 
       notify(
-        result.folder === 'inbox'
-          ? '邮件已从收件箱移除。'
-          : result.folder === 'sent'
-            ? '该发送记录已移除。'
-            : '草稿已删除。',
-        'warning'
+        '已移入垃圾箱。',
+        'warning',
+        {
+          timeoutMs: 8_000,
+          action: {
+            label: '撤销',
+            run: async () => {
+              const restored = await restoreTrashItem(result.removedId);
+              metrics = restored.metrics;
+              trashLoaded = false;
+              if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace();
+              notify('已撤销移入垃圾箱。', 'success');
+            }
+          }
+        }
       );
     } catch (error) {
       notifyError(error, '删除邮件失败。');
+    } finally {
+      pending = false;
+    }
+  }
+
+  function removeTrashItemFromView(messageId: string) {
+    trashItems = trashItems.filter((item) => item.id !== messageId);
+    selectedMessageId = trashItems.some((item) => item.id === selectedMessageId)
+      ? selectedMessageId
+      : trashItems[0]?.id ?? null;
+    mobileDetailOpen = Boolean(selectedMessageId);
+    updateWorkspaceUrl({ messageId: selectedMessageId }, true);
+  }
+
+  async function handleRestoreTrash(message: MailMessage) {
+    pending = true;
+    try {
+      const result = await restoreTrashItem(message.id);
+      metrics = result.metrics;
+      removeTrashItemFromView(message.id);
+      notify(`已恢复到${result.originalFolder === 'archive' ? '归档' : result.originalFolder === 'sent' ? '已发送' : result.originalFolder === 'drafts' ? '草稿箱' : '收件箱'}。`, 'success');
+    } catch (error) {
+      notifyError(error, '恢复垃圾箱项目失败。');
+    } finally {
+      pending = false;
+    }
+  }
+
+  async function handlePermanentDelete(message: MailMessage) {
+    pending = true;
+    try {
+      const result = await permanentlyDeleteTrashItem(message.id);
+      metrics = result.metrics;
+      removeTrashItemFromView(message.id);
+      inboundDetailCache.invalidate(message.id);
+      deliveryDetailCache.invalidate(message.id);
+      workspaceBodyCache.invalidate(message.id);
+      notify('项目已永久删除。', 'warning');
+    } catch (error) {
+      notifyError(error, '永久删除失败。');
+    } finally {
+      pending = false;
+    }
+  }
+
+  async function handleEmptyTrash() {
+    pending = true;
+    try {
+      const result = await emptyTrash();
+      metrics = result.metrics;
+      for (const item of trashItems) {
+        inboundDetailCache.invalidate(item.id);
+        deliveryDetailCache.invalidate(item.id);
+        workspaceBodyCache.invalidate(item.id);
+      }
+      trashItems = [];
+      trashHasMore = false;
+      selectedMessageId = null;
+      mobileDetailOpen = false;
+      emptyTrashConfirmOpen = false;
+      notify(`已永久删除 ${result.deleted} 个垃圾箱项目。`, 'warning');
+    } catch (error) {
+      notifyError(error, '清空垃圾箱失败。');
     } finally {
       pending = false;
     }
@@ -1321,9 +1462,9 @@
       const action = shortcuts.handle(event, {
         helpOpen: shortcutHelpOpen,
         mobileDetailOpen,
-        canReply: Boolean(selectedMessage && selectedMessage.folder !== 'drafts'),
+        canReply: Boolean(activeSection !== 'trash' && selectedMessage && selectedMessage.folder !== 'drafts'),
         canReplyAll: selectedReplyAllAvailable,
-        canForward: Boolean(selectedMessage && selectedMessage.folder !== 'drafts')
+        canForward: Boolean(activeSection !== 'trash' && selectedMessage && selectedMessage.folder !== 'drafts')
       });
       const actions: Partial<Record<WorkspaceShortcutAction, () => void>> = {
         'close-help': () => (shortcutHelpOpen = false),
@@ -1404,6 +1545,7 @@
           activeSection={activeSection}
           draftCount={metrics.draftsCount}
           inboxCount={metrics.inboxCount}
+          trashCount={metrics.trashCount}
           {pending}
           onCompose={() => {
             openCompose('new');
@@ -1419,6 +1561,7 @@
             activeSection={activeSection}
             draftCount={metrics.draftsCount}
             inboxCount={metrics.inboxCount}
+            trashCount={metrics.trashCount}
             {pending}
             sentCount={metrics.sentCount}
             onCompose={() => {
@@ -1446,16 +1589,21 @@
                 <section class="mail-list-panel" aria-label="邮件列表">
                   <FolderHeader
                     activeSection={activeSection}
-                    count={activeSection === 'drafts' ? activeMessages.length : activeThreads.length}
+                    count={activeSection === 'drafts' || activeSection === 'trash' ? activeMessages.length : activeThreads.length}
                     unreadCount={activeSection === 'inbox' ? unreadCount : 0}
                     query={searchQuery}
                     filter={mailFilter}
-                    loading={mailboxLoading}
+                    loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
                     onQueryChange={handleSearchQueryChange}
                     onFilterChange={handleFilterChange}
                     onRefresh={refreshWorkspace}
                   />
-                  {#if activeSection !== 'drafts'}
+                  {#if activeSection === 'trash'}
+                    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
+                      <span class="text-xs text-[var(--fm-text-muted)]">项目保留至手动删除；维护任务默认只报告超过 30 天的项目。</span>
+                      <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending || trashItems.length === 0} onclick={() => (emptyTrashConfirmOpen = true)}>清空垃圾箱</button>
+                    </div>
+                  {:else if activeSection !== 'drafts'}
                     <div class="flex flex-wrap items-center gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2" aria-label="批量邮件操作">
                       <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={selectAllVisible}>
                         {selectedMessageIds.length ? '取消选择' : '选择当前页'}
@@ -1470,6 +1618,7 @@
                         <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unread')}>标记未读</button>
                         <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('star')}>加星标</button>
                         <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unstar')}>取消星标</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('trash')}>移入垃圾箱</button>
                         <span class="text-xs text-[var(--fm-text-muted)]">已选 {selectedMessageIds.length} 封</span>
                       {/if}
                     </div>
@@ -1482,18 +1631,19 @@
                     {selectedMessageId}
                     query={searchQuery}
                     filter={mailFilter}
-                    loading={mailboxLoading}
-                    hasMore={mailboxPages?.[activeSection]?.hasMore ?? false}
-                    paginationEnd={!(mailboxPages?.[activeSection]?.hasMore ?? false)}
+                    loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
+                    error={activeSection === 'trash' ? trashError : ''}
+                    hasMore={activeSection === 'trash' ? trashHasMore : mailboxPages?.[activeSection]?.hasMore ?? false}
+                    paginationEnd={activeSection === 'trash' ? !trashHasMore : !(mailboxPages?.[activeSection]?.hasMore ?? false)}
                     onSelect={handleSelectMessage}
                     onSelectThread={handleSelectThread}
-                    onToggleStar={handleToggleStar}
+                    onToggleStar={activeSection === 'trash' ? undefined : handleToggleStar}
                     onQueryChange={handleSearchQueryChange}
                     onFilterChange={handleFilterChange}
                     onClearFilters={clearMailFilters}
                     onRefresh={refreshWorkspace}
                     onLoadMore={loadMoreMailbox}
-                    selectable={activeSection !== 'drafts'}
+                    selectable={activeSection !== 'drafts' && activeSection !== 'trash'}
                     selectedMessageIds={selectedMessageIds}
                     onToggleSelect={toggleBulkSelection}
                   />
@@ -1519,6 +1669,9 @@
                     onForward={handleForwardMessage}
                     onReply={handleReplyMessage}
                     onReplyAll={selectedReplyAllAvailable ? handleReplyAllMessage : undefined}
+                    trashMode={activeSection === 'trash'}
+                    onRestore={handleRestoreTrash}
+                    onPermanentDelete={handlePermanentDelete}
                     onReloadDeliveryDetail={handleReloadDeliveryDetail}
                     onRetryDelivery={retryMessageDelivery}
                     onReloadInboundDetail={handleReloadInboundDetail}
@@ -1601,6 +1754,16 @@
         <div><dt><kbd>?</kbd></dt><dd>打开快捷键帮助</dd></div>
       </dl>
     </Dialog>
+
+    <ConfirmDialog
+      open={emptyTrashConfirmOpen}
+      title="永久清空垃圾箱？"
+      description="垃圾箱中的邮件、草稿、正文和附件会被永久删除，且无法恢复。"
+      confirmLabel="永久清空"
+      {pending}
+      onCancel={() => (emptyTrashConfirmOpen = false)}
+      onConfirm={handleEmptyTrash}
+    />
   {/if}
 
   <ToastRegion
