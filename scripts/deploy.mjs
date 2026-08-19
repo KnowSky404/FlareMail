@@ -1,37 +1,28 @@
-import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { createDeployInvocation, parseDeployMode, requireDeployConfig } from './deploy-command.ts';
 
 const configPath = 'wrangler.deploy.toml';
-const mode = process.argv[2] ?? 'deploy';
+try {
+  const mode = parseDeployMode(process.argv[2]);
+  requireDeployConfig(configPath);
+  const invocation = createDeployInvocation(mode, { configPath });
+  const child = spawn(invocation.command, invocation.args, {
+    stdio: 'inherit',
+    env: invocation.env
+  });
 
-if (!existsSync(configPath)) {
-  console.error(
-    [
-      `Missing ${configPath}.`,
-      'Copy wrangler.deploy.toml.example to wrangler.deploy.toml and fill in your real Cloudflare bindings before deploying.'
-    ].join('\n')
-  );
+  child.on('error', (error) => {
+    console.error(`Unable to start Wrangler: ${error.message}`);
+    process.exit(1);
+  });
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code ?? 1);
+  });
+} catch (error) {
+  console.error(error instanceof Error ? error.message : 'Unable to prepare deployment.');
   process.exit(1);
 }
-
-const args =
-  mode === 'dry-run'
-    ? ['x', 'wrangler', 'deploy', '--config', configPath, '--dry-run', '--outdir', '/tmp/flaremail-dry-run']
-    : ['x', 'wrangler', 'deploy', '--config', configPath];
-
-const child = spawn('bun', args, {
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || '/tmp'
-  }
-});
-
-child.on('exit', (code, signal) => {
-  if (signal) {
-    process.kill(process.pid, signal);
-    return;
-  }
-
-  process.exit(code ?? 1);
-});

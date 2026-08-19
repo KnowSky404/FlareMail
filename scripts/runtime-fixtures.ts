@@ -34,7 +34,7 @@ export function renderRuntimeFixture(size: number) {
 async function main() {
   const outputIndex = process.argv.indexOf('--output');
   const output = outputIndex >= 0 ? process.argv[outputIndex + 1] : undefined;
-  if (!output) throw new Error('Usage: bun scripts/runtime-fixtures.ts --output /tmp/flaremail-runtime-fixtures');
+  if (!output) throw new Error('Usage: bun scripts/runtime-fixtures.ts --output <directory>');
 
   await mkdir(output, { recursive: true });
   await Bun.write(`${output}/runtime-1MiB.eml`, renderRuntimeFixture(RUNTIME_FIXTURE_SIZES.oneMiB));

@@ -1,4 +1,8 @@
 import { hashPassword, PASSWORD_HASH_ITERATIONS } from '../src/lib/server/auth/password';
+import {
+  createLocalWranglerEnvironment,
+  inheritWranglerEnvironment
+} from './wrangler-environment';
 
 const remote = process.argv.includes('--remote');
 const email = process.env.FLAREMAIL_ADMIN_EMAIL?.trim().toLowerCase();
@@ -43,7 +47,12 @@ const config = remote ? 'wrangler.deploy.toml' : 'wrangler.toml';
 const child = Bun.spawn([
   'bun', 'x', 'wrangler', 'd1', 'execute', 'flaremail-db', remote ? '--remote' : '--local',
   '--config', config, '--command', statement
-], { stdin: 'inherit', stdout: 'inherit', stderr: 'inherit', env: { ...process.env, XDG_CONFIG_HOME: '/tmp' } });
+], {
+  stdin: 'inherit',
+  stdout: 'inherit',
+  stderr: 'inherit',
+  env: remote ? inheritWranglerEnvironment() : createLocalWranglerEnvironment()
+});
 const exitCode = await child.exited;
 if (exitCode !== 0) process.exit(exitCode);
 console.log(`Administrator credential updated for ${email} (${remote ? 'remote' : 'local'} D1).`);

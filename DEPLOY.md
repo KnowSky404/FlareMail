@@ -4,18 +4,24 @@
 
 不要把真实邮箱、D1 `database_id`、R2 桶名或密钥提交到仓库。
 
-- 复制一份本地变量模板：
+- POSIX shell 复制本地变量和部署模板：
+
   ```bash
   cp .dev.vars.example .dev.vars
-  ```
-- 按真实环境填写 `.dev.vars`
-- 复制部署配置模板：
-  ```bash
   cp wrangler.deploy.toml.example wrangler.deploy.toml
   ```
+
+- PowerShell：
+
+  ```powershell
+  Copy-Item .dev.vars.example .dev.vars
+  Copy-Item wrangler.deploy.toml.example wrangler.deploy.toml
+  ```
+
+- 按真实环境填写 `.dev.vars`
 - 按真实环境填写 `wrangler.deploy.toml`
 - 仓库中的 [wrangler.toml](./wrangler.toml) 只保留可公开提交的模板配置
-- 真正部署只使用本地私有的 `wrangler.deploy.toml`
+- 真正部署只使用本地私有的 `wrangler.deploy.toml`；该文件已被 Git 忽略，绝不提交
 
 推荐本地变量至少包含：
 
@@ -31,10 +37,37 @@ NOTIFICATION_EMAIL=ops@example.com
 
 ## 2. 创建 Cloudflare 资源
 
-首次部署前执行：
+交互式 OAuth 登录推荐使用操作系统 keyring。远程 SSH/VPS 无法让浏览器访问本机回调时，再加 `--device`：
 
 ```bash
-bun x wrangler login
+bun x wrangler login --use-keyring
+# 远程终端可改用：bun x wrangler login --use-keyring --device
+bun x wrangler whoami
+```
+
+PowerShell 使用相同命令：
+
+```powershell
+bun x wrangler login --use-keyring
+# 远程终端可改用：bun x wrangler login --use-keyring --device
+bun x wrangler whoami
+```
+
+CI 或其他非交互环境可由 secret store 注入 API token；远程脚本会完整继承当前环境，不会改写 Wrangler 的登录目录：
+
+```bash
+export CLOUDFLARE_API_TOKEN='<read from your secret store>'
+bun x wrangler whoami
+```
+
+```powershell
+$env:CLOUDFLARE_API_TOKEN = '<read from your secret store>'
+bun x wrangler whoami
+```
+
+不要把 token 写进仓库、命令历史或 `wrangler.deploy.toml`。认证确认后再创建资源：
+
+```bash
 bun x wrangler d1 create flaremail-db
 bun x wrangler r2 bucket create flaremail-bucket
 bun x wrangler r2 bucket create flaremail-bucket-preview
@@ -65,7 +98,7 @@ bun x wrangler secret put RESEND_API_KEY --config wrangler.deploy.toml
 bun x wrangler secret put RESEND_WEBHOOK_SECRET --config wrangler.deploy.toml
 ```
 
-远程 bootstrap 也只从当前 shell 读取凭据：
+远程 bootstrap 也只从当前 shell 读取凭据。POSIX shell：
 
 ```bash
 export FLAREMAIL_ADMIN_EMAIL='admin@your-domain.com'
@@ -73,6 +106,16 @@ export FLAREMAIL_ADMIN_NAME='FlareMail Administrator'
 export FLAREMAIL_ADMIN_PASSWORD='use-a-long-unique-password'
 bun run auth:bootstrap:remote
 unset FLAREMAIL_ADMIN_EMAIL FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
+```
+
+PowerShell：
+
+```powershell
+$env:FLAREMAIL_ADMIN_EMAIL = 'admin@your-domain.com'
+$env:FLAREMAIL_ADMIN_NAME = 'FlareMail Administrator'
+$env:FLAREMAIL_ADMIN_PASSWORD = '<read a long unique password securely>'
+bun run auth:bootstrap:remote
+Remove-Item Env:FLAREMAIL_ADMIN_EMAIL, Env:FLAREMAIL_ADMIN_NAME, Env:FLAREMAIL_ADMIN_PASSWORD
 ```
 
 部署前建议先跑：
@@ -91,6 +134,8 @@ bun run deploy:dry-run
 ```bash
 bun run deploy
 ```
+
+这些 `bun run` 命令可从 bash、zsh、PowerShell 或 cmd 调用；脚本本身不依赖 `VAR=value command` 或固定的 POSIX 临时目录。`deploy:dry-run` 使用操作系统临时目录，`deploy` 和所有远程 D1 命令则继承当前 OAuth keyring/API token 环境。
 
 ## 4. 配置 Email Routing
 

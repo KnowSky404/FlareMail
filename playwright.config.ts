@@ -1,7 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const port = Number(process.env.FLAREMAIL_E2E_PORT ?? 4173);
-const stateDirectory = process.env.FLAREMAIL_E2E_STATE_DIR ?? '/tmp/flaremail-e2e-state';
+const stateDirectory = process.env.FLAREMAIL_E2E_STATE_DIR ?? join(tmpdir(), 'flaremail-e2e', 'state');
 const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
@@ -28,7 +30,8 @@ export default defineConfig({
     video: 'retain-on-failure'
   },
   webServer: {
-    command: `bun scripts/e2e/start-local.ts --port ${port} --persist-to ${stateDirectory}`,
+    command: `bun scripts/e2e/start-local.ts --port ${port}`,
+    env: { FLAREMAIL_E2E_STATE_DIR: stateDirectory },
     url: baseURL,
     timeout: 120_000,
     reuseExistingServer: false,

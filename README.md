@@ -15,7 +15,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 - 版本化 D1 migration：`migrations/0001` 至 `0010`，包括 D1 原子登录限速、schema metadata、inbound ingest claim 和 append-only mailbox archive 字段，并由 `schema.sql` 保存最新结构快照。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
 - 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention 与 orphan 报告。
-- 隔离浏览器验证：Playwright 在 `/tmp` 创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖桌面、移动端与 320px 窄屏。
+- 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖桌面、移动端与 320px 窄屏。
 
 ## 运行环境边界
 
@@ -88,6 +88,8 @@ bun run deploy:dry-run
 ```
 
 `deploy:dry-run` 需要先从 `wrangler.deploy.toml.example` 创建本地私有的 `wrangler.deploy.toml`。它只构建和校验 Worker，不会发布。
+
+Wrangler 远程命令继承当前 OAuth keyring 或 `CLOUDFLARE_API_TOKEN` 环境；本地命令的隔离目录和 dry-run 输出均通过操作系统临时目录生成，因此同一组 `bun run` 命令可由 PowerShell、cmd、bash 或 zsh 调用。
 
 `test:e2e`/`test:a11y` 不读取生产配置、不调用真实 Resend，也不会访问远程 D1/R2。若 Playwright 未自动找到 Chromium，可显式设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`。
 

@@ -20,7 +20,7 @@ should use an isolated preview Worker and preview D1/R2 resources, then:
    service:
 
    ```bash
-   bun run runtime:fixtures -- --output /tmp/flaremail-runtime-fixtures
+   bun run runtime:fixtures -- --output ./flaremail-runtime-fixtures
    ```
 
    The directory contains 1 MiB, 5 MiB, and near-25 MiB raw-message fixtures.

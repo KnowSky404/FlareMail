@@ -4,6 +4,12 @@
 `wrangler.deploy.toml.example` to the private `wrangler.deploy.toml`, replace
 the D1 and R2 placeholders, and keep that file out of Git.
 
+Remote maintenance inherits the operator's normal Wrangler OAuth keyring or
+`CLOUDFLARE_API_TOKEN` environment. It does not redirect the Wrangler config
+directory. Authenticate with `bun x wrangler login --use-keyring` (add
+`--device` for a remote terminal when needed), then verify the active identity
+with `bun x wrangler whoami` before any explicitly authorized remote command.
+
 Both templates enable Workers Observability logs and traces. Development uses
 25% log sampling and 5% trace sampling; the deployment template uses 50% log
 sampling and 5% trace sampling. Application logs contain correlation IDs and

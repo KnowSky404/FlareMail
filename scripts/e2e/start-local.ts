@@ -1,5 +1,7 @@
 import { rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { createLocalWranglerEnvironment } from '../wrangler-environment';
 
 const root = resolve(import.meta.dir, '../..');
 const argument = (name: string, fallback: string) => {
@@ -8,8 +10,17 @@ const argument = (name: string, fallback: string) => {
 };
 
 const port = argument('--port', '4173');
-const persistTo = resolve(argument('--persist-to', '/tmp/flaremail-e2e-state'));
-if (!persistTo.startsWith('/tmp/flaremail-e2e-')) {
+const persistenceRoot = resolve(join(tmpdir(), 'flaremail-e2e'));
+const persistTo = resolve(argument(
+  '--persist-to',
+  process.env.FLAREMAIL_E2E_STATE_DIR ?? join(persistenceRoot, 'state')
+));
+const relativePersistencePath = relative(persistenceRoot, persistTo);
+if (
+  !relativePersistencePath ||
+  relativePersistencePath.startsWith('..') ||
+  isAbsolute(relativePersistencePath)
+) {
   throw new Error(`Refusing to clear non-isolated E2E persistence path: ${persistTo}`);
 }
 const adminEmail = process.env.FLAREMAIL_E2E_EMAIL ?? 'e2e-admin@flaremail.test';
@@ -24,7 +35,10 @@ type Child = { exited: Promise<number>; kill: (signal?: string) => void };
 async function run(command: string, args: string[], env?: Record<string, string>) {
   const child = Bun.spawn([command, ...args], {
     cwd: root,
-    env: { ...process.env, XDG_CONFIG_HOME: '/tmp', WRANGLER_LOG_PATH: '/tmp/flaremail-e2e-wrangler.log', ...env },
+    env: {
+      ...createLocalWranglerEnvironment(process.env, { logFileName: 'flaremail-e2e-wrangler.log' }),
+      ...env
+    },
     stdout: 'inherit',
     stderr: 'inherit'
   });
@@ -124,7 +138,7 @@ const worker = Bun.spawn(
   ],
   {
     cwd: root,
-    env: { ...process.env, XDG_CONFIG_HOME: '/tmp', WRANGLER_LOG_PATH: '/tmp/flaremail-e2e-wrangler.log' },
+    env: createLocalWranglerEnvironment(process.env, { logFileName: 'flaremail-e2e-wrangler.log' }),
     stdout: 'inherit',
     stderr: 'inherit'
   }

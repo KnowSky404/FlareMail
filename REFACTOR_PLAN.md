@@ -28,7 +28,7 @@
 
 实际 migrations 为 `0001_baseline`、`0002_mail_contracts`、`0003_auth_and_settings`、`0004_delivery_states`、`0005_operational_indexes`、`0006_inbound_ownership`、`0007_outbound_contracts`、`0008_login_rate_limits`、`0009_inbound_ingest_claims`、`0010_mailbox_archive_and_bulk`。`schema.sql` 已由自动测试验证与顺序应用结果一致；`workspace_schema_metadata` 由 `0010` 推进到版本 10，health readiness 会拒绝部分 schema。
 
-最终本地 QA 使用提交到仓库的 Playwright harness，在 `/tmp` 创建隔离 D1/R2、fake gateway 与 Chromium；覆盖登录、服务端搜索/筛选/cursor、active-folder lazy snapshot、读信/星标/归档批量持久化、草稿自动保存与冲突、发送、签名 webhook、delivery timeline、主题/快捷键、手机详情/返回、320px/200% 缩放、axe WCAG 2.1 A/AA、44px 触控目标及 console error。CI 复用同一 harness。未执行生产部署、远程 migration、真实 Resend、真实 Email Routing 或真实邮件 smoke test。
+最终本地 QA 使用提交到仓库的 Playwright harness，在操作系统临时目录创建隔离 D1/R2、fake gateway 与 Chromium；覆盖登录、服务端搜索/筛选/cursor、active-folder lazy snapshot、读信/星标/归档批量持久化、草稿自动保存与冲突、发送、签名 webhook、delivery timeline、主题/快捷键、手机详情/返回、320px/200% 缩放、axe WCAG 2.1 A/AA、44px 触控目标及 console error。CI 复用同一 harness。未执行生产部署、远程 migration、真实 Resend、真实 Email Routing 或真实邮件 smoke test。
 
 ## 1. 目标与范围
 
@@ -360,7 +360,7 @@ src/lib/
 
 - 服务端受控 query/filter/cursor 与大列表分页已实现；尚未引入 D1 FTS5 或外部全文索引。
 - HTML MIME 内容会持久化但不会直接渲染；sandbox/sanitized HTML、远程图片策略与内嵌 CID 预览仍在 TODO。
-- Playwright harness 与确定性凭据 fixture 已提交，但只作用于 `/tmp` 隔离本地 D1/R2 和 fake provider；CI 运行 Bun、check/build 与浏览器门禁。
+- Playwright harness 与确定性凭据 fixture 已提交，但只作用于操作系统临时目录中的隔离本地 D1/R2 和 fake provider；CI 运行 Bun、check/build 与浏览器门禁。
 - 已执行自动 axe/缩放/触控审计；未执行真实屏幕阅读器、真实 D1/R2/Email Routing/Resend smoke、远程 migration 或生产部署。
 - 单附件与原始 `.eml` 下载已实现；附件预览、批量下载和完整 MIME 结构 UI 尚未实现。
 

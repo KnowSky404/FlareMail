@@ -1,4 +1,8 @@
 import { readFile } from 'node:fs/promises';
+import {
+  createLocalWranglerEnvironment,
+  inheritWranglerEnvironment
+} from './wrangler-environment';
 
 type MaintenanceOptions = {
   remote: boolean;
@@ -178,11 +182,11 @@ export function isManagedR2Key(key: string) {
   return /^inbound\/\d{4}-\d{2}-\d{2}\/[A-Za-z0-9_-]+(?:\/message\.eml|\/attachments\/[A-Za-z0-9_-]+\/[^/]+)$/u.test(key);
 }
 
-async function runWrangler(args: string[]) {
+async function runWrangler(args: string[], remote: boolean) {
   const child = Bun.spawn(['bun', 'x', 'wrangler', ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME || '/tmp' }
+    env: remote ? inheritWranglerEnvironment() : createLocalWranglerEnvironment()
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
@@ -199,7 +203,7 @@ async function runWrangler(args: string[]) {
 async function executeD1(options: MaintenanceOptions, sql: string, write = false) {
   const args = ['d1', 'execute', options.database, options.remote ? '--remote' : '--local', '--config', options.config, '--command', sql, '--json'];
   if (write) args.push('--yes');
-  return parseJsonOutput(await runWrangler(args));
+  return parseJsonOutput(await runWrangler(args, options.remote));
 }
 
 function manifestKeys(value: unknown): R2Object[] {
@@ -245,7 +249,10 @@ async function deleteR2Objects(options: MaintenanceOptions, objects: R2Object[])
       skippedUnsafeDeletes += 1;
       continue;
     }
-    await runWrangler(['r2', 'object', 'delete', `${options.bucket}/${object.key}`, options.remote ? '--remote' : '--local', '--config', options.config]);
+    await runWrangler(
+      ['r2', 'object', 'delete', `${options.bucket}/${object.key}`, options.remote ? '--remote' : '--local', '--config', options.config],
+      options.remote
+    );
     deleted += 1;
   }
   return { deleted, skippedUnsafeDeletes };

@@ -9,9 +9,9 @@
   },
   "scripts": {
     "dev": "vite dev",
-    "build": "XDG_CONFIG_HOME=/tmp svelte-kit sync && XDG_CONFIG_HOME=/tmp vite build",
-    "preview": "bun run build && XDG_CONFIG_HOME=/tmp wrangler dev worker/index.ts --local",
-    "check": "XDG_CONFIG_HOME=/tmp svelte-kit sync && XDG_CONFIG_HOME=/tmp svelte-check --tsconfig ./tsconfig.json",
+    "build": "svelte-kit sync && vite build",
+    "preview": "bun run build && bun ./scripts/wrangler-local.ts dev worker/index.ts --local",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test src scripts",
     "test:unit": "bun test src/lib/client src/lib/domain/mail src/lib/server/auth src/lib/server/config src/lib/server/db/deliveries.test.ts src/lib/server/db/messages.test.ts src/lib/server/email.test.ts src/lib/server/inbound/parser.test.ts src/lib/server/outbound/gateway.test.ts src/lib/server/outbound/system.test.ts",
     "test:integration": "bun test src/lib/server/email.integration.test.ts src/lib/server/workspace/outbound.integration.test.ts src/lib/server/workspace/delivery.integration.test.ts src/lib/server/workspace/draft.integration.test.ts src/lib/server/workspace/mailbox.integration.test.ts src/lib/server/workspace/mutation-query-counter.integration.test.ts src/lib/server/db/migrations.test.ts src/routes/api/health/health.test.ts",
@@ -19,9 +19,9 @@
     "test:e2e": "playwright test",
     "test:a11y": "playwright test --project=mobile --project=narrow --grep 'horizontal overflow|touch targets|accessible'",
     "runtime:fixtures": "bun scripts/runtime-fixtures.ts",
-    "cf:typegen": "XDG_CONFIG_HOME=/tmp wrangler types worker-configuration.d.ts --env-interface CloudflareEnv",
-    "db:migrate:local": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --local --config wrangler.toml",
-    "db:migrate:remote": "XDG_CONFIG_HOME=/tmp wrangler d1 migrations apply flaremail-db --remote --config wrangler.deploy.toml",
+    "cf:typegen": "bun ./scripts/wrangler-local.ts types worker-configuration.d.ts --env-interface CloudflareEnv",
+    "db:migrate:local": "bun ./scripts/wrangler-local.ts d1 migrations apply flaremail-db --local --config wrangler.toml",
+    "db:migrate:remote": "wrangler d1 migrations apply flaremail-db --remote --config wrangler.deploy.toml",
     "auth:bootstrap:local": "bun ./scripts/bootstrap-admin.ts",
     "auth:bootstrap:remote": "bun ./scripts/bootstrap-admin.ts --remote",
     "deploy:dry-run": "bun run build && bun ./scripts/deploy.mjs dry-run",
@@ -36,7 +36,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@cloudflare/workers-types": "^4.20260317.1",
+    "@cloudflare/workers-types": "^5.20260815.1",
     "@playwright/test": "1.58.2",
     "@sveltejs/adapter-cloudflare": "^7.2.8",
     "@sveltejs/vite-plugin-svelte": "^6.2.4",
@@ -47,6 +47,6 @@
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
-    "wrangler": "^4.76.0"
+    "wrangler": "^4.124.0"
   }
 }
