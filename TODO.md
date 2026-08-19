@@ -6,6 +6,9 @@
 - clean checkout CI preparation、bounded JSON、production origin/auth hardening、session touch throttle。
 - inbound claim lease/recovery、expected reject、RFC 3834 loop guard、schema readiness metadata。
 - workspace mutation deltas、targeted ownership queries、draft optimistic conflict actions、Resend expiry review。
+- active-folder workspace snapshot、一次性 metrics、入站列表正文隔离，以及用户级/全局入站通知开关。
+- 草稿 autosave 的版本/并发校验与可见冲突提示；Wrangler 生成类型和 CI 同步检查。
+- 邮箱归档/恢复、单条与批量读写/星标操作；批量请求具备 ownership preflight、去重、100 条上限和 D1 batch 原子性。
 - 仍需操作者在 isolated preview 运行 CPU/容量测量和生产 smoke checklist；本仓库不自动执行远程操作。
 
 ### 已完成
@@ -18,6 +21,7 @@
 - 服务端 mailbox query/filter/cursor 分页、typed API envelope 与前端“加载更多”。
 - D1 原子登录限速、请求关联 ID、Workers observability 与只读优先的 retention/orphan maintenance。
 - Playwright 隔离 E2E、axe WCAG 2.1 A/AA、44px 触控目标、320px/200% 缩放和 CI 浏览器门禁。
+- 归档字段使用 append-only migration `0010`，不把归档状态伪装成 folder；归档页、批量选择和移动端触达区域已覆盖。
 
 ## 第二阶段
 
@@ -27,7 +31,6 @@
 - 收件人补全、最近联系人、常用抄送模板。
 
 ### P2 收件箱效率功能
-- 归档、批量选择、多选操作。
 - 标签/分类筛选。
 - D1 FTS5 或外部索引（当前服务端 query 为受控 `LIKE` 搜索，并已支持 cursor 分页）。
 
@@ -50,6 +53,6 @@
 - 错误追踪与操作审计。
 
 ## 备注
-- 当前最推荐的下一步是“草稿并发冲突处理 + 批量收件箱操作”，同时补生产环境 SLO/告警。
+- 当前最推荐的下一步是 D1 FTS5/标签筛选和附件预览，同时补生产环境 SLO/告警。
 - 如果要跑通真实回执链路，需要在运行环境中配置 `RESEND_WEBHOOK_SECRET`，并让 Resend webhook 指向 `/api/webhooks/resend`。
 - 工作台发送、重试、自动回信与入站通知现已统一到 Resend gateway；development/test 可显式使用 fake provider，production 不再回退 Cloudflare 原生或 demo 外发。

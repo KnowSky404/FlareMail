@@ -58,8 +58,10 @@ authorized operations.
 ## Schema, claims, and delivery review
 
 Migration `0009_inbound_ingest_claims.sql` adds the project-owned
-`workspace_schema_metadata` version marker and the inbound claim lease. Apply
-migrations in order; do not edit `0001` through `0008`. A stale claim report is
+`workspace_schema_metadata` version marker and the inbound claim lease.
+Migration `0010_mailbox_archive_and_bulk.sql` append-only adds `archived_at` and
+the mailbox indexes used by archive and bulk actions. Apply migrations in order;
+do not edit `0001` through `0010`. A stale claim report is
 read-only by default. Review the claim age and D1/R2 evidence before using the
 explicit `--apply` path to remove stale processing claims.
 

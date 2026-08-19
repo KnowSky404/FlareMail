@@ -133,7 +133,8 @@ bun run deploy
 ## 7. 回滚与恢复
 
 - 应用 migration 前记录提交 SHA、待应用 migration 列表和 D1 导出文件位置。
-- 运行时回滚优先部署上一已知良好提交；`0001`–`0008` 均不通过无备份 `DROP` 删除业务数据。
+- `0010_mailbox_archive_and_bulk.sql` 只追加 `archived_at` 字段和索引；应用 `0001`–`0010` 必须按顺序执行，不要修改已发布 migration。
+- 运行时回滚优先部署上一已知良好提交；`0001`–`0010` 均不通过无备份 `DROP` 删除业务数据。
 - 如果需要恢复数据，先停止写入并由操作者选择导入预迁移 SQL，或使用 D1 Time Travel 恢复到明确 bookmark/timestamp。
 - Time Travel 会覆盖数据库并取消进行中的请求，属于破坏性操作，执行前必须再次导出当前状态并取得明确批准。
 - R2 原始 `.eml` 和附件不要在代码回滚时删除；恢复 D1 后抽样核对 ownership、object key 与行数。
