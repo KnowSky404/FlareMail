@@ -78,7 +78,7 @@ export async function resolveOwnedMailboxThreadMessageIds(
 function inboundMutationStatement(
   db: D1Database,
   userId: string,
-  inboundIds: string[],
+  inboundId: string,
   action: MailboxMutationAction,
   timestamp: string
 ) {
@@ -89,7 +89,7 @@ function inboundMutationStatement(
     : action === 'unarchive' ? 'NULL' : 's.archived_at';
   const bindings: unknown[] = [crypto.randomUUID(), userId];
   if (action === 'archive') bindings.push(timestamp);
-  bindings.push(timestamp, timestamp, userId, userId, ...inboundIds);
+  bindings.push(timestamp, timestamp, userId, userId, inboundId);
   return db.prepare(`
     INSERT INTO workspace_email_states (
       id, user_id, email_message_id, is_read, is_starred, archived_at, deleted_at, created_at, updated_at
@@ -98,7 +98,7 @@ function inboundMutationStatement(
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE e.owner_user_id = ? AND e.id IN (${placeholders(inboundIds)}) AND s.deleted_at IS NULL
+    WHERE e.owner_user_id = ? AND e.id = ? AND s.deleted_at IS NULL
     ON CONFLICT(user_id, email_message_id) DO UPDATE SET
       is_read = excluded.is_read,
       is_starred = excluded.is_starred,
@@ -134,7 +134,7 @@ export function buildMailboxMutationStatements(
       WHERE user_id = ? AND folder IN ('inbox', 'sent') AND id IN (${placeholders(workspaceIds)})
     `).bind(...bindings));
   }
-  if (inboundIds.length) statements.push(inboundMutationStatement(db, userId, inboundIds, action, timestamp));
+  statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp)));
   return statements;
 }
 

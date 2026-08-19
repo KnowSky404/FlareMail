@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { validateEnvironment } from '$lib/server/config/env';
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import type { RequestHandler } from './$types';
 
 const REQUIRED_TABLES = [
@@ -21,8 +22,6 @@ const REQUIRED_TABLES = [
   'workspace_delivery_attempts',
   'workspace_schema_metadata'
 ] as const;
-const REQUIRED_SCHEMA_VERSION = 9;
-
 export const GET: RequestHandler = async ({ platform }) => {
   const env = platform?.env as CloudflareEnv | undefined;
   const validation = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
@@ -36,7 +35,7 @@ export const GET: RequestHandler = async ({ platform }) => {
         WHERE type = 'table' AND name IN (${placeholders})
       `).bind(...REQUIRED_TABLES).all<{ name: string }>();
       const version = await env.DB.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?').bind('flaremail').first<{ schema_version: number }>();
-      schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && version?.schema_version === REQUIRED_SCHEMA_VERSION;
+      schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && version?.schema_version === FLAREMAIL_SCHEMA_VERSION;
     } catch {
       schemaReady = false;
     }

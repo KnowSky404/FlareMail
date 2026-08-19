@@ -1,7 +1,6 @@
 import type { DeliveryStatus, MailFolder, MailboxFilter, MailboxSection, WorkspaceMetrics } from '$lib/domain/mail';
 import type {
   WorkspaceDraftRow,
-  WorkspaceInboundRow,
   WorkspaceMessageRow,
   WorkspaceOutboundStatusRow
 } from '$lib/server/workspace/shared';
@@ -100,44 +99,6 @@ export async function listWorkspaceMessagePage(
     ORDER BY m.sent_at DESC, m.id DESC
     LIMIT ?
   `).bind(...bindings).all<WorkspaceMessagePageRow>();
-}
-
-export async function listInboundMessagePage(
-  db: D1Database,
-  userId: string,
-  input: MailboxRepositoryQuery
-) {
-  const conditions = [
-    'e.owner_user_id = ?',
-    's.deleted_at IS NULL',
-    input.section === 'archive' ? 's.archived_at IS NOT NULL' : 'COALESCE(s.archived_at, NULL) IS NULL',
-    flagPredicate(input.filter, 'COALESCE(s.is_read, 0)', 'COALESCE(s.is_starred, 0)')
-  ];
-  const bindings: unknown[] = [userId];
-  if (input.query) {
-    conditions.push(`(
-      lower(e.subject) LIKE ? OR lower(e.snippet) LIKE ? OR
-      lower(e."from") LIKE ? OR lower(e."to") LIKE ?
-    )`);
-    bindings.push(...Array(5).fill(searchPattern(input.query)));
-  }
-  if (input.timestamp && input.cursorId) {
-    conditions.push(`(e."timestamp" < ? OR (e."timestamp" = ? AND ('email:' || e.id) < ?))`);
-    bindings.push(input.timestamp, input.timestamp, input.cursorId);
-  }
-  bindings.push(input.limit);
-
-  return db.prepare(`
-    SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
-      e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
-      COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
-    FROM email_messages AS e
-    LEFT JOIN workspace_email_states AS s
-      ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC
-    LIMIT ?
-  `).bind(userId, ...bindings).all<WorkspaceInboundRow>();
 }
 
 export async function listDraftPage(

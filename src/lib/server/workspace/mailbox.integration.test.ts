@@ -39,8 +39,15 @@ class TestD1 {
   }
 
   async batch(statements: D1PreparedStatement[]) {
-    for (const statement of statements) await (statement as unknown as TestStatement).run();
-    return [];
+    this.database.exec('BEGIN');
+    try {
+      for (const statement of statements) await (statement as unknown as TestStatement).run();
+      this.database.exec('COMMIT');
+      return [];
+    } catch (error) {
+      this.database.exec('ROLLBACK');
+      throw error;
+    }
   }
 }
 
@@ -153,6 +160,8 @@ describe('D1 mailbox pages', () => {
     const { env, workspace } = fixture();
     const searched = await loadMailboxPage(env, workspace, query('inbox', { query: 'incident' }));
     expect(searched.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+    const inboundSearch = await loadMailboxPage(env, workspace, query('inbox', { query: 'carol@example.test' }));
+    expect(inboundSearch.messages.map(({ id }) => id)).toEqual(['email:incoming-1']);
     const unread = await loadMailboxPage(env, workspace, query('inbox', { filter: 'unread' }));
     expect(unread.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'inbox-z']);
     const starredDrafts = await loadMailboxPage(env, workspace, query('drafts', { filter: 'starred' }));
@@ -266,5 +275,70 @@ describe('D1 mailbox pages', () => {
       messageIds: ['inbox-z', 'not-owned']
     })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
     expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).toBeNull();
+  });
+
+  test.each([
+    ['archive', { column: 'archived_at', expected: 'not-null' }],
+    ['unarchive', { column: 'archived_at', expected: null }],
+    ['read', { column: 'is_read', expected: 1 }],
+    ['unread', { column: 'is_read', expected: 0 }],
+    ['star', { column: 'is_starred', expected: 1 }],
+    ['unstar', { column: 'is_starred', expected: 0 }]
+  ] as const)('creates unique inbound state rows and applies %s idempotently', async (action, assertion) => {
+    const { env, workspace, database } = fixture();
+    const insert = database.query(`
+      INSERT INTO email_messages (
+        id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key, text_body, direction
+      ) VALUES (?, 'user-1', 'Bulk <bulk@example.test>', 'ada@example.test', ?, ?, 'preview', ?, 'body', 'inbound')
+    `);
+    const messageIds = ['fresh-1', 'fresh-2', 'fresh-3'];
+    for (const [index, id] of messageIds.entries()) {
+      insert.run(id, `Fresh ${index}`, `2026-08-13T14:0${index}:00.000Z`, `raw/${id}`);
+    }
+    const selected = messageIds.map((id) => `email:${id}`);
+
+    await mutateWorkspaceMailbox(env, workspace, { action, messageIds: selected });
+    await mutateWorkspaceMailbox(env, workspace, { action, messageIds: selected });
+
+    const rows = database.query(`
+      SELECT id, email_message_id, is_read, is_starred, archived_at
+      FROM workspace_email_states
+      WHERE user_id = 'user-1' AND email_message_id IN ('fresh-1', 'fresh-2', 'fresh-3')
+      ORDER BY email_message_id
+    `).all() as Array<Record<string, string | number | null>>;
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(3);
+    for (const row of rows) {
+      if (assertion.expected === 'not-null') expect(row[assertion.column]).not.toBeNull();
+      else expect(row[assertion.column]).toBe(assertion.expected);
+    }
+  });
+
+  test('rejects mixed workspace and foreign inbound selections without partial writes', async () => {
+    const { env, workspace, database } = fixture();
+    database.query(`
+      INSERT INTO email_messages (
+        id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key, direction
+      ) VALUES ('foreign-1', 'user-2', 'Foreign <foreign@example.test>', 'other@example.test',
+        'Foreign', '2026-08-13T14:00:00.000Z', 'foreign', 'raw/foreign-1', 'inbound')
+    `).run();
+
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive',
+      messageIds: ['inbox-z', 'email:incoming-1', 'email:foreign-1']
+    })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+
+    expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).toBeNull();
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE user_id = 'user-1'`).get()).toEqual({ count: 0 });
+  });
+
+  test('rejects selections larger than the mutation limit before writing', async () => {
+    const { env, workspace, database } = fixture();
+    const ids = Array.from({ length: 101 }, (_, index) => `mail-${index}`);
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ids
+    })).rejects.toMatchObject({ code: 'MAILBOX_SELECTION_TOO_LARGE' });
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states`).get()).toEqual({ count: 0 });
   });
 });

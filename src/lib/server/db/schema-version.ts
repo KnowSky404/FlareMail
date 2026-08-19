@@ -1,0 +1,1 @@
+export const FLAREMAIL_SCHEMA_VERSION = 10;
