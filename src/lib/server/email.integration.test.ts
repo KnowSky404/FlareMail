@@ -185,6 +185,49 @@ describe('inbound email persistence', () => {
     expect(test.BUCKET.objects.size).toBe(2);
   });
 
+  test('persists bounded Reply-To, recipient and upstream authentication metadata', async () => {
+    const test = environment();
+    const raw = new TextEncoder().encode([
+      'From: Sender <sender@example.com>',
+      'To: Owner <owner@example.test>, Observer <observer@example.com>',
+      'Cc: Team <team@example.com>',
+      'Reply-To: Support <support@example.com>',
+      'Return-Path: <bounce@example.net>',
+      'Delivered-To: owner@example.test',
+      'Authentication-Results: mx.example.net; spf=pass smtp.mailfrom=example.com; dkim=fail header.d=example.com; dmarc=pass header.from=example.com',
+      'X-Private-Trace: do-not-store',
+      'Message-ID: <reply-metadata@example.com>',
+      'Subject: Metadata',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      'Metadata body.',
+      ''
+    ].join('\r\n'));
+
+    await handleInboundEmail(message(raw, 'owner@example.test').value, test.env);
+    const row = test.database.query(`
+      SELECT to_json, cc_json, reply_to_json, return_path, delivered_to,
+        headers_json, authentication_results_json
+      FROM email_messages
+    `).get() as Record<string, string>;
+
+    expect(JSON.parse(row.to_json)).toEqual([
+      { name: 'Owner', email: 'owner@example.test' },
+      { name: 'Observer', email: 'observer@example.com' }
+    ]);
+    expect(JSON.parse(row.cc_json)).toEqual([{ name: 'Team', email: 'team@example.com' }]);
+    expect(JSON.parse(row.reply_to_json)).toEqual([{ name: 'Support', email: 'support@example.com' }]);
+    expect(row.return_path).toBe('bounce@example.net');
+    expect(row.delivered_to).toBe('owner@example.test');
+    expect(JSON.parse(row.authentication_results_json)).toEqual([
+      { method: 'spf', result: 'pass' },
+      { method: 'dkim', result: 'fail' },
+      { method: 'dmarc', result: 'pass' }
+    ]);
+    expect(row.headers_json).not.toContain('do-not-store');
+    expect(new TextEncoder().encode(row.headers_json).byteLength).toBeLessThanOrEqual(32 * 1024 + 4096);
+  });
+
   test('cleans newly written R2 objects when D1 persistence fails', async () => {
     const test = environment(true);
     await expect(handleInboundEmail(message().value, test.env)).rejects.toThrow('simulated d1 write failure');

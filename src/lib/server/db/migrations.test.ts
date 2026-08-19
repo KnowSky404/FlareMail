@@ -106,14 +106,16 @@ describe('versioned D1 migrations', () => {
       '0010_mailbox_archive_and_bulk.sql',
       '0011_recipient_arrays.sql',
       '0012_body_objects.sql',
-      '0013_trash.sql'
+      '0013_trash.sql',
+      '0014_inbound_metadata.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
       new Set([
         'id', 'message_id', 'from', 'to', 'subject', 'timestamp', 'snippet', 'raw_key', 'raw_size', 'created_at',
         'in_reply_to', 'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key',
-        'provider_message_id', 'idempotency_key', 'owner_user_id', 'body_object_id'
+        'provider_message_id', 'idempotency_key', 'owner_user_id', 'body_object_id', 'to_json', 'cc_json',
+        'reply_to_json', 'return_path', 'delivered_to', 'headers_json', 'authentication_results_json'
       ])
     );
     expect(tableColumns(db, 'workspace_messages')).toEqual(
@@ -171,7 +173,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 13 }
+      { schema_name: 'flaremail', schema_version: 14 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -245,7 +247,8 @@ describe('versioned D1 migrations', () => {
     }
 
     const inbound = db.query(
-      `SELECT message_id, thread_key, dedupe_key, direction, text_body, html_body, owner_user_id
+      `SELECT message_id, thread_key, dedupe_key, direction, text_body, html_body, owner_user_id,
+        to_json, reply_to_json, headers_json, authentication_results_json
        FROM email_messages WHERE id = 'legacy-email-1'`
     ).get() as Record<string, string | null>;
     expect(inbound).toMatchObject({
@@ -255,7 +258,11 @@ describe('versioned D1 migrations', () => {
       direction: 'inbound',
       text_body: 'Legacy body',
       html_body: '',
-      owner_user_id: 'legacy-user-1'
+      owner_user_id: 'legacy-user-1',
+      to_json: '[{"name":"","email":"admin@example.test"}]',
+      reply_to_json: '[]',
+      headers_json: '[]',
+      authentication_results_json: '[]'
     });
 
     const workspaceInbound = db.query(

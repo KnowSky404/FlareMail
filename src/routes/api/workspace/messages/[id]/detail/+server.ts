@@ -1,11 +1,46 @@
 import type { RequestHandler } from './$types';
-import { fromInboundMessageId, isInboundMessageId } from '$lib/domain/mail';
+import { fromInboundMessageId, isInboundMessageId, parseAddressJson, parseAddressList } from '$lib/domain/mail';
+import type { MailAuthenticationResult, MailTechnicalHeader } from '$lib/domain/mail';
 import { listAttachmentsForMessage } from '$lib/server/db/attachments';
 import { findBodyObject } from '$lib/server/db/body';
 import { readBodyObject } from '$lib/server/body';
 import { findOwnedInboundMessage } from '$lib/server/db/inbound';
 import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
+
+function parseTechnicalHeaders(value: string): MailTechnicalHeader[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const { name, value } = entry as Record<string, unknown>;
+      return typeof name === 'string' && typeof value === 'string'
+        ? [{ name: name.slice(0, 64), value: value.slice(0, 2048) }]
+        : [];
+    }).slice(0, 64);
+  } catch {
+    return [];
+  }
+}
+
+function parseAuthenticationResults(value: string): MailAuthenticationResult[] {
+  const methods = new Set(['spf', 'dkim', 'dmarc']);
+  const results = new Set(['pass', 'fail', 'softfail', 'neutral', 'none', 'temperror', 'permerror', 'policy']);
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const { method, result } = entry as Record<string, unknown>;
+      return typeof method === 'string' && typeof result === 'string' && methods.has(method) && results.has(result)
+        ? [{ method, result } as MailAuthenticationResult]
+        : [];
+    }).slice(0, 12);
+  } catch {
+    return [];
+  }
+}
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
@@ -31,11 +66,24 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     }
   }
   const attachments = await listAttachmentsForMessage(env.DB, session.userId, messageId);
+  const storedToAddresses = parseAddressJson(record.to_json);
+  const storedCcAddresses = parseAddressJson(record.cc_json);
   return apiSuccess(event, {
     detail: {
       body,
       rawSize: record.raw_size,
       hasHtml,
+      toAddresses: storedToAddresses.length ? storedToAddresses : parseAddressList(record.to),
+      ccAddresses: storedCcAddresses.length ? storedCcAddresses : parseAddressList(record.cc),
+      replyTo: parseAddressJson(record.reply_to_json),
+      date: record.timestamp,
+      messageId: record.message_id,
+      inReplyTo: record.in_reply_to,
+      references: record.references,
+      returnPath: record.return_path,
+      deliveredTo: record.delivered_to,
+      headers: parseTechnicalHeaders(record.headers_json),
+      authenticationResults: parseAuthenticationResults(record.authentication_results_json),
       attachments: attachments.map((attachment) => ({
         id: attachment.id,
         filename: attachment.filename,

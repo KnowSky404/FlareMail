@@ -1,5 +1,5 @@
 import type { CloudflareEnv } from './cloudflare';
-import { parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename } from '$lib/domain/mail';
+import { MAX_RECIPIENTS, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
 import { insertBodyObject } from '$lib/server/db/body';
 import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
@@ -41,6 +41,9 @@ const addressLabel = (address: { name: string; address: string } | null, fallbac
 
 const addressList = (addresses: Array<{ name: string; address: string }>) =>
   addresses.map((address) => address.name ? `${address.name} <${address.address}>` : address.address).join(', ');
+
+const canonicalAddresses = (addresses: Array<{ name: string; address: string }>) =>
+  parseAddressList(addresses.map(({ name, address }) => ({ name, email: address }))).slice(0, MAX_RECIPIENTS);
 
 const bytesToBase64Url = (value: ArrayBuffer) => {
   let binary = '';
@@ -235,12 +238,22 @@ export async function handleInboundEmail(
 
     const from = addressLabel(parsed.from, message.from);
     const subject = parsed.subject.trim() || message.headers.get('subject')?.trim() || '(no subject)';
+    const toAddresses = canonicalAddresses(parsed.to);
+    const ccAddresses = canonicalAddresses(parsed.cc);
+    const replyToAddresses = canonicalAddresses(parsed.replyTo);
     const statements = [insertInboundMessage(env.DB, {
       id: storageId,
       messageId,
       from,
       to: recipient,
-      cc: addressList(parsed.cc),
+      cc: serializeAddressList(ccAddresses) || addressList(parsed.cc),
+      toJson: serializeAddressJson(toAddresses),
+      ccJson: serializeAddressJson(ccAddresses),
+      replyToJson: serializeAddressJson(replyToAddresses),
+      returnPath: parsed.returnPath,
+      deliveredTo: parsed.deliveredTo,
+      headersJson: JSON.stringify(parsed.headers),
+      authenticationResultsJson: JSON.stringify(parsed.authenticationResults),
       subject,
       timestamp: date,
       snippet: projected.snippet,

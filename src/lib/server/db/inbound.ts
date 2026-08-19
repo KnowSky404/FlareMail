@@ -4,6 +4,13 @@ export interface InboundMessageInsert {
   from: string;
   to: string;
   cc: string;
+  toJson: string;
+  ccJson: string;
+  replyToJson: string;
+  returnPath: string | null;
+  deliveredTo: string | null;
+  headersJson: string;
+  authenticationResultsJson: string;
   subject: string;
   timestamp: string;
   snippet: string;
@@ -96,16 +103,24 @@ export async function findInboundOwnerId(db: D1Database, recipient: string) {
 export function insertInboundMessage(db: D1Database, message: InboundMessageInsert) {
   return db.prepare(`
     INSERT INTO email_messages (
-      id, message_id, "from", "to", cc, subject, "timestamp", snippet,
+      id, message_id, "from", "to", cc, to_json, cc_json, reply_to_json,
+      return_path, delivered_to, headers_json, authentication_results_json, subject, "timestamp", snippet,
       text_body, html_body, in_reply_to, "references", thread_key,
       direction, dedupe_key, idempotency_key, raw_key, raw_size, owner_user_id, body_object_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?)
   `).bind(
     message.id,
     message.messageId,
     message.from,
     message.to,
     message.cc,
+    message.toJson,
+    message.ccJson,
+    message.replyToJson,
+    message.returnPath,
+    message.deliveredTo,
+    message.headersJson,
+    message.authenticationResultsJson,
     message.subject,
     message.timestamp,
     message.snippet,
@@ -129,7 +144,8 @@ export async function findOwnedInboundMessage(
   messageId: string
 ) {
   return db.prepare(`
-    SELECT id, message_id, "from", "to", cc, subject, "timestamp", snippet,
+    SELECT id, message_id, "from", "to", cc, to_json, cc_json, reply_to_json,
+      return_path, delivered_to, headers_json, authentication_results_json, subject, "timestamp", snippet,
       text_body, html_body, in_reply_to, "references", thread_key,
       raw_key, raw_size, body_object_id, created_at
     FROM email_messages
@@ -140,6 +156,13 @@ export async function findOwnedInboundMessage(
     from: string;
     to: string;
     cc: string;
+    to_json: string;
+    cc_json: string;
+    reply_to_json: string;
+    return_path: string | null;
+    delivered_to: string | null;
+    headers_json: string;
+    authentication_results_json: string;
     subject: string;
     timestamp: string;
     snippet: string;

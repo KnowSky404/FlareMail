@@ -178,6 +178,17 @@
     workspaceBodyPendingId = snapshot.pendingId;
   });
   const shortcuts = new WorkspaceShortcutController();
+
+  function replySource(message: MailMessage): MailMessage {
+    if (!isInboundMessageId(message.id)) return message;
+    const detail = inboundDetails[message.id];
+    if (!detail) return message;
+    return {
+      ...message,
+      toAddresses: detail.toAddresses.length ? detail.toAddresses : message.toAddresses,
+      ccAddresses: detail.ccAddresses.length ? detail.ccAddresses : message.ccAddresses
+    };
+  }
   const toastController = new ToastController((messages) => (toastMessages = messages));
   const workspaceSnapshotController = new WorkspaceSnapshotController();
   const trashController = new TrashController(fetchTrash, {
@@ -347,7 +358,10 @@
     selectedMessage &&
       activeSection !== 'trash' &&
       selectedMessage.folder !== 'drafts' &&
-      hasDistinctReplyAllRecipients(selectedMessage, { selfEmail: profile.email })
+      hasDistinctReplyAllRecipients(replySource(selectedMessage), {
+        selfEmail: profile.email,
+        replyTo: isInboundMessageId(selectedMessage.id) ? inboundDetails[selectedMessage.id]?.replyTo : undefined
+      })
   ));
   const selectedInboundDetail = $derived(
     selectedMessage && isInboundMessageId(selectedMessage.id)
@@ -1385,7 +1399,9 @@
       ? inboundDetails[message.id]?.body ?? ''
       : workspaceBodies[message.id]?.body ?? message.body;
 
-    openCompose('reply', createReplyComposeInput(message, quotedBody));
+    openCompose('reply', createReplyComposeInput(replySource(message), quotedBody, {
+      replyTo: isInboundMessageId(message.id) ? inboundDetails[message.id]?.replyTo : undefined
+    }));
     notify(`正在回复《${message.subject}》。`);
   }
 
@@ -1406,7 +1422,10 @@
       ? inboundDetails[message.id]?.body ?? ''
       : workspaceBodies[message.id]?.body ?? message.body;
 
-    openCompose('reply', createReplyAllComposeInput(message, { selfEmail: profile.email }, quotedBody));
+    openCompose('reply', createReplyAllComposeInput(replySource(message), {
+      selfEmail: profile.email,
+      replyTo: isInboundMessageId(message.id) ? inboundDetails[message.id]?.replyTo : undefined
+    }, quotedBody));
     notify(`正在回复《${message.subject}》中的所有收件人。`);
   }
 

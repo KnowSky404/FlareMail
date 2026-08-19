@@ -20,6 +20,13 @@ CREATE TABLE IF NOT EXISTS email_messages (
   idempotency_key TEXT,
   owner_user_id TEXT,
   body_object_id TEXT,
+  to_json TEXT NOT NULL DEFAULT '[]',
+  cc_json TEXT NOT NULL DEFAULT '[]',
+  reply_to_json TEXT NOT NULL DEFAULT '[]',
+  return_path TEXT,
+  delivered_to TEXT,
+  headers_json TEXT NOT NULL DEFAULT '[]',
+  authentication_results_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

@@ -85,11 +85,32 @@ export interface MailAttachmentSummary {
   downloadUrl?: string;
 }
 
+export interface MailTechnicalHeader {
+  name: string;
+  value: string;
+}
+
+export interface MailAuthenticationResult {
+  method: 'spf' | 'dkim' | 'dmarc';
+  result: 'pass' | 'fail' | 'softfail' | 'neutral' | 'none' | 'temperror' | 'permerror' | 'policy';
+}
+
 export interface InboundMessageDetail {
   body: string;
   attachments: MailAttachmentSummary[];
   rawSize: number;
   hasHtml?: boolean;
+  toAddresses: MailAddress[];
+  ccAddresses: MailAddress[];
+  replyTo: MailAddress[];
+  date: string;
+  messageId: string | null;
+  inReplyTo: string | null;
+  references: string | null;
+  returnPath: string | null;
+  deliveredTo: string | null;
+  headers: MailTechnicalHeader[];
+  authenticationResults: MailAuthenticationResult[];
 }
 
 export interface MailMessage extends MailRfcHeaders {

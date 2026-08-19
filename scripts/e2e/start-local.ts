@@ -114,14 +114,22 @@ INSERT OR IGNORE INTO workspace_messages (
 );
 INSERT OR IGNORE INTO email_messages (
   id, message_id, "from", "to", subject, "timestamp", snippet, raw_key, raw_size,
-  direction, text_body, html_body, cc, dedupe_key, owner_user_id, created_at
+  direction, text_body, html_body, cc, to_json, cc_json, reply_to_json, return_path,
+  delivered_to, headers_json, authentication_results_json, dedupe_key, owner_user_id, created_at
 ) VALUES (
   ${sql(htmlInboxId)}, '<e2e-html-inbox-message@flaremail.test>',
   'HTML Safety Sender <html-sender@flaremail.test>', ${sql(adminEmail)}, 'E2E HTML Safety',
   ${sql(timestamp)}, 'A malicious HTML fixture for isolated browser QA.', 'e2e/html-message.eml', 512,
   'inbound', 'Safe HTML fixture text fallback.',
   ${sql('<p onclick="alert(1)"><strong>Safe HTML fixture</strong> <a href="https://example.com/login">https://different.example/login</a></p><script>alert(1)</script><img src="cid:e2e-logo@flaremail.test" alt="inline logo"><img src="https://tracker.example/pixel.png" alt="tracking pixel"><img src="http://insecure.example/pixel.png" alt="insecure pixel">')},
-  '', ${sql(`legacy:${htmlInboxId}`)}, ${sql(userId)}, ${sql(timestamp)}
+  'Team <team@flaremail.test>',
+  ${sql(JSON.stringify([{ name: 'E2E Administrator', email: adminEmail }, { name: 'Observer', email: 'observer@flaremail.test' }]))},
+  ${sql(JSON.stringify([{ name: 'Team', email: 'team@flaremail.test' }]))},
+  ${sql(JSON.stringify([{ name: 'Support', email: 'support@flaremail.test' }]))},
+  'bounce@flaremail.test', ${sql(adminEmail)},
+  ${sql(JSON.stringify([{ name: 'authentication-results', value: 'mx.flaremail.test; spf=pass; dkim=pass; dmarc=pass' }]))},
+  ${sql(JSON.stringify([{ method: 'spf', result: 'pass' }, { method: 'dkim', result: 'pass' }, { method: 'dmarc', result: 'pass' }]))},
+  ${sql(`legacy:${htmlInboxId}`)}, ${sql(userId)}, ${sql(timestamp)}
 );
 INSERT OR IGNORE INTO workspace_attachments (
   id, user_id, message_id, filename, content_type, size, inline, content_id, r2_key

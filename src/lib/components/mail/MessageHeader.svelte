@@ -113,6 +113,9 @@
   const bccSummary = $derived(message
     ? serializeAddressList(message.bccAddresses ?? parseAddressList(message.bcc ?? ''))
     : '');
+  const technicalToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.toAddresses) : '');
+  const technicalCcSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.ccAddresses) : '');
+  const replyToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.replyTo) : '');
 
   const deliveryLabel = (status: string | null) => {
     const labels: Record<string, string> = {
@@ -246,6 +249,47 @@
               {#if message.messageId}<dt>Message-ID</dt><dd class="truncate font-mono text-[var(--fm-text-secondary)]">{message.messageId}</dd>{/if}
             </dl>
           </details>
+          {#if inboundDetail}
+            <details class="mt-1 text-xs text-[var(--fm-text-muted)]">
+              <summary class="inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
+                <span>技术详情</span><ChevronDown class="size-3" aria-hidden="true" />
+              </summary>
+              <div class="mt-2 max-w-3xl rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
+                <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                  <dt>To</dt><dd class="break-words text-[var(--fm-text-secondary)]">{technicalToSummary || '未提供'}</dd>
+                  {#if technicalCcSummary}<dt>CC</dt><dd class="break-words text-[var(--fm-text-secondary)]">{technicalCcSummary}</dd>{/if}
+                  {#if replyToSummary}<dt>Reply-To</dt><dd class="break-words text-[var(--fm-text-secondary)]">{replyToSummary}</dd>{/if}
+                  <dt>Date</dt><dd class="break-words font-mono text-[var(--fm-text-secondary)]">{inboundDetail.date}</dd>
+                  {#if inboundDetail.messageId}<dt>Message-ID</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.messageId}</dd>{/if}
+                  {#if inboundDetail.inReplyTo}<dt>In-Reply-To</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.inReplyTo}</dd>{/if}
+                  {#if inboundDetail.references}<dt>References</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.references}</dd>{/if}
+                  {#if inboundDetail.returnPath}<dt>Return-Path</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.returnPath}</dd>{/if}
+                  {#if inboundDetail.deliveredTo}<dt>Delivered-To</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.deliveredTo}</dd>{/if}
+                </dl>
+                {#if inboundDetail.authenticationResults.length}
+                  <div class="mt-3 border-t border-[var(--fm-border)] pt-2">
+                    <p class="font-medium text-[var(--fm-text-secondary)]">上游邮件认证结果</p>
+                    <div class="mt-1 flex flex-wrap gap-1.5">
+                      {#each inboundDetail.authenticationResults as result}
+                        <span class="rounded-full border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-0.5 font-mono uppercase text-[var(--fm-text-secondary)]">{result.method}={result.result}</span>
+                      {/each}
+                    </div>
+                    <p class="mt-1 text-[11px]">这些状态来自上游邮件头，FlareMail 未独立执行 SPF、DKIM 或 DMARC 验证。</p>
+                  </div>
+                {/if}
+                {#if inboundDetail.headers.length}
+                  <details class="mt-3 border-t border-[var(--fm-border)] pt-2">
+                    <summary class="cursor-pointer font-medium text-[var(--fm-text-secondary)]">安全筛选后的原始头（{inboundDetail.headers.length}）</summary>
+                    <dl class="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                      {#each inboundDetail.headers as header}
+                        <dt class="font-mono">{header.name}</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{header.value}</dd>
+                      {/each}
+                    </dl>
+                  </details>
+                {/if}
+              </div>
+            </details>
+          {/if}
         </div>
         <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatDate(message.sentAt)}</time>
       </div>

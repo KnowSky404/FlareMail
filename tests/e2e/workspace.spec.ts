@@ -162,6 +162,18 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
   await item.getByRole('button', { name: /E2E HTML Safety/u }).first().click();
   const detail = page.getByRole('region', { name: '邮件详情' });
+  await detail.getByText('技术详情', { exact: true }).click();
+  await expect(detail).toContainText('Support <support@flaremail.test>');
+  await expect(detail).toContainText('Observer <observer@flaremail.test>');
+  await expect(detail).toContainText('spf=pass');
+  await expect(detail).toContainText('FlareMail 未独立执行 SPF、DKIM 或 DMARC 验证');
+  await detail.getByRole('button', { name: '回复全部', exact: true }).click();
+  const replyAllDialog = page.getByRole('dialog', { name: '回复邮件' });
+  await expect(replyAllDialog.getByRole('button', { name: '移除收件人 support@flaremail.test' })).toBeVisible();
+  await expect(replyAllDialog.getByRole('button', { name: '移除抄送 observer@flaremail.test' })).toBeVisible();
+  await expect(replyAllDialog.getByRole('button', { name: '移除抄送 team@flaremail.test' })).toBeVisible();
+  await replyAllDialog.getByRole('button', { name: '关闭' }).click();
+  await expect(replyAllDialog).toBeHidden();
   await expect(detail.getByRole('button', { name: '纯文本' })).toHaveAttribute('aria-pressed', 'true');
   await expect(detail.getByTitle('安全 HTML 邮件正文')).toHaveCount(0);
 
