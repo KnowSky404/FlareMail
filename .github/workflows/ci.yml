@@ -25,6 +25,7 @@ jobs:
       - run: bun run check
       - run: bun run cf:typegen -- --check
       - run: bun run build
+      - run: bun run deploy:dry-run
 
   e2e:
     runs-on: ubuntu-latest

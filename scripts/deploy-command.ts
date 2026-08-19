@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { inheritWranglerEnvironment } from './wrangler-environment';
+import { join, resolve } from 'node:path';
+import { createLocalWranglerEnvironment, inheritWranglerEnvironment } from './wrangler-environment';
 
 export type DeployMode = 'deploy' | 'dry-run';
 
@@ -22,6 +22,32 @@ export function requireDeployConfig(
     ].join('\n'));
   }
   return configPath;
+}
+
+const tomlString = (value: string) => JSON.stringify(value);
+
+/**
+ * Turn the checked-in local Wrangler config into a self-contained dry-run
+ * config. Wrangler resolves paths relative to the config file, so a config
+ * written under the operating-system temp directory must use absolute paths.
+ * The checked-in source contains no secrets or production resource IDs.
+ */
+export function createCiDryRunConfig(
+  source: string,
+  projectRoot: string,
+  resolvePath: (...parts: string[]) => string = resolve
+) {
+  const replacements: Array<[RegExp, string, string]> = [
+    [/^main\s*=\s*"[^"]+"\s*$/mu, `main = ${tomlString(resolvePath(projectRoot, 'worker/index.ts'))}`, 'main'],
+    [/^directory\s*=\s*"build"\s*$/mu, `directory = ${tomlString(resolvePath(projectRoot, 'build'))}`, 'assets directory'],
+    [/^migrations_dir\s*=\s*"migrations"\s*$/mu, `migrations_dir = ${tomlString(resolvePath(projectRoot, 'migrations'))}`, 'migrations directory']
+  ];
+  let generated = source;
+  for (const [pattern, replacement, label] of replacements) {
+    if (!pattern.test(generated)) throw new Error(`Unable to locate ${label} in the public Wrangler config.`);
+    generated = generated.replace(pattern, replacement);
+  }
+  return `${generated.trimEnd()}\n`;
 }
 
 export function createDeployInvocation(
@@ -46,7 +72,13 @@ export function createDeployInvocation(
   return {
     command: 'bun',
     args,
-    env: inheritWranglerEnvironment(options.environment),
+    env: mode === 'dry-run'
+      ? createLocalWranglerEnvironment(options.environment, {
+          temporaryDirectory: options.temporaryDirectory,
+          joinPath: options.joinPath,
+          logFileName: 'flaremail-deploy-dry-run.log'
+        })
+      : inheritWranglerEnvironment(options.environment),
     outdir
   };
 }
