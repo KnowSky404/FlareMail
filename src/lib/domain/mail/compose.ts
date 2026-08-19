@@ -1,5 +1,12 @@
 import { normalizeMessageId, parseMessageIds } from './thread';
-import { dedupeAddresses, parseAddressList, serializeAddressList } from './addresses';
+import {
+  MAX_RECIPIENTS,
+  dedupeAddresses,
+  normalizeMailboxEmail,
+  parseAddressList,
+  serializeAddressList,
+  type MailAddress
+} from './addresses';
 import type {
   ComposeInput,
   DraftMessageInput,
@@ -172,6 +179,55 @@ export function createReplyComposeInput(message: MailMessage, quotedBody = messa
   };
 }
 
+export interface ReplyAllOptions {
+  selfEmail: string;
+  /** Parsed RFC Reply-To mailboxes. These take precedence over From for inbound mail. */
+  replyTo?: readonly MailAddress[];
+}
+
+/** Build Reply All recipients without ever carrying over BCC or the current account. */
+export function createReplyAllComposeInput(
+  message: MailMessage,
+  options: ReplyAllOptions,
+  quotedBody = message.body
+): ComposeInput {
+  const selfEmail = normalizeMailboxEmail(options.selfEmail);
+  const withoutSelf = (addresses: readonly MailAddress[]) =>
+    parseAddressList(addresses).filter(({ email }) => email !== selfEmail);
+  const originalTo = withoutSelf(message.toAddresses ?? parseAddressList(message.toEmail));
+  const originalCc = withoutSelf(message.ccAddresses ?? parseAddressList(message.cc ?? ''));
+  const from = withoutSelf([{ name: message.fromName, email: message.fromEmail }]);
+  const replyTo = withoutSelf(options.replyTo ?? []);
+  const primary = message.folder === 'sent'
+    ? originalTo
+    : replyTo.length
+      ? replyTo
+      : from;
+  const to = dedupeAddresses(primary).slice(0, MAX_RECIPIENTS);
+  const used = new Set(to.map(({ email }) => email));
+  const cc = dedupeAddresses([
+    ...(message.folder === 'sent' ? originalCc : [...originalTo, ...originalCc])
+  ]).filter(({ email }) => {
+    if (used.has(email)) return false;
+    used.add(email);
+    return true;
+  }).slice(0, Math.max(0, MAX_RECIPIENTS - to.length));
+  const first = to[0] ?? cc[0];
+  const inReplyTo = canonicalMessageId(message.messageId);
+  const references = composeReferences(message);
+
+  return {
+    to,
+    cc,
+    bcc: [],
+    toEmail: first?.email ?? '',
+    subject: prefixedSubject('Re', message.subject),
+    body: `Hi ${first?.name || first?.email || ''},\n\n\n\n在 ${message.sentAt}，${message.fromName} <${message.fromEmail}> 写道：\n${quoteBody(quotedBody)}`,
+    inReplyTo,
+    references
+  };
+}
+
 export function createForwardComposeInput(message: MailMessage, forwardedBody = message.body): ComposeInput {
   return {
     to: [],
@@ -188,4 +244,5 @@ export function createForwardComposeInput(message: MailMessage, forwardedBody = 
 export const createDraft = createDraftMessage;
 export const createSent = createSentMessage;
 export const createReply = createReplyComposeInput;
+export const createReplyAll = createReplyAllComposeInput;
 export const createForward = createForwardComposeInput;

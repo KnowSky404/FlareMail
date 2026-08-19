@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createForwardComposeInput, createReplyComposeInput, createSentMessage } from './compose';
+import { createForwardComposeInput, createReplyAllComposeInput, createReplyComposeInput, createSentMessage } from './compose';
 import { parseAddressList, serializeAddressList } from './addresses';
 import { applyDeliveryEvent, getDeliveryRetryEligibility, isDeliveryRetryable, transitionDeliveryStatus } from './delivery';
 import { buildMailThreads, getMailThreadKey } from './thread';
@@ -107,6 +107,58 @@ describe('compose domain', () => {
     expect(forward.inReplyTo).toBeUndefined();
     expect(forward.references).toBeUndefined();
     expect(forward.body).not.toContain('CC:');
+  });
+
+  test('Reply All prefers Reply-To, excludes self, dedupes recipients and never copies BCC', () => {
+    const source = message({
+      messageId: '<current@example.com>',
+      references: '<root@example.com>',
+      fromName: 'Sender',
+      fromEmail: 'sender@example.com',
+      toAddresses: [
+        { name: 'Owner', email: 'OWNER@example.com' },
+        { name: 'Team', email: 'team@example.com' }
+      ],
+      ccAddresses: [
+        { name: 'Team duplicate', email: 'TEAM@example.com' },
+        { name: 'Copy', email: 'copy@example.com' }
+      ],
+      bccAddresses: [{ name: 'Hidden', email: 'hidden@example.com' }]
+    });
+    const reply = createReplyAllComposeInput(source, {
+      selfEmail: 'owner@example.com',
+      replyTo: [{ name: 'Support', email: 'SUPPORT@example.com' }]
+    });
+
+    expect(reply.to).toEqual([{ name: 'Support', email: 'support@example.com' }]);
+    expect(reply.cc).toEqual([
+      { name: 'Team', email: 'team@example.com' },
+      { name: 'Copy', email: 'copy@example.com' }
+    ]);
+    expect(reply.bcc).toEqual([]);
+    expect(reply.inReplyTo).toBe('<current@example.com>');
+    expect(reply.references).toBe('<root@example.com> <current@example.com>');
+  });
+
+  test('Reply All on sent mail targets original To and CC instead of the sender account', () => {
+    const source = message({
+      folder: 'sent',
+      source: 'workspace',
+      fromName: 'Owner',
+      fromEmail: 'owner@example.com',
+      toAddresses: [
+        { name: 'First', email: 'first@example.com' },
+        { name: 'Owner duplicate', email: 'OWNER@example.com' }
+      ],
+      ccAddresses: [{ name: 'Copy', email: 'copy@example.com' }]
+    });
+    const reply = createReplyAllComposeInput(source, {
+      selfEmail: 'owner@example.com',
+      replyTo: [{ name: 'Ignored', email: 'reply-to@example.com' }]
+    });
+
+    expect(reply.to).toEqual([{ name: 'First', email: 'first@example.com' }]);
+    expect(reply.cc).toEqual([{ name: 'Copy', email: 'copy@example.com' }]);
   });
 });
 
