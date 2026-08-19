@@ -4,3 +4,4 @@ export * from './thread';
 export * from './compose';
 export * from './delivery';
 export * from './validation';
+export * from './search-query';
