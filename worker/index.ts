@@ -1,3 +1,5 @@
+/// <reference path="./generated-worker.d.ts" />
+
 import app from '../build/_worker.js';
 import type { CloudflareEnv } from '../src/lib/server/cloudflare';
 import { handleInboundEmail } from '../src/lib/server/email';
