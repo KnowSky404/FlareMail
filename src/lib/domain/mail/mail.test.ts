@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createForwardComposeInput, createReplyAllComposeInput, createReplyComposeInput, createSentMessage } from './compose';
+import { createForwardComposeInput, createReplyAllComposeInput, createReplyComposeInput, createSentMessage, hasDistinctReplyAllRecipients } from './compose';
 import { parseAddressList, serializeAddressList } from './addresses';
 import { applyDeliveryEvent, getDeliveryRetryEligibility, isDeliveryRetryable, transitionDeliveryStatus } from './delivery';
 import { buildMailThreads, getMailThreadKey } from './thread';
@@ -159,6 +159,20 @@ describe('compose domain', () => {
 
     expect(reply.to).toEqual([{ name: 'First', email: 'first@example.com' }]);
     expect(reply.cc).toEqual([{ name: 'Copy', email: 'copy@example.com' }]);
+    expect(createReplyComposeInput(source).to).toEqual([{ name: 'First', email: 'first@example.com' }]);
+    expect(hasDistinctReplyAllRecipients(source, { selfEmail: 'owner@example.com' })).toBe(true);
+  });
+
+  test('Reply prefers Reply-To and hides duplicate Reply All actions', () => {
+    const source = message({
+      fromName: 'Sender',
+      fromEmail: 'sender@example.com',
+      toAddresses: [{ name: 'Owner', email: 'owner@example.com' }]
+    });
+    const replyTo = [{ name: 'Support', email: 'support@example.com' }];
+
+    expect(createReplyComposeInput(source, 'quoted', { replyTo }).to).toEqual(replyTo);
+    expect(hasDistinctReplyAllRecipients(source, { selfEmail: 'owner@example.com', replyTo })).toBe(false);
   });
 });
 

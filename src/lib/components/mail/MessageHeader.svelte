@@ -8,6 +8,7 @@
     Mail,
     MoreHorizontal,
     Reply,
+    ReplyAll,
     RotateCcw,
     Star,
     Trash2
@@ -34,6 +35,7 @@
     onEditDraft,
     onForward,
     onReply,
+    onReplyAll,
     onToggleStar,
     onToggleRead,
     onRemove,
@@ -53,6 +55,7 @@
     onEditDraft?: (message: MailMessage) => void | Promise<void>;
     onForward?: (message: MailMessage) => void;
     onReply?: (message: MailMessage) => void;
+    onReplyAll?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
@@ -249,8 +252,11 @@
       </div>
 
       <nav class="mt-4 flex flex-wrap items-center gap-2" aria-label="邮件操作">
-        {#if message.folder === 'inbox'}
+        {#if message.folder !== 'drafts'}
           <button class="action-button action-button-primary" type="button" onclick={() => onReply?.(message)} disabled={pending}><Reply class="size-4" aria-hidden="true" />回复</button>
+          {#if onReplyAll}
+            <button class="action-button" type="button" onclick={() => onReplyAll?.(message)} disabled={pending}><ReplyAll class="size-4" aria-hidden="true" />回复全部</button>
+          {/if}
         {/if}
         {#if message.folder !== 'drafts'}
           <button class="action-button" type="button" onclick={() => onForward?.(message)} disabled={pending}><Forward class="size-4" aria-hidden="true" />转发</button>

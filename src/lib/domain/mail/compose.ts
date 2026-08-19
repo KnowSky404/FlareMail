@@ -163,17 +163,26 @@ export function createComposeInputFromDraft(message: MailMessage): ComposeInput 
   };
 }
 
-export function createReplyComposeInput(message: MailMessage, quotedBody = message.body): ComposeInput {
+export function createReplyComposeInput(
+  message: MailMessage,
+  quotedBody = message.body,
+  options: { replyTo?: readonly MailAddress[] } = {}
+): ComposeInput {
+  const sentRecipient = parseAddressList(message.toAddresses ?? message.toEmail)[0];
+  const replyTo = parseAddressList(options.replyTo ?? [])[0];
+  const target = message.folder === 'sent'
+    ? sentRecipient
+    : replyTo ?? { name: message.fromName, email: message.fromEmail };
   const inReplyTo = canonicalMessageId(message.messageId);
   const references = composeReferences(message);
 
   return {
-    to: [{ name: message.fromName, email: message.fromEmail }],
+    to: target ? [target] : [],
     cc: [],
     bcc: [],
-    toEmail: message.fromEmail,
+    toEmail: target?.email ?? '',
     subject: prefixedSubject('Re', message.subject),
-    body: `Hi ${message.fromName},\n\n\n\n在 ${message.sentAt}，${message.fromName} <${message.fromEmail}> 写道：\n${quoteBody(quotedBody)}`,
+    body: `Hi ${target?.name || target?.email || ''},\n\n\n\n在 ${message.sentAt}，${message.fromName} <${message.fromEmail}> 写道：\n${quoteBody(quotedBody)}`,
     inReplyTo,
     references
   };
@@ -226,6 +235,13 @@ export function createReplyAllComposeInput(
     inReplyTo,
     references
   };
+}
+
+export function hasDistinctReplyAllRecipients(message: MailMessage, options: ReplyAllOptions): boolean {
+  const reply = createReplyComposeInput(message, '', { replyTo: options.replyTo });
+  const replyAll = createReplyAllComposeInput(message, options, '');
+  return serializeAddressList(parseAddressList(reply.to)) !== serializeAddressList(parseAddressList(replyAll.to)) ||
+    serializeAddressList(parseAddressList(reply.cc)) !== serializeAddressList(parseAddressList(replyAll.cc));
 }
 
 export function createForwardComposeInput(message: MailMessage, forwardedBody = message.body): ComposeInput {

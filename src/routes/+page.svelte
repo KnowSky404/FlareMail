@@ -66,7 +66,9 @@
     cloneMailbox,
     cloneProfile,
     createForwardComposeInput,
+    createReplyAllComposeInput,
     createReplyComposeInput,
+    hasDistinctReplyAllRecipients,
     isInboundMessageId,
     serializeAddressList,
     type DeliveryDetail,
@@ -309,6 +311,11 @@
     );
   });
   const selectedThreadMessages = $derived(selectedThread?.messages ?? (selectedMessage ? [selectedMessage] : []));
+  const selectedReplyAllAvailable = $derived(Boolean(
+    selectedMessage &&
+      selectedMessage.folder !== 'drafts' &&
+      hasDistinctReplyAllRecipients(selectedMessage, { selfEmail: profile.email })
+  ));
   const selectedInboundDetail = $derived(
     selectedMessage && isInboundMessageId(selectedMessage.id)
       ? inboundDetails[selectedMessage.id] ?? null
@@ -1241,6 +1248,27 @@
     notify(`正在回复《${message.subject}》。`);
   }
 
+  async function handleReplyAllMessage(message: MailMessage) {
+    if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
+      if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
+        notify('正文尚未载入，暂时无法引用回复。', 'error');
+        return;
+      }
+    }
+    if (!isInboundMessageId(message.id) && !workspaceBodies[message.id]) {
+      if (!(await loadWorkspaceBody(message)) || !workspaceBodies[message.id]) {
+        notify('正文尚未载入，暂时无法引用回复。', 'error');
+        return;
+      }
+    }
+    const quotedBody = isInboundMessageId(message.id)
+      ? inboundDetails[message.id]?.body ?? ''
+      : workspaceBodies[message.id]?.body ?? message.body;
+
+    openCompose('reply', createReplyAllComposeInput(message, { selfEmail: profile.email }, quotedBody));
+    notify(`正在回复《${message.subject}》中的所有收件人。`);
+  }
+
   async function handleForwardMessage(message: MailMessage) {
     if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
       if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
@@ -1293,7 +1321,8 @@
       const action = shortcuts.handle(event, {
         helpOpen: shortcutHelpOpen,
         mobileDetailOpen,
-        canReply: selectedMessage?.folder === 'inbox',
+        canReply: Boolean(selectedMessage && selectedMessage.folder !== 'drafts'),
+        canReplyAll: selectedReplyAllAvailable,
         canForward: Boolean(selectedMessage && selectedMessage.folder !== 'drafts')
       });
       const actions: Partial<Record<WorkspaceShortcutAction, () => void>> = {
@@ -1307,6 +1336,7 @@
         'next-message': () => moveMessageSelection(1),
         'previous-message': () => moveMessageSelection(-1),
         reply: () => selectedMessage && handleReplyMessage(selectedMessage),
+        'reply-all': () => selectedMessage && handleReplyAllMessage(selectedMessage),
         forward: () => selectedMessage && handleForwardMessage(selectedMessage),
         'open-help': () => (shortcutHelpOpen = true)
       };
@@ -1488,6 +1518,7 @@
                     onEditDraft={handleEditDraft}
                     onForward={handleForwardMessage}
                     onReply={handleReplyMessage}
+                    onReplyAll={selectedReplyAllAvailable ? handleReplyAllMessage : undefined}
                     onReloadDeliveryDetail={handleReloadDeliveryDetail}
                     onRetryDelivery={retryMessageDelivery}
                     onReloadInboundDetail={handleReloadInboundDetail}
@@ -1564,6 +1595,7 @@
         <div><dt><kbd>G</kbd> <kbd>D</kbd></dt><dd>前往草稿箱</dd></div>
         <div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>下一封 / 上一封</dd></div>
         <div><dt><kbd>R</kbd></dt><dd>回复当前邮件</dd></div>
+        <div><dt><kbd>A</kbd></dt><dd>回复全部（有其他收件人时）</dd></div>
         <div><dt><kbd>F</kbd></dt><dd>转发当前邮件</dd></div>
         <div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div>
         <div><dt><kbd>?</kbd></dt><dd>打开快捷键帮助</dd></div>

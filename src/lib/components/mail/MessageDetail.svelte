@@ -23,6 +23,7 @@
     pending = false,
     onEditDraft,
     onReply,
+    onReplyAll,
     onForward,
     onToggleStar,
     onToggleRead,
@@ -49,6 +50,7 @@
     pending?: boolean;
     onEditDraft?: (message: MailMessage) => void | Promise<void>;
     onReply?: (message: MailMessage) => void;
+    onReplyAll?: (message: MailMessage) => void;
     onForward?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
@@ -94,6 +96,7 @@
     {onEditDraft}
     {onForward}
     {onReply}
+    {onReplyAll}
     {onToggleStar}
     {onToggleRead}
     {onRemove}
