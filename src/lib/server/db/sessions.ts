@@ -1,5 +1,11 @@
 import type { WorkspaceSessionJoinRow } from '$lib/server/workspace/shared';
 
+export interface ActiveSessionCapabilityRow {
+  user_id: string;
+  token_hash: string;
+  expires_at: string;
+}
+
 export async function findSessionJoin(db: D1Database, sessionId: string) {
   return db.prepare(`
     SELECT s.id AS session_id, s.created_at, s.updated_at,
@@ -18,6 +24,18 @@ export async function findSessionJoinByTokenHash(db: D1Database, tokenHash: stri
     FROM workspace_sessions AS s JOIN workspace_users AS u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?
   `).bind(tokenHash, timestamp).first<WorkspaceSessionJoinRow>();
+}
+
+export async function findActiveSessionCapability(
+  db: D1Database,
+  sessionId: string,
+  timestamp = new Date().toISOString()
+) {
+  return db.prepare(`
+    SELECT user_id, token_hash, expires_at
+    FROM workspace_sessions
+    WHERE id = ? AND token_hash IS NOT NULL AND revoked_at IS NULL AND expires_at > ?
+  `).bind(sessionId, timestamp).first<ActiveSessionCapabilityRow>();
 }
 
 export async function createSession(db: D1Database, userId: string, tokenHash: string, expiresAt: string) {

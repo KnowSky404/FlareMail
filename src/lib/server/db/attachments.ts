@@ -40,13 +40,13 @@ export function insertAttachment(db: D1Database, attachment: AttachmentInsert) {
   );
 }
 
-export async function listAttachmentsForMessage(db: D1Database, messageId: string) {
+export async function listAttachmentsForMessage(db: D1Database, userId: string, messageId: string) {
   const result = await db.prepare(`
     SELECT id, user_id, message_id, filename, content_type, size, inline, content_id, r2_key
     FROM workspace_attachments
-    WHERE message_id = ?
+    WHERE user_id = ? AND message_id = ?
     ORDER BY created_at ASC, id ASC
-  `).bind(messageId).all<StoredAttachmentRow>();
+  `).bind(userId, messageId).all<StoredAttachmentRow>();
   return result.results ?? [];
 }
 

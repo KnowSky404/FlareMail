@@ -30,6 +30,7 @@
     onRemove,
     onRestore,
     onPermanentDelete,
+    onReportHtmlIssue,
     onReloadInboundDetail,
     onReloadDeliveryDetail,
     onRetryDelivery,
@@ -60,6 +61,7 @@
     onRemove?: (message: MailMessage) => void | Promise<void>;
     onRestore?: (message: MailMessage) => void | Promise<void>;
     onPermanentDelete?: (message: MailMessage) => void | Promise<void>;
+    onReportHtmlIssue?: (message: MailMessage) => void;
     onReloadInboundDetail?: (message: MailMessage) => void | Promise<void>;
     onReloadDeliveryDetail?: (message: MailMessage) => void | Promise<void>;
     onRetryDelivery?: (message: MailMessage) => void | Promise<void>;
@@ -125,7 +127,15 @@
           </div>
         {/if}
 
-        <MessageBody body={visibleBody} loading={(isInbound && inboundDetailPending && !inboundDetail) || (!isInbound && workspaceBodyPending && workspaceBody === null)} hasHtml={hasHtml} />
+        {#key message.id}
+          <MessageBody
+            body={visibleBody}
+            loading={(isInbound && inboundDetailPending && !inboundDetail) || (!isInbound && workspaceBodyPending && workspaceBody === null)}
+            hasHtml={hasHtml}
+            messageId={message.id}
+            onReportIssue={() => onReportHtmlIssue?.(message)}
+          />
+        {/key}
 
         {#if isInbound}
           <div class="mt-8">

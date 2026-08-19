@@ -1,5 +1,8 @@
 import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
+import { readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 
 test.describe.configure({ mode: 'serial' });
@@ -73,7 +76,7 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
   await login(page);
   const navigation = page.getByRole('navigation', { name: '主导航' });
-  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).getByText('46', { exact: true })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).getByText('47', { exact: true })).toBeVisible();
   await expect(navigation.getByRole('button', { name: '已发送', exact: true }).getByText('1', { exact: true })).toBeVisible();
   await expect(navigation.getByRole('button', { name: '草稿箱', exact: true }).getByText('5', { exact: true })).toBeVisible();
 
@@ -141,6 +144,67 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
   await login(page);
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: '取消星标', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await assertNoConsoleErrors(consoleErrors);
+});
+
+test('reads sanitized HTML with reversible remote-image consent and a private display report', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name === 'narrow', 'Desktop and mobile cover the safe HTML reader interaction.');
+  const remoteRequests: string[] = [];
+  await page.route('https://tracker.example/**', async (route) => {
+    remoteRequests.push(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')
+    });
+  });
+
+  await login(page);
+  const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
+  await item.getByRole('button', { name: /E2E HTML Safety/u }).first().click();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.getByRole('button', { name: '纯文本' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(detail.getByTitle('安全 HTML 邮件正文')).toHaveCount(0);
+
+  await detail.getByRole('button', { name: '安全 HTML' }).click();
+  const frame = page.frameLocator('iframe[title="安全 HTML 邮件正文"]');
+  await expect(frame.getByText('Safe HTML fixture')).toBeVisible();
+  await expect(frame.getByText('[example.com]')).toBeVisible();
+  await expect(frame.getByText(/显示文本与目标不一致/u)).toBeVisible();
+  await expect(frame.locator('script, form, iframe, object, embed, svg')).toHaveCount(0);
+  const cidImage = frame.locator('img[alt="inline logo"]');
+  await expect(cidImage).toHaveCount(1);
+  await expect.poll(() => cidImage.evaluate((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth === 1)).toBe(true);
+  await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
+  expect(remoteRequests).toEqual([]);
+
+  const consent = detail.getByRole('button', { name: '加载本邮件 HTTPS 图片' });
+  await consent.click();
+  await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
+  await expect.poll(() => remoteRequests.length).toBe(1);
+  await expect(frame.locator('img[src^="http://insecure.example/"]')).toHaveCount(0);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-safe-html-${testInfo.project.name}.png`), fullPage: false });
+
+  await detail.getByRole('button', { name: '撤销远程图片权限' }).click();
+  await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
+
+  const downloadPromise = page.waitForEvent('download');
+  await detail.getByRole('button', { name: '下载显示问题报告' }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^flaremail-html-display-email_e2e-html-inbox-message\.json$/u);
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  const report = JSON.parse(await readFile(path!, 'utf8')) as Record<string, unknown>;
+  expect(report.messageId).toBe('email:e2e-html-inbox-message');
+  expect(JSON.stringify(report)).not.toContain('This message is seeded');
+  expect(JSON.stringify(report)).not.toContain('sender@flaremail.test');
+  await expect(page.getByRole('status').filter({ hasText: '显示问题报告已下载' })).toBeVisible();
+  // Wrangler's local explorer injects a debug script into text/html responses.
+  // The production build does not; the iframe sandbox intentionally blocks it.
+  await assertNoConsoleErrors(consoleErrors.filter((message) => !(
+    message.startsWith('Blocked script execution in ') &&
+    message.includes('/api/workspace/messages/email%3Ae2e-html-inbox-message/html?remote=') &&
+    message.includes("'allow-scripts' permission is not set")
+  )));
 });
 
 test('uses global service metrics and exposes typed API errors with a request ID', async ({ page, consoleErrors }, testInfo) => {

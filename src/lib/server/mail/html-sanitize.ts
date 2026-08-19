@@ -34,6 +34,7 @@ export interface SafeHtmlSanitizerOptions {
   maxNodes?: number;
   maxDepth?: number;
   resolveCidImage?: CidImageResolver;
+  allowRemoteImages?: boolean;
 }
 
 export interface SafeHtmlResult {
@@ -42,11 +43,14 @@ export interface SafeHtmlResult {
   removedElements: number;
   blockedImages: number;
   allowedCidImages: number;
+  allowedRemoteImages: number;
+  linkWarnings: number;
 }
 
 type Attribute = { name: string; value: string };
 type ParsedTag = { name: string; closing: boolean; selfClosing: boolean; attributes: Attribute[] };
-type Frame = { name: string; emitted: boolean };
+type LinkFrame = { hostname: string; textStart: number; warnings: string[] };
+type Frame = { name: string; emitted: boolean; link?: LinkFrame };
 
 const allowedTags = new Set([
   'p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
@@ -196,6 +200,50 @@ function safeExternalUrl(value: string): string | null {
   }
 }
 
+function safeRemoteImageUrl(value: string): string | null {
+  const safe = safeExternalUrl(value);
+  if (!safe) return null;
+  try {
+    const parsed = new URL(safe);
+    return parsed.protocol === 'https:' ? safe : null;
+  } catch {
+    return null;
+  }
+}
+
+function isIpHostname(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[|\]$/gu, '');
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/u.test(normalized) || normalized.includes(':');
+}
+
+function displayedHostname(value: string): string | null {
+  const normalized = value.trim().replaceAll(/\s+/gu, '');
+  if (!normalized || normalized.length > 512 || !/[.:]/u.test(normalized)) return null;
+  const candidate = /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(normalized) ? normalized : `https://${normalized}`;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.hostname ? parsed.hostname.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+function externalLinkFrame(href: string, textStart: number): LinkFrame | undefined {
+  try {
+    const parsed = new URL(href);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+    const hostname = parsed.hostname.toLowerCase();
+    const warnings: string[] = [];
+    if (parsed.protocol === 'http:') warnings.push('不安全 HTTP');
+    if (hostname.includes('xn--')) warnings.push('Punycode 域名');
+    if (isIpHostname(hostname)) warnings.push('IP 地址');
+    if (parsed.username || parsed.password) warnings.push('包含用户信息');
+    return { hostname, textStart, warnings };
+  } catch {
+    return undefined;
+  }
+}
+
 function safeMappedCidUrl(value: string | null): string | null {
   if (!value) return null;
   const normalized = value.trim();
@@ -224,6 +272,8 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
   let removedElements = 0;
   let blockedImages = 0;
   let allowedCidImages = 0;
+  let allowedRemoteImages = 0;
+  let linkWarnings = 0;
   const stack: Frame[] = [];
 
   const checkNode = () => {
@@ -262,6 +312,19 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
     append(escapeText(decoded));
   };
   const suppressed = () => stack.some((frame) => !frame.emitted);
+  const closeFrame = (frame: Frame) => {
+    if (!frame.emitted || voidTags.has(frame.name)) return;
+    append(`</${frame.name}>`);
+    if (!frame.link) return;
+    const visibleHostname = displayedHostname(text.slice(frame.link.textStart));
+    const warnings = [...frame.link.warnings];
+    if (visibleHostname && visibleHostname !== frame.link.hostname) warnings.push('显示文本与目标不一致');
+    const warning = warnings.length
+      ? ` <span class="fm-link-warning" aria-label="链接风险：${escapeAttribute(warnings.join('、'))}">⚠ ${escapeText(warnings.join('、'))}</span>`
+      : '';
+    append(` <span class="fm-link-target" aria-label="链接目标域名 ${escapeAttribute(frame.link.hostname)}">[${escapeText(frame.link.hostname)}]</span>${warning}`);
+    if (warnings.length) linkWarnings += 1;
+  };
 
   while (position < input.length) {
     if (input[position] !== '<') {
@@ -302,7 +365,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       if (matchingIndex < 0) continue;
       while (stack.length > matchingIndex) {
         const frame = stack.pop();
-        if (frame?.emitted && !voidTags.has(frame.name)) append(`</${frame.name}>`);
+        if (frame) closeFrame(frame);
       }
       continue;
     }
@@ -332,6 +395,14 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
           continue;
         }
       }
+      const remote = source ? safeRemoteImageUrl(source) : null;
+      if (remote && options.allowRemoteImages) {
+        const altAttribute = alt ? ` alt="${escapeAttribute(alt)}"` : '';
+        append(`<img src="${escapeAttribute(remote)}"${altAttribute} loading="lazy" referrerpolicy="no-referrer">`);
+        allowedRemoteImages += 1;
+        if (alt) appendPlainText(alt);
+        continue;
+      }
       blockedImages += 1;
       removedElements += 1;
       if (alt) appendText(alt);
@@ -351,7 +422,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
         continue;
       }
       append(`<a href="${escapeAttribute(safeHref)}" target="_blank" rel="noopener noreferrer">`);
-      stack.push({ name: parsed.name, emitted: true });
+      stack.push({ name: parsed.name, emitted: true, link: externalLinkFrame(safeHref, text.length) });
       checkDepth();
       continue;
     }
@@ -373,8 +444,8 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
 
   while (stack.length) {
     const frame = stack.pop();
-    if (frame?.emitted && !voidTags.has(frame.name)) append(`</${frame.name}>`);
+    if (frame) closeFrame(frame);
   }
 
-  return { html, text, removedElements, blockedImages, allowedCidImages };
+  return { html, text, removedElements, blockedImages, allowedCidImages, allowedRemoteImages, linkWarnings };
 }

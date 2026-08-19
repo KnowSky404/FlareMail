@@ -5,7 +5,7 @@ describe('safe HTML sanitizer', () => {
   test('keeps safe formatting and canonicalizes links', () => {
     const result = sanitizeHtml('<H1>Hello</H1><p><strong>中文</strong> <a href="https://example.com/x?a=1">link</a></p><table><tr><td colspan="2">cell</td></tr></table>');
 
-    expect(result.html).toBe('<h1>Hello</h1><p><strong>中文</strong> <a href="https://example.com/x?a=1" target="_blank" rel="noopener noreferrer">link</a></p><table><tr><td colspan="2">cell</td></tr></table>');
+    expect(result.html).toBe('<h1>Hello</h1><p><strong>中文</strong> <a href="https://example.com/x?a=1" target="_blank" rel="noopener noreferrer">link</a> <span class="fm-link-target" aria-label="链接目标域名 example.com">[example.com]</span></p><table><tr><td colspan="2">cell</td></tr></table>');
     expect(result.text).toBe('Hello中文 linkcell');
   });
 
@@ -52,8 +52,40 @@ describe('safe HTML sanitizer', () => {
   test('treats malformed tags as text without executing them', () => {
     const result = sanitizeHtml('<p>ok &lt;script&gt;still text</p><a href="https://example.com" title="ignored">x</a><broken');
 
-    expect(result.html).toBe('<p>ok &lt;script&gt;still text</p><a href="https://example.com" target="_blank" rel="noopener noreferrer">x</a>&lt;broken');
+    expect(result.html).toBe('<p>ok &lt;script&gt;still text</p><a href="https://example.com" target="_blank" rel="noopener noreferrer">x</a> <span class="fm-link-target" aria-label="链接目标域名 example.com">[example.com]</span>&lt;broken');
     expect(result.text).toBe('ok <script>still textx<broken');
+  });
+
+  test('loads remote images only after explicit consent and omits referrers', () => {
+    const blocked = sanitizeHtml('<img src="https://tracker.example/pixel?id=1" alt="tracker">');
+    const allowed = sanitizeHtml('<img src="https://tracker.example/pixel?id=1" alt="tracker"><img src="http://insecure.example/pixel"><img src="javascript:alert(1)">', {
+      allowRemoteImages: true
+    });
+
+    expect(blocked.html).toBe('tracker');
+    expect(blocked.blockedImages).toBe(1);
+    expect(blocked.allowedRemoteImages).toBe(0);
+    expect(allowed.html).toBe('<img src="https://tracker.example/pixel?id=1" alt="tracker" loading="lazy" referrerpolicy="no-referrer">');
+    expect(allowed.allowedRemoteImages).toBe(1);
+    expect(allowed.blockedImages).toBe(2);
+  });
+
+  test('shows real target domains and marks punycode, IP, userinfo and label mismatches', () => {
+    const result = sanitizeHtml([
+      '<a href="https://example.com/path">https://different.example/login</a>',
+      '<a href="https://xn--e1afmkfd.xn--p1ai/">portal</a>',
+      '<a href="https://user@example.net/">account</a>',
+      '<a href="https://192.0.2.1/">host</a>',
+      '<a href="http://example.org/">plain HTTP</a>'
+    ].join(''));
+
+    expect(result.html).toContain('[example.com]');
+    expect(result.html).toContain('显示文本与目标不一致');
+    expect(result.html).toContain('Punycode 域名');
+    expect(result.html).toContain('包含用户信息');
+    expect(result.html).toContain('IP 地址');
+    expect(result.html).toContain('不安全 HTTP');
+    expect(result.linkWarnings).toBe(5);
   });
 
   test('enforces input, output, nesting and node limits with stable typed errors', () => {

@@ -1431,6 +1431,10 @@
     notify(`正在转发《${message.subject}》。`);
   }
 
+  function handleReportHtmlIssue() {
+    notify('显示问题报告已下载；文件只包含本地显示环境，不含邮件正文或地址。', 'success');
+  }
+
   async function handleReloadInboundDetail(message: MailMessage) {
     const ok = await loadInboundDetail(message, true);
     notify(
@@ -1672,6 +1676,7 @@
                     trashMode={activeSection === 'trash'}
                     onRestore={handleRestoreTrash}
                     onPermanentDelete={handlePermanentDelete}
+                    onReportHtmlIssue={handleReportHtmlIssue}
                     onReloadDeliveryDetail={handleReloadDeliveryDetail}
                     onRetryDelivery={retryMessageDelivery}
                     onReloadInboundDetail={handleReloadInboundDetail}

@@ -30,7 +30,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
       throw new ApiError(409, 'BODY_OBJECT_INTEGRITY', '入站正文完整性校验失败。', undefined, { reason: error instanceof Error ? error.message : 'unknown' });
     }
   }
-  const attachments = await listAttachmentsForMessage(env.DB, messageId);
+  const attachments = await listAttachmentsForMessage(env.DB, session.userId, messageId);
   return apiSuccess(event, {
     detail: {
       body,
