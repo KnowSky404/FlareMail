@@ -75,8 +75,8 @@ export async function listWorkspaceMessagePage(
   return db.prepare(`
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
-      m.subject, m.preview, m.body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
-      m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key,
+      m.subject, m.preview, '' AS body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
+      m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key, m.body_object_id,
       ds.status AS delivery_status,
       ds.attempts AS delivery_attempts,
       ds.delivered_at AS delivery_delivered_at,
@@ -126,8 +126,8 @@ export async function listDraftPage(
   bindings.push(input.limit);
 
   return db.prepare(`
-    SELECT d.id, d.to_email, d.cc, d.to_json, d.cc_json, d.bcc_json, d.subject, d.body, d.is_starred, d.created_at, d.updated_at,
-      d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key
+    SELECT d.id, d.to_email, d.cc, d.to_json, d.cc_json, d.bcc_json, d.subject, '' AS body, d.is_starred, d.created_at, d.updated_at,
+      d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key, d.body_object_id
     FROM workspace_drafts AS d
     WHERE ${conditions.join(' AND ')}
     ORDER BY d.updated_at DESC, d.id DESC

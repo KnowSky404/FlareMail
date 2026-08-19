@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import { FakeOutboundGateway, OutboundGatewayError } from '$lib/server/outbound/gateway';
 import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound';
 import { getWorkspaceMessageDeliveryDetail } from './delivery';
+import { saveWorkspaceDraft, DraftBodyReloadRequiredError } from './draft';
 import type { WorkspaceSession } from './shared';
 
 class TestStatement {
@@ -25,19 +26,34 @@ class TestD1 {
   }
 }
 
+class TestBucket {
+  private readonly objects = new Map<string, Uint8Array>();
+  async put(key: string, value: Uint8Array) { this.objects.set(key, new Uint8Array(value)); }
+  async get(key: string) {
+    const value = this.objects.get(key);
+    if (!value) return null;
+    return {
+      size: value.byteLength,
+      arrayBuffer: async () => value.slice().buffer
+    } as unknown as R2ObjectBody;
+  }
+  async delete(key: string) { this.objects.delete(key); }
+}
+
 const setup = () => {
   const database = new Database(':memory:');
   database.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
   database.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
-    VALUES ('flaremail', 11, '2026-08-19T00:00:00.000Z')`).run();
+    VALUES ('flaremail', 12, '2026-08-19T00:00:00.000Z')`).run();
   database.query(`INSERT INTO workspace_users
     (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '-- Owner', 0)`).run();
   database.query(`INSERT INTO workspace_sessions (id, user_id) VALUES ('session-1', 'user-1')`).run();
   const DB = new TestD1(database) as unknown as D1Database;
+  const BUCKET = new TestBucket() as unknown as R2Bucket;
   const env = {
     DB,
-    BUCKET: {} as R2Bucket,
+    BUCKET,
     APP_ENV: 'test',
     ALLOW_FAKE_SERVICES: 'true',
     OUTBOUND_PROVIDER: 'fake',
@@ -149,5 +165,49 @@ describe('outbound workspace persistence', () => {
     database.query(`UPDATE workspace_delivery_attempts SET started_at = ?, created_at = ? WHERE message_id = ?`).run('2026-08-12T00:00:00.000Z', '2026-08-12T00:00:00.000Z', first.message.id);
     await expect(retryWorkspaceMessageDelivery(env, session, first.message.id, { gateway: new FakeOutboundGateway() }))
       .rejects.toMatchObject({ kind: 'idempotency_expired' });
+  });
+
+  test('sends a large draft from its canonical body and refuses edited projections', async () => {
+    const { env, database, session } = setup();
+    const large = 'canonical-tail😀'.repeat(30_000);
+    const draft = await saveWorkspaceDraft(env, session, {
+      toEmail: 'alice@example.net', subject: 'Large draft', body: large
+    });
+    const stored = database.query('SELECT body, body_object_id FROM workspace_drafts WHERE id = ?').get(draft.message.id) as {
+      body: string; body_object_id: string;
+    };
+    expect(stored.body.length).toBeLessThan(large.length);
+
+    const legacyGateway = new FakeOutboundGateway({ providerMessageId: 're_large_legacy' });
+    await sendWorkspaceMessage(env, session, {
+      draftId: draft.message.id,
+      toEmail: 'alice@example.net',
+      subject: 'Large draft',
+      body: stored.body
+    }, { gateway: legacyGateway });
+    expect(legacyGateway.sent[0]?.text).toBe(large);
+
+    const second = await saveWorkspaceDraft(env, session, {
+      toEmail: 'alice@example.net', subject: 'Large draft 2', body: large
+    });
+    const secondStored = database.query('SELECT body FROM workspace_drafts WHERE id = ?').get(second.message.id) as { body: string };
+    await expect(sendWorkspaceMessage(env, session, {
+      draftId: second.message.id,
+      toEmail: 'alice@example.net',
+      subject: 'Large draft 2',
+      body: `${secondStored.body}edited without canonical load`
+    }, { gateway: new FakeOutboundGateway() })).rejects.toBeInstanceOf(DraftBodyReloadRequiredError);
+    expect(database.query('SELECT id FROM workspace_drafts WHERE id = ?').get(second.message.id)).not.toBeNull();
+
+    const edited = `${large}\ncanonical edit`;
+    const editedGateway = new FakeOutboundGateway({ providerMessageId: 're_large_edited' });
+    await sendWorkspaceMessage(env, session, {
+      draftId: second.message.id,
+      bodyRevision: second.bodyRevision ?? undefined,
+      toEmail: 'alice@example.net',
+      subject: 'Large draft 2',
+      body: edited
+    }, { gateway: editedGateway });
+    expect(editedGateway.sent[0]?.text).toBe(edited);
   });
 });

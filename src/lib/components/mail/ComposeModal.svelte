@@ -25,6 +25,7 @@
   const serializeComposeInput = (value: ComposeInput) =>
     JSON.stringify({
       draftId: value.draftId ?? null,
+      bodyRevision: value.bodyRevision ?? null,
       to: parseAddressList(value.to ?? value.toEmail ?? ''),
       cc: parseAddressList(value.cc ?? ''),
       bcc: parseAddressList(value.bcc ?? ''),
@@ -72,9 +73,9 @@
     onInputChange?: (input: ComposeInput) => void;
     onSaveDraft: (input: ComposeInput) => void | Promise<void>;
     onSend: (input: ComposeInput) => void | Promise<void>;
-    draftConflict?: MailMessage | null;
+    draftConflict?: Pick<MailMessage, 'id' | 'sentAt'> | null;
     localEditedAt?: string | null;
-    onLoadServerDraft?: () => void;
+    onLoadServerDraft?: () => void | Promise<void>;
     onSaveDraftCopy?: () => void | Promise<void>;
     onOverwriteServerDraft?: () => void | Promise<void>;
   } = $props();

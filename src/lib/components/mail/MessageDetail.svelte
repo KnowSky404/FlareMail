@@ -17,6 +17,9 @@
     deliveryDetail = null,
     deliveryDetailError = '',
     deliveryDetailPending = false,
+    workspaceBody = null,
+    workspaceBodyError = '',
+    workspaceBodyPending = false,
     pending = false,
     onEditDraft,
     onReply,
@@ -40,8 +43,11 @@
     deliveryDetail?: DeliveryDetail | null;
     deliveryDetailError?: string;
     deliveryDetailPending?: boolean;
+    workspaceBody?: string | null;
+    workspaceBodyError?: string;
+    workspaceBodyPending?: boolean;
     pending?: boolean;
-    onEditDraft?: (message: MailMessage) => void;
+    onEditDraft?: (message: MailMessage) => void | Promise<void>;
     onReply?: (message: MailMessage) => void;
     onForward?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
@@ -59,7 +65,7 @@
     message
       ? message.source === 'inbound'
         ? inboundDetail?.body ?? message.body
-        : message.body
+        : workspaceBody ?? message.body
       : ''
   );
   const hasHtml = $derived(Boolean(inboundDetail?.hasHtml));
@@ -99,14 +105,15 @@
   {#if message}
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <article class="mx-auto w-full max-w-4xl px-4 py-6 sm:px-8 sm:py-8 lg:px-12" aria-label="邮件正文详情">
-        {#if inboundDetailError || deliveryDetailError}
+        {#if inboundDetailError || deliveryDetailError || workspaceBodyError}
           <div class="mb-5 grid gap-2" aria-live="polite">
             {#if inboundDetailError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">正文载入失败：{inboundDetailError}</p>{/if}
+            {#if workspaceBodyError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">正文载入失败：{workspaceBodyError}</p>{/if}
             {#if deliveryDetailError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">投递回执载入失败：{deliveryDetailError}</p>{/if}
           </div>
         {/if}
 
-        <MessageBody body={visibleBody} loading={isInbound && inboundDetailPending && !inboundDetail} hasHtml={hasHtml} />
+        <MessageBody body={visibleBody} loading={(isInbound && inboundDetailPending && !inboundDetail) || (!isInbound && workspaceBodyPending && workspaceBody === null)} hasHtml={hasHtml} />
 
         {#if isInbound}
           <div class="mt-8">

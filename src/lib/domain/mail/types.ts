@@ -248,6 +248,8 @@ export interface LoginInput {
 export interface ComposeInput extends MailRfcHeaders {
   draftId?: string;
   expectedUpdatedAt?: string;
+  /** Opaque pointer proving that the editor loaded the canonical draft body. */
+  bodyRevision?: string;
   overwrite?: boolean;
   saveAsCopy?: boolean;
   /** New payload shape. Strings are accepted only as a legacy compatibility input. */

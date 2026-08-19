@@ -44,8 +44,10 @@
     deleteMessage,
     deleteSession,
     fetchDeliveryDetail,
+    fetchDraftDetail,
     fetchInboundDetail,
     fetchMailboxPage,
+    fetchMessageBody,
     persistDraft,
     retryDelivery,
     submitMessage,
@@ -81,6 +83,8 @@
   type AppSection = WorkspaceSection;
 
   type ComposeAutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+  type DraftConflictInfo = Pick<MailMessage, 'id' | 'sentAt'>;
+  type WorkspaceBodyDetail = { body: string };
 
   let { data }: { data: PageData } = $props();
   const serverWorkspace = $derived(data.workspace);
@@ -112,7 +116,7 @@
   let composeAutosaveStatus = $state<ComposeAutosaveStatus>('idle');
   let composeAutosaveMessage = $state('自动保存会在停顿后触发。');
   let composeLastSavedSignature = $state('');
-  let draftConflict = $state<MailMessage | null>(null);
+  let draftConflict = $state<DraftConflictInfo | null>(null);
   let draftConflictLocalEditedAt = $state<string | null>(null);
   let inboundDetails = $state<Record<string, InboundMessageDetail>>({});
   let deliveryDetails = $state<Record<string, DeliveryDetail>>({});
@@ -120,6 +124,9 @@
   let deliveryDetailErrors = $state<Record<string, string>>({});
   let inboundDetailPendingId = $state<string | null>(null);
   let deliveryDetailPendingId = $state<string | null>(null);
+  let workspaceBodies = $state<Record<string, WorkspaceBodyDetail>>({});
+  let workspaceBodyErrors = $state<Record<string, string>>({});
+  let workspaceBodyPendingId = $state<string | null>(null);
   let banner = $state('工作台已准备就绪，当前列表只展示真实写入或当前会话产生的数据。');
   let loginError = $state('');
   let profileStatus = $state('');
@@ -139,6 +146,11 @@
     deliveryDetails = snapshot.values;
     deliveryDetailErrors = snapshot.errors;
     deliveryDetailPendingId = snapshot.pendingId;
+  });
+  const workspaceBodyCache = new DetailCacheController<WorkspaceBodyDetail>('加载邮件正文失败。', (snapshot) => {
+    workspaceBodies = snapshot.values;
+    workspaceBodyErrors = snapshot.errors;
+    workspaceBodyPendingId = snapshot.pendingId;
   });
   const shortcuts = new WorkspaceShortcutController();
 
@@ -302,6 +314,16 @@
       ? deliveryDetailErrors[selectedMessage.id] ?? ''
       : ''
   );
+  const selectedWorkspaceBody = $derived(
+    selectedMessage && !isInboundMessageId(selectedMessage.id)
+      ? workspaceBodies[selectedMessage.id]?.body ?? null
+      : null
+  );
+  const selectedWorkspaceBodyError = $derived(
+    selectedMessage && !isInboundMessageId(selectedMessage.id)
+      ? workspaceBodyErrors[selectedMessage.id] ?? ''
+      : ''
+  );
   const composeBusy = $derived(pending || composeAutosavePending || composeClosePending);
 
   const clearComposeAutosaveTimer = () => {
@@ -334,8 +356,8 @@
     draftConflictLocalEditedAt = null;
   };
 
-  const syncComposeDraftState = (message: MailMessage, statusMessage: string) => {
-    const nextInput = composeInputFromSavedDraft(message);
+  const syncComposeDraftState = (message: MailMessage, statusMessage: string, bodyRevision?: string | null) => {
+    const nextInput = composeInputFromSavedDraft(message, bodyRevision);
 
     composeDraftId = message.id;
     composeLiveInput = nextInput;
@@ -398,6 +420,18 @@
   });
 
   $effect(() => {
+    if (
+      selectedMessage &&
+      !isInboundMessageId(selectedMessage.id) &&
+      !workspaceBodies[selectedMessage.id] &&
+      workspaceBodyPendingId !== selectedMessage.id &&
+      !workspaceBodyErrors[selectedMessage.id]
+    ) {
+      void loadWorkspaceBody(selectedMessage);
+    }
+  });
+
+  $effect(() => {
     clearComposeAutosaveTimer();
 
     const input = composeLiveInput;
@@ -453,6 +487,7 @@
       resetComposeState();
       inboundDetailCache.reset();
       deliveryDetailCache.reset();
+      workspaceBodyCache.reset();
     }
     const next = workspaceViewStateFromSnapshot(workspace, options);
     profile = next.profile;
@@ -502,6 +537,7 @@
     resetComposeState();
     inboundDetailCache.reset();
     deliveryDetailCache.reset();
+    workspaceBodyCache.reset();
     profileStatus = '';
     loginError = '';
     hydratedFromServer = false;
@@ -529,6 +565,24 @@
       async (signal) => (await fetchDeliveryDetail(message.id, signal)).detail,
       force
     );
+  }
+
+  async function loadWorkspaceBody(message: MailMessage, force = false) {
+    if (isInboundMessageId(message.id)) return false;
+    return workspaceBodyCache.load(
+      message.id,
+      async (signal) => await fetchMessageBody(message.id, signal),
+      force
+    );
+  }
+
+  function draftConflictFromError(error: unknown): DraftConflictInfo | null {
+    if (!(error instanceof ClientApiError) || error.code !== 'DRAFT_CONFLICT') return null;
+    const draftId = error.details?.draftId;
+    const updatedAt = error.details?.updatedAt;
+    return typeof draftId === 'string' && draftId.length > 0 && typeof updatedAt === 'string' && updatedAt.length > 0
+      ? { id: draftId, sentAt: updatedAt }
+      : null;
   }
 
   function updateWorkspaceUrl(
@@ -736,16 +790,18 @@
         if (save.isCurrent()) {
           syncComposeDraftState(
             result.message,
-            `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`
+            `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`,
+            result.bodyRevision
           );
         } else if (composeLiveInput) {
           composeDraftId = result.message.id;
-          composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message);
-          composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id });
+          composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message, result.bodyRevision);
+          composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id, bodyRevision: result.bodyRevision ?? undefined });
         }
       } catch (error) {
-        if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
-          draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+        const conflict = draftConflictFromError(error);
+        if (conflict) {
+          draftConflict = conflict;
           draftConflictLocalEditedAt = new Date().toISOString();
         }
         composeAutosaveStatus = 'error';
@@ -841,8 +897,9 @@
       resetComposeState();
       banner = (input.draftId ?? composeDraftId) ? '草稿已更新。' : '草稿已保存到工作区。';
     } catch (error) {
-      if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
-        draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+      const conflict = draftConflictFromError(error);
+      if (conflict) {
+        draftConflict = conflict;
         draftConflictLocalEditedAt = new Date().toISOString();
         composeAutosaveStatus = 'error';
         composeAutosaveMessage = '服务器版本已更新，请选择如何处理冲突。';
@@ -880,20 +937,22 @@
       if (save.isCurrent()) {
         syncComposeDraftState(
           result.message,
-          `已自动保存于 ${formatComposeSavedAt(result.message.sentAt)}。`
+          `已自动保存于 ${formatComposeSavedAt(result.message.sentAt)}。`,
+          result.bodyRevision
         );
       } else {
         composeDraftId = result.message.id;
-        if (composeLiveInput) composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message);
-        composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id });
+        if (composeLiveInput) composeLiveInput = mergeSavedDraftMetadata(composeLiveInput, result.message, result.bodyRevision);
+        composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id, bodyRevision: result.bodyRevision ?? undefined });
         composeTouched = true;
         composeAutosaveStatus = 'dirty';
         composeAutosaveMessage = '较早改动已保存，正在等待保存最新内容。';
       }
     } catch (error) {
       if (save.isActive()) {
-        if (error instanceof ClientApiError && error.code === 'DRAFT_CONFLICT') {
-          draftConflict = (error.details?.draft as MailMessage | undefined) ?? null;
+        const conflict = draftConflictFromError(error);
+        if (conflict) {
+          draftConflict = conflict;
           draftConflictLocalEditedAt = new Date().toISOString();
         }
         composeAutosaveStatus = 'error';
@@ -1003,12 +1062,18 @@
     }
   }
 
-  function loadServerDraft() {
+  async function loadServerDraft() {
     if (!draftConflict) return;
-    composeInitialInput = composeInputFromSavedDraft(draftConflict);
-    syncComposeDraftState(draftConflict, '已载入服务器版本。');
-    draftConflict = null;
-    draftConflictLocalEditedAt = null;
+    const conflict = draftConflict;
+    try {
+      const { message, bodyRevision } = await fetchDraftDetail(conflict.id);
+      composeInitialInput = composeInputFromSavedDraft(message, bodyRevision);
+      syncComposeDraftState(message, '已载入服务器版本。', bodyRevision);
+      draftConflict = null;
+      draftConflictLocalEditedAt = null;
+    } catch (error) {
+      banner = error instanceof Error ? error.message : '载入服务器草稿失败。';
+    }
   }
 
   async function saveDraftCopy() {
@@ -1106,9 +1171,14 @@
     }
   }
 
-  function handleEditDraft(message: MailMessage) {
-    openCompose('draft', composeInputFromSavedDraft(message));
-    banner = '你正在继续编辑一封草稿。';
+  async function handleEditDraft(message: MailMessage) {
+    try {
+      const current = await fetchDraftDetail(message.id);
+      openCompose('draft', composeInputFromSavedDraft(current.message, current.bodyRevision));
+      banner = '你正在继续编辑一封草稿。';
+    } catch (error) {
+      banner = error instanceof Error ? error.message : '载入草稿失败。';
+    }
   }
 
   async function handleReplyMessage(message: MailMessage) {
@@ -1118,7 +1188,15 @@
         return;
       }
     }
-    const quotedBody = isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? '' : message.body;
+    if (!isInboundMessageId(message.id) && !workspaceBodies[message.id]) {
+      if (!(await loadWorkspaceBody(message)) || !workspaceBodies[message.id]) {
+        banner = '正文尚未载入，暂时无法引用回复。';
+        return;
+      }
+    }
+    const quotedBody = isInboundMessageId(message.id)
+      ? inboundDetails[message.id]?.body ?? ''
+      : workspaceBodies[message.id]?.body ?? message.body;
 
     openCompose('reply', createReplyComposeInput(message, quotedBody));
     banner = `正在回复《${message.subject}》。`;
@@ -1131,7 +1209,15 @@
         return;
       }
     }
-    const forwardedBody = isInboundMessageId(message.id) ? inboundDetails[message.id]?.body ?? '' : message.body;
+    if (!isInboundMessageId(message.id) && !workspaceBodies[message.id]) {
+      if (!(await loadWorkspaceBody(message)) || !workspaceBodies[message.id]) {
+        banner = '正文尚未载入，暂时无法引用转发。';
+        return;
+      }
+    }
+    const forwardedBody = isInboundMessageId(message.id)
+      ? inboundDetails[message.id]?.body ?? ''
+      : workspaceBodies[message.id]?.body ?? message.body;
 
     openCompose('forward', createForwardComposeInput(message, forwardedBody));
     banner = `正在转发《${message.subject}》。`;
@@ -1334,6 +1420,9 @@
                     inboundDetail={selectedInboundDetail}
                     inboundDetailError={selectedInboundDetailError}
                     inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
+                    workspaceBody={selectedWorkspaceBody}
+                    workspaceBodyError={selectedWorkspaceBodyError}
+                    workspaceBodyPending={workspaceBodyPendingId === selectedMessage?.id}
                     {pending}
                     rawDownloadHref={selectedInboundDownloadHref}
                     showBack={true}

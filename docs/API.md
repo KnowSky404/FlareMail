@@ -25,19 +25,25 @@ returns a page with an opaque cursor. `q` and `filter` are optional server-side
 query parameters; a cursor is only valid for the same folder, section, query,
 and filter.
 
-Inbound list rows contain metadata and a short snippet but do not select or
-return the stored inbound body. The full body is loaded through the owned
-message detail route when the user opens a message. Ownership is checked on
-both list and detail paths.
+Mailbox list rows contain metadata and a short snippet but do not select or
+return stored inbound, sent, or draft bodies. Inbound text is loaded through
+the owned message detail route. Workspace sent text is loaded through
+`GET /api/workspace/messages/:id/body`; the response never contains raw HTML.
+Ownership is checked on every list and detail path.
 
 ## Draft concurrency
 
-Draft writes include `expectedUpdatedAt`, the version observed by the editor.
+`GET /api/workspace/drafts/:id` returns the current owned draft with its full
+text body and an opaque `bodyRevision`. Draft writes include `expectedUpdatedAt`,
+the version observed by the editor, and echo `bodyRevision` after a canonical
+body write. A client must present that revision before changing a tiered body;
+an edit based only on a list projection returns `DRAFT_BODY_RELOAD_REQUIRED`.
+
 The server updates only when that version still matches. A stale write returns
-HTTP `409` with a typed `DRAFT_CONFLICT` error and the current server draft
-metadata/body needed to choose between server and local content. The client
-keeps the local edit visible, shows both edit timestamps, and can explicitly
-reload the server version or overwrite after the user chooses.
+HTTP `409` with a typed `DRAFT_CONFLICT` error containing only `draftId` and
+`updatedAt`. The client keeps the local edit visible and explicitly fetches the
+owned current draft if the user chooses the server version; error envelopes do
+not reflect a mail body.
 
 ## Mailbox mutations
 

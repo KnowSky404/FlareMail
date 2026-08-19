@@ -32,15 +32,33 @@ class TestD1 {
 
 class TestBucket {
   readonly objects = new Map<string, Uint8Array>();
+  readonly metadata = new Map<string, Record<string, string>>();
   putCount = 0;
+  getCount = 0;
   failPuts = false;
-  async put(key: string, value: ArrayBuffer | Uint8Array) {
+  failGets = false;
+  failDeletes = false;
+  async put(key: string, value: ArrayBuffer | Uint8Array, options?: R2PutOptions) {
     if (this.failPuts) throw new Error('simulated r2 write failure');
     this.putCount += 1;
     this.objects.set(key, value instanceof Uint8Array ? new Uint8Array(value) : new Uint8Array(value.slice(0)));
+    this.metadata.set(key, options?.customMetadata ?? {});
     return {} as R2Object;
   }
-  async delete(key: string) { this.objects.delete(key); }
+  async get(key: string) {
+    this.getCount += 1;
+    if (this.failGets) throw new Error('simulated r2 read failure');
+    const bytes = this.objects.get(key);
+    if (!bytes) return null;
+    const response = new Response(bytes.buffer as ArrayBuffer);
+    return { body: response.body, size: bytes.byteLength, arrayBuffer: () => bytes.slice().buffer,
+      httpMetadata: { contentType: 'application/octet-stream' }, customMetadata: this.metadata.get(key) ?? {} } as unknown as R2Object;
+  }
+  async delete(key: string) {
+    if (this.failDeletes) throw new Error('simulated r2 delete failure');
+    this.objects.delete(key);
+    this.metadata.delete(key);
+  }
 }
 
 const fixtureBytes = (name = 'base64-attachment') => {
@@ -131,6 +149,26 @@ const notificationEnvironment = () => {
 };
 
 describe('inbound email persistence', () => {
+  test('stores large UTF-8 text/html in a canonical R2 body and bounded D1 projections', async () => {
+    const test = environment();
+    const boundary = 'body-boundary';
+    const raw = new TextEncoder().encode([
+      'From: alice@example.com', 'To: owner@example.test', 'Subject: Large body',
+      `Content-Type: multipart/alternative; boundary="${boundary}"`, '',
+      `--${boundary}`, 'Content-Type: text/plain; charset=utf-8', '', '正文😀'.repeat(70_000),
+      `--${boundary}`, 'Content-Type: text/html; charset=utf-8', '', `<p>${'内容中文'.repeat(40_000)}</p>`,
+      `--${boundary}--`, ''
+    ].join('\r\n'));
+    await handleInboundEmail(message(raw).value, test.env);
+    const row = test.database.query('SELECT body_object_id, length(text_body) AS text_length, length(html_body) AS html_length FROM email_messages').get() as { body_object_id: string | null; text_length: number; html_length: number };
+    expect(row.body_object_id).toBeString();
+    const projection = test.database.query('SELECT text_body, html_body FROM email_messages').get() as { text_body: string; html_body: string };
+    expect(new TextEncoder().encode(projection.text_body).byteLength).toBeLessThanOrEqual(128 * 1024);
+    expect(new TextEncoder().encode(projection.html_body).byteLength).toBeLessThanOrEqual(64 * 1024);
+    expect(test.BUCKET.objects.size).toBe(2);
+    expect(test.database.query('SELECT COUNT(*) AS count FROM mail_body_objects').get()).toEqual({ count: 1 });
+  });
+
   test('stores raw, parsed metadata and attachment exactly once', async () => {
     const test = environment();
     const first = message();

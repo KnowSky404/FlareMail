@@ -3,6 +3,21 @@ export function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+/** Return a prefix that fits within a UTF-8 byte budget without splitting text. */
+export function truncateUtf8(value: string, maxBytes: number): string {
+  if (maxBytes <= 0 || !value) return '';
+  if (utf8ByteLength(value) <= maxBytes) return value;
+  let bytes = 0;
+  let end = 0;
+  for (const codePoint of value) {
+    const size = utf8ByteLength(codePoint);
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    end += codePoint.length;
+  }
+  return value.slice(0, end);
+}
+
 export interface BoundedUtf8Result {
   value: string;
   bytes: number;

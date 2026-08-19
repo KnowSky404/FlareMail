@@ -50,7 +50,7 @@
     deliveryDetailPending?: boolean;
     showBack?: boolean;
     onBack?: () => void;
-    onEditDraft?: (message: MailMessage) => void;
+    onEditDraft?: (message: MailMessage) => void | Promise<void>;
     onForward?: (message: MailMessage) => void;
     onReply?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;

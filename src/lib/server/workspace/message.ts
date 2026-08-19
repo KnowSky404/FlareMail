@@ -1,5 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
+import { findOwnedDraft } from '$lib/server/db/drafts';
+import { markBodyObjectDeletePending } from '$lib/server/db/body';
 import { findOwnedInboundState } from '$lib/server/db/inbound';
 import { getWorkspaceCapabilities } from '$lib/server/db/capabilities';
 import { deleteDraft } from '$lib/server/db/drafts';
@@ -48,8 +50,12 @@ export async function deleteWorkspaceMessage(env: CloudflareEnv | undefined, ses
     statements.push(softDeleteInboundState(env.DB, session.userId, fromInboundMessageId(messageId), currentMessage.read, currentMessage.starred, timestamp));
   } else if (currentMessage.folder === 'drafts') {
     if (!capabilities.drafts) throw new Error('草稿表尚未迁移，请先执行最新的 D1 schema。');
+    const draft = await findOwnedDraft(env.DB, session.userId, messageId);
+    if (draft?.body_object_id) statements.push(markBodyObjectDeletePending(env.DB, draft.body_object_id, new Date(Date.now() + 86_400_000).toISOString(), timestamp));
     statements.push(deleteDraft(env.DB, session.userId, messageId));
   } else {
+    const workspaceRow = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
+    if (workspaceRow?.body_object_id) statements.push(markBodyObjectDeletePending(env.DB, workspaceRow.body_object_id, new Date(Date.now() + 86_400_000).toISOString(), timestamp));
     statements.push(deleteMessage(env.DB, session.userId, messageId));
     if (currentMessage.folder === 'sent' && capabilities.outboundStatuses) statements.push(deleteOutboundStatus(env.DB, session.userId, messageId));
   }

@@ -24,7 +24,7 @@ export type SessionResponse = {
 
 export type WorkspaceResponse = { ok: boolean; workspace?: WorkspacePayload; error?: string; profile?: UserProfile; metrics?: WorkspacePayload['metrics'] };
 
-export type MessageResponse = { ok: boolean; message: MailMessage; metrics: WorkspacePayload['metrics']; error?: string };
+export type MessageResponse = { ok: boolean; message: MailMessage; metrics: WorkspacePayload['metrics']; bodyRevision?: string | null; error?: string };
 export type DeleteResponse = WorkspaceResponse & { removedId: string; folder: MailFolder };
 
 export function fetchInboundDetail(messageId: string, signal?: AbortSignal) {
@@ -37,6 +37,20 @@ export function fetchInboundDetail(messageId: string, signal?: AbortSignal) {
 export function fetchDeliveryDetail(messageId: string, signal?: AbortSignal) {
   return requestJson<{ ok: boolean; detail: DeliveryDetail; error?: string }>(
     `/api/workspace/messages/${encodeURIComponent(messageId)}/delivery`,
+    { signal }
+  );
+}
+
+export function fetchMessageBody(messageId: string, signal?: AbortSignal) {
+  return requestJson<{ body: string }>(
+    `/api/workspace/messages/${encodeURIComponent(messageId)}/body`,
+    { signal }
+  );
+}
+
+export function fetchDraftDetail(draftId: string, signal?: AbortSignal) {
+  return requestJson<{ message: MailMessage; bodyRevision: string | null }>(
+    `/api/workspace/drafts/${encodeURIComponent(draftId)}`,
     { signal }
   );
 }

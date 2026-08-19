@@ -16,6 +16,7 @@ export interface InboundMessageInsert {
   rawKey: string;
   rawSize: number;
   ownerUserId: string | null;
+  bodyObjectId?: string | null;
 }
 
 export interface InboundIngestClaim {
@@ -97,8 +98,8 @@ export function insertInboundMessage(db: D1Database, message: InboundMessageInse
     INSERT INTO email_messages (
       id, message_id, "from", "to", cc, subject, "timestamp", snippet,
       text_body, html_body, in_reply_to, "references", thread_key,
-      direction, dedupe_key, idempotency_key, raw_key, raw_size, owner_user_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?)
+      direction, dedupe_key, idempotency_key, raw_key, raw_size, owner_user_id, body_object_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?)
   `).bind(
     message.id,
     message.messageId,
@@ -117,7 +118,8 @@ export function insertInboundMessage(db: D1Database, message: InboundMessageInse
     message.dedupeKey,
     message.rawKey,
     message.rawSize,
-    message.ownerUserId
+    message.ownerUserId,
+    message.bodyObjectId ?? null
   );
 }
 
@@ -129,7 +131,7 @@ export async function findOwnedInboundMessage(
   return db.prepare(`
     SELECT id, message_id, "from", "to", cc, subject, "timestamp", snippet,
       text_body, html_body, in_reply_to, "references", thread_key,
-      raw_key, raw_size, created_at
+      raw_key, raw_size, body_object_id, created_at
     FROM email_messages
     WHERE id = ? AND owner_user_id = ?
   `).bind(messageId, userId).first<{
@@ -148,6 +150,7 @@ export async function findOwnedInboundMessage(
     thread_key: string;
     raw_key: string;
     raw_size: number;
+    body_object_id: string | null;
     created_at: string;
   }>();
 }

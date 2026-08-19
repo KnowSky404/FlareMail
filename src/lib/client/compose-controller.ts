@@ -10,6 +10,7 @@ export function serializeComposeInput(input: ComposeInput | null) {
   if (!input) return '';
   return JSON.stringify({
     draftId: input.draftId?.trim() || null,
+    bodyRevision: input.bodyRevision ?? null,
     to: parseAddressList(input.to ?? input.toEmail ?? ''),
     cc: parseAddressList(input.cc ?? ''),
     bcc: parseAddressList(input.bcc ?? ''),
@@ -40,7 +41,7 @@ export function hasComposeContent(input: ComposeInput | null) {
   return Boolean(input && (parseAddressList(input.to ?? input.toEmail ?? '').length || parseAddressList(input.cc ?? '').length || parseAddressList(input.bcc ?? '').length || input.subject.trim() || input.body.trim()));
 }
 
-export function composeInputFromSavedDraft(message: MailMessage): ComposeInput {
+export function composeInputFromSavedDraft(message: MailMessage, bodyRevision?: string | null): ComposeInput {
   return {
     draftId: message.id,
     to: message.toAddresses ?? parseAddressList(message.toEmail),
@@ -52,15 +53,19 @@ export function composeInputFromSavedDraft(message: MailMessage): ComposeInput {
     messageId: message.messageId,
     inReplyTo: message.inReplyTo,
     references: message.references,
-    expectedUpdatedAt: message.sentAt
+    expectedUpdatedAt: message.sentAt,
+    ...(bodyRevision ? { bodyRevision } : {})
   };
 }
 
-export function mergeSavedDraftMetadata(input: ComposeInput, message: MailMessage): ComposeInput {
-  return withComposePersistence(input, {
-    draftId: message.id,
-    expectedUpdatedAt: message.sentAt
-  });
+export function mergeSavedDraftMetadata(input: ComposeInput, message: MailMessage, bodyRevision?: string | null): ComposeInput {
+  return {
+    ...withComposePersistence(input, {
+      draftId: message.id,
+      expectedUpdatedAt: message.sentAt
+    }),
+    ...(bodyRevision ? { bodyRevision } : { bodyRevision: undefined })
+  };
 }
 
 export function formatComposeSavedAt(value: string) {

@@ -35,8 +35,8 @@ describe('compose controller', () => {
   });
 
   test('carries the optimistic-concurrency version for existing and newly saved drafts', () => {
-    expect(composeInputFromSavedDraft(savedDraft())).toMatchObject({
-      draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:00.000Z'
+    expect(composeInputFromSavedDraft(savedDraft(), 'body-object-1')).toMatchObject({
+      draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:00.000Z', bodyRevision: 'body-object-1'
     });
     expect(withComposePersistence({ toEmail: '', subject: 'Latest edit', body: 'B' }, {
       draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:01.000Z'
@@ -47,8 +47,9 @@ describe('compose controller', () => {
 
   test('updates only persisted metadata when an earlier request finishes after a later edit', () => {
     const local = { ...composeInputFromSavedDraft(savedDraft()), body: 'newer local edit' };
-    const merged = mergeSavedDraftMetadata(local, savedDraft({ sentAt: '2026-08-19T10:00:01.000Z', body: 'older request body' }));
+    const merged = mergeSavedDraftMetadata(local, savedDraft({ sentAt: '2026-08-19T10:00:01.000Z', body: 'older request body' }), 'body-object-2');
     expect(merged.body).toBe('newer local edit');
     expect(merged.expectedUpdatedAt).toBe('2026-08-19T10:00:01.000Z');
+    expect(merged.bodyRevision).toBe('body-object-2');
   });
 });

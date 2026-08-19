@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  bodyMetadataDeleteSql,
   cutoffIso,
   d1Changes,
   d1Count,
@@ -44,6 +45,14 @@ describe('maintenance CLI safety helpers', () => {
     ];
     expect(orphanKeys(objects, new Set(['inbound/2026-08-01/abc/message.eml']))).toEqual(objects.slice(1));
     expect(isManagedR2Key(objects[1].key)).toBe(true);
+    expect(isManagedR2Key(`body/v1/workspace_message/message-1/object-id-${'a'.repeat(64)}.json`)).toBe(true);
     expect(isManagedR2Key(objects[2].key)).toBe(false);
+  });
+
+  test('deletes metadata only for reviewed managed body keys', () => {
+    const key = `body/v1/draft/draft-1/object-id-${'a'.repeat(64)}.json`;
+    expect(bodyMetadataDeleteSql([key, key, 'unmanaged/private'])).toEqual([
+      `DELETE FROM mail_body_objects WHERE state = 'delete_pending' AND r2_key IN ('${key}')`
+    ]);
   });
 });

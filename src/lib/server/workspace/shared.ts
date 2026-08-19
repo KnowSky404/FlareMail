@@ -116,6 +116,7 @@ export interface WorkspaceMessageRow {
   bcc_json?: string | null;
   idempotency_key?: string | null;
   archived_at?: string | null;
+  body_object_id?: string | null;
 }
 
 export interface WorkspaceDraftRow {
@@ -135,6 +136,7 @@ export interface WorkspaceDraftRow {
   references: string | null;
   thread_key: string | null;
   idempotency_key: string | null;
+  body_object_id?: string | null;
 }
 
 export interface WorkspaceInboundRow {
@@ -151,6 +153,7 @@ export interface WorkspaceInboundRow {
   references?: string | null;
   thread_key?: string | null;
   text_body?: string;
+  body_object_id?: string | null;
   archived_at?: string | null;
 }
 
@@ -386,7 +389,7 @@ export function serializeMessageForInsert(userId: string, message: MailMessage, 
   const ccAddresses = message.ccAddresses ?? parseAddressList(message.cc ?? '');
   const bccAddresses = message.bccAddresses ?? parseAddressList(message.bcc ?? '');
   return { userId, id: message.id, folder: message.folder, fromName: message.fromName, fromEmail: message.fromEmail,
-    toName: message.toName, toEmail: message.toEmail, subject: message.subject, preview: message.preview, body: message.body,
+    toName: message.toName, toEmail: message.toEmail, subject: message.subject, preview: message.preview, body: message.body, bodyObjectId: null as string | null,
     sentAt: message.sentAt, labelsJson: JSON.stringify(message.labels), isRead: message.read ? 1 : 0,
     isStarred: message.starred ? 1 : 0, messageId: message.messageId ?? null, inReplyTo: message.inReplyTo ?? null,
     references: message.references ?? null, threadKey: message.threadKey ?? null, cc: serializeAddressList(ccAddresses),
@@ -402,7 +405,7 @@ export function serializeDraftForInsert(userId: string, draft: MailMessage) {
   const bccAddresses = draft.bccAddresses ?? parseAddressList(draft.bcc ?? '');
   return { userId, id, toEmail: toAddresses[0]?.email ?? '',
     cc: serializeAddressList(ccAddresses), toJson: serializeAddressJson(toAddresses), ccJson: serializeAddressJson(ccAddresses), bccJson: serializeAddressJson(bccAddresses),
-    subject: draft.subject === '未命名草稿' ? '' : draft.subject, body: draft.body, isStarred: draft.starred ? 1 : 0,
+    subject: draft.subject === '未命名草稿' ? '' : draft.subject, body: draft.body, bodyObjectId: null as string | null, isStarred: draft.starred ? 1 : 0,
     messageId: draft.messageId ?? null, inReplyTo: draft.inReplyTo ?? null, references: draft.references ?? null,
     threadKey: draft.references ?? draft.inReplyTo ?? draft.messageId ?? null,
     idempotencyKey: `flaremail:draft:${id}`,

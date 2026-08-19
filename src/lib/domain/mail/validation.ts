@@ -1,4 +1,5 @@
 import type { ComposeInput, UserProfile } from './types';
+import { utf8ByteLength } from '$lib/domain/utf8';
 import {
   dedupeAddresses,
   inspectAddressList,
@@ -13,7 +14,9 @@ export const MAIL_LIMITS = Object.freeze({
   email: 254,
   to: 4_096,
   subject: 998,
-  body: 1_048_576,
+  // Keep compose parsing, JSON serialization and provider payloads well below
+  // the 128 MiB Worker isolate ceiling. Inbound MIME has a separate limit.
+  body: 8 * 1024 * 1024,
   cc: 4_096,
   bcc: 4_096,
   recipients: MAX_RECIPIENTS,
@@ -72,9 +75,19 @@ function bounded(value: string, max: number, field: string, label: string, requi
   return [normalized, issues];
 }
 
+function boundedBody(value: string): [string, ValidationIssue[]] {
+  const normalized = value.trim();
+  const issues: ValidationIssue[] = [];
+  if (!normalized) issues.push({ field: 'body', message: '正文不能为空。' });
+  const bytes = utf8ByteLength(normalized);
+  if (bytes > MAIL_LIMITS.body) issues.push({ field: 'body', message: `正文不能超过 ${MAIL_LIMITS.body} 个 UTF-8 字节。` });
+  return [normalized, issues];
+}
+
 function validateMailInput(input: ComposeInput, requireSendFields: boolean): ValidationResult<ComposeInput> {
   const [subject, subjectIssues] = bounded(input.subject, MAIL_LIMITS.subject, 'subject', '主题', requireSendFields);
-  const [body, bodyIssues] = bounded(input.body, MAIL_LIMITS.body, 'body', '正文', requireSendFields);
+  const [body, bodyIssues] = boundedBody(input.body);
+  if (!requireSendFields && !body) bodyIssues.length = 0;
   const issues = [...subjectIssues, ...bodyIssues];
   const parsed: Record<'to' | 'cc' | 'bcc', MailAddress[]> = { to: [], cc: [], bcc: [] };
   const sources: Array<['to' | 'cc' | 'bcc', string | MailAddressInput[] | undefined, number]> = [

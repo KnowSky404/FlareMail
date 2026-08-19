@@ -11,6 +11,22 @@ Do not lower PBKDF2 password-hash strength to fit a plan limit. If a workload is
 too expensive, change the deployment plan or workload shape deliberately and
 record the evidence.
 
+## Persisted text and object budgets
+
+- D1 `TEXT`/`BLOB` and row limits are treated as 2 MB hard ceilings. FlareMail
+  keeps mail-body projections far below them: 128 KiB text, 64 KiB HTML, and a
+  4 KiB snippet. Bounds use encoded UTF-8 bytes, not JavaScript `.length`.
+- Compose text is limited to 8 MiB UTF-8 so request parsing, canonical JSON,
+  hashing, and provider serialization remain below the 128 MiB Worker isolate
+  memory ceiling. The bounded JSON request reader also caps observed bytes.
+- Canonical large bodies are stored in R2 with a 32 MiB encoded-envelope cap;
+  D1 stores the pointer, byte counts, digest, and bounded projections.
+- Mailbox list and SSR queries do not select body columns. Owned body routes
+  perform lazy R2 reads and integrity checks.
+- R2 orphan deletion is disabled in ordinary maintenance runs. Apply mode also
+  requires a separately reviewed manifest and only recognizes repository-owned
+  key shapes.
+
 ## Manual preview measurement
 
 This repository does not run a remote benchmark automatically. An operator

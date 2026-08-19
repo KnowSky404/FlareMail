@@ -1,7 +1,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
-import { DraftConflictError, DraftNotFoundError, saveWorkspaceDraft } from './draft';
+import { DraftBodyReloadRequiredError, DraftConflictError, DraftNotFoundError, saveWorkspaceDraft } from './draft';
 import type { WorkspaceContext } from './shared';
 
 class Statement {
@@ -18,6 +18,12 @@ class D1 {
   async batch(statements: D1PreparedStatement[]) { return Promise.all(statements.map((statement) => statement.run())); }
 }
 
+class Bucket {
+  readonly objects = new Set<string>();
+  async put(key: string) { this.objects.add(key); }
+  async delete(key: string) { this.objects.delete(key); }
+}
+
 const fixture = () => {
   const database = new Database(':memory:');
   database.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
@@ -27,7 +33,8 @@ const fixture = () => {
   const session: WorkspaceContext = { id: 'session-1', userId: 'user-1', profile: {
     name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: ''
   }, incomingSequence: 0, createdAt: '', updatedAt: '', storage: 'd1' };
-  return { database, DB, env: { DB } as never, session };
+  const bucket = new Bucket();
+  return { database, DB, bucket, env: { DB, BUCKET: bucket } as never, session };
 };
 
 const input = (extra: Record<string, unknown> = {}) => ({ toEmail: 'alice@example.net', cc: '', subject: 'Subject', body: 'Body', ...extra });
@@ -51,6 +58,47 @@ describe('draft optimistic concurrency', () => {
     database.query('DELETE FROM workspace_drafts WHERE id = ?').run(consecutive.message.id);
     await expect(saveWorkspaceDraft(env, session, input({ draftId: consecutive.message.id, expectedUpdatedAt: consecutive.message.sentAt })))
       .rejects.toBeInstanceOf(DraftNotFoundError);
+    void DB;
+  });
+
+  test('does not mutate body metadata or R2 on a large draft CAS conflict', async () => {
+    const { DB, env, session, database, bucket } = fixture();
+    const large = '正文😀'.repeat(90_000);
+    const created = await saveWorkspaceDraft(env, session, input({ body: large }));
+    const before = database.query('SELECT body_object_id FROM workspace_drafts WHERE id = ?').get(created.message.id) as { body_object_id: string | null };
+    expect(before.body_object_id).toBeString();
+    expect(bucket.objects.size).toBe(1);
+    const objectCount = Number((database.query('SELECT COUNT(*) AS count FROM mail_body_objects').get() as { count: number }).count);
+    await expect(saveWorkspaceDraft(env, session, input({ draftId: created.message.id, expectedUpdatedAt: '2000-01-01T00:00:00.000Z', bodyRevision: created.bodyRevision, body: `${large}changed` })))
+      .rejects.toBeInstanceOf(DraftConflictError);
+    expect(Number((database.query('SELECT COUNT(*) AS count FROM mail_body_objects').get() as { count: number }).count)).toBe(objectCount);
+    expect(database.query('SELECT state FROM mail_body_objects').get()).toEqual({ state: 'active' });
+    expect(bucket.objects.size).toBe(1);
+    void DB;
+  });
+
+  test('preserves a canonical pointer for an unchanged legacy projection and rejects projection edits', async () => {
+    const { DB, env, session, database, bucket } = fixture();
+    const large = 'tail-safe😀'.repeat(40_000);
+    const created = await saveWorkspaceDraft(env, session, input({ body: large }));
+    const row = database.query('SELECT body, body_object_id, updated_at FROM workspace_drafts WHERE id = ?').get(created.message.id) as {
+      body: string; body_object_id: string; updated_at: string;
+    };
+    const metadataOnly = await saveWorkspaceDraft(env, session, input({
+      draftId: created.message.id,
+      expectedUpdatedAt: row.updated_at,
+      subject: 'Metadata changed',
+      body: row.body
+    }));
+    expect(metadataOnly.bodyRevision).toBe(row.body_object_id);
+    expect(bucket.objects.size).toBe(1);
+    expect((database.query('SELECT body_object_id FROM workspace_drafts WHERE id = ?').get(created.message.id) as { body_object_id: string }).body_object_id)
+      .toBe(row.body_object_id);
+    await expect(saveWorkspaceDraft(env, session, input({
+      draftId: created.message.id,
+      expectedUpdatedAt: metadataOnly.message.sentAt,
+      body: `${row.body}unsafe edit`
+    }))).rejects.toBeInstanceOf(DraftBodyReloadRequiredError);
     void DB;
   });
 });

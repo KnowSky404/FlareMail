@@ -1,6 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { getWorkspaceCapabilities, hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
-import { deleteDraft } from '$lib/server/db/drafts';
+import { deleteDraft, findOwnedDraft } from '$lib/server/db/drafts';
+import { deleteBodyObjectRow, insertBodyObject, markBodyObjectDeletePending, findBodyObject } from '$lib/server/db/body';
 import {
   findDeliveryStatus,
   finishDeliveryAttempt,
@@ -20,6 +21,7 @@ import {
 import { createOutboundGateway, outboundProviderName } from '$lib/server/outbound/provider';
 import {
   createSentMessage,
+  mapDraftRow,
   nowIso,
   serializeMessageForInsert,
   serializeOutboundEventInsert,
@@ -32,11 +34,13 @@ import {
 } from '$lib/server/workspace/shared';
 import { parseAddressList, serializeAddress, type MailAddress } from '$lib/domain/mail';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
+import { prepareBodyObject, projectBody, putBodyObject, readBodyObject, type CanonicalBody } from '$lib/server/body';
 import {
   assertPersistedDeliveryRetryable,
   DeliveryNotRetryableError,
   reconcilePendingResendEvents
 } from '$lib/server/workspace/delivery';
+import { DraftBodyReloadRequiredError, DraftConflictError } from '$lib/server/workspace/draft';
 
 export interface OutboundSubmissionOptions {
   requestId?: string | null;
@@ -66,14 +70,15 @@ const threadKey = (message: MailMessage) => {
 const providerRecipients = (addresses: readonly MailAddress[]) => addresses.map(serializeAddress);
 const optionalProviderRecipients = (addresses: readonly MailAddress[]) => addresses.length ? providerRecipients(addresses) : undefined;
 
-const gatewayInput = (env: CloudflareEnv | undefined, message: MailMessage, idempotencyKey: string): OutboundMailInput => ({
+const gatewayInput = (env: CloudflareEnv | undefined, message: MailMessage, idempotencyKey: string, body?: CanonicalBody): OutboundMailInput => ({
   idempotencyKey,
   from: sender(env, message),
   to: providerRecipients(message.toAddresses ?? parseAddressList(message.toEmail)),
   cc: optionalProviderRecipients(message.ccAddresses ?? parseAddressList(message.cc ?? '')),
   bcc: optionalProviderRecipients(message.bccAddresses ?? parseAddressList(message.bcc ?? '')),
   subject: message.subject,
-  text: message.body,
+  text: body?.textBody ?? message.body,
+  html: body?.htmlBody || undefined,
   replyTo: env?.OUTBOUND_FROM_EMAIL?.trim() ? [env.OUTBOUND_FROM_EMAIL.trim()] : [message.fromEmail.trim()],
   headers: Object.fromEntries([
     ['Message-ID', headerValue(message.messageId)],
@@ -138,7 +143,8 @@ async function submitPersistedMessage(
   idempotencyKey: string,
   attempts: number,
   gateway: OutboundMailGateway,
-  provider: string
+  provider: string,
+  body?: CanonicalBody
 ) {
   const startedAt = nowIso();
   const attemptNumber = attempts + 1;
@@ -153,7 +159,7 @@ async function submitPersistedMessage(
   console.log(JSON.stringify({ event: 'outbound_phase', phase: 'd1_attempt_persist', durationMs: Date.now() - d1StartedAt }));
 
   try {
-    const result = await gateway.send(gatewayInput(env, message, idempotencyKey));
+    const result = await gateway.send(gatewayInput(env, message, idempotencyKey, body));
     const completedAt = nowIso();
     const state = statusPayload({ session, messageId: message.id, idempotencyKey, provider, status: 'submitted',
       attempts: attemptNumber, providerMessageId: result.providerMessageId, remoteTimestamp: completedAt });
@@ -222,25 +228,67 @@ export async function sendWorkspaceMessage(
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? 'injected' : outboundProviderName(env);
 
+  const existingDraft = draftId && capabilities.drafts ? await findOwnedDraft(env.DB, session.userId, draftId) : null;
+  let canonicalBody: CanonicalBody = { version: 1, textBody: input.body, htmlBody: '' };
+  if (existingDraft?.body_object_id) {
+    const requestedBodyRevision = input.bodyRevision?.trim() || null;
+    if (requestedBodyRevision && requestedBodyRevision !== existingDraft.body_object_id) {
+      throw new DraftConflictError(mapDraftRow(existingDraft, session.profile));
+    }
+    if (!requestedBodyRevision && input.body !== existingDraft.body) {
+      throw new DraftBodyReloadRequiredError();
+    }
+    if (!requestedBodyRevision) {
+      if (!env.BUCKET) throw new Error('BODY_STORAGE_UNAVAILABLE');
+      const draftObject = await findBodyObject(env.DB, existingDraft.body_object_id, session.userId, 'draft', draftId);
+      if (!draftObject) throw new Error('BODY_OBJECT_NOT_FOUND');
+      canonicalBody = await readBodyObject(env.BUCKET, draftObject.r2_key, draftObject.size_bytes, draftObject.sha256);
+    }
+  }
+
   const message = createSentMessage({ id: messageId, from: session.profile, to: input.to, toEmail: input.toEmail, subject: input.subject,
-    body: input.body, cc: input.cc, bcc: input.bcc, messageId: input.messageId || localMessageId(messageId, env, session.profile.email),
+    body: canonicalBody.textBody, cc: input.cc, bcc: input.bcc, messageId: input.messageId || localMessageId(messageId, env, session.profile.email),
     inReplyTo: input.inReplyTo, references: input.references, deliveryStatus: 'submitting', deliveryAttempts: 0 });
   message.threadKey = threadKey(message);
   const timestamp = nowIso();
-  const statements = [insertMessage(env.DB, serializeMessageForInsert(session.userId, message, idempotencyKey)),
-  ];
-  if (draftId && capabilities.drafts) statements.unshift(deleteDraft(env.DB, session.userId, draftId));
+  const bodyObject = await prepareBodyObject('workspace_message', message.id, canonicalBody.textBody, canonicalBody.htmlBody);
+  if (bodyObject && !env.BUCKET) throw new Error('BODY_STORAGE_UNAVAILABLE');
+  if (bodyObject) await putBodyObject(env.BUCKET, bodyObject);
+  const projected = projectBody(canonicalBody.textBody, canonicalBody.htmlBody, message.preview);
+  const serialized = serializeMessageForInsert(session.userId, { ...message, body: bodyObject ? projected.textBody : canonicalBody.textBody, preview: projected.snippet }, idempotencyKey);
+  serialized.bodyObjectId = bodyObject?.id ?? null;
+  const statements: D1PreparedStatement[] = [];
+  if (existingDraft?.body_object_id && existingDraft.body_object_id !== bodyObject?.id) {
+    statements.push(markBodyObjectDeletePending(env.DB, existingDraft.body_object_id, new Date(Date.now() + 86_400_000).toISOString(), timestamp));
+  }
+  if (bodyObject) statements.push(insertBodyObject(env.DB, {
+    id: bodyObject.id, owner_user_id: session.userId, entity_type: 'workspace_message', entity_id: message.id,
+    r2_key: bodyObject.key, size_bytes: bodyObject.sizeBytes, sha256: bodyObject.sha256,
+    text_bytes: bodyObject.textBytes, html_bytes: bodyObject.htmlBytes, createdAt: timestamp
+  }));
+  if (draftId && capabilities.drafts) statements.push(deleteDraft(env.DB, session.userId, draftId));
+  statements.push(insertMessage(env.DB, serialized));
   try {
     await env.DB.batch(statements);
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       const concurrent = await findMessageByIdempotencyKey(env.DB, session.userId, idempotencyKey);
-      if (concurrent) return refreshedResult(env, session, concurrent.id);
+      if (concurrent) {
+        if (bodyObject) {
+          await deleteBodyObjectRow(env.DB, bodyObject.id).run().catch(() => undefined);
+          await env.BUCKET.delete(bodyObject.key).catch(() => undefined);
+        }
+        return refreshedResult(env, session, concurrent.id);
+      }
+    }
+    if (bodyObject) {
+      await deleteBodyObjectRow(env.DB, bodyObject.id).run().catch(() => undefined);
+      await env.BUCKET.delete(bodyObject.key).catch(() => undefined);
     }
     throw error;
   }
 
-  await submitPersistedMessage(env, session, message, idempotencyKey, 0, gateway, provider);
+  await submitPersistedMessage(env, session, message, idempotencyKey, 0, gateway, provider, bodyObject?.body);
   return refreshedResult(env, session, message.id);
 }
 
@@ -278,6 +326,13 @@ export async function retryWorkspaceMessageDelivery(
   }
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? delivery.provider || 'injected' : outboundProviderName(env);
-  await submitPersistedMessage(env, session, message, delivery.idempotency_key, delivery.attempts, gateway, provider);
+  let body: CanonicalBody | undefined;
+  if (row.body_object_id) {
+    if (!env.BUCKET) throw new Error('BODY_STORAGE_UNAVAILABLE');
+    const object = await findBodyObject(env.DB, row.body_object_id, session.userId, 'workspace_message', messageId);
+    if (!object) throw new Error('BODY_OBJECT_NOT_FOUND');
+    body = await readBodyObject(env.BUCKET, object.r2_key, object.size_bytes, object.sha256);
+  }
+  await submitPersistedMessage(env, session, message, delivery.idempotency_key, delivery.attempts, gateway, provider, body);
   return refreshedResult(env, session, message.id);
 }

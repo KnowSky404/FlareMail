@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS email_messages (
   provider_message_id TEXT,
   idempotency_key TEXT,
   owner_user_id TEXT,
+  body_object_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -99,6 +100,7 @@ CREATE TABLE IF NOT EXISTS workspace_messages (
   provider_message_id TEXT,
   idempotency_key TEXT,
   archived_at TEXT,
+  body_object_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -156,6 +158,7 @@ CREATE TABLE IF NOT EXISTS workspace_drafts (
   "references" TEXT,
   thread_key TEXT,
   idempotency_key TEXT,
+  body_object_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -165,6 +168,25 @@ CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_updated_at
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_drafts_idempotency_key ON workspace_drafts(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_drafts_thread_key ON workspace_drafts(user_id, thread_key, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS mail_body_objects (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('email_message', 'workspace_message', 'draft')),
+  entity_id TEXT NOT NULL,
+  r2_key TEXT NOT NULL UNIQUE,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+  sha256 TEXT NOT NULL,
+  text_bytes INTEGER NOT NULL DEFAULT 0 CHECK (text_bytes >= 0),
+  html_bytes INTEGER NOT NULL DEFAULT 0 CHECK (html_bytes >= 0),
+  state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'delete_pending', 'deleted')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  delete_after TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_mail_body_cleanup ON mail_body_objects(state, delete_after);
+CREATE INDEX IF NOT EXISTS idx_mail_body_owner ON mail_body_objects(owner_user_id, entity_type, entity_id);
 
 CREATE TABLE IF NOT EXISTS workspace_email_states (
   id TEXT PRIMARY KEY,
