@@ -60,6 +60,7 @@
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
   import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl } from '$lib/client/workspace-url-controller';
+  import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
   import {
     buildMailThreads,
     cloneMailbox,
@@ -144,9 +145,6 @@
   let profileStatus = $state('');
   let pending = $state(false);
   let mailboxLoading = $state(false);
-  let hydratedFromServer = $state(false);
-  let appliedServerRevision = '';
-  let appliedWorkspaceIdentity = '';
   let composeSavePromise: Promise<void> | null = null;
   const composeAutosave = new ComposeAutosaveController();
   const inboundDetailCache = new DetailCacheController<InboundMessageDetail>('加载原始邮件失败。', (snapshot) => {
@@ -166,6 +164,7 @@
   });
   const shortcuts = new WorkspaceShortcutController();
   const toastController = new ToastController((messages) => (toastMessages = messages));
+  const workspaceSnapshotController = new WorkspaceSnapshotController();
 
   const notify = (message: string, tone: ToastTone = 'info', options: {
     requestId?: string;
@@ -185,7 +184,6 @@
   const urlQuery = $derived(urlState.query);
   const urlFilter = $derived(urlState.filter);
   const urlMessageId = $derived(urlState.messageId);
-  const serverRevision = $derived(serverWorkspace ? JSON.stringify(serverWorkspace) : '');
 
   $effect(() => {
     activeSection = urlSection;
@@ -198,19 +196,18 @@
 
   $effect(() => {
     const workspace = serverWorkspace;
-    const revision = serverRevision;
-    if (workspace && revision !== appliedServerRevision) {
+    if (workspace) {
+      const decision = workspaceSnapshotController.accept(data.snapshotIdentity, workspace.profile.email);
+      if (!decision.apply) return;
       untrack(() => {
         applyWorkspaceSnapshot(workspace, {
           section: urlSection,
           preferredMessageId: urlMessageId,
-          resetUserScoped: Boolean(appliedWorkspaceIdentity && appliedWorkspaceIdentity !== workspace.profile.email)
+          resetUserScoped: decision.resetUserScoped
         });
-        if (!hydratedFromServer) {
+        if (decision.announceRestore) {
           notify('工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。', 'success');
         }
-        hydratedFromServer = true;
-        appliedServerRevision = revision;
       });
     }
   });
@@ -525,7 +522,7 @@
     mailFilter = next.mailFilter;
     mobileDetailOpen = false;
     authenticated = true;
-    appliedWorkspaceIdentity = workspace.profile.email;
+    workspaceSnapshotController.noteUser(workspace.profile.email);
 
     if (options?.syncUrl) {
       updateWorkspaceUrl(
@@ -563,9 +560,7 @@
     workspaceBodyCache.reset();
     profileStatus = '';
     loginError = '';
-    hydratedFromServer = false;
-    appliedServerRevision = '';
-    appliedWorkspaceIdentity = '';
+    workspaceSnapshotController.reset();
   }
 
   async function loadInboundDetail(message: MailMessage, force = false) {

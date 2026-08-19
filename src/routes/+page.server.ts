@@ -38,6 +38,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
   const emptyData = (runtimeState: RuntimeState) => ({
     dbBound,
     bucketBound,
+    snapshotIdentity: requestId,
     workspace: null,
     runtimeDiagnostics: null,
     schemaReady: runtimeState.state === 'ready',
@@ -80,6 +81,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
     return {
       dbBound,
       bucketBound,
+      snapshotIdentity: requestId,
       workspace,
       runtimeDiagnostics: safeRuntimeDiagnostics(env),
       schemaReady: true,
