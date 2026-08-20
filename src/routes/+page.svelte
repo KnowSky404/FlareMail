@@ -156,6 +156,7 @@
   let workspaceBodyErrors = $state<Record<string, string>>({});
   let workspaceBodyPendingId = $state<string | null>(null);
   let toastMessages = $state<ToastMessage[]>([]);
+  let runtimeOperationError = $state(false);
   let loginError = $state('');
   let profileStatus = $state('');
   let pending = $state(false);
@@ -217,11 +218,14 @@
     action?: { label: string; run: () => void | Promise<void> };
   } = {}) => toastController.push({ tone, message, ...options });
 
-  const notifyError = (error: unknown, fallback: string) => notify(
-    error instanceof Error ? error.message : fallback,
-    'error',
-    { requestId: error instanceof ClientApiError ? error.requestId : undefined }
-  );
+  const notifyError = (error: unknown, fallback: string) => {
+    if (!(error instanceof ClientApiError) || error.status >= 500) runtimeOperationError = true;
+    notify(
+      error instanceof Error ? error.message : fallback,
+      'error',
+      { requestId: error instanceof ClientApiError ? error.requestId : undefined }
+    );
+  };
 
   const urlState = $derived(readWorkspaceUrl(page.url));
   const urlSection = $derived(urlState.section);
@@ -258,7 +262,7 @@
 
   const unreadCount = $derived(metrics.unreadCount);
   const serviceDegraded = $derived(
-    metrics.delayedCount + metrics.failedCount + metrics.bouncedCount + metrics.complainedCount + metrics.staleDeliveryCount > 0
+    runtimeOperationError || metrics.delayedCount + metrics.failedCount + metrics.bouncedCount + metrics.complainedCount + metrics.staleDeliveryCount > 0
   );
   const activeMessages = $derived(
     activeSection === 'trash'
@@ -448,6 +452,7 @@
     mailbox = merged.snapshot.mailbox;
     mailboxPages = merged.snapshot.mailboxPages;
     metrics = merged.snapshot.metrics;
+    runtimeOperationError = false;
     authenticated = true;
     if (options?.section) activeSection = options.section;
     if (options?.clearMailView) {
@@ -618,6 +623,7 @@
     workspaceBodyCache.reset();
     profileStatus = '';
     loginError = '';
+    runtimeOperationError = false;
     workspaceSnapshotController.reset();
   }
 
@@ -779,7 +785,10 @@
   async function refreshWorkspace() {
     if (activeSection === 'trash') {
       const refreshed = await trashController.load();
-      if (refreshed) notify('垃圾箱已刷新。', 'success');
+      if (refreshed) {
+        runtimeOperationError = false;
+        notify('垃圾箱已刷新。', 'success');
+      }
       return;
     }
     const refreshed = await mailboxController.refresh(
@@ -787,7 +796,10 @@
       searchQuery,
       mailFilter
     );
-    if (refreshed) notify('邮件列表已刷新。', 'success');
+    if (refreshed) {
+      runtimeOperationError = false;
+      notify('邮件列表已刷新。', 'success');
+    }
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {
@@ -795,6 +807,7 @@
     mailbox = merged.mailbox;
     mailboxPages = merged.mailboxPages;
     metrics = merged.metrics;
+    runtimeOperationError = false;
     const currentMessages = merged.mailboxPages?.[page.folder]?.messages ?? [];
     if (activeSection === page.folder) {
       selectedMessageIds = reconcileBulkSelection(selectedMessageIds, currentMessages);
@@ -1011,6 +1024,7 @@
 
       profile = result.profile ?? profile;
       metrics = result.metrics ?? metrics;
+      runtimeOperationError = false;
       profileStatus = '个人资料已保存到工作区。';
       notify('个人信息已更新，写信时会自动使用新的身份与签名。', 'success');
     } catch (error) {
@@ -1343,6 +1357,7 @@
       mailbox = removed.snapshot.mailbox;
       mailboxPages = removed.snapshot.mailboxPages;
       metrics = removed.snapshot.metrics;
+      runtimeOperationError = false;
       trashLoaded = false;
       selectedMessageId = removed.selectedMessageId;
       selectedMessageIds = selectedMessageIds.filter((id) => id !== result.removedId);
@@ -1388,6 +1403,7 @@
     try {
       const result = await restoreTrashItem(message.id);
       metrics = result.metrics;
+      runtimeOperationError = false;
       removeTrashItemFromView(message.id);
       notify(`已恢复到${result.originalFolder === 'archive' ? '归档' : result.originalFolder === 'sent' ? '已发送' : result.originalFolder === 'drafts' ? '草稿箱' : '收件箱'}。`, 'success');
     } catch (error) {
@@ -1402,6 +1418,7 @@
     try {
       const result = await permanentlyDeleteTrashItem(message.id);
       metrics = result.metrics;
+      runtimeOperationError = false;
       removeTrashItemFromView(message.id);
       inboundDetailCache.invalidate(message.id);
       deliveryDetailCache.invalidate(message.id);
@@ -1423,6 +1440,7 @@
     try {
       const result = await emptyTrash();
       metrics = result.metrics;
+      runtimeOperationError = false;
       for (const item of trashItems) {
         inboundDetailCache.invalidate(item.id);
         deliveryDetailCache.invalidate(item.id);
@@ -1965,6 +1983,10 @@
   }
 
   @media (max-width: 767px) {
+    :global(.fm-workspace-body) {
+      height: calc(100dvh - 52px - env(safe-area-inset-top));
+    }
+
     .mail-workspace,
     .mail-detail-panel {
       width: 100%;
@@ -1982,7 +2004,7 @@
 
     :global(.fm-workspace-body.mobile-detail-mode) {
       grid-template-rows: minmax(0, 1fr);
-      height: 100dvh;
+      height: calc(100dvh - env(safe-area-inset-top));
     }
 
   }

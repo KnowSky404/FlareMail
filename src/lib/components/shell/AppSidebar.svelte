@@ -48,7 +48,7 @@
 </script>
 
 <aside class="sidebar" aria-label="邮箱导航">
-  <button class="compose" type="button" disabled={pending} onclick={onCompose}>
+  <button class="compose" type="button" aria-label="写邮件" title="写邮件" disabled={pending} onclick={onCompose}>
     <PenLine size={18} strokeWidth={2} aria-hidden="true" />
     <span>写邮件</span>
   </button>

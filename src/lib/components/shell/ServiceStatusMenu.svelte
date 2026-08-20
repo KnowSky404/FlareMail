@@ -37,7 +37,7 @@
       <span>全局状态正常</span>
     {:else}
       <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
-      <span>全局投递状态需处理</span>
+      <span>全局状态需处理</span>
     {/if}
     <ChevronDown class="chevron" size={14} aria-hidden="true" />
   </summary>

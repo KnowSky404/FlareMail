@@ -101,7 +101,7 @@
 
   <button class="command" type="button" onclick={onSearch}>
     <Search size={16} aria-hidden="true" />
-    <span>搜索邮件或输入快捷命令</span>
+    <span>搜索邮件</span>
     <kbd>/</kbd>
   </button>
 
