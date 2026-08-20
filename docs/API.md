@@ -113,6 +113,21 @@ objects. `GET /api/workspace/messages/:id/body` includes sent attachment
 summaries, and the owned attachment route forces safe download headers after a
 fresh integrity check.
 
+## Inbound attachment downloads
+
+Email Routing ingest computes SHA-256 from the already bounded parsed bytes and
+persists the same lowercase digest in R2 put metadata and the owned D1
+attachment row. The download route first resolves session, message,
+relation, attachment ID, and owner scope. It then requires the object, exact
+size, and, for new rows, a matching SHA-256 before returning any bytes.
+
+Missing, size-mismatched, and checksum-mismatched objects return controlled
+typed errors without an R2 key, filename, object bytes, or storage exception.
+Responses retain `no-store`, `nosniff`, safe `Content-Disposition`, and a
+bounded content type. Historical checksum-null rows use actual-byte size
+verification and the degraded integrity event until an operator runs the
+bounded repair workflow; a download never performs bulk repair.
+
 ## Mailbox mutations
 
 `POST /api/workspace/mailbox/mutate`
@@ -183,9 +198,11 @@ events, receipts, attachment/body metadata, and their owned R2 objects. The
 operation is ownership-preflighted and safe to retry. It commits the owned D1
 deletion before deleting R2 objects, so a storage failure cannot leave live D1
 pointers to missing data. The same D1 transaction records every object in
-`workspace_r2_cleanup_queue`; successful deletes remove those records, while
-`cleanupPending: true` means the API can retry them idempotently and the
-reviewed maintenance path retains a durable fallback.
+`workspace_r2_cleanup_queue`; successful deletes mark those records completed
+and retain the lifecycle evidence. `cleanupPending: true` means retry/backoff or
+manual review remains. Claim tokens, leases, bounded attempts, canonical key
+scope, and source ownership make later API or reviewed maintenance replay
+idempotent.
 
 `POST /api/workspace/trash` with `{ "action": "empty" }` permanently deletes
 all owned trash items up to the bounded batch size. Expired trash is reported

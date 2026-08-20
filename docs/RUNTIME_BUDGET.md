@@ -27,6 +27,13 @@ record the evidence.
   total stays below Resend's 40 MB encoded-email cap and leaves isolate-memory
   headroom for the byte and Base64 copies; preview measurements must still
   cover the upper bound before production enablement.
+- Inbound MIME parsing already materializes each accepted attachment within a
+  15 MiB per-file and 24 MiB aggregate attachment budget. Ingest hashes those
+  bounded bytes before R2/D1 finalization. A verified download reads at most one
+  15 MiB object into memory, checks actual size and SHA-256, and only then
+  returns bytes. This is intentionally below the 128 MiB isolate ceiling but
+  still requires the near-limit Preview measurement because parser, digest,
+  response, and runtime overhead coexist.
 - Mailbox list and SSR queries do not select body columns. Owned body routes
   perform lazy R2 reads and integrity checks.
 - FTS5 indexes only bounded projections: 8 KiB from, 16 KiB To/CC, 4 KiB
@@ -49,19 +56,35 @@ should use an isolated preview Worker and preview D1/R2 resources, then:
    service:
 
    ```bash
-   bun run runtime:fixtures -- --output ./flaremail-runtime-fixtures
+   bun run runtime:fixtures
    ```
 
-   The directory contains 1 MiB, 5 MiB, and near-25 MiB raw-message fixtures.
-2. deploy the exact tested commit to the preview Worker and verify `/api/health`;
-3. use Workers Logs or `wrangler tail` and record `cpuTime`, duration,
+   The directory contains deterministic 1 MiB, 5 MiB, near-raw-limit,
+   near-15-MiB inbound attachment, near-12-MiB outbound aggregate,
+   multi-attachment, HTML/CID, mismatched-length, checksum-mismatch, and
+   deeply nested multipart fixtures. Each contains a stable
+   `X-FlareMail-Runtime-Correlation` value and a recorded SHA-256.
+2. execute the local parser measurement without contacting Cloudflare:
+
+   ```bash
+   bun run runtime:measure
+   bun run runtime:measure -- --json
+   ```
+
+   This invokes the production MIME parser and reports fixture bytes, local
+   parser wall duration, bounded result/error category, and correlation ID.
+   D1, R2, upload, download, and send-preparation fields remain explicitly
+   `preview_required`; the command never fabricates Workers CPU, memory, or
+   subrequest values.
+3. deploy the exact tested commit to the preview Worker and verify `/api/health`;
+4. use Workers Logs or `wrangler tail` and record `cpuTime`, duration,
    invocation outcome, and any `exceededCpu` event;
-4. test login (successful and rejected), an SSR mailbox request, and inbound
+5. test login (successful and rejected), an SSR mailbox request, and inbound
    MIME fixtures at approximately 1 MiB, 5 MiB, and near the configured limit;
-5. separately observe D1, R2, parser, and Resend failure outcomes.
-6. upload files near the 8 MiB per-file and 12 MiB total outbound limits, then
+6. separately observe D1, R2, parser, and Resend failure outcomes.
+7. upload files near the 8 MiB per-file and 12 MiB total outbound limits, then
    record R2 put, integrity-read, serialization, and provider-call timings;
-7. run `bun run search:index -- --mode verify --json` and record projection
+8. run `bun run search:index -- --mode verify --json` and record projection
    counts; use a reviewed rebuild only if drift is reported.
 
 The application emits structured, non-sensitive phase timing events. They may
