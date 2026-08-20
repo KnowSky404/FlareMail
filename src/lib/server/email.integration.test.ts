@@ -1,6 +1,6 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createInboundDedupeKey, handleInboundEmail } from './email';
 
 class TestStatement {
@@ -33,6 +33,7 @@ class TestD1 {
 class TestBucket {
   readonly objects = new Map<string, Uint8Array>();
   readonly metadata = new Map<string, Record<string, string>>();
+  readonly checksums = new Map<string, string>();
   putCount = 0;
   getCount = 0;
   failPuts = false;
@@ -43,6 +44,7 @@ class TestBucket {
     this.putCount += 1;
     this.objects.set(key, value instanceof Uint8Array ? new Uint8Array(value) : new Uint8Array(value.slice(0)));
     this.metadata.set(key, options?.customMetadata ?? {});
+    if (typeof options?.sha256 === 'string') this.checksums.set(key, options.sha256);
     return {} as R2Object;
   }
   async get(key: string) {
@@ -58,6 +60,7 @@ class TestBucket {
     if (this.failDeletes) throw new Error('simulated r2 delete failure');
     this.objects.delete(key);
     this.metadata.delete(key);
+    this.checksums.delete(key);
   }
 }
 
@@ -177,6 +180,12 @@ describe('inbound email persistence', () => {
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
     expect(test.database.query('SELECT COUNT(*) AS count FROM workspace_attachments').get()).toEqual({ count: 1 });
     expect(test.database.query('SELECT owner_user_id FROM email_messages').get()).toEqual({ owner_user_id: 'user-1' });
+    const attachment = test.database.query('SELECT r2_key, sha256 FROM workspace_attachments').get() as { r2_key: string; sha256: string };
+    const r2Checksum = test.BUCKET.checksums.get(attachment.r2_key);
+    expect(r2Checksum).toBeString();
+    if (!r2Checksum) throw new Error('test fixture did not record the R2 checksum');
+    expect(attachment.sha256).toBe(r2Checksum);
+    expect(test.BUCKET.metadata.get(attachment.r2_key)?.sha256).toBe(attachment.sha256);
     expect(test.BUCKET.objects.size).toBe(2);
     expect(first.rejected()).toBe('');
 
@@ -233,6 +242,24 @@ describe('inbound email persistence', () => {
     await expect(handleInboundEmail(message().value, test.env)).rejects.toThrow('simulated d1 write failure');
     expect(test.BUCKET.objects.size).toBe(0);
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+  });
+
+  test('records incomplete cleanup when R2 rollback deletion fails', async () => {
+    const test = environment(true);
+    test.BUCKET.failDeletes = true;
+    const logs: string[] = [];
+    const logger = spyOn(console, 'log').mockImplementation((value) => { logs.push(String(value)); });
+    try {
+      await expect(handleInboundEmail(message().value, test.env)).rejects.toThrow('simulated d1 write failure');
+      expect(test.BUCKET.objects.size).toBeGreaterThan(0);
+      expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+    } finally {
+      logger.mockRestore();
+    }
+    const rollback = logs.map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find(({ event }) => event === 'inbound_rollback_incomplete');
+    expect(rollback).toMatchObject({ attemptedObjects: 2, failedObjects: 2 });
+    expect(JSON.stringify(rollback)).not.toContain('inbound/');
   });
 
   test('keeps accepted mail when a secondary notification fails', async () => {

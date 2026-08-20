@@ -8,6 +8,7 @@ import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 import { isInboundNotificationEnabled } from './workspace/profile';
 import { BodyCanonicalLimitError, prepareBodyObject, projectBody, putBodyObject } from '$lib/server/body';
+import { sha256Hex } from '$lib/server/attachment-integrity';
 
 export const DEFAULT_INBOUND_LIMITS = Object.freeze({
   rawBytes: 25 * 1024 * 1024,
@@ -107,11 +108,23 @@ function isUniqueConstraintError(error: unknown) {
 }
 
 async function removeObjects(bucket: R2Bucket, keys: string[]) {
-  await Promise.all(keys.map((key) => bucket.delete(key).catch(() => undefined)));
+  const results = await Promise.allSettled(keys.map((key) => bucket.delete(key)));
+  return { attempted: keys.length, failed: results.filter((result) => result.status === 'rejected').length };
 }
 
 function safeLog(event: string, detail: Record<string, string | number | boolean | null>) {
   console.log(JSON.stringify({ event, ...detail }));
+}
+
+const RUNTIME_CORRELATION_PATTERN = /^flaremail-rc1-[a-z0-9-]{1,96}$/u;
+
+export function resolveInboundCorrelationId(headers: Headers | null | undefined, appEnv?: string) {
+  const supplied = headers?.get('x-flaremail-runtime-correlation')?.trim() ?? '';
+  const environment = appEnv?.trim().toLowerCase();
+  if (environment && ['development', 'test', 'preview'].includes(environment) && RUNTIME_CORRELATION_PATTERN.test(supplied)) {
+    return supplied;
+  }
+  return crypto.randomUUID();
 }
 
 const rejectReason = (code: string) => ({
@@ -127,7 +140,7 @@ export async function handleInboundEmail(
   ctx?: ExecutionContext
 ) {
   const startedAt = Date.now();
-  const correlationId = crypto.randomUUID();
+  const correlationId = resolveInboundCorrelationId(message.headers, env.APP_ENV);
   if (!env.DB || !env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
 
   const rawLimit = configuredLimit(env.INBOUND_MAX_RAW_BYTES, DEFAULT_INBOUND_LIMITS.rawBytes, DEFAULT_INBOUND_LIMITS.rawBytes);
@@ -199,18 +212,22 @@ export async function handleInboundEmail(
   const ownerKey = ownerUserId ?? 'unassigned';
   const writtenKeys = [rawKey];
   const projected = projectBody(parsed.text, parsed.html, parsed.snippet || '(empty body)');
-  const attachmentRows = parsed.attachments.map((attachment, index) => {
-    const id = `${storageId.slice(0, 24)}-${String(index + 1).padStart(3, '0')}`;
-    const filename = sanitizeFilename(attachment.filename);
-    const r2Key = `inbound/${date.slice(0, 10)}/${storageId}/attachments/${id}/${encodeURIComponent(filename)}`;
-    writtenKeys.push(r2Key);
-    return { id, userId: ownerKey, messageId: storageId, filename, contentType: attachment.mimeType,
-      size: attachment.size, inline: attachment.inline, contentId: attachment.contentId, r2Key, content: attachment.content };
-  });
-
+  let attachmentRows: Array<{
+    id: string; userId: string; messageId: string; filename: string; contentType: string;
+    size: number; inline: boolean; contentId: string | null; r2Key: string; sha256: string; content: Uint8Array;
+  }> = [];
   let d1Finalized = false;
   let bodyObject: Awaited<ReturnType<typeof prepareBodyObject>> = null;
   try {
+    attachmentRows = await Promise.all(parsed.attachments.map(async (attachment, index) => {
+      const id = `${storageId.slice(0, 24)}-${String(index + 1).padStart(3, '0')}`;
+      const filename = sanitizeFilename(attachment.filename);
+      const r2Key = `inbound/${date.slice(0, 10)}/${storageId}/attachments/${id}/${encodeURIComponent(filename)}`;
+      writtenKeys.push(r2Key);
+      return { id, userId: ownerKey, messageId: storageId, filename, contentType: attachment.mimeType,
+        size: attachment.size, inline: attachment.inline, contentId: attachment.contentId, r2Key,
+        sha256: await sha256Hex(attachment.content), content: attachment.content };
+    }));
     try {
       bodyObject = await prepareBodyObject('email_message', storageId, parsed.text, parsed.html);
     } catch (error) {
@@ -231,8 +248,9 @@ export async function handleInboundEmail(
     await env.BUCKET.put(rawKey, raw, { httpMetadata: { contentType: 'message/rfc822' }, customMetadata: { messageId: storageId } });
     if (bodyObject) await putBodyObject(env.BUCKET, bodyObject);
     await Promise.all(attachmentRows.map((attachment) => env.BUCKET.put(attachment.r2Key, attachment.content, {
+      sha256: attachment.sha256,
       httpMetadata: { contentType: attachment.contentType },
-      customMetadata: { messageId: storageId, attachmentId: attachment.id }
+      customMetadata: { messageId: storageId, attachmentId: attachment.id, sha256: attachment.sha256 }
     })));
     safeLog('inbound_phase', { correlationId, phase: 'r2_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - r2StartedAt });
 
@@ -287,7 +305,14 @@ export async function handleInboundEmail(
       }
     }
     if (!duplicate && !d1Finalized) {
-      await removeObjects(env.BUCKET, writtenKeys);
+      const rollback = await removeObjects(env.BUCKET, writtenKeys);
+      if (rollback.failed > 0) {
+        safeLog('inbound_rollback_incomplete', {
+          correlationId,
+          attemptedObjects: rollback.attempted,
+          failedObjects: rollback.failed
+        });
+      }
       await releaseInboundIngestClaim(env.DB, dedupeKey, claim.claimToken).catch(() => undefined);
     }
     if (duplicate) {
