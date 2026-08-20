@@ -8,6 +8,7 @@ import {
   configuredCleanupBucket,
   d1Changes,
   d1Count,
+  d1StatementResults,
   isManagedR2Key,
   maintenanceD1TargetFlag,
   maintenanceSql,
@@ -44,6 +45,17 @@ describe('maintenance CLI safety helpers', () => {
     expect(d1Count({ results: [{ count: 3 }] })).toBe(3);
     expect(d1Changes([{ meta: { changes: 2 } }, { meta: { changes: 1 } }])).toBe(3);
     expect(referencedKeys({ results: [{ key: 'inbound/one/message.eml' }, { key: '' }] })).toEqual(new Set(['inbound/one/message.eml']));
+  });
+
+  test('preserves and validates ordered D1 batch result sets', () => {
+    const results = [
+      { results: [{ count: 1 }], success: true, meta: { changes: 0 } },
+      { results: [{ count: 2 }], success: true, meta: { changes: 0 } }
+    ];
+    expect(d1StatementResults(results, 2)).toEqual(results);
+    expect(d1StatementResults({ result: results }, 2)).toEqual(results);
+    expect(() => d1StatementResults(results, 1)).toThrow('2 result set(s) for 1 statement(s)');
+    expect(() => d1StatementResults([{ success: false }], 1)).toThrow('1 result set(s) for 1 statement(s)');
   });
 
   test('reports only unreferenced keys and restricts apply deletion shape', () => {

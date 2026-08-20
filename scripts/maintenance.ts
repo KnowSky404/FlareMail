@@ -224,6 +224,23 @@ export function d1Changes(value: unknown) {
   }, 0);
 }
 
+export function d1StatementResults(value: unknown, expectedStatements: number) {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  const results = Array.isArray(value)
+    ? value
+    : record && Array.isArray(record.result)
+      ? record.result
+      : [value];
+  if (results.length !== expectedStatements || results.some((item) => {
+    if (!item || typeof item !== 'object') return true;
+    const result = item as Record<string, unknown>;
+    return result.success === false || (!Array.isArray(result.results) && !result.meta);
+  })) {
+    throw new Error(`D1 returned ${results.length} result set(s) for ${expectedStatements} statement(s).`);
+  }
+  return results;
+}
+
 export function maintenanceD1TargetFlag(options: Pick<MaintenanceOptions, 'command' | 'remote'>) {
   if (!options.remote) return '--local';
   return options.command === 'retention' ? '--remote' : '--preview';
@@ -292,6 +309,12 @@ async function executeD1(options: MaintenanceOptions, sql: string, write = false
   const args = ['d1', 'execute', options.database, maintenanceD1TargetFlag(options), '--config', options.config, '--command', sql, '--json'];
   if (write) args.push('--yes');
   return parseJsonOutput(await runWrangler(args, options.remote));
+}
+
+async function executeD1Batch(options: MaintenanceOptions, statements: string[], write = false) {
+  if (statements.length === 0) return [];
+  const sql = statements.map((statement) => statement.replace(/;\s*$/u, '')).join('; ');
+  return d1StatementResults(await executeD1(options, sql, write), statements.length);
 }
 
 function manifestKeys(value: unknown): R2Object[] {
@@ -412,10 +435,7 @@ async function runCleanupMaintenance(options: MaintenanceOptions): Promise<Clean
   options = { ...options, bucket: configuredCleanupBucket(configSource, options.remote) };
   const now = new Date().toISOString();
   const reportSql = cleanupReportSql(now);
-  const [countResult, staleResult] = await Promise.all([
-    executeD1(options, reportSql.counts),
-    executeD1(options, reportSql.stale)
-  ]);
+  const [countResult, staleResult] = await executeD1Batch(options, [reportSql.counts, reportSql.stale]);
   const queue = cleanupQueueSummary(countResult, staleResult);
   const report: CleanupMaintenanceReport = {
     command: options.command as CleanupMaintenanceReport['command'],
@@ -512,29 +532,28 @@ export async function runMaintenance(options: MaintenanceOptions) {
     trash: cutoffIso(new Date(), options.trashRetentionDays)
   };
   const sql = maintenanceSql(cutoffs);
-  const [sessionCount, webhookCount, trashCount, staleClaimCount, staleSubmittingCount, approachingExpiryCount, expiredReviewCount, referencesResult, expiredAttachmentResult, cleanupQueueResult, r2Inventory] = await Promise.all([
-    executeD1(options, sql.sessionCandidates),
-    executeD1(options, sql.webhookCandidates),
-    executeD1(options, sql.trashCandidates),
-    executeD1(options, sql.staleClaimCandidates),
-    executeD1(options, sql.staleSubmittingCandidates),
-    executeD1(options, sql.approachingExpiryCandidates),
-    executeD1(options, sql.expiredReviewCandidates),
-    executeD1(options, sql.references),
-    executeD1(options, sql.expiredAttachmentKeys),
-    executeD1(options, sql.cleanupQueueKeys),
+  const [stateResults, r2Inventory] = await Promise.all([
+    executeD1Batch(options, [
+      sql.sessionCandidates,
+      sql.webhookCandidates,
+      sql.trashCandidates,
+      sql.staleClaimCandidates,
+      sql.staleSubmittingCandidates,
+      sql.approachingExpiryCandidates,
+      sql.expiredReviewCandidates,
+      sql.references,
+      sql.expiredAttachmentKeys,
+      sql.cleanupQueueKeys
+    ]),
     listR2Objects(options)
   ]);
+  const [sessionCount, webhookCount, trashCount, staleClaimCount, staleSubmittingCount, approachingExpiryCount, expiredReviewCount, referencesResult, expiredAttachmentResult, cleanupQueueResult] = stateResults;
   const references = referencedKeys(referencesResult);
   const expiredAttachmentKeys = referencedKeys(expiredAttachmentResult);
   const cleanupQueueKeys = referencedKeys(cleanupQueueResult);
   const orphaned = r2Inventory.inventory === 'unavailable' ? [] : orphanKeys(r2Inventory.objects, references);
   const applyD1 = options.apply
-    ? await Promise.all([
-      executeD1(options, sql.apply.split(';')[0], true),
-      executeD1(options, sql.apply.split(';')[1], true),
-      executeD1(options, sql.apply.split(';')[2], true)
-    ])
+    ? await executeD1Batch(options, sql.apply.split(';').map((statement) => statement.trim()).filter(Boolean), true)
     : null;
   const r2DeleteResult = options.apply && r2Inventory.inventory !== 'unavailable'
     ? await deleteR2Objects(options, orphaned)
@@ -546,7 +565,7 @@ export async function runMaintenance(options: MaintenanceOptions) {
     : [...new Set([...expiredAttachmentKeys, ...cleanupQueueKeys])]
       .filter((key) => !inventoryKeys.has(key) || deletedKeys.has(key));
   const metadataDeletes = options.apply
-    ? await Promise.all(metadataDeleteSql([...r2DeleteResult.deletedKeys, ...reconciledLifecycleKeys]).map((statement) => executeD1(options, statement, true)))
+    ? await executeD1Batch(options, metadataDeleteSql([...r2DeleteResult.deletedKeys, ...reconciledLifecycleKeys]), true)
     : [];
   const report: MaintenanceReport = {
     mode: options.apply ? 'apply' : 'dry-run',
