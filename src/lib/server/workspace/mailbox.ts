@@ -228,7 +228,10 @@ export async function loadMailboxPage(
       folder: persistedFolder,
       section,
       timestamp: last.sentAt,
-      id: last.id
+      id: last.id,
+      query: query.query,
+      filter: query.filter,
+      deliveryStatus: query.deliveryStatus
     }) : null,
     hasMore,
     limit: query.limit,

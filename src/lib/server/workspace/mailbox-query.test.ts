@@ -18,22 +18,42 @@ describe('mailbox query contract', () => {
     const encoded = encodeMailboxCursor({
       folder: 'sent',
       timestamp: '2026-08-13T12:00:00.000Z',
-      id: 'sent-live-2'
+      id: 'sent-live-2',
+      query: '',
+      filter: 'all',
+      deliveryStatus: null
     });
-    expect(decodeMailboxCursor(encoded, 'sent')).toEqual({
-      version: 1,
+    expect(decodeMailboxCursor(encoded, 'sent', 'sent', {
+      query: '', filter: 'all', deliveryStatus: null
+    })).toEqual({
+      version: 2,
       folder: 'sent',
       timestamp: '2026-08-13T12:00:00.000Z',
-      id: 'sent-live-2'
+      id: 'sent-live-2',
+      query: '',
+      filter: 'all',
+      deliveryStatus: null
     });
   });
 
   test('rejects cross-folder and malformed cursors', () => {
     const cursor = encodeMailboxCursor({
-      folder: 'inbox', timestamp: '2026-08-13T12:00:00.000Z', id: 'email:1'
+      folder: 'inbox', timestamp: '2026-08-13T12:00:00.000Z', id: 'email:1',
+      query: '', filter: 'all', deliveryStatus: null
     });
-    expect(() => decodeMailboxCursor(cursor, 'drafts')).toThrow(ApiError);
-    expect(() => decodeMailboxCursor('not-json', 'inbox')).toThrow(ApiError);
+    expect(() => decodeMailboxCursor(cursor, 'drafts', 'drafts', { query: '', filter: 'all', deliveryStatus: null })).toThrow(ApiError);
+    expect(() => decodeMailboxCursor('not-json', 'inbox', 'inbox', { query: '', filter: 'all', deliveryStatus: null })).toThrow(ApiError);
+  });
+
+  test('rejects a cursor reused with different search or filters', () => {
+    const cursor = encodeMailboxCursor({
+      folder: 'sent', timestamp: '2026-08-13T12:00:00.000Z', id: 'email:1',
+      query: 'from:alice@example.test', filter: 'unread', deliveryStatus: 'failed'
+    });
+    expect(() => parseMailboxQuery(new URLSearchParams(`folder=sent&q=${encodeURIComponent('from:other@example.test')}&filter=unread&status=failed&cursor=${encodeURIComponent(cursor)}`)))
+      .toThrow(ApiError);
+    expect(() => parseMailboxQuery(new URLSearchParams(`folder=sent&q=${encodeURIComponent('from:alice@example.test')}&filter=all&status=failed&cursor=${encodeURIComponent(cursor)}`)))
+      .toThrow(ApiError);
   });
 
   test('validates filters, status, query and limits', () => {
