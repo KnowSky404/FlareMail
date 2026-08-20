@@ -1,3 +1,5 @@
+import { isValidResendWebhookSecret } from '$lib/server/resend-webhook';
+
 export const APP_ENV_VALUES = ['development', 'preview', 'test', 'production'] as const;
 export type AppEnv = (typeof APP_ENV_VALUES)[number];
 
@@ -139,7 +141,7 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
     }
   }
   const webhookSecret = asString(environment.RESEND_WEBHOOK_SECRET);
-  if (appEnv === 'production' && webhookSecret && !/^whsec_[A-Za-z0-9._-]{8,}$/u.test(webhookSecret)) {
+  if (appEnv === 'production' && webhookSecret && (!webhookSecret.startsWith('whsec_') || !isValidResendWebhookSecret(webhookSecret))) {
     error('invalid_webhook_secret', 'RESEND_WEBHOOK_SECRET has an invalid format.');
   }
   const baseUrl = asString(environment.RESEND_API_BASE_URL);

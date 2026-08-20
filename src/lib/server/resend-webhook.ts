@@ -68,13 +68,33 @@ const secretBytes = (secret: string) => {
   const value = secret.trim();
   if (!value) throw new ResendWebhookError('missing_config', 'Webhook signing secret is unavailable.');
   try {
-    const bytes = base64ToBytes(value.startsWith('whsec_') ? value.slice(6) : value);
+    const encoded = value.startsWith('whsec_') ? value.slice(6) : value;
+    const match = /^(?<body>[A-Za-z0-9+/_-]+)(?<padding>={0,2})$/u.exec(encoded);
+    if (!match?.groups) throw new Error('secret encoding');
+    const body = match.groups.body;
+    const padding = match.groups.padding;
+    if (body.length % 4 === 1 || (padding && (body.length + padding.length) % 4 !== 0)) {
+      throw new Error('secret padding');
+    }
+    const normalized = body.replaceAll('-', '+').replaceAll('_', '/');
+    const padded = `${normalized}${'='.repeat((4 - normalized.length % 4) % 4)}`;
+    const bytes = base64ToBytes(padded);
     if (bytes.byteLength < 16) throw new Error('secret too short');
     return bytes;
   } catch {
     throw new ResendWebhookError('missing_config', 'Webhook signing secret is malformed.');
   }
 };
+
+/** Validate the accepted Resend/Svix secret encodings without exposing secret material. */
+export function isValidResendWebhookSecret(secret: string): boolean {
+  try {
+    secretBytes(secret);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function verifyResendWebhook(
   body: string,

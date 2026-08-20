@@ -95,12 +95,14 @@ export async function authenticateWorkspaceUser(
   return { session, token };
 }
 
-export async function destroyWorkspaceSession(env: CloudflareEnv | undefined, token?: string | null) {
-  if (!env?.DB || !token) return;
+export async function destroyWorkspaceSession(env: CloudflareEnv | undefined, token?: string | null): Promise<boolean> {
+  if (!token) return true;
+  if (!env?.DB) return false;
   try {
     await revokeSessionByTokenHash(env.DB, await hashSessionToken(token));
+    return true;
   } catch {
-    // Logout remains idempotent if D1 is temporarily unavailable.
+    return false;
   }
 }
 

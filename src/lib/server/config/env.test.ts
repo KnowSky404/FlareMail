@@ -6,7 +6,7 @@ const bindings = {
   BUCKET: {},
   APP_ORIGIN: 'https://mail.example.test',
   RESEND_API_KEY: 'placeholder',
-  RESEND_WEBHOOK_SECRET: 'whsec_test_secret',
+  RESEND_WEBHOOK_SECRET: `whsec_${btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))}`,
   OUTBOUND_FROM_EMAIL: 'mail@example.test',
   OUTBOUND_PROVIDER: 'resend'
 };

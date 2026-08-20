@@ -5,6 +5,45 @@ import { ResendWebhookError, verifyResendWebhook } from '$lib/server/resend-webh
 import { applyResendDeliveryWebhook } from '$lib/server/workspace';
 import { DeliveryPersistenceError } from '$lib/server/workspace/delivery';
 
+export const _maxWebhookBodyBytes = 256 * 1024;
+
+export class _WebhookBodyTooLargeError extends Error {
+  constructor() {
+    super('Webhook body is too large.');
+    this.name = 'WebhookBodyTooLargeError';
+  }
+}
+
+/** Read a webhook body with a byte bound even when Content-Length is absent or false. */
+export async function _readBoundedWebhookBody(request: Request, maxBytes = _maxWebhookBodyBytes): Promise<string> {
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new _WebhookBodyTooLargeError();
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 export function _classifyWebhookProcessingError(error: unknown) {
   if (error instanceof ResendWebhookError) {
     return { status: 400 as const, code: error.code, message: 'Webhook payload is invalid.' };
@@ -33,11 +72,14 @@ export const POST: RequestHandler = async (event) => {
   }
 
   const declaredLength = Number(event.request.headers.get('content-length') ?? 0);
-  if (Number.isFinite(declaredLength) && declaredLength > 256 * 1024) {
+  if (Number.isFinite(declaredLength) && declaredLength > _maxWebhookBodyBytes) {
     return json({ ok: false, code: 'WEBHOOK_BODY_TOO_LARGE', error: 'Webhook body is too large.' }, { status: 413 });
   }
-  const body = await event.request.text();
-  if (new TextEncoder().encode(body).byteLength > 256 * 1024) {
+  let body: string;
+  try {
+    body = await _readBoundedWebhookBody(event.request);
+  } catch (error) {
+    if (!(error instanceof _WebhookBodyTooLargeError)) throw error;
     return json({ ok: false, code: 'WEBHOOK_BODY_TOO_LARGE', error: 'Webhook body is too large.' }, { status: 413 });
   }
 
