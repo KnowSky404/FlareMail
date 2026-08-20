@@ -22,6 +22,7 @@ const REQUIRED_TABLES = [
   'workspace_inbound_ingest_claims',
   'workspace_delivery_attempts',
   'mail_body_objects',
+  'workspace_r2_cleanup_queue',
   'workspace_schema_metadata'
 ] as const;
 export const GET: RequestHandler = async (event) => {
@@ -40,6 +41,7 @@ export const GET: RequestHandler = async (event) => {
   }
   let schemaReady = false;
   let schemaCode: 'D1_UNAVAILABLE' | 'SCHEMA_NOT_READY' = 'D1_UNAVAILABLE';
+  let cleanupQueue: { pending: number; processing: number; retryable: number; manualReview: number; staleProcessing: number } | undefined;
 
   if (env?.DB) {
     try {
@@ -51,6 +53,24 @@ export const GET: RequestHandler = async (event) => {
       const version = await env.DB.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?').bind('flaremail').first<{ schema_version: number }>();
       schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && version?.schema_version === FLAREMAIL_SCHEMA_VERSION;
       schemaCode = 'SCHEMA_NOT_READY';
+      if (schemaReady) {
+        const queue = await env.DB.prepare(`
+          SELECT
+            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing,
+            SUM(CASE WHEN status = 'retryable' THEN 1 ELSE 0 END) AS retryable,
+            SUM(CASE WHEN status = 'manual_review' THEN 1 ELSE 0 END) AS manual_review,
+            SUM(CASE WHEN status = 'processing' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ? THEN 1 ELSE 0 END) AS stale_processing
+          FROM workspace_r2_cleanup_queue
+        `).bind(new Date().toISOString()).first<{ pending: number | null; processing: number | null; retryable: number | null; manual_review: number | null; stale_processing: number | null }>();
+        cleanupQueue = {
+          pending: Number(queue?.pending ?? 0),
+          processing: Number(queue?.processing ?? 0),
+          retryable: Number(queue?.retryable ?? 0),
+          manualReview: Number(queue?.manual_review ?? 0),
+          staleProcessing: Number(queue?.stale_processing ?? 0)
+        };
+      }
     } catch {
       schemaReady = false;
       schemaCode = 'D1_UNAVAILABLE';
@@ -70,6 +90,7 @@ export const GET: RequestHandler = async (event) => {
     version: env?.APP_VERSION ?? 'development',
     timestamp: new Date().toISOString(),
     requestId,
+    ...(cleanupQueue && schemaReady ? { cleanupQueue } : {}),
     ...(ok ? {} : {
       error: {
         code: errorCode,

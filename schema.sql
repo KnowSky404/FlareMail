@@ -168,12 +168,28 @@ CREATE TABLE IF NOT EXISTS workspace_r2_cleanup_queue (
   entity_id TEXT NOT NULL,
   r2_key TEXT NOT NULL UNIQUE,
   reason TEXT NOT NULL CHECK (reason IN ('trash_delete')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'retryable', 'completed', 'manual_review')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  max_attempts INTEGER NOT NULL DEFAULT 8 CHECK (max_attempts > 0),
+  next_attempt_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',
+  claim_token TEXT,
+  lease_expires_at TEXT,
+  last_error TEXT,
+  completed_at TEXT,
+  object_kind TEXT NOT NULL DEFAULT 'legacy' CHECK (object_kind IN ('raw', 'attachment', 'body', 'legacy')),
+  source_id TEXT,
+  source_owner_user_id TEXT,
+  source_entity_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_r2_cleanup_queue_owner_entity
   ON workspace_r2_cleanup_queue(owner_user_id, entity_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_workspace_r2_cleanup_queue_claim
+  ON workspace_r2_cleanup_queue(status, next_attempt_at, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_workspace_r2_cleanup_queue_lease
+  ON workspace_r2_cleanup_queue(status, lease_expires_at);
 
 CREATE TABLE IF NOT EXISTS workspace_drafts (
   id TEXT PRIMARY KEY,

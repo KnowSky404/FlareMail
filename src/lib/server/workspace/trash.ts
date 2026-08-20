@@ -3,6 +3,7 @@ import { ApiError } from '$lib/server/http/api';
 import { mapDraftRow, mapInboundRow, mapWorkspaceMessageRow, type WorkspaceContext, type WorkspaceDraftRow, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 import type { MailMessage } from '$lib/domain/mail';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
+import { createCleanupEnqueueStatement, drainCleanupQueue } from '$lib/server/workspace/r2-cleanup';
 
 type TrashKind = 'workspace' | 'draft' | 'inbound';
 type TrashRow = {
@@ -10,7 +11,7 @@ type TrashRow = {
   kind: TrashKind;
   deletedAt: string;
   message: MailMessage;
-  r2Keys: string[];
+  r2Keys: Array<{ key: string; sourceId: string }>;
 };
 
 const inboundId = (id: string) => id.startsWith('email:') ? id.slice(6) : null;
@@ -35,7 +36,7 @@ async function findTrashRow(db: D1Database, userId: string, id: string, includeA
     `).bind(userId, emailId, userId).first<WorkspaceInboundRow & { deleted_at: string | null; raw_key: string; body_object_id: string | null }>();
     if (!row || (!includeActive && !row.deleted_at)) return null;
     const message = mapInboundRow(row, { name: '', role: '', email: row.to, company: '', location: '', timezone: '', forwardingEnabled: false, signature: '' });
-    return { id, kind: 'inbound', deletedAt: row.deleted_at ?? '', message, r2Keys: row.raw_key ? [row.raw_key] : [] };
+    return { id, kind: 'inbound', deletedAt: row.deleted_at ?? '', message, r2Keys: row.raw_key ? [{ key: row.raw_key, sourceId: emailId }] : [] };
   }
 
   const workspace = await db.prepare(`
@@ -64,29 +65,26 @@ async function findTrashRow(db: D1Database, userId: string, id: string, includeA
 
 async function resourceKeys(db: D1Database, userId: string, row: TrashRow) {
   const keys = [...row.r2Keys];
-  const attachments = await db.prepare('SELECT r2_key FROM workspace_attachments WHERE user_id = ? AND message_id = ?')
-    .bind(userId, row.kind === 'inbound' ? row.id.slice(6) : row.id).all<{ r2_key: string }>();
-  keys.push(...(attachments.results ?? []).map((item) => item.r2_key));
-  const body = await db.prepare('SELECT r2_key FROM mail_body_objects WHERE owner_user_id = ? AND entity_id = ?')
-    .bind(userId, row.kind === 'inbound' ? row.id.slice(6) : row.id).all<{ r2_key: string }>();
-  keys.push(...(body.results ?? []).map((item) => item.r2_key));
-  return [...new Set(keys.filter(Boolean))];
+  const attachments = await db.prepare('SELECT id, r2_key FROM workspace_attachments WHERE user_id = ? AND message_id = ?')
+    .bind(userId, row.kind === 'inbound' ? row.id.slice(6) : row.id).all<{ id: string; r2_key: string }>();
+  keys.push(...(attachments.results ?? []).map((item) => ({ key: item.r2_key, sourceId: item.id })));
+  const body = await db.prepare('SELECT id, r2_key FROM mail_body_objects WHERE owner_user_id = ? AND entity_id = ?')
+    .bind(userId, row.kind === 'inbound' ? row.id.slice(6) : row.id).all<{ id: string; r2_key: string }>();
+  keys.push(...(body.results ?? []).map((item) => ({ key: item.r2_key, sourceId: item.id })));
+  return [...new Map(keys.filter((item) => item.key).map((item) => [item.key, item])).values()];
 }
 
-function enqueueR2Cleanup(db: D1Database, userId: string, entityId: string, key: string) {
-  const now = new Date().toISOString();
-  return db.prepare(`
-    INSERT INTO workspace_r2_cleanup_queue
-      (id, owner_user_id, entity_id, r2_key, reason, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'trash_delete', ?, ?)
-    ON CONFLICT(r2_key) DO NOTHING
-  `).bind(crypto.randomUUID(), userId, entityId, key, now, now);
+function enqueueR2Cleanup(db: D1Database, userId: string, entityId: string, resource: { key: string; sourceId: string }) {
+  return createCleanupEnqueueStatement(db, {
+    id: crypto.randomUUID(), ownerUserId: userId, entityId, sourceId: resource.sourceId,
+    sourceOwnerUserId: userId, sourceEntityId: entityId, r2Key: resource.key
+  });
 }
 
 async function pendingR2CleanupKeys(db: D1Database, userId: string, entityId: string) {
   const result = await db.prepare(`
     SELECT r2_key FROM workspace_r2_cleanup_queue
-    WHERE owner_user_id = ? AND entity_id = ? AND reason = 'trash_delete'
+    WHERE owner_user_id = ? AND entity_id = ? AND reason = 'trash_delete' AND status <> 'completed'
     ORDER BY created_at ASC, id ASC
   `).bind(userId, entityId).all<{ r2_key: string }>();
   return (result.results ?? []).map((row) => row.r2_key);
@@ -99,15 +97,15 @@ async function cleanQueuedR2Keys(
   entityId: string,
   keys: string[]
 ) {
-  if (!keys.length || !env?.BUCKET) return keys.length > 0;
-  const results = await Promise.allSettled(keys.map(async (key) => {
-    await env.BUCKET!.delete(key);
-    await db.prepare(`
-      DELETE FROM workspace_r2_cleanup_queue
-      WHERE owner_user_id = ? AND entity_id = ? AND r2_key = ?
-    `).bind(userId, entityId, key).run();
-  }));
-  return results.some((item) => item.status === 'rejected');
+  if (!keys.length) return false;
+  const result = await drainCleanupQueue(env, db, {
+    ownerUserId: userId,
+    entityId,
+    keys: new Set(keys),
+    limit: keys.length,
+    apply: true
+  });
+  return result.completed !== keys.length;
 }
 
 async function optionalOwnedCleanupStatements(db: D1Database, userId: string, entityId: string) {
@@ -191,6 +189,7 @@ export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undef
 export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, id: string, includeMetrics: false): Promise<PermanentDeleteResultWithoutMetrics>;
 export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, id: string, includeMetrics = true): Promise<PermanentDeleteResult | PermanentDeleteResultWithoutMetrics> {
   const db = requireD1(env, session);
+  const entityId = inboundId(id) ?? id;
   const result = async (value: PermanentDeleteResultWithoutMetrics) => includeMetrics
     ? { ...value, metrics: await getMailboxMetrics(db, session.userId) }
     : value;
@@ -198,15 +197,15 @@ export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undef
   if (!current) {
     const active = await findTrashRow(db, session.userId, id, true);
     if (active) throw new ApiError(409, 'TRASH_ITEM_NOT_TRASHED', '只能永久删除已移入回收站的项目。', undefined, undefined, false);
-    const cleanupKeys = await pendingR2CleanupKeys(db, session.userId, id);
-    const cleanupPending = await cleanQueuedR2Keys(env, db, session.userId, id, cleanupKeys);
+    const cleanupKeys = await pendingR2CleanupKeys(db, session.userId, entityId);
+    const cleanupPending = await cleanQueuedR2Keys(env, db, session.userId, entityId, cleanupKeys);
     return result({ deletedId: id, idempotent: true, ...(cleanupPending ? { cleanupPending: true } : {}) });
   }
-  const keys = await resourceKeys(db, session.userId, current);
+  const resources = await resourceKeys(db, session.userId, current);
+  const keys = resources.map((resource) => resource.key);
   if (keys.length && !env?.BUCKET) throw new ApiError(503, 'R2_UNAVAILABLE', '文件存储服务暂不可用。');
-  const entityId = current.kind === 'inbound' ? id.slice(6) : id;
   const statements = [
-    ...keys.map((key) => enqueueR2Cleanup(db, session.userId, id, key)),
+    ...resources.map((resource) => enqueueR2Cleanup(db, session.userId, entityId, resource)),
     db.prepare('DELETE FROM workspace_attachments WHERE user_id = ? AND message_id = ?').bind(session.userId, entityId),
     db.prepare('DELETE FROM mail_body_objects WHERE owner_user_id = ? AND entity_id = ?').bind(session.userId, entityId),
     db.prepare('DELETE FROM workspace_delivery_attempts WHERE user_id = ? AND message_id = ?').bind(session.userId, entityId),
@@ -222,7 +221,7 @@ export async function permanentlyDeleteWorkspaceTrash(env: CloudflareEnv | undef
   } else if (current.kind === 'draft') statements.push(db.prepare('DELETE FROM workspace_drafts WHERE user_id = ? AND id = ?').bind(session.userId, id));
   else statements.push(db.prepare('DELETE FROM workspace_messages WHERE user_id = ? AND id = ?').bind(session.userId, id));
   await db.batch(statements);
-  const cleanupPending = await cleanQueuedR2Keys(env, db, session.userId, id, keys);
+  const cleanupPending = await cleanQueuedR2Keys(env, db, session.userId, entityId, keys);
   return result({
     deletedId: id,
     idempotent: false,
