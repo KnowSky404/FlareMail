@@ -102,7 +102,7 @@ function hasAny(source: string, patterns: RegExp[]) {
 
 function versionFromSource(source: string) {
   return Number(
-    source.match(/schema_version\s*\)\s*VALUES\s*\(\s*'flaremail'\s*,\s*(\d+)/u)?.[1] ??
+    source.match(/INSERT\s+INTO\s+workspace_schema_metadata[\s\S]{0,512}?VALUES\s*\(\s*'flaremail'\s*,\s*(\d+)/u)?.[1] ??
     source.match(/schema_version\s*=\s*(\d+)/u)?.[1] ??
     NaN
   );

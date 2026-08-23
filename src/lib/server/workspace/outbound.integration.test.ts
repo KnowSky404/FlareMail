@@ -1,7 +1,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
-import { FakeOutboundGateway, OutboundGatewayError } from '$lib/server/outbound/gateway';
+import { FakeOutboundGateway, MAX_OUTBOUND_ATTACHMENT_BYTES, OutboundGatewayError } from '$lib/server/outbound/gateway';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound';
 import { getWorkspaceMessageDeliveryDetail } from './delivery';
@@ -111,6 +111,19 @@ describe('outbound workspace persistence', () => {
 
     await expect(retryWorkspaceMessageDelivery(env, session, first.message.id, { gateway: new FakeOutboundGateway() }))
       .rejects.toMatchObject({ code: 'DELIVERY_NOT_RETRYABLE', reason: 'status_not_retryable' });
+  });
+
+  test('sanitizes HTML-only payloads before provider submission and blocks remote images', async () => {
+    const { env, session } = setup();
+    const gateway = new FakeOutboundGateway({ providerMessageId: 're_html_1' });
+    await sendWorkspaceMessage(env, session, {
+      toEmail: 'alice@example.net', subject: 'HTML', body: '',
+      html: '<p>Hello <a href="https://example.com">portal</a></p><script>alert(1)</script><img src="https://tracker.example/pixel">'
+    }, { requestId: 'html-1', gateway });
+    expect(gateway.sent[0]?.text).toBe('Hello portal');
+    expect(gateway.sent[0]?.html).toBe('<p>Hello <a href="https://example.com" target="_blank" rel="noopener noreferrer">portal</a></p>');
+    expect(gateway.sent[0]?.html).not.toContain('fm-link-target');
+    expect(gateway.sent[0]?.html).not.toContain('tracker.example');
   });
 
   test('does not reveal or retry a message owned by another user', async () => {
@@ -251,6 +264,28 @@ describe('outbound workspace persistence', () => {
     expect(retried?.message.deliveryStatus).toBe('submitted');
     expect([...retryGateway.sent[0]!.attachments![0]!.bytes]).toEqual([...attachmentBytes]);
     expect(retryGateway.sent[0]?.idempotencyKey).toBe(`flaremail:send:${sent.message.id}`);
+  });
+
+  test('rejects oversized persisted attachment metadata before reading R2 bytes', async () => {
+    const { env, database, session } = setup();
+    const draft = await saveWorkspaceDraft(env, session, {
+      toEmail: 'alice@example.net', subject: 'Oversized attachment', body: 'Do not read the object.'
+    });
+    const attachmentId = '019d1234-5678-4abc-8def-4123456789ab';
+    database.query(`INSERT INTO workspace_attachments
+      (id, user_id, message_id, filename, content_type, size, inline, content_id, r2_key, relation_type, state, sha256, disposition, updated_at)
+      VALUES (?, 'user-1', ?, 'oversized.bin', 'application/octet-stream', ?, 0, NULL, 'missing-oversized-object', 'draft', 'ready', ?, 'attachment', '2026-08-19T00:00:00.000Z')`)
+      .run(attachmentId, draft.message.id, MAX_OUTBOUND_ATTACHMENT_BYTES + 1, '0'.repeat(64));
+    database.query(`UPDATE workspace_drafts SET attachment_revision = 1 WHERE id = ?`).run(draft.message.id);
+
+    await expect(sendWorkspaceMessage(env, session, {
+      draftId: draft.message.id,
+      attachmentRevision: 1,
+      toEmail: 'alice@example.net',
+      subject: 'Oversized attachment',
+      body: 'Do not read the object.'
+    }, { gateway: new FakeOutboundGateway() })).rejects.toMatchObject({ kind: 'configuration' });
+    expect(database.query('SELECT COUNT(*) AS count FROM workspace_messages').get()).toEqual({ count: 0 });
   });
 
   test('sends without logically removed attachments while their cleanup pointer remains durable', async () => {

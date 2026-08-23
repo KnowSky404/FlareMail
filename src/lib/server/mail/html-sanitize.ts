@@ -11,6 +11,7 @@ export type SafeHtmlErrorCode =
   | 'HTML_INPUT_TOO_LARGE'
   | 'HTML_OUTPUT_TOO_LARGE'
   | 'HTML_TEXT_TOO_LARGE'
+  | 'HTML_CONTENT_EMPTY'
   | 'HTML_COMPLEXITY_LIMIT'
   | 'HTML_NESTING_TOO_DEEP';
 
@@ -35,6 +36,8 @@ export interface SafeHtmlSanitizerOptions {
   maxDepth?: number;
   resolveCidImage?: CidImageResolver;
   allowRemoteImages?: boolean;
+  /** Display-only risk annotations are disabled for outbound provider HTML. */
+  decorateLinks?: boolean;
 }
 
 export interface SafeHtmlResult {
@@ -316,14 +319,16 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
     if (!frame.emitted || voidTags.has(frame.name)) return;
     append(`</${frame.name}>`);
     if (!frame.link) return;
-    const visibleHostname = displayedHostname(text.slice(frame.link.textStart));
-    const warnings = [...frame.link.warnings];
-    if (visibleHostname && visibleHostname !== frame.link.hostname) warnings.push('显示文本与目标不一致');
-    const warning = warnings.length
-      ? ` <span class="fm-link-warning" aria-label="链接风险：${escapeAttribute(warnings.join('、'))}">⚠ ${escapeText(warnings.join('、'))}</span>`
-      : '';
-    append(` <span class="fm-link-target" aria-label="链接目标域名 ${escapeAttribute(frame.link.hostname)}">[${escapeText(frame.link.hostname)}]</span>${warning}`);
-    if (warnings.length) linkWarnings += 1;
+    if (options.decorateLinks !== false) {
+      const visibleHostname = displayedHostname(text.slice(frame.link.textStart));
+      const warnings = [...frame.link.warnings];
+      if (visibleHostname && visibleHostname !== frame.link.hostname) warnings.push('显示文本与目标不一致');
+      const warning = warnings.length
+        ? ` <span class="fm-link-warning" aria-label="链接风险：${escapeAttribute(warnings.join('、'))}">⚠ ${escapeText(warnings.join('、'))}</span>`
+        : '';
+      append(` <span class="fm-link-target" aria-label="链接目标域名 ${escapeAttribute(frame.link.hostname)}">[${escapeText(frame.link.hostname)}]</span>${warning}`);
+      if (warnings.length) linkWarnings += 1;
+    }
   };
 
   while (position < input.length) {

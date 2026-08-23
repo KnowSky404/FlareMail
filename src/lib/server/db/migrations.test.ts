@@ -119,7 +119,8 @@ describe('versioned D1 migrations', () => {
       '0014_inbound_metadata.sql',
       '0015_search_fts.sql',
       '0016_outbound_attachments.sql',
-      '0017_r2_cleanup_queue_reliability.sql'
+      '0017_r2_cleanup_queue_reliability.sql',
+      '0018_outbound_rate_limits.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -191,6 +192,9 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_login_rate_limits')).toEqual(
       new Set(['identity_hash', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'])
     );
+    expect(tableColumns(db, 'workspace_outbound_rate_limits')).toEqual(
+      new Set(['user_id', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'])
+    );
     expect(tableColumns(db, 'workspace_inbound_ingest_claims')).toEqual(
       new Set(['dedupe_key', 'storage_id', 'claim_token', 'raw_key', 'status', 'created_at', 'updated_at', 'completed_at'])
     );
@@ -198,7 +202,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 17 }
+      { schema_name: 'flaremail', schema_version: 18 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -233,6 +237,9 @@ describe('versioned D1 migrations', () => {
     ]));
     expect(indexNames(db, 'workspace_login_rate_limits')).toEqual(
       new Set(['idx_workspace_login_rate_limits_reset_at'])
+    );
+    expect(indexNames(db, 'workspace_outbound_rate_limits')).toEqual(
+      new Set(['idx_workspace_outbound_rate_limits_reset_at'])
     );
 
     // The complete state CHECK and idempotency/dedupe uniqueness are real D1

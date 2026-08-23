@@ -1,3 +1,4 @@
+import { isValidMailboxEmail, parseAddressList } from '$lib/domain/mail/addresses';
 import { MAIL_LIMITS, sanitizeFilename } from '$lib/domain/mail/validation';
 import { utf8ByteLength } from '$lib/domain/utf8';
 
@@ -101,6 +102,8 @@ const DEFAULT_API_BASE_URL = 'https://api.resend.com';
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
 const MAX_PREVIEW_LENGTH = 400;
+/** Do not let an untrusted provider response become an unbounded string. */
+export const MAX_RESEND_RESPONSE_BYTES = 16 * 1024;
 // Keep substantial headroom below Resend's 40 MB post-Base64 email limit and
 // the Workers isolate limit for JSON/base64 copies made during serialization.
 export const MAX_OUTBOUND_ATTACHMENT_COUNT = 10;
@@ -137,15 +140,53 @@ const normalizeBaseUrl = (value: string | undefined) => {
 };
 
 function validateInput(input: OutboundMailInput) {
-  const key = input.idempotencyKey.trim();
+  if (!input || typeof input !== 'object') {
+    throw new OutboundGatewayError('configuration', 'Outbound mail input is invalid.');
+  }
+  const key = typeof input.idempotencyKey === 'string' ? input.idempotencyKey.trim() : '';
   if (!key || key.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
     throw new OutboundGatewayError(
       'configuration',
       `Idempotency-Key must be between 1 and ${MAX_IDEMPOTENCY_KEY_LENGTH} characters.`
     );
   }
-  if (!input.from.trim() || input.to.length === 0) {
+  const validateAddress = (value: unknown, field: string) => {
+    if (typeof value !== 'string') {
+      throw new OutboundGatewayError('configuration', `Outbound ${field} address is invalid.`);
+    }
+    const normalized = value.trim();
+    if (
+      !normalized ||
+      normalized.length > MAIL_LIMITS.email ||
+      utf8ByteLength(normalized) > MAIL_LIMITS.email ||
+      /[\u0000-\u001f\u007f]/u.test(normalized)
+    ) {
+      throw new OutboundGatewayError('configuration', `Outbound ${field} address is invalid.`);
+    }
+    const parsed = parseAddressList(normalized);
+    if (parsed.length !== 1 || !isValidMailboxEmail(parsed[0]?.email ?? '')) {
+      throw new OutboundGatewayError('configuration', `Outbound ${field} address is invalid.`);
+    }
+  };
+
+  validateAddress(input.from, 'sender');
+  if (!Array.isArray(input.to) || input.to.length === 0 || input.to.length > MAIL_LIMITS.recipients) {
     throw new OutboundGatewayError('configuration', 'Outbound mail requires from and at least one recipient.');
+  }
+  input.to.forEach((value) => validateAddress(value, 'recipient'));
+  if (
+    typeof input.subject !== 'string' ||
+    input.subject.length > MAIL_LIMITS.subject ||
+    utf8ByteLength(input.subject) > MAIL_LIMITS.subject ||
+    /[\u0000-\u001f\u007f]/u.test(input.subject)
+  ) {
+    throw new OutboundGatewayError('configuration', 'Outbound subject is invalid.');
+  }
+  if (
+    (typeof input.text !== 'string' && typeof input.text !== 'undefined') ||
+    (typeof input.html !== 'string' && typeof input.html !== 'undefined')
+  ) {
+    throw new OutboundGatewayError('configuration', 'Outbound mail content is invalid.');
   }
   if (!input.text?.trim() && !input.html?.trim()) {
     throw new OutboundGatewayError('configuration', 'Outbound mail requires text or html content.');
@@ -238,13 +279,43 @@ const looksLikePayloadMismatch = (message: string) =>
   /payload|idempotenc|same request|request body|parameters/i.test(message);
 
 const parseResponseBody = async (response: Response) => {
-  const raw = await response.text();
-  if (!raw.trim()) return { payload: null as unknown, raw: '' };
+  if (!response.body) return { payload: null as unknown, raw: '' };
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
   try {
-    return { payload: JSON.parse(raw) as unknown, raw };
-  } catch {
-    return { payload: null as unknown, raw: compact(raw) };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = MAX_RESEND_RESPONSE_BYTES - total;
+      if (value.byteLength > remaining) {
+        if (remaining > 0) chunks.push(value.subarray(0, remaining));
+        total = MAX_RESEND_RESPONSE_BYTES;
+        truncated = true;
+        await reader.cancel('Resend response exceeds the response size limit.').catch(() => undefined);
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
   }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const raw = new TextDecoder().decode(bytes);
+  if (!raw.trim()) return { payload: null as unknown, raw: '' };
+  if (!truncated) {
+    try {
+      return { payload: JSON.parse(raw) as unknown, raw };
+    } catch { /* fall through to the non-JSON preview semantics */ }
+  }
+  return { payload: null as unknown, raw: compact(raw) };
 };
 
 const abortError = (error: unknown) => error instanceof Error && error.name === 'AbortError';

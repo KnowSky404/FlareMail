@@ -78,6 +78,7 @@ export function createDraftMessage(input: DraftMessageInput): MailMessage {
   const recipients = composeAddresses(input);
   const toEmail = recipients.to[0]?.email ?? (input.to === undefined ? input.toEmail?.trim() ?? '' : '');
   const body = input.body.trim();
+  const html = input.html?.trim() ?? '';
   const rfc = sharedRfcFields(input);
 
   return {
@@ -96,6 +97,7 @@ export function createDraftMessage(input: DraftMessageInput): MailMessage {
     subject: input.subject.trim() || '未命名草稿',
     preview: normalizePreview(body || '继续补充内容…'),
     body,
+    html,
     sentAt: input.updatedAt ?? new Date().toISOString(),
     labels: ['Draft'],
     read: true,
@@ -112,6 +114,7 @@ export function createSentMessage(input: SentMessageInput): MailMessage {
   const signatureBlock = input.from.signature ? `\n\n${input.from.signature}` : '';
   const cc = serializeAddressList(recipients.cc);
   const body = input.body.trim();
+  const html = input.html?.trim() ?? '';
   const rfc = sharedRfcFields(input);
 
   return {
@@ -130,6 +133,7 @@ export function createSentMessage(input: SentMessageInput): MailMessage {
     subject: input.subject.trim(),
     preview: normalizePreview(body),
     body: `${body}${signatureBlock}`,
+    html,
     sentAt: input.sentAt ?? new Date().toISOString(),
     labels: ['Sent'],
     read: true,
@@ -158,6 +162,7 @@ export function createComposeInputFromDraft(message: MailMessage): ComposeInput 
     toEmail: message.toEmail,
     subject: message.subject === '未命名草稿' ? '' : message.subject,
     body: message.body,
+    html: message.html ?? '',
     messageId: message.messageId,
     inReplyTo: message.inReplyTo,
     references: message.references

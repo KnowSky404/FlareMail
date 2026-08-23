@@ -132,6 +132,8 @@ test('opens the compose attachment modal and restores an autosaved draft', async
   await expect(dialog.getByRole('button', { name: '移除密送 blind@flaremail.test' })).toBeVisible();
   await page.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('WebKit autosave fixture.');
+  await dialog.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>WebKit <strong>HTML</strong> autosave fixture.</p>');
+  await assertNoHorizontalOverflow(page);
   await page.getByLabel('选择附件').setInputFiles({ name: 'webkit-smoke.txt', mimeType: 'text/plain', buffer: Buffer.from('webkit attachment') });
   await expect(dialog.getByLabel('附件名称 webkit-smoke.txt')).toHaveValue('webkit-smoke.txt', { timeout: 12_000 });
   await expect(dialog.getByRole('status').filter({ hasText: /已自动保存于/u })).toBeVisible({ timeout: 12_000 });
@@ -141,7 +143,14 @@ test('opens the compose attachment modal and restores an autosaved draft', async
 
   await page.reload();
   await openFolder(page, '草稿箱');
-  await expect(page.getByRole('listitem').filter({ hasText: subject })).toBeVisible();
+  const draft = page.getByRole('listitem').filter({ hasText: subject });
+  await expect(draft).toBeVisible();
+  await draft.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
+  await page.getByRole('button', { name: '更多邮件操作' }).click();
+  await page.getByRole('menuitem', { name: '继续编辑草稿' }).click();
+  const editDialog = page.getByRole('dialog', { name: '编辑草稿' });
+  await expect(editDialog).toBeVisible();
+  await expect(editDialog.getByLabel('HTML 源码（可选）', { exact: true })).toHaveValue('<p>WebKit <strong>HTML</strong> autosave fixture.</p>');
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -152,11 +161,12 @@ test('sends successfully and exposes a typed failure without claiming success', 
   await page.getByLabel('收件人').fill('webkit-send@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill(successSubject);
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('WebKit fake-provider success.');
+  await page.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>WebKit <strong>HTML</strong> fake-provider success.</p>');
   await page.getByRole('button', { name: '发送邮件' }).click();
   await expect(page.getByRole('region', { name: '邮件详情' }).getByRole('heading', { name: successSubject, exact: true })).toBeVisible({ timeout: 12_000 });
   await expect(page.getByRole('status').filter({ hasText: /已提交|发起投递/u })).toBeVisible({ timeout: 8_000 });
 
-  await page.route('**/api/workspace/messages', async (route) => {
+  await page.route('**/api/send', async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
     await route.fulfill({
       status: 503,
@@ -178,7 +188,7 @@ test('sends successfully and exposes a typed failure without claiming success', 
   const failedDialog = page.getByRole('dialog', { name: '新邮件' });
   await failedDialog.getByRole('button', { name: '取消', exact: true }).click();
   await expect(failedDialog).toBeHidden();
-  await page.unroute('**/api/workspace/messages');
+  await page.unroute('**/api/send');
   await page.getByRole('button', { name: '刷新邮件列表' }).click();
   if (!projectIsMobile(testInfo.project.name)) {
     await expect(page.getByText('全局状态正常', { exact: true })).toBeVisible();

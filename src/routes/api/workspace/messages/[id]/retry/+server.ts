@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
-import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
+import { ApiError, apiFailure, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
-import { retryWorkspaceMessageDelivery } from '$lib/server/workspace';
+import { OutboundRateLimitError, retryWorkspaceMessageDelivery } from '$lib/server/workspace';
 import { isOutboundGatewayError } from '$lib/server/outbound/gateway';
 import { DeliveryNotRetryableError } from '$lib/server/workspace/delivery';
 
@@ -19,6 +19,13 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
     if (!result) throw new ApiError(404, 'DELIVERY_RETRY_NOT_AVAILABLE', '当前邮件不支持重试投递。');
     return apiSuccess(event, result);
   } catch (error) {
+    if (error instanceof OutboundRateLimitError) {
+      return apiFailure(
+        event,
+        new ApiError(429, 'SEND_RATE_LIMITED', `发送过于频繁，请在 ${error.retryAfterSeconds} 秒后重试。`),
+        { headers: { 'Retry-After': String(error.retryAfterSeconds) } }
+      );
+    }
     const retryError = _mapDeliveryRetryError(error);
     if (retryError) throw retryError;
     if (isOutboundGatewayError(error) && error.kind === 'configuration') {

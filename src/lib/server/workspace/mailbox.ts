@@ -1,4 +1,5 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { resolveOutboundFromEmail } from '$lib/server/config/env';
 import { ApiError } from '$lib/server/http/api';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import { buildFtsSearchPlan } from '$lib/server/search/fts';
@@ -358,7 +359,7 @@ export async function loadWorkspaceSnapshot(
     activePage: page,
     mailbox,
     mailboxPages,
-    outboundSenderEmail: env.OUTBOUND_FROM_EMAIL?.trim() || null
+    outboundSenderEmail: resolveOutboundFromEmail(env)
   };
   return { workspace: snapshot };
 }

@@ -270,6 +270,7 @@ export const mapWorkspaceMessageRow = (
   deliveryError: row.folder === 'sent' ? outboundStatus?.last_error ?? '' : '',
   deliveredAt: row.folder === 'sent' ? outboundStatus?.delivered_at ?? null : null,
   deliveryProvider: row.folder === 'sent' ? outboundStatus?.provider ?? null : null,
+  deliveryProviderMessageId: row.folder === 'sent' ? outboundStatus?.provider_message_id ?? null : null,
   deliveryResultKind: row.folder === 'sent' ? outboundStatus?.result_kind ?? null : null,
   deliveryRemoteStatus: row.folder === 'sent' ? outboundStatus?.remote_status ?? null : null,
   deliveryResponsePreview: row.folder === 'sent' ? outboundStatus?.response_preview ?? '' : '',

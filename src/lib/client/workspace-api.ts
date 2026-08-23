@@ -31,6 +31,7 @@ export type MessageResponse = {
   message: MailMessage;
   metrics: WorkspacePayload['metrics'];
   bodyRevision?: string | null;
+  html?: string;
   attachments?: NonNullable<ComposeInput['attachments']>;
   attachmentRevision?: number;
   error?: string;
@@ -167,6 +168,7 @@ export function fetchMessageBody(messageId: string, signal?: AbortSignal) {
 export function fetchDraftDetail(draftId: string, signal?: AbortSignal) {
   return requestJson<{
     message: MailMessage;
+    html?: string;
     bodyRevision: string | null;
     attachments: NonNullable<ComposeInput['attachments']>;
     attachmentRevision: number;
@@ -206,7 +208,7 @@ export function persistDraft(input: ComposeInput) {
 }
 
 export function submitMessage(input: ComposeInput, idempotencyKey?: string) {
-  return requestJson<MessageResponse>('/api/workspace/messages', {
+  return requestJson<MessageResponse>('/api/send', {
     method: 'POST',
     headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
     body: JSON.stringify(serverComposeInput(input))

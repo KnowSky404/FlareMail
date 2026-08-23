@@ -1197,9 +1197,12 @@
           : result.message.deliveryResultKind === 'accepted'
             ? `已向 ${result.message.toEmail} 发起投递，并提交到 ${result.message.deliveryProvider ?? '投递服务'}。`
             : describeDeliveryState(result.message);
+      const deliveryReceipt = result.message.deliveryResultKind === 'accepted' && result.message.deliveryProviderMessageId
+        ? ` Resend message id ${result.message.deliveryProviderMessageId}，发送时间 ${new Date(result.message.sentAt).toLocaleString('zh-CN')}。`
+        : '';
       const deliveryTone: ToastTone = result.message.deliveryResultKind === 'accepted' ? 'success' : 'warning';
       resetComposeState();
-      notify(deliveryMessage, deliveryTone, { persistent: deliveryTone === 'warning' });
+      notify(`${deliveryMessage}${deliveryReceipt}`, deliveryTone, { persistent: deliveryTone === 'warning' });
     } catch (error) {
       notifyError(error, '发送失败。');
     } finally {

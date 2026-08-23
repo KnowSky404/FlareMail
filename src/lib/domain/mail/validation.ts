@@ -17,6 +17,7 @@ export const MAIL_LIMITS = Object.freeze({
   // Keep compose parsing, JSON serialization and provider payloads well below
   // the 128 MiB Worker isolate ceiling. Inbound MIME has a separate limit.
   body: 8 * 1024 * 1024,
+  html: 256 * 1024,
   cc: 4_096,
   bcc: 4_096,
   recipients: MAX_RECIPIENTS,
@@ -64,11 +65,12 @@ export function validateEmail(value: string, field = 'email'): ValidationResult<
   return result(normalized, issues);
 }
 
-function bounded(value: string, max: number, field: string, label: string, required = false): [string, ValidationIssue[]] {
+function bounded(value: string, max: number, field: string, label: string, required = false, bytes = false): [string, ValidationIssue[]] {
   const normalized = value.trim();
   const issues: ValidationIssue[] = [];
   if (required && !normalized) issues.push({ field, message: `${label}不能为空。` });
-  if (normalized.length > max) issues.push({ field, message: `${label}不能超过 ${max} 个字符。` });
+  const length = bytes ? utf8ByteLength(normalized) : normalized.length;
+  if (length > max) issues.push({ field, message: `${label}不能超过 ${max} 个${bytes ? ' UTF-8 字节' : '字符'}。` });
   if (/[\u0000\r\n]/.test(normalized) && (field === 'email' || field === 'subject')) {
     issues.push({ field, message: `${label}包含非法控制字符。` });
   }
@@ -84,16 +86,53 @@ function boundedBody(value: string): [string, ValidationIssue[]] {
   return [normalized, issues];
 }
 
-function validateMailInput(input: ComposeInput, requireSendFields: boolean): ValidationResult<ComposeInput> {
-  const [subject, subjectIssues] = bounded(input.subject, MAIL_LIMITS.subject, 'subject', '主题', requireSendFields);
-  const [body, bodyIssues] = boundedBody(input.body);
-  if (!requireSendFields && !body) bodyIssues.length = 0;
-  const issues = [...subjectIssues, ...bodyIssues];
+function emptyComposeInput(): ComposeInput {
+  return { to: [], cc: [], bcc: [], toEmail: '', subject: '', body: '' };
+}
+
+function validateMailInput(input: unknown, requireSendFields: boolean): ValidationResult<ComposeInput> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return result(emptyComposeInput(), [{ field: 'request', message: '请求正文必须是 JSON 对象。' }]);
+  }
+
+  const record = input as Record<string, unknown>;
+  const typeIssues: ValidationIssue[] = [];
+  const subjectValue = typeof record.subject === 'string' ? record.subject : '';
+  const bodyValue = typeof record.body === 'string' ? record.body : '';
+  if (record.subject !== undefined && typeof record.subject !== 'string') {
+    typeIssues.push({ field: 'subject', message: '主题必须是字符串。' });
+  }
+  if (record.body !== undefined && typeof record.body !== 'string') {
+    typeIssues.push({ field: 'body', message: '正文必须是字符串。' });
+  }
+  if (record.html !== undefined && typeof record.html !== 'string') {
+    typeIssues.push({ field: 'html', message: 'HTML 正文必须是字符串。' });
+  }
+  const normalizedInput = {
+    ...(record as unknown as ComposeInput),
+    subject: subjectValue,
+    body: bodyValue
+  };
+  const [subject, subjectIssues] = bounded(subjectValue, MAIL_LIMITS.subject, 'subject', '主题', requireSendFields, true);
+  const [body, bodyIssues] = boundedBody(bodyValue);
+  const hasHtmlField = typeof record.html === 'string';
+  const html = typeof record.html === 'string' ? record.html.trim() : '';
+  const htmlIssues: ValidationIssue[] = [];
+  if (utf8ByteLength(html) > MAIL_LIMITS.html) {
+    htmlIssues.push({ field: 'html', message: `HTML 正文不能超过 ${MAIL_LIMITS.html} 个 UTF-8 字节。` });
+  }
+  if (html) bodyIssues.length = 0;
+  if (!requireSendFields && !body && !html) bodyIssues.length = 0;
+  if (requireSendFields && !body && !html) {
+    bodyIssues.length = 0;
+    htmlIssues.push({ field: 'body', message: '正文不能为空。' });
+  }
+  const issues = [...typeIssues, ...subjectIssues, ...bodyIssues, ...htmlIssues];
   const parsed: Record<'to' | 'cc' | 'bcc', MailAddress[]> = { to: [], cc: [], bcc: [] };
   const sources: Array<['to' | 'cc' | 'bcc', string | MailAddressInput[] | undefined, number]> = [
-    ['to', input.to ?? input.toEmail ?? '', MAIL_LIMITS.to],
-    ['cc', input.cc, MAIL_LIMITS.cc],
-    ['bcc', input.bcc, MAIL_LIMITS.bcc]
+    ['to', normalizedInput.to ?? normalizedInput.toEmail ?? '', MAIL_LIMITS.to],
+    ['cc', normalizedInput.cc, MAIL_LIMITS.cc],
+    ['bcc', normalizedInput.bcc, MAIL_LIMITS.bcc]
   ];
   for (const [field, value, max] of sources) {
     if (typeof value === 'string' && value.trim().length > max) {
@@ -124,15 +163,15 @@ function validateMailInput(input: ComposeInput, requireSendFields: boolean): Val
   const all = [...parsed.to, ...parsed.cc, ...parsed.bcc];
   if (all.length > MAIL_LIMITS.recipients) issues.push({ field: 'recipients', message: `收件人总数不能超过 ${MAIL_LIMITS.recipients} 个。` });
   if (requireSendFields && parsed.to.length === 0) issues.push({ field: 'to', message: '至少需要一个收件人。' });
-  return result({ ...input, to: parsed.to, cc: parsed.cc, bcc: parsed.bcc, toEmail: parsed.to[0]?.email ?? '', subject, body }, issues);
+  return result({ ...normalizedInput, to: parsed.to, cc: parsed.cc, bcc: parsed.bcc, toEmail: parsed.to[0]?.email ?? '', subject, body, ...(hasHtmlField ? { html } : {}) }, issues);
 }
 
-export function validateComposeInput(input: ComposeInput): ValidationResult<ComposeInput> {
+export function validateComposeInput(input: unknown): ValidationResult<ComposeInput> {
   return validateMailInput(input, true);
 }
 
 /** Drafts may be incomplete, but every supplied field must still be safe and bounded. */
-export function validateDraftInput(input: ComposeInput): ValidationResult<ComposeInput> {
+export function validateDraftInput(input: unknown): ValidationResult<ComposeInput> {
   return validateMailInput(input, false);
 }
 

@@ -88,6 +88,15 @@ describe('safe HTML sanitizer', () => {
     expect(result.linkWarnings).toBe(5);
   });
 
+  test('can sanitize outbound HTML without display-only link decorations', () => {
+    const result = sanitizeHtml('<p><a href="https://example.com">portal</a><img src="https://tracker.example/pixel"></p>', {
+      decorateLinks: false
+    });
+    expect(result.html).toBe('<p><a href="https://example.com" target="_blank" rel="noopener noreferrer">portal</a></p>');
+    expect(result.html).not.toContain('fm-link-target');
+    expect(result.blockedImages).toBe(1);
+  });
+
   test('enforces input, output, nesting and node limits with stable typed errors', () => {
     const errorCode = (run: () => void) => {
       try {

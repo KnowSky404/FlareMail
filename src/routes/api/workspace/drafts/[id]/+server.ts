@@ -22,7 +22,9 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     const object = await findBodyObject(env.DB, row.body_object_id, session.userId, 'draft', id);
     if (!object) throw new ApiError(404, 'BODY_OBJECT_NOT_FOUND', '草稿正文对象不存在。');
     try {
-      message.body = (await readBodyObject(env.BUCKET, object.r2_key, object.size_bytes, object.sha256)).textBody;
+      const canonical = await readBodyObject(env.BUCKET, object.r2_key, object.size_bytes, object.sha256);
+      message.body = canonical.textBody;
+      message.html = canonical.htmlBody;
     } catch {
       throw new ApiError(409, 'BODY_OBJECT_INTEGRITY', '草稿正文完整性校验失败。');
     }
@@ -31,6 +33,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   const attachmentSnapshot = await draftAttachmentSnapshot(env.DB, session.userId, id);
   return apiSuccess(event, {
     message,
+    html: message.html ?? '',
     bodyRevision: row.body_object_id ?? null,
     attachments: attachmentSnapshot.attachments,
     attachmentRevision: attachmentSnapshot.attachmentRevision

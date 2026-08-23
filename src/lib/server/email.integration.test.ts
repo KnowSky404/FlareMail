@@ -172,6 +172,19 @@ describe('inbound email persistence', () => {
     expect(test.database.query('SELECT COUNT(*) AS count FROM mail_body_objects').get()).toEqual({ count: 1 });
   });
 
+  test('keeps the D1 body columns bounded when no canonical body object is written', async () => {
+    const test = environment();
+    const raw = new TextEncoder().encode([
+      'From: alice@example.com', 'To: owner@example.test', 'Subject: Inline body',
+      'Content-Type: text/plain; charset=utf-8', '', 'x'.repeat(200 * 1024), ''
+    ].join('\r\n'));
+    await handleInboundEmail(message(raw).value, test.env);
+    const row = test.database.query('SELECT body_object_id, text_body FROM email_messages').get() as { body_object_id: string | null; text_body: string };
+    expect(row.body_object_id).toBeNull();
+    expect(new TextEncoder().encode(row.text_body).byteLength).toBeLessThanOrEqual(128 * 1024);
+    expect(test.BUCKET.objects.size).toBe(1);
+  });
+
   test('stores raw, parsed metadata and attachment exactly once', async () => {
     const test = environment();
     const first = message();

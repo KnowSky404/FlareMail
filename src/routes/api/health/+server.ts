@@ -17,6 +17,7 @@ const REQUIRED_TABLES = [
   'workspace_attachments',
   'workspace_delivery_statuses',
   'workspace_login_rate_limits',
+  'workspace_outbound_rate_limits',
   'workspace_outbound_receipts',
   'workspace_outbound_events',
   'workspace_inbound_ingest_claims',

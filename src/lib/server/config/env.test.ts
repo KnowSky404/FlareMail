@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { assertValidEnvironment, parseAppEnv, parseEnvironment, validateEnvironment } from './env';
+import { assertValidEnvironment, parseAppEnv, parseEnvironment, resolveOutboundFromEmail, validateEnvironment } from './env';
 
 const bindings = {
   DB: {},
@@ -51,6 +51,18 @@ describe('runtime environment validation', () => {
     expect(validateEnvironment({ ...bindings, APP_ENV: 'production', OUTBOUND_PROVIDER: 'cloudflare' }).errors.map(({ code }) => code)).toContain('invalid_outbound_provider');
     expect(validateEnvironment({ ...bindings, APP_ENV: 'production' }).ok).toBe(true);
     expect(validateEnvironment({ APP_ENV: 'development', OUTBOUND_PROVIDER: 'unknown' }).errors.map(({ code }) => code)).toContain('invalid_outbound_provider');
+  });
+
+  test('accepts MAIL_FROM as a legacy sender alias and rejects conflicting values', () => {
+    const aliasOnly = { ...bindings, APP_ENV: 'production', MAIL_FROM: 'mail@example.test' };
+    delete (aliasOnly as Record<string, unknown>).OUTBOUND_FROM_EMAIL;
+    expect(validateEnvironment(aliasOnly).ok).toBe(true);
+    expect(resolveOutboundFromEmail(aliasOnly)).toBe('mail@example.test');
+    expect(validateEnvironment({ ...bindings, APP_ENV: 'production', MAIL_FROM: 'other@example.test' }).errors.map(({ code }) => code))
+      .toContain('conflicting_outbound_from');
+    expect(resolveOutboundFromEmail({ ...bindings, MAIL_FROM: 'other@example.test' })).toBeNull();
+    expect(validateEnvironment({ ...bindings, APP_ENV: 'production', MAIL_FROM: 'not-an-email' }).errors.map(({ code }) => code))
+      .toContain('conflicting_outbound_from');
   });
 
   test('requires an explicit opt-in for fake development and test services', () => {

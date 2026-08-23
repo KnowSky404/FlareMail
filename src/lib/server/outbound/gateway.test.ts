@@ -6,6 +6,7 @@ import {
   MAX_OUTBOUND_ATTACHMENT_BYTES,
   MAX_OUTBOUND_ATTACHMENT_COUNT,
   MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES,
+  MAX_RESEND_RESPONSE_BYTES,
   type OutboundMailInput
 } from './gateway';
 
@@ -108,6 +109,26 @@ describe('ResendOutboundGateway', () => {
     expect(calls).toBe(0);
   });
 
+  test('rejects malformed sender, recipients, and bounded header fields before provider fetch', async () => {
+    let calls = 0;
+    const gateway = new ResendOutboundGateway({
+      apiKey: 're_test_secret',
+      fetch: async () => { calls += 1; return jsonResponse({ id: 'unexpected' }); }
+    });
+    const cases: OutboundMailInput[] = [
+      input({ from: 'not-an-email' }),
+      input({ from: 'Sender\n <sender@example.com>' }),
+      input({ to: ['invalid-recipient'] }),
+      input({ to: ['recipient@example.net\u0000'] }),
+      input({ to: Array.from({ length: 51 }, (_, index) => `recipient-${index}@example.net`) }),
+      input({ subject: `主题${'界'.repeat(400)}` }),
+      input({ subject: `x${'a'.repeat(998)}` }),
+      input({ subject: 'Hello\r\nBcc: attacker@example.net' })
+    ];
+    for (const candidate of cases) await expect(gateway.send(candidate)).rejects.toMatchObject({ kind: 'configuration' });
+    expect(calls).toBe(0);
+  });
+
   test('requires a stable idempotency key and reuses it on retries', async () => {
     const keys: string[] = [];
     const gateway = new ResendOutboundGateway({
@@ -150,6 +171,30 @@ describe('ResendOutboundGateway', () => {
       });
       await expect(gateway.send(input())).rejects.toMatchObject({ kind, retryable, remoteStatus: status });
     }
+  });
+
+  test('bounds provider response reads and cancels an oversized stream', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('x'.repeat(MAX_RESEND_RESPONSE_BYTES + 1)));
+      },
+      cancel() { cancelled = true; }
+    });
+    const gateway = new ResendOutboundGateway({
+      apiKey: 're_test_secret',
+      fetch: async () => ({
+        status: 502,
+        body,
+        text: async () => { throw new Error('unbounded response.text() must not be called'); }
+      } as unknown as Response)
+    });
+    await expect(gateway.send(input())).rejects.toMatchObject({
+      kind: 'server_error',
+      remoteStatus: 502,
+      responsePreview: 'Resend returned HTTP 502.'
+    });
+    expect(cancelled).toBe(true);
   });
 
   test('distinguishes timeout from an unknown network outcome', async () => {

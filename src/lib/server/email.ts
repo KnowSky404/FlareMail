@@ -275,8 +275,12 @@ export async function handleInboundEmail(
       subject,
       timestamp: date,
       snippet: projected.snippet,
-      textBody: bodyObject ? projected.textBody : parsed.text,
-      htmlBody: bodyObject ? projected.htmlBody : parsed.html,
+      // D1 is a bounded projection in every case. When the canonical body
+      // is too large for R2, the raw RFC822 object above remains the lossless
+      // source of truth and these columns must not retain the unbounded MIME
+      // decode.
+      textBody: projected.textBody,
+      htmlBody: projected.htmlBody,
       inReplyTo: parsed.inReplyTo,
       references: parsed.references,
       threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from }),

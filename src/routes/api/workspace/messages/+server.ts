@@ -2,16 +2,18 @@ import type { RequestHandler } from './$types';
 import { validateComposeInput, type ComposeInput } from '$lib/domain/mail';
 import {
   ApiError,
+  apiFailure,
   apiSuccess,
   fieldErrorsFromIssues,
   readJsonBody,
   withApiHandler
 } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
-import { sendWorkspaceMessage } from '$lib/server/workspace';
+import { OutboundRateLimitError, sendWorkspaceMessage } from '$lib/server/workspace';
 import { isOutboundGatewayError } from '$lib/server/outbound/gateway';
 import { DraftBodyReloadRequiredError, DraftConflictError } from '$lib/server/workspace/draft';
 import { MAIL_LIMITS } from '$lib/domain/mail';
+import { SafeHtmlError } from '$lib/server/mail/html-sanitize';
 
 export const POST: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
@@ -25,6 +27,16 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
     });
     return apiSuccess(event, result);
   } catch (error) {
+    if (error instanceof OutboundRateLimitError) {
+      return apiFailure(
+        event,
+        new ApiError(429, 'SEND_RATE_LIMITED', `发送过于频繁，请在 ${error.retryAfterSeconds} 秒后重试。`),
+        { headers: { 'Retry-After': String(error.retryAfterSeconds) } }
+      );
+    }
+    if (error instanceof SafeHtmlError) {
+      throw new ApiError(400, 'VALIDATION_FAILED', error.message, fieldErrorsFromIssues([{ field: 'html', message: error.message }]));
+    }
     if (error instanceof DraftConflictError) {
       throw new ApiError(409, 'DRAFT_CONFLICT', '服务器版本已更新。', undefined, {
         draftId: error.current.id,

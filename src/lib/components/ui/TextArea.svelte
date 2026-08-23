@@ -34,8 +34,8 @@
   const describedBy = $derived([hint ? `${id}-hint` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined);
 </script>
 
-<label class="grid gap-1.5" for={id}>
-  {#if label}<span class="text-xs font-medium text-[var(--fm-text)]">{label}{#if required}<span class="ml-1 text-[var(--fm-brand-orange)]" aria-hidden="true">*</span>{/if}</span>{/if}
+<div class="grid gap-1.5">
+  {#if label}<label for={id} class="text-xs font-medium text-[var(--fm-text)]">{label}{#if required}<span class="ml-1 text-[var(--fm-brand-orange)]" aria-hidden="true">*</span>{/if}</label>{/if}
   <textarea
     {id}
     {name}
@@ -51,4 +51,4 @@
     {oninput}
   ></textarea>
   {#if error}<span id={`${id}-error`} class="text-xs text-[var(--fm-danger)]" role="alert">{error}</span>{:else if hint}<span id={`${id}-hint`} class="text-xs text-[var(--fm-text-muted)]">{hint}</span>{/if}
-</label>
+</div>

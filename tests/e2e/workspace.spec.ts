@@ -340,15 +340,18 @@ test('moves a draft to trash, persists across refresh, restores, and permanently
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
-  await expect(page.getByRole('dialog', { name: '新邮件' })).toBeVisible();
+  const composeDialog = page.getByRole('dialog', { name: '新邮件' });
+  await expect(composeDialog).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await page.getByLabel('收件人').fill('draft-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill('E2E autosaved draft');
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('This draft must survive a page refresh.');
+  await composeDialog.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>This <strong>HTML</strong> draft must survive a page refresh.</p>');
   await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
   await page.reload();
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
-  await openFolder(page, '草稿箱');
-  await expect(page.getByText('E2E autosaved draft', { exact: true }).first()).toBeVisible();
+  await openDraftEditor(page, 'E2E autosaved draft');
+  await expect(page.getByLabel('HTML 源码（可选）', { exact: true })).toHaveValue('<p>This <strong>HTML</strong> draft must survive a page refresh.</p>');
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -521,8 +524,12 @@ test('continues an existing draft on mobile and persists its next version', asyn
 
 test('sends through the local fake provider and applies a signed delivered webhook', async ({ page, consoleErrors }, testInfo) => {
   const externalRequests: string[] = [];
+  let outboundPayload: Record<string, unknown> | undefined;
   page.on('request', (request) => {
     if (/resend\.com/iu.test(request.url())) externalRequests.push(request.url());
+    if (request.url().endsWith('/api/send') && request.method() === 'POST') {
+      outboundPayload = request.postDataJSON() as Record<string, unknown>;
+    }
   });
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
@@ -530,11 +537,13 @@ test('sends through the local fake provider and applies a signed delivered webho
   await page.getByLabel('收件人').fill('send-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('This message is sent by the local fake provider.');
+  await page.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>This <em>HTML</em> message is sent by the local fake provider.</p>');
   await page.getByRole('button', { name: '发送邮件' }).click();
   const detail = page.getByRole('region', { name: '邮件详情' });
   await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
   await expect(detail.getByText('已提交', { exact: true }).first()).toBeVisible();
   expect(externalRequests).toEqual([]);
+  expect(outboundPayload?.html).toBe('<p>This <em>HTML</em> message is sent by the local fake provider.</p>');
 
   const providerLine = detail.locator('p').filter({ hasText: 'Provider ID' }).first();
   await expect(providerLine).toBeVisible();
