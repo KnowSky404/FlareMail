@@ -66,6 +66,90 @@ do not turn a storage or schema failure into the login page.
 and `workspace_schema_metadata` equals the exact application schema version.
 Otherwise it returns HTTP `503` with a typed safe error and correlation ID.
 
+## `/api/send` compatibility contract
+
+`POST /api/send` is a compatibility adapter for the first-generation compose
+client. It is still an authenticated workspace operation; it is not a public
+Resend proxy. The adapter keeps `RESEND_API_KEY` server-side, applies the same
+recipient/subject/body limits and rate limits as the workspace send route, and
+uses `OUTBOUND_FROM_EMAIL` as the recommended sender setting. `MAIL_FROM` may be
+supplied by an older deployment as a runtime compatibility alias; when both are
+present they must match, or environment validation fails closed.
+
+The minimum legacy request is:
+
+```http
+POST /api/send
+Content-Type: application/json
+Idempotency-Key: flaremail-legacy-client-20260823-001
+
+{
+  "to": "recipient@example.test",
+  "subject": "Hello",
+  "html": "<p>Hello from FlareMail</p>"
+}
+```
+
+`to` may be a single address (the legacy shape); implementations may also
+accept the current address-list form. `text`, `cc`, `bcc`, and RFC threading
+fields are optional extensions. The server must reject an empty/invalid
+recipient, an overlong subject/body, and malformed JSON. `Idempotency-Key` is
+recommended for retryable clients; when it is absent, the server uses the
+request correlation ID, so a later retry must reuse that ID to deduplicate the
+logical send. A successful compatibility response retains the old fields (the
+standard envelope also adds `ok`, `data`, and `requestId`):
+
+```json
+{
+  "ok": true,
+  "data": {
+    "message": {
+      "id": "sent-local-message-id",
+      "deliveryProviderMessageId": "provider-message-id"
+    },
+    "metrics": {}
+  },
+  "success": true,
+  "id": "provider-message-id",
+  "sentAt": "2026-08-23T12:00:00.000Z",
+  "messageId": "sent-local-message-id",
+  "requestId": "correlation-id"
+}
+```
+
+The `id` is a provider message ID, not proof of delivery. The standard `data`
+payload remains the typed workspace message/metrics result used by the web UI;
+the top-level fields preserve the small compatibility contract. Clients should
+inspect the persisted `submitted`/`delivered` state. Errors use the normal private
+`requestId`/field-error envelope where possible; they never include the API key,
+raw message body, R2 key, or provider credential details. The application-level
+limit is 10 send or retry attempts per authenticated user per 60-second fixed
+window; HTTP `429` includes `Retry-After`. `400`, `401`, `409`, `429`, and `503`
+retain their normal meaning and are safe for clients to retry only when the
+response contract allows it.
+
+### HTML safety boundary
+
+The `html` field is email content, not trusted application markup. The adapter
+must validate its UTF-8 size and treat it as an opaque payload for the provider;
+it must never expose `RESEND_API_KEY` to the browser or interpolate the request
+into a page with Svelte `{@html}`. Any preview, sent-message detail, or inbound
+message display goes through the server sanitizer and the sandboxed HTML route:
+
+- scripts, event-handler attributes, forms, frames, SVG, `javascript:`/unsafe
+  `data:` URLs, and unsafe CSS are removed;
+- links receive safe target/rel handling and remote images are blocked by
+  default, with an explicit per-viewer consent path;
+- inline CID images are resolved only through an ownership-checked attachment
+  route; attachment bytes and raw MIME are never embedded in JSON;
+- the text view remains the safe fallback, and raw `.eml` download is an
+  attachment response rather than executable HTML.
+
+This boundary protects FlareMail's UI even when an outbound or inbound message
+contains hostile HTML. It does not claim that a recipient's mail client will
+render provider-delivered HTML identically; production testing must use a
+dedicated mailbox and must not send secrets or personal data in fixtures.
+
 ## Draft concurrency
 
 `GET /api/workspace/drafts/:id` returns the current owned draft with its full

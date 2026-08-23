@@ -29,6 +29,7 @@
 APP_ENV=production
 OUTBOUND_PROVIDER=resend
 OUTBOUND_FROM_EMAIL=dev@your-domain.com
+# MAIL_FROM=dev@your-domain.com  # legacy compatibility alias; prefer OUTBOUND_FROM_EMAIL
 OUTBOUND_FROM_NAME=FlareMail
 AUTO_REPLY_ENABLED=true
 INBOUND_NOTIFICATION_ENABLED=true
@@ -150,15 +151,68 @@ bun run deploy
 
 这些 `bun run` 命令可从 bash、zsh、PowerShell 或 cmd 调用；脚本本身不依赖 `VAR=value command` 或固定的 POSIX 临时目录。`deploy:dry-run` 使用操作系统临时目录，`deploy` 和所有远程 D1 命令则继承当前 OAuth keyring/API token 环境。
 
-## 4. 配置 Email Routing
+## 4. 配置 Cloudflare Email Routing
 
-在 Cloudflare Dashboard 中确认：
+### 4.1 Dashboard 中把收件地址绑定到 Worker
 
-- 域名已开启 Email Routing
-- `dev@your-domain.com` 这类地址已路由到当前 Worker
-- Resend 已验证 `OUTBOUND_FROM_EMAIL` 对应的域名或发件地址
-- Resend webhook 指向 `https://<worker-domain>/api/webhooks/resend`
-- webhook signing secret 与 `RESEND_WEBHOOK_SECRET` 一致
+按以下顺序在 Cloudflare Dashboard 操作，规则的目标必须是部署了 FlareMail
+`email()` handler 的 Worker，而不是只部署了静态 Assets 的项目：
+
+1. 打开目标域名的 **Email Routing**，先点击 **Get started/Enable Email
+   Routing**；确认 DNS 由 Cloudflare 托管，并按页面提示创建所需 MX/TXT
+   记录。
+2. 在 **Email Routing → Routes**（或 **Routing rules**）点击 **Create
+   address**，填写要接收的完整地址（例如 `dev@your-domain.com`），不要
+   使用生产真实地址作为本地测试地址。
+3. 在目标类型中选择 **Worker**，选择已部署的 `flaremail` Worker；不要选择
+   Forward to email，否则邮件不会调用 Worker 的 `email()` handler。
+4. 保存并启用规则，检查规则优先级、匹配字段是 `to`，且没有更早的 catch-all
+   或 forwarding 规则抢先处理该地址。用 Dashboard 的规则详情确认状态为
+   enabled/active。
+5. 从外部测试邮箱发送一封唯一主题的邮件到该地址。观察 Worker 日志和
+   FlareMail Inbox；不要把 Resend API key、webhook secret 或管理员密码放进
+   邮件、URL、日志或截图。
+
+本地不会经过 Dashboard。启动 `bun run preview`（或
+`bun x wrangler dev worker/index.ts --local`）后，向本地
+`/cdn-cgi/handler/email?from=...&to=...` 发送 `message/rfc822` RFC5322 原文，
+并确保原文含 `Message-ID`。可复制命令和 D1/R2/UI 分层验证见
+[README 的本地入站章节](./README.md#本地-email-routing-入站验证)。
+
+### 4.2 Resend domain、DNS 与 secret
+
+在 Resend Dashboard 的 **Domains → Add Domain** 添加发件域名，然后把 Resend
+页面为该域名生成的 DNS 记录逐条复制到权威 DNS 提供商；不要凭记忆改写值：
+
+- **SPF**：按 Resend 提供的 TXT/MX 记录发布；若域名已有 SPF，合并
+  `include` 到同一条 `v=spf1 ...`，不要发布两条 SPF TXT。
+- **DKIM**：按 Resend 提供的 selector CNAME/TXT 记录发布，等待状态变为
+  verified。DKIM selector、目标值和 TTL 以 Resend 当前页面为准。
+- **DMARC**：在 `_dmarc.your-domain.com` 发布 TXT，例如先从
+  `v=DMARC1; p=none; rua=mailto:dmarc@your-domain.com` 观测，再按报告逐步
+  收紧策略；DMARC 依赖 SPF/DKIM 对齐，不能替代二者。确认收件地址可接收
+  报告且不会把隐私邮件地址提交到仓库。
+
+DNS 全球传播可能需要数小时（极端情况下更久）。在 Resend 显示 domain
+`verified` 前不要把它作为生产发件人。生产 Worker 使用：
+
+```bash
+bun x wrangler secret put RESEND_API_KEY --config wrangler.deploy.toml
+bun x wrangler secret put RESEND_WEBHOOK_SECRET --config wrangler.deploy.toml
+```
+
+以上命令会交互式读取 secret；不要把 secret 写入命令参数、`.dev.vars`、
+`wrangler.deploy.toml`、GitHub body 或日志。配置
+`OUTBOUND_FROM_EMAIL=dev@your-domain.com` 时，`your-domain.com` 必须已经在
+Resend verified；`MAIL_FROM` 是旧部署变量的运行时兼容别名。推荐只配置
+`OUTBOUND_FROM_EMAIL`；若两者同时存在，值必须一致，否则环境校验会拒绝启动。
+
+在 Resend 中创建 webhook，订阅 `email.sent`、`email.delivered`、
+`email.delivery_delayed`、`email.bounced`、`email.failed`、
+`email.complained`、`email.suppressed`，目标为
+`https://<worker-domain>/api/webhooks/resend`。把页面生成的 signing secret
+作为 `RESEND_WEBHOOK_SECRET` 注入；不要以“API 返回 200”替代 signed webhook
+的 delivered 证据。
 
 注意：
 
@@ -176,15 +230,28 @@ bun run deploy
 
 ## 6. 上线后验证
 
-至少验证这几项：
+先确认生产 Worker 的 `DB` 与 `BUCKET` binding 指向同一套已迁移的生产资源，
+而不是 `wrangler.toml` 的 development/preview 资源。使用入站邮件对应的
+owner-scoped R2 key 做一次只读对象读取（不要遍历或删除 bucket）：
+
+```bash
+bun x wrangler r2 object get <PRODUCTION_BUCKET_NAME>/<KNOWN_R2_KEY> --remote --config wrangler.deploy.toml --file /tmp/flaremail-r2-smoke.eml
+```
+
+然后按以下顺序完成 smoke；每一步记录时间、request ID 或 provider message
+ID，避免把邮件正文、secret 或完整地址写入公开报告：
 
 1. 从外部邮箱发信到 Worker 绑定地址
-2. 确认 D1 有入站记录
-3. 确认 R2 有 `.eml` 原文
-4. 确认通知邮箱收到了通知
-5. 确认原始发件人收到了自动回信
-6. 从工作台发送到专用测试邮箱，先确认状态为 `submitted`，收到 Resend webhook 后再确认 `delivered`
-7. 验证移动端列表→详情→返回、light/dark/system、键盘写信和退出登录
+2. 确认 `/api/health` 为 `200`，且 D1 有该入站记录和正确 owner
+3. 在工作台读取详情、下载 raw `.eml`，确认 R2 原文对象可读取且 checksum/size
+   校验通过；有附件时逐一下载并确认附件对象也来自同一 R2 binding
+4. 确认通知邮箱收到了通知（若启用）
+5. 确认原始发件人收到了自动回信（若启用且 loop guard 未拦截）
+6. 从工作台或兼容 `/api/send` 的客户端发送到专用测试邮箱，先确认状态为
+   `submitted`，收到 Resend signed webhook 后再确认 `delivered`
+7. 在 Resend Dashboard 对照 provider message ID，确认没有 bounce、complaint
+   或 suppression；不要把 API 受理响应当作送达证据
+8. 验证移动端列表→详情→返回、light/dark/system、键盘写信和退出登录
 
 生产证据必须区分：API 受理不等于邮件已送达；只有 `email.delivered` webhook 才能证明 delivered。
 
@@ -231,19 +298,25 @@ bun run search:index -- --mode verify --json
 
 只有报告出现 missing/orphan projection 时才审阅并显式执行 `--mode rebuild --apply`；远程目标还必须加 `--remote`。
 
-## 10. 生产 smoke checklist（仅供操作者执行，本轮不执行）
+## 10. 生产闭环 checklist（仅供操作者执行，本轮不执行）
 
-1. 记录 preview/production migration list 和 D1 备份；
-2. 验证 `/api/health` readiness 和 schema metadata version；
-3. 外部邮箱入站；
-4. D1 ownership；
-5. R2 raw 与附件；
-6. expected reject 不产生 Worker failure；
-7. 自动回复 loop guard；
-8. 工作台 Resend 提交；
-9. signed webhook；
-10. `submitted` 到 `delivered` 状态；
-11. webhook duplicate/out-of-order；
-12. stale submitting 与 expired delivery review；
-13. mobile、theme、keyboard、logout；
-14. Workers `cpuTime`、`exceededCpu`、D1/R2 error 观察。
+上线前、上线后和回滚预案必须共同满足：
+
+1. 记录提交 SHA、preview/production migration list、D1 backup bookmark 和
+   production `DB`/`BUCKET` binding；
+2. 验证 `/api/health` readiness、schema metadata version，以及 R2 只读对象
+   读取 smoke；
+3. 验证 Dashboard Email Routing 规则启用且指向 Worker；外部邮箱入站后确认
+   D1 ownership、R2 raw `.eml` 与附件完整性、Inbox/UI 详情；
+4. 验证 expected reject 不产生 Worker failure、自动回复 loop guard，以及通知
+   开关行为；
+5. 验证 Resend domain verified、SPF/DKIM/DMARC DNS、API secret 与
+   `OUTBOUND_FROM_EMAIL`；`MAIL_FROM` 只能作为兼容别名；
+6. 通过工作台和 `/api/send` 兼容契约发送专用测试邮件，保存 `submitted`、
+   signed webhook、provider message ID、最终 `delivered`/bounce 证据；
+7. 重放 duplicate/out-of-order webhook，确认不会倒退状态；检查 stale
+   submitting、expired delivery review、R2 cleanup pending；
+8. 验证 mobile、theme、keyboard、logout，并观察 Workers `cpuTime`、
+   `exceededCpu`、D1/R2 error 和 Resend 投递指标；
+9. 只有以上证据齐全才宣布生产邮件闭环完成。任一步失败时停止扩大流量，保留
+   D1/R2 数据，按上一已知良好提交回滚并重新核对 binding。

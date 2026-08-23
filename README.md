@@ -11,8 +11,8 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 - Resend 出站：稳定幂等键、`reply_to`/RFC headers、R2 流式附件上传与完整性校验、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
-- 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
-- 版本化 D1 migration：`migrations/0001` 至 `0017`，包括登录限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5、出站附件与 lease/retry/manual-review 清理队列，并由 `schema.sql` 保存最新结构快照。
+- 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本回退与可选 HTML 写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
+- 版本化 D1 migration：`migrations/0001` 至 `0018`，包括登录与出站发送限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5、出站附件与 lease/retry/manual-review 清理队列，并由 `schema.sql` 保存最新结构快照。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
 - 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention/orphan 报告，以及有界 claim、lease、backoff、max-attempts 和人工复核的 canonical R2 cleanup lifecycle。
 - 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖 Chromium 桌面/移动/320px、axe，以及 Desktop WebKit、iPhone 与 iPad 模拟 smoke。
@@ -75,6 +75,58 @@ unset FLAREMAIL_ADMIN_EMAIL FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
 bun run dev
 bun run preview
 ```
+
+### 本地 Email Routing 入站验证
+
+`bun run dev` 主要用于页面开发；要执行 Worker 的 `email()` handler，请使用
+`bun run preview`（它会构建 Worker 并启动本地 Wrangler）或先执行
+`bun run build`，再运行 `bun x wrangler dev worker/index.ts --local`。本地 Email Routing 的入口是
+`/cdn-cgi/handler/email`，`from` 和 `to` 查询参数代表 envelope，POST body
+必须是完整的 RFC5322 原文，而不是 JSON。下面的 body 包含稳定的
+`Message-ID`，可直接复制执行；它只向本机发送测试邮件，不调用外部邮箱：
+
+```bash
+curl --fail-with-body --silent --show-error \
+  --request POST \
+  'http://127.0.0.1:8787/cdn-cgi/handler/email?from=sender@example.test&to=admin@example.test' \
+  --header 'Content-Type: message/rfc822' \
+  --data-binary @- <<'EOF'
+Message-ID: <local-flaremail-demo-20260823@example.test>
+Date: Sat, 23 Aug 2026 12:00:00 +0000
+From: Sender <sender@example.test>
+To: admin@example.test
+Subject: Local FlareMail Email Routing demo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This message exercises the local Cloudflare Email Routing handler.
+EOF
+```
+
+示例中的 `admin@example.test` 必须与前面 bootstrap 的
+`FLAREMAIL_ADMIN_EMAIL` 一致；如果你使用了其他本地管理员地址，请同时替换
+URL 的 `to` 和 RFC5322 的 `To`，否则邮件只能作为未归属入站记录保存，不会
+出现在该管理员的 Inbox。
+
+入站验证应按 D1、R2、UI 三层分别留证：
+
+1. `curl http://127.0.0.1:8787/api/health` 应返回本地 readiness；只读查询
+   `bun x wrangler d1 execute flaremail-db --local --config wrangler.toml --command="SELECT message_id, \"from\", \"to\" FROM email_messages ORDER BY created_at DESC LIMIT 1"`
+   确认 envelope、`Message-ID` 和 owner 记录已保存。
+2. 在已登录工作台打开该邮件并下载 raw `.eml` 或附件，确认正文不是列表
+   projection；这次下载本身就是 R2 binding smoke。若已从受控的本地 D1
+   metadata 得到对象 key，也可用 Wrangler 读取该单个对象：
+   `bun x wrangler r2 object get flaremail-bucket-preview/<KNOWN_R2_KEY> --local --config wrangler.toml --file /tmp/flaremail-r2-smoke.eml`。
+3. 在 UI 中确认邮件出现在 Inbox，进入详情、切换纯文本/安全 HTML（若有
+   HTML）、下载 raw，并验证刷新后仍可见。测试账号通过
+   `bun run auth:bootstrap:local` 创建，不能把密码写入仓库。
+
+本地 `OUTBOUND_PROVIDER=demo`/`fake` 只验证 compose、D1 状态机、R2 附件和
+UI；它不会访问 Resend、不会证明 DNS、真实投递或 `delivered`。真实 Resend
+验证必须使用独立 preview/production 配置、Resend secret 和已验证域名，且
+不能把 `submitted` 当作已送达；只有收到 signed `email.delivered` webhook
+才能完成 delivered 闭环。
 
 ## 验证
 
