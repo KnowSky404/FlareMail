@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 286 64" role="img" aria-labelledby="title">
+  <title id="title">FlareMail</title>
+  <g fill="#f48120">
+    <path d="M4 36 28 52l24-16v14c0 5.5-4.5 10-10 10H14C8.5 60 4 55.5 4 50V36Z" />
+    <path d="M29 4c2 8-2 14-10 20-8 6-11 12-6 18l11 7c-2-7 0-12 6-17 9-7 11-18-1-28Z" />
+    <path d="M36 19c5 6 7 13 4 19-2 5-7 9-12 12-1-6 1-11 6-15 5-5 5-10 2-16Z" />
+  </g>
+  <text
+    x="68"
+    y="43"
+    fill="#1d1d1f"
+    font-family="Inter, 'Segoe UI', Arial, sans-serif"
+    font-size="34"
+    font-weight="700"
+    letter-spacing="-1.2"
+  >FlareMail</text>
+</svg>
