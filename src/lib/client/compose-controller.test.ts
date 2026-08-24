@@ -39,9 +39,27 @@ describe('compose controller', () => {
       draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:00.000Z', bodyRevision: 'body-object-1'
     });
     expect(withComposePersistence({ toEmail: '', subject: 'Latest edit', body: 'B' }, {
-      draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:01.000Z'
+      draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:01.000Z', bodyRevision: 'body-object-2'
     })).toMatchObject({
-      subject: 'Latest edit', draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:01.000Z'
+      subject: 'Latest edit', draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:01.000Z', bodyRevision: 'body-object-2'
+    });
+  });
+
+  test('keeps authoritative persistence metadata when closing a stale modal snapshot', () => {
+    const staleModal = {
+      ...composeInputFromSavedDraft(savedDraft(), 'body-object-1'),
+      subject: 'Latest modal edit'
+    };
+    const closing = withComposePersistence(staleModal, {
+      draftId: 'draft-1',
+      expectedUpdatedAt: '2026-08-19T10:00:02.000Z',
+      bodyRevision: 'body-object-3'
+    });
+    expect(closing).toMatchObject({
+      subject: 'Latest modal edit',
+      draftId: 'draft-1',
+      expectedUpdatedAt: '2026-08-19T10:00:02.000Z',
+      bodyRevision: 'body-object-3'
     });
   });
 

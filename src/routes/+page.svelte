@@ -902,7 +902,13 @@
 
   async function closeCompose(latestInput?: ComposeInput) {
     clearComposeAutosaveTimer();
-    if (latestInput) composeLiveInput = withCurrentComposePersistence(latestInput);
+    if (latestInput) {
+      composeLiveInput = withComposePersistence(latestInput, {
+        draftId: composeLiveInput?.draftId ?? composeDraftId,
+        expectedUpdatedAt: composeLiveInput?.expectedUpdatedAt,
+        bodyRevision: composeLiveInput?.bodyRevision
+      });
+    }
     composeClosePending = true;
     let savedBeforeClose = false;
 
