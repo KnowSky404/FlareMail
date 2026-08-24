@@ -1,180 +1,192 @@
-# FlareMail production checklist
+# FlareMail production release checklist
 
-This checklist is the operator gate for an RC-1 Preview or production release.
-Repository tests do not authorize or perform a deployment, remote migration,
-real email, webhook registration, R2 deletion, alert change, or Cron creation.
+This is the checkable release gate for every future production release. The
+complete first-deployment and upgrade procedure is
+[DEPLOY.md](../DEPLOY.md); this file records evidence and stop conditions. It
+does not authorize or perform deployment, remote migration, real mail,
+webhook registration, Email Routing changes, D1 restore or R2 deletion.
 
-Record every command, timestamp, target, and result in the release evidence.
-Never paste secrets, cookies, email bodies, recipient addresses, raw MIME, or
-complete R2 keys into that evidence.
+Record the command, UTC timestamp, target and result for each checked item.
+Never put secrets, passwords, cookies, message bodies, raw MIME, complete
+recipient addresses or full R2 keys into shared evidence.
 
 ## Release identity
 
-- [ ] Record `git rev-parse HEAD` as the immutable release SHA.
-- [ ] Confirm the branch is `codex/flaremail-rc1-hardening` and its base is
-  `04b840e7548e329b1f1d07efc1e6c772e61a8f2d`.
-- [ ] Confirm `git status --short` is empty and the SHA exists on `origin`.
-- [ ] Confirm every required GitHub Actions job passed for that exact SHA.
-- [ ] Confirm `bun.lock` is committed and `bun install --frozen-lockfile`
-  succeeds with Bun 1.3.14.
-- [ ] Confirm `bun run audit:dependencies` reports no high or critical
-  advisory for the exact lockfile.
-- [ ] Archive the redacted outputs of `bun run release:preflight -- --json`,
-  `bun run search:index -- --mode verify --json`, and the browser jobs.
+- [ ] The release is being prepared from `main`, or an explicitly approved
+  immutable release commit has been selected and recorded.
+- [ ] `git status --short` is empty.
+- [ ] The 40-character `git rev-parse HEAD` SHA is recorded.
+- [ ] The release SHA is reachable from `origin/main`:
 
-## Before any remote change
+  ```bash
+  git fetch origin main
+  git merge-base --is-ancestor <RELEASE_SHA> origin/main
+  ```
 
-- [ ] Name the target explicitly: isolated Preview or production. Stop if a
-  Preview command resolves to a production D1 database, R2 bucket, Worker,
-  Resend key/domain, or webhook.
-- [ ] Review the private Wrangler configuration without printing secrets.
-  Production must use HTTPS `APP_ORIGIN`, `APP_ENV=production`,
-  `OUTBOUND_PROVIDER=resend`, the official Resend API origin, and distinct D1
-  and R2 bindings. Demo/fake services are forbidden.
-- [ ] Confirm `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are configured as
-  secrets. Record only present/missing status.
-- [ ] Confirm the Resend sending domain is verified and the intended From,
-  Reply-To, bounce, and webhook domains are controlled by the operator.
-- [ ] Confirm Email Routing targets only the intended Worker and test address.
-- [ ] Confirm `/api/health` is not used as proof of authenticated mail flow.
-- [ ] Record the currently deployed Worker version/SHA as the rollback target.
-- [ ] Record a bounded R2 inventory summary by managed prefix and object count;
-  do not export filenames or complete keys into shared logs.
-- [ ] Confirm cleanup backlog, manual-review jobs, stale inbound claims, stale
-  attachment uploads, and stuck delivery attempts are understood. A growing or
-  unexplained backlog blocks release.
+- [ ] The exact SHA's required GitHub Actions jobs are completed and green.
+- [ ] No gate depends on a historical RC branch, old base SHA, closed PR, or
+  feature-branch relationship.
+- [ ] The checkout uses Bun `1.3.14`, the exact `packageManager` version in
+  `package.json`.
+- [ ] `bun.lock` is committed and `bun install --frozen-lockfile` succeeds.
+- [ ] `bun run audit:dependencies` reports no high-severity dependency issue.
 
-## D1 backup and migration
+## Target, configuration and invariants
 
-D1 Time Travel is always on for supported production databases. Before a
-migration, record the current bookmark with an explicitly reviewed Wrangler
-command and retain it with the release evidence:
+- [ ] The target is explicitly recorded as production; no Preview command
+  resolves to production D1, R2, Worker, Resend credentials or webhook.
+- [ ] The private `wrangler.deploy.toml` was created from
+  `wrangler.deploy.toml.example` and `git check-ignore wrangler.deploy.toml`
+  confirms it is ignored.
+- [ ] `wrangler.toml` is not being used for a production deploy.
+- [ ] `APP_ENV=production` and `APP_ORIGIN` is the credential-free HTTPS origin
+  of the actual Worker Custom Domain.
+- [ ] `OUTBOUND_PROVIDER=resend` and `RESEND_API_BASE_URL` is the official
+  `https://api.resend.com` origin or is omitted to use the code default.
+- [ ] `DB`, `BUCKET` and `ASSETS` bindings point to the reviewed production
+  resources. A preview R2 bucket is not required by the production config.
+- [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Wrangler
+  secrets; record only presence, never values.
+- [ ] `OUTBOUND_FROM_EMAIL` belongs to a Resend domain whose status is
+  `verified`.
+- [ ] `AUTO_REPLY_ENABLED`, `INBOUND_NOTIFICATION_ENABLED` and
+  `NOTIFICATION_EMAIL` were reviewed as real outbound behavior.
+- [ ] The Email Routing recipient exactly matches the bootstrapped
+  administrator's `login_email`/`email` under the current owner lookup.
+- [ ] `APP_ORIGIN` exactly matches the Custom Domain used by the Web UI and
+  webhook endpoint.
 
-```bash
-bun x wrangler d1 info flaremail-db --remote --config wrangler.deploy.toml
-bun x wrangler d1 time-travel info flaremail-db --remote --config wrangler.deploy.toml
-```
+## D1 target and migration evidence
 
-- [ ] Confirm the D1 backend supports Time Travel and record the pre-migration
-  bookmark. Do not run `time-travel restore` during normal release work; restore
-  is destructive and requires separate incident approval.
-- [ ] If a longer-lived logical backup is required, schedule a write freeze.
-  D1 export blocks database requests and cannot export a database while an FTS5
-  virtual table exists.
-- [ ] For logical export, first verify the search projection, explicitly remove
-  only the rebuildable virtual FTS layer using the documented maintenance
-  command, export, restore the FTS layer, and verify it again. Never drop
-  `workspace_search_documents`.
-- [ ] Review migrations from `0011` through the latest number. Apply every file
-  once, in order; never edit an applied migration or perform a destructive
-  downgrade.
-- [ ] Apply the remote migration only after a separate operator approval:
+- [ ] The intended D1 target is confirmed with:
+
+  ```bash
+  bun x wrangler d1 info flaremail-db --config wrangler.deploy.toml
+  ```
+
+- [ ] The current Time Travel state/bookmark is recorded before migration:
+
+  ```bash
+  bun x wrangler d1 time-travel info flaremail-db --config wrangler.deploy.toml
+  ```
+
+  These Time Travel commands are remote-only in the current Wrangler CLI; do
+  not add a legacy `--remote` option to them.
+- [ ] The migration list was reviewed against the checked-out files:
+
+  ```bash
+  rg --files migrations | sort | tail -n 1
+  bun x wrangler d1 migrations list flaremail-db --remote --config wrangler.deploy.toml
+  ```
+
+- [ ] The checkout's latest migration filename and schema version are recorded
+  (currently migrations `0001` through `0018` and schema version `18`); the
+  repository's `schema-version.ts` and preflight output were checked rather
+  than relying on an old number.
+- [ ] Every unapplied migration is approved and applied in numeric order:
 
   ```bash
   bun run db:migrate:remote
   ```
 
-- [ ] Verify `workspace_schema_metadata` equals the repository schema version
-  and all health-required tables exist.
-- [ ] Run FTS verify. If missing/orphaned rows are non-zero, investigate first;
-  then use an explicitly authorized bounded rebuild and verify again.
-- [ ] Run attachment integrity repair in report-only mode. Apply only a bounded
-  batch after reviewing owner scope, missing objects, size mismatches, checksum
-  mismatches, and the continuation cursor.
-- [ ] Run cleanup report. Do not release while unsafe keys, lost claims, or
-  unexplained `manual_review` jobs exist.
+- [ ] No published migration was edited, skipped or downgraded.
+- [ ] `workspace_schema_metadata.schema_version` and every health-required table
+  are present after migration.
+- [ ] `workspace_search_documents` remains canonical. Migration `0015`'s FTS5
+  virtual layer is treated as rebuildable, not as the mail source of truth.
+- [ ] A logical export, if required, followed the FTS-aware procedure in
+  [docs/DEPLOYMENT.md](./DEPLOYMENT.md): verify, prepare, export during a write
+  freeze, restore the virtual layer, and verify again.
+- [ ] No Time Travel restore was run during ordinary release work. Restore is
+  an incident-only destructive operation requiring separate approval.
 
-For local or isolated Preview evidence, use the fail-closed commands below.
-They refuse production targets; production mutation requires a separately
-reviewed operator procedure and approval.
+## Code and preflight gates
 
-```bash
-bun run attachment:integrity -- --limit 100 --json
-bun run maintenance -- cleanup-report --config wrangler.toml --json
-bun run maintenance -- cleanup-drain --dry-run --limit 50 --config wrangler.toml --json
-```
+- [ ] `bun run check` passes.
+- [ ] `bun test src scripts` passes.
+- [ ] `bun run build` passes.
+- [ ] `bun run release:preflight -- --json` passes with no `FAIL` checks.
+- [ ] `bun run deploy:dry-run` passes without reading the private config or
+  publishing a Worker.
+- [ ] `git diff --check` passes.
+- [ ] If UI behavior changed, the isolated local browser gates were run:
 
-For Preview, add `--remote --config wrangler.preview.toml` only after confirming
-that config declares `APP_ENV=preview` and isolated Preview D1/R2 resources.
-Only an approved bounded Preview repair/drain may add `--apply`.
+  ```bash
+  bun run test:e2e
+  bun run test:e2e:webkit
+  bun run test:a11y
+  ```
 
-## Isolated Preview measurement
+- [ ] Local, mock, browser and CI evidence is labeled as such; none is claimed
+  as proof of Cloudflare production capacity, Resend delivery, Email Routing,
+  production webhook registration or real-device Safari.
 
-- [ ] Deploy the exact release SHA to an isolated Preview Worker with separate
-  D1, R2, Resend test credentials, Email Routing address, and webhook.
-- [ ] Generate deterministic runtime fixtures locally and record each fixture
-  SHA-256. Large generated files remain outside Git.
-- [ ] Run the local measurement harness and record its phase timing only as
-  local harness evidence, never as Workers CPU or memory evidence.
-- [ ] In Workers Logs/Traces and the Cloudflare dashboard, record `cpuTime`,
-  wall time, invocation outcome, `exceededCpu`/`exceededMemory`, startup time,
-  subrequests, D1 requests, and R2 operations for small, medium, near-limit,
-  multipart, HTML/CID, mismatched-length, and attachment-integrity fixtures.
-- [ ] Record exact SHA, Preview Worker, fixture hash, UTC time, Cloudflare plan,
-  compatibility date, and result. Apply the thresholds in [SLO.md](./SLO.md).
+## First deployment or production runtime changes
 
-## Preview smoke
+- [ ] Email Routing remains disabled while the bootstrap Worker is deployed.
+- [ ] The bootstrap Worker was created with `bun run deploy` from the exact
+  release SHA and private config.
+- [ ] The Custom Domain was attached and resolves to the intended Worker:
 
-Run these against isolated data. Any unexpected 5xx, integrity failure,
-cross-owner result, unbounded latency, or PII-bearing log blocks production.
+  ```text
+  Workers & Pages → flaremail → Settings → Domains & Routes
+  → Add → Custom Domain
+  ```
 
-- [ ] Login succeeds; bad credentials are generic and rate limited; logout
-  revokes the session; stale/forged sessions fail closed.
-- [ ] Compose with multiple To/CC/BCC recipients, refresh autosave, then send.
-  Verify BCC is never exposed in recipient-visible headers or API responses.
-- [ ] Receive a routed email and verify ownership, plain text, RFC threading,
-  Reply, Reply All, Forward, and deduplication.
-- [ ] Open sanitized HTML; verify scripts/forms/event handlers are absent,
-  remote images require per-message consent, and owned CID images render.
-- [ ] Open a canonical large body from R2 and verify size/checksum failure paths.
-- [ ] Upload, rename, cancel, retry, refresh, send, and download attachments.
-  Test valid, missing, size-mismatched, checksum-mismatched, and legacy-null
-  inbound objects without returning corrupt bytes.
-- [ ] Search owner-scoped ASCII/UTF-8 content and advanced filters; verify no
-  BCC/body/attachment leakage, trash visibility, stable pagination, and zero
-  missing/orphan projections.
-- [ ] Move to trash, undo, restore, permanently delete, and drain one bounded
-  cleanup batch. Verify retry/backoff/manual-review behavior without full keys
-  in logs.
-- [ ] Submit outbound mail and reconcile signed duplicate/out-of-order webhook
-  events. Verify delayed/bounced/complained/suppressed monotonicity.
-- [ ] Verify `/api/health`, runtime degraded UI, global mailbox/delivery counts,
-  toast semantics, accessibility, Chromium, and Playwright WebKit projects.
-- [ ] Manually test a real iPhone and iPad: safe areas, dynamic viewport,
-  keyboard/IME, file picker, download, focus restoration, touch targets,
-  drawers/dialogs, theme, and horizontal overflow. Linux Playwright WebKit is
-  not proof of real-device Safari behavior.
+- [ ] Resend sending domain DNS is verified; SPF is merged into one SPF record,
+  DKIM uses the dashboard-generated selector/target, and DMARC is reviewed.
+- [ ] Resend webhook endpoint is exactly
+  `https://<APP_ORIGIN_HOST>/api/webhooks/resend`.
+- [ ] The webhook subscribes to the code-supported events:
+  `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`,
+  `email.failed`, `email.complained`, and `email.suppressed`. `email.opened`
+  and `email.clicked` are timeline-only events in the current code.
+- [ ] Both Resend secrets were set with `wrangler secret put`, then the final
+  `bun run deploy` was performed so code/config/bindings/secrets form one
+  reviewed release.
+- [ ] `GET https://<APP_ORIGIN_HOST>/api/health` returns HTTP 200.
+- [ ] Only after health and dependency review passed was Email Routing enabled:
 
-## Production change and smoke
+  ```text
+  Email Routing → Enable/Get started → Routing Rules → Create address
+  → Send to a Worker → flaremail
+  ```
 
-Production commands and real messages are operator-only and are not run by CI.
+- [ ] The active rule is not shadowed by a higher-priority catch-all or
+  forwarding rule. It sends to a Worker, not **Forward to email**.
 
-- [ ] Reconfirm the exact SHA, backup bookmark, target bindings, current
-  cleanup/search/integrity reports, and approved maintenance window.
-- [ ] Apply migrations before deploying code that requires the new schema.
-- [ ] Deploy the exact approved SHA. Do not rebuild from a different checkout.
-- [ ] Register or update Email Routing and the Resend webhook only if separately
-  approved; preserve the previous configuration for rollback.
-- [ ] Run one controlled login, inbound, outbound, webhook, attachment,
-  search, trash, cleanup-report, and health smoke. Use designated test mailboxes
-  and remove evidence that contains message data.
-- [ ] Watch Workers, D1, R2, Resend, cleanup backlog, search drift, attachment
-  integrity failures, and the external uptime probe through the release window.
+## Production smoke
 
-## Rollback
+- [ ] Inbound smoke reached Worker `email()`, created a D1 row with the correct
+  owner, wrote raw/body/attachment objects to the production R2 bucket, and
+  displayed the message in the administrator Inbox.
+- [ ] Inbound UTF-8/Chinese text, sender, subject, threading, raw `.eml`, plain
+  text, sanitized HTML, attachment download, size and SHA-256 integrity passed.
+- [ ] Expected inbound size/MIME rejects did not become Worker failures.
+- [ ] Outbound smoke reached Resend from the verified domain and first reported
+  local state `submitted` with a provider message ID.
+- [ ] A valid signed `email.delivered` webhook changed the local state to
+  `delivered`. API acceptance or `email.sent` alone was not counted as delivery.
+- [ ] Bounce, delayed, failed, complained and suppressed events were reviewed;
+  duplicate/out-of-order events did not move delivery state backwards.
+- [ ] `/api/health = 200` was not used as proof of login, inbound, R2,
+  outbound, webhook or mailbox delivery.
+- [ ] Evidence contains no secrets, message body, raw MIME or complete R2 key.
 
-- [ ] Roll back the Worker to the recorded previous version/SHA.
-- [ ] Keep append-only tables and columns. Never downgrade or delete D1 schema
-  merely because older Worker code is restored.
-- [ ] Do not blindly delete R2 canonical objects. Preserve raw messages, bodies,
-  attachments, and cleanup jobs until ownership and references are reviewed.
-- [ ] Pause any operator-driven cleanup drain; production Cron is not created by
-  this release.
-- [ ] Disable or restore webhook, Resend, and Email Routing changes only when
-  they caused the incident and the prior configuration is known.
-- [ ] If data restoration is required, use the recorded Time Travel bookmark
-  only under incident approval; restoration overwrites D1 in place and cancels
+## Rollback readiness and incident recovery
+
+- [ ] Current and previous known-good Worker SHAs/versions are recorded.
+- [ ] The production D1 target, schema version and pre-change Time Travel
+  bookmark are recorded.
+- [ ] Production D1/R2 binding names, Resend webhook endpoint/event set,
+  Email Routing rule and secret-present status are recorded without values.
+- [ ] Normal code rollback will deploy the previous Worker while preserving
+  append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.
+- [ ] No older Worker rollback plan requires dropping new D1 columns or deleting
+  raw mail, body or attachment objects.
+- [ ] Any D1 restore has a separate incident approval and a reviewed bookmark or
+  timestamp. The operator understands that restore overwrites D1 and cancels
   in-flight queries.
-- [ ] After rollback or restore, verify schema metadata, FTS projection/index,
-  cleanup queue, attachment integrity backlog, delivery reconciliation, and R2
-  canonical references before reopening normal traffic.
+- [ ] After rollback/restore, health, schema metadata, FTS projection/index,
+  cleanup queue, attachment integrity, delivery reconciliation and R2
+  references will be reverified before traffic is reopened.

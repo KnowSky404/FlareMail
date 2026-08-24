@@ -298,7 +298,7 @@ src/lib/
 
 提交：`docs: finalize deployment and migration guide`
 
-产物：更新 `README.md`、`DEPLOY.md`、`TODO.md`（过时项归档），说明唯一入口/config、development/preview/test/production、secrets、D1 migration/backup/rollback、R2、Email Routing、Resend webhook、bootstrap admin、smoke test、troubleshooting、禁止提交真实 secret/ID；配置文件和模板唯一且一致。
+产物：更新 `README.md`、`DEPLOY.md`、`TODO.md`（过时项归档），说明唯一入口/config、development/preview/test/production、secrets、D1 migration/Time Travel/rollback、R2、Email Routing、Resend webhook、bootstrap admin、smoke test、troubleshooting、禁止提交真实 secret/ID；配置文件和模板唯一且一致。
 
 验证：`bun run check`、`bun run build`、`bun run test`、`bun run deploy:dry-run`；逐项完成最终验收清单；只做本地 dry-run，不做生产 deploy/smoke/mail。
 

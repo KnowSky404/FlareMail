@@ -83,119 +83,57 @@ bun run preview
 ### 本地 Email Routing 入站验证
 
 `bun run dev` 主要用于页面开发；要执行 Worker 的 `email()` handler，请使用
-`bun run preview`（它会构建 Worker 并启动本地 Wrangler）或先执行
-`bun run build`，再运行 `bun x wrangler dev worker/index.ts --local`。本地 Email Routing 的入口是
-`/cdn-cgi/handler/email`，`from` 和 `to` 查询参数代表 envelope，POST body
-必须是完整的 RFC5322 原文，而不是 JSON。下面的 body 包含稳定的
-`Message-ID`，可直接复制执行；它只向本机发送测试邮件，不调用外部邮箱：
+`bun run preview`。本地入口是
+`/cdn-cgi/handler/email?from=...&to=...`，POST body 必须是完整的 RFC5322
+原文而不是 JSON。`to` 必须与本地 bootstrap 的
+`FLAREMAIL_ADMIN_EMAIL` 一致，否则邮件会保存为未归属记录。生产部署顺序请
+使用 [DEPLOY.md](./DEPLOY.md)，不要套用本地 `demo` provider。
 
-```bash
-curl --fail-with-body --silent --show-error \
-  --request POST \
-  'http://127.0.0.1:8787/cdn-cgi/handler/email?from=sender@example.test&to=admin@example.test' \
-  --header 'Content-Type: message/rfc822' \
-  --data-binary @- <<'EOF'
-Message-ID: <local-flaremail-demo-20260823@example.test>
-Date: Sat, 23 Aug 2026 12:00:00 +0000
-From: Sender <sender@example.test>
-To: admin@example.test
-Subject: Local FlareMail Email Routing demo
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
+本地 `OUTBOUND_PROVIDER=demo`/`fake` 只验证 UI、D1/R2 和状态机，不访问 Resend，
+也不证明 DNS、真实投递或 `delivered`。只有 signed `email.delivered` webhook
+才是生产送达证据。
 
-This message exercises the local Cloudflare Email Routing handler.
-EOF
-```
-
-示例中的 `admin@example.test` 必须与前面 bootstrap 的
-`FLAREMAIL_ADMIN_EMAIL` 一致；如果你使用了其他本地管理员地址，请同时替换
-URL 的 `to` 和 RFC5322 的 `To`，否则邮件只能作为未归属入站记录保存，不会
-出现在该管理员的 Inbox。
-
-入站验证应按 D1、R2、UI 三层分别留证：
-
-1. `curl http://127.0.0.1:8787/api/health` 应返回本地 readiness；只读查询
-   `bun x wrangler d1 execute flaremail-db --local --config wrangler.toml --command="SELECT message_id, \"from\", \"to\" FROM email_messages ORDER BY created_at DESC LIMIT 1"`
-   确认 envelope、`Message-ID` 和 owner 记录已保存。
-2. 在已登录工作台打开该邮件并下载 raw `.eml` 或附件，确认正文不是列表
-   projection；这次下载本身就是 R2 binding smoke。若已从受控的本地 D1
-   metadata 得到对象 key，也可用 Wrangler 读取该单个对象：
-   `bun x wrangler r2 object get flaremail-bucket-preview/<KNOWN_R2_KEY> --local --config wrangler.toml --file /tmp/flaremail-r2-smoke.eml`。
-3. 在 UI 中确认邮件出现在 Inbox，进入详情、切换纯文本/安全 HTML（若有
-   HTML）、下载 raw，并验证刷新后仍可见。测试账号通过
-   `bun run auth:bootstrap:local` 创建，不能把密码写入仓库。
-
-本地 `OUTBOUND_PROVIDER=demo`/`fake` 只验证 compose、D1 状态机、R2 附件和
-UI；它不会访问 Resend、不会证明 DNS、真实投递或 `delivered`。真实 Resend
-验证必须使用独立 preview/production 配置、Resend secret 和已验证域名，且
-不能把 `submitted` 当作已送达；只有收到 signed `email.delivered` webhook
-才能完成 delivered 闭环。
-
-## 验证
+## 本地验证
 
 ```bash
 bun install --frozen-lockfile
-bun test
-bun run test:unit
-bun run test:integration
-bun run test:remaining
-bun run check
-bun run cf:typegen -- --check
-bun run build
 bun run db:migrate:local
-bun run search:index -- --mode verify --json
-bun run release:preflight
-bun run release:preflight -- --json
+bun test
+bun run check
+bun run build
+```
+
+浏览器验证使用隔离的本地 D1/R2 与 fake provider：
+
+```bash
 bun run test:e2e
 bun run test:e2e:webkit
 bun run test:a11y
-bun run deploy:dry-run
-git diff --check
 ```
 
-`deploy:dry-run` 从 checked-in development config 在操作系统临时目录生成结构合法、无效资源 ID、无 secret 的 CI 配置；不需要也不会读取私有 `wrangler.deploy.toml`，只构建和校验 Worker，不会发布。
+`deploy:dry-run` 只从公开 development config 生成临时配置，不读取私有生产
+配置，也不会发布 Worker。Linux Playwright WebKit 不是真实 iOS/iPadOS Safari
+证据。
 
-Wrangler 远程命令继承当前 OAuth keyring 或 `CLOUDFLARE_API_TOKEN` 环境；本地命令的隔离目录和 dry-run 输出均通过操作系统临时目录生成，因此同一组 `bun run` 命令可由 PowerShell、cmd、bash 或 zsh 调用。
+## 生产部署
 
-`test:e2e`/`test:e2e:webkit`/`test:a11y` 不读取生产配置、不调用真实 Resend，也不会访问远程 D1/R2。每个浏览器项目使用独立端口与临时状态；Linux Playwright WebKit 结果不等同于真实 iOS/iPadOS Safari 验证。
+请从 [DEPLOY.md](./DEPLOY.md) 开始；它是完整的首次生产部署、升级、Custom
+Domain、Resend、D1 Time Travel 与 Email Routing 顺序的唯一权威说明。
 
-本地 `bun test` 聚合运行完整 `src/` 与 `scripts/` 集合；CI 的 unit、integration、remaining 三组互不重叠并合计覆盖同一集合，避免重复执行掩盖分组遗漏。
-
-运维清理默认仅生成报告；只有显式 `--remote` 才访问远程资源，只有再加 `--apply` 才执行经过范围保护的删除：
-
-```bash
-bun run maintenance -- --config wrangler.toml
-bun run maintenance -- cleanup-report --config wrangler.toml --json
-bun run attachment:integrity -- --limit 100 --json
-bun run search:index -- --mode verify --json
-```
-
-附件修复和 cleanup drain 默认 local、bounded、report-only。远程只接受显式 `APP_ENV=preview` 的独立配置；`--apply` 必须再次显式给出，production 目标由命令硬拒绝。
-
-邮件搜索使用 owner-scoped D1 FTS5，支持 `from:`、`to:`、`cc:`、`subject:`、
-`is:`、`has:attachment`、`after:`、`before:`、`status:` 与 `label:`。索引校验
-默认只读且只访问本地 D1；重建必须显式加 `--mode rebuild --apply`。
-
-## 部署安全
-
-- 不提交真实 Cloudflare token、D1 ID、生产桶名、邮箱凭据或 Resend secrets。
-- 生产部署只使用不入库的 `wrangler.deploy.toml`。
-- 先备份并应用远程 migrations，再 bootstrap 管理员和部署。
-- `RESEND_API_KEY` 与 `RESEND_WEBHOOK_SECRET` 必须使用 Wrangler secret 注入。
-- Resend webhook endpoint 为 `/api/webhooks/resend`。
-- 生产 smoke test、真实邮件与远程 migration 必须由操作者显式执行并保留证据。
+维护、FTS 导出、cleanup 和 incident recovery 见
+[docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)；可勾选的 release gate 见
+[docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md)。
 
 ## 文档
 
 - [品牌资源与 logo 来源记录](./docs/design-concepts/flaremail-logo/README.md)：生产 SVG、favicon 及设计概念素材说明。
 - [DESIGN.md](./DESIGN.md)：权威设计系统与响应式/可访问性规则。
 - [REFACTOR_PLAN.md](./REFACTOR_PLAN.md)：阶段实施、回滚点和最终验收边界。
-- [DEPLOY.md](./DEPLOY.md)：生产配置、migration、回滚与 smoke test。
+- [DEPLOY.md](./DEPLOY.md)：权威生产首次部署、升级、回滚与 smoke test。
 - [docs/API.md](./docs/API.md)：工作区 snapshot、邮箱分页、草稿并发、批量操作和投递重试契约。
 - [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)：维护 dry-run、stale claim 和投递 review 报告。
 - [docs/RUNTIME_BUDGET.md](./docs/RUNTIME_BUDGET.md)：Workers CPU 预算与 preview 人工测量流程。
-- [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md)：RC-1 Preview、生产审批与回滚操作门禁。
+- [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md)：所有未来生产 release 的审批与回滚操作门禁。
 - [docs/RC1_RELEASE.md](./docs/RC1_RELEASE.md)：RC-1 行为、schema、验证边界与残余风险。
 - [docs/SLO.md](./docs/SLO.md)：建议性 SLO、阻塞阈值与无 PII 可观测性契约。
 - [TODO.md](./TODO.md)：重构完成后的剩余产品路线。

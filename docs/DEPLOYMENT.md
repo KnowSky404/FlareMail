@@ -1,4 +1,9 @@
-# FlareMail deployment and maintenance
+# FlareMail maintenance and recovery procedures
+
+The complete first-deployment and ordinary upgrade flow is
+[DEPLOY.md](../DEPLOY.md). This document is intentionally focused on
+read-only-by-default maintenance, FTS-aware export, cleanup and incident
+recovery. It does not authorize production operations by itself.
 
 `wrangler.toml` is the local development template. Copy
 `wrangler.deploy.toml.example` to the private `wrangler.deploy.toml`, replace
@@ -87,7 +92,7 @@ derived from its `BUCKET` binding; `--bucket` is rejected. A mutation requires
 the additional `--apply` flag. These commands refuse production configs, never
 process `legacy` keys automatically, never print complete keys, and handle at
 most 500 rows per invocation. Production cleanup remains a separately reviewed
-operator workflow; RC-1 does not create a Cron trigger.
+operator workflow; the current configuration does not create a Cron trigger.
 
 An R2 delete is followed by a claim-token-guarded D1 completion update. A
 temporary delete failure schedules exponential backoff; exhausted or unsafe
@@ -116,7 +121,9 @@ addresses, message bodies, object keys, cookies, or credentials.
 
 Before production maintenance, record a current D1 Time Travel bookmark and
 the exact commit. Time Travel is automatic on supported production databases;
-restoring a bookmark overwrites D1 in place and is a separately approved
+the current Cloudflare documentation describes a bounded recent history, so
+verify availability and retention for the active account at release time.
+Restoring a bookmark overwrites D1 in place and is a separately approved
 incident action. D1 SQL export does not support databases containing FTS5
 virtual tables. Do not run a normal logical export after migration 0015 unless
 the explicit FTS export procedure below is in a maintenance window. Production
@@ -145,13 +152,13 @@ mutation, `--apply`.
 Prefer D1 Time Travel for production rollback evidence:
 
 ```bash
-bun x wrangler d1 info flaremail-db --remote --config wrangler.deploy.toml
-bun x wrangler d1 time-travel info flaremail-db --remote --config wrangler.deploy.toml
+bun x wrangler d1 info flaremail-db --config wrangler.deploy.toml
+bun x wrangler d1 time-travel info flaremail-db --config wrangler.deploy.toml
 ```
 
-Record the returned bookmark without running `time-travel restore`. Workers
-Paid retains up to 30 days and Workers Free up to 7 days under current D1
-limits; verify the active plan at release time. A logical export is appropriate
+These commands act on remote production D1; the current Wrangler CLI does not
+need a `--remote` flag for `d1 info` or `d1 time-travel`. Record the returned
+bookmark without running `time-travel restore`. A logical export is appropriate
 only when a longer-lived SQL artifact is explicitly required.
 
 If a logical SQL export is mandatory, stop application writes and use this
@@ -167,9 +174,18 @@ bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --j
 ```
 
 If export fails, restore the virtual layer before reopening traffic. After any
-SQL import or Time Travel restore, run the reviewed rebuild command. Time Travel
-restore overwrites the target database, cancels in-flight queries, and always
-requires the recorded pre-change bookmark plus separate operator approval.
+SQL import or Time Travel restore, run the reviewed rebuild command. The
+current restore command accepts a bookmark or timestamp:
+
+```bash
+bun x wrangler d1 time-travel restore flaremail-db \
+  --bookmark='<RECORDED_BOOKMARK>' \
+  --config wrangler.deploy.toml
+```
+
+Time Travel restore overwrites the target database, cancels in-flight queries,
+and always requires the recorded pre-change bookmark plus separate operator
+approval. It is never part of ordinary deployment.
 
 ## Schema, claims, and delivery review
 
@@ -186,9 +202,11 @@ canonical-row synchronization triggers. Migration
 upload/ready/failure/delete-pending states, SHA-256 metadata, cleanup deadlines,
 and the draft attachment revision used by guarded sends.
 Migration `0017_r2_cleanup_queue_reliability.sql` append-only adds the durable
-claim/lease/retry/manual-review lifecycle and advances schema metadata to 17.
-Do not modify or downgrade migrations `0001` through `0017`; rollback restores
-Worker code while preserving the newer D1 columns and queue evidence.
+claim/lease/retry/manual-review lifecycle. Migration
+`0018_outbound_rate_limits.sql` adds the per-user outbound rate-limit state and
+advances the current schema metadata to 18. Do not modify or downgrade
+published migrations; rollback restores Worker code while preserving newer D1
+columns and queue evidence.
 
 The maintenance report also lists stale submitting attempts, attempts within
 one hour of the Resend 24-hour idempotency expiry, and expired attempts that

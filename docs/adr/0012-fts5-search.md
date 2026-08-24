@@ -32,18 +32,21 @@ query calculates the exact first-page total. Svelte renders delimited segments
 as text and `<mark>` nodes, never as HTML. The legacy byte-safe LIKE builder is
 retained only for explicitly chosen short fallback paths, not ordinary search.
 
-## Repair, backup and restore
+## Repair, export and restore
 
 `bun run search:index -- --mode verify` is read-only and local by default. It
 reports canonical, projected, missing and orphan counts. A reviewed
 `--mode rebuild --apply` repairs projections and rebuilds FTS5.
 
-D1 logical export does not support virtual tables. Managed D1 backups are the
-default production backup. The explicit maintenance-window export workflow
-temporarily removes only the FTS virtual table and its projection triggers,
-keeps `workspace_search_documents`, exports canonical data, recreates the
-virtual layer and rebuilds it. Remote and mutating modes both require explicit
-flags; the application never initiates them.
+D1 logical export does not support virtual tables. D1 Time Travel is the
+preferred production point-in-time evidence on the supported production
+backend; inspect the active account's current retention and availability at
+release time. The explicit maintenance-window export workflow temporarily
+removes only the FTS virtual table and its projection triggers, keeps
+`workspace_search_documents`, exports canonical data, recreates the virtual
+layer and rebuilds it. Remote and mutating modes both require explicit flags;
+the application never initiates them. Time Travel restore overwrites D1 and is
+an incident-only operation requiring separate approval.
 
 ## Consequences
 
@@ -51,4 +54,4 @@ flags; the application never initiates them.
 - Projection drift is observable and repairable without reading R2 or losing
   canonical mail.
 - Writes pay trigger/index maintenance cost for bounded text only.
-- Backup procedures must account for D1's virtual-table export limitation.
+- Recovery procedures must account for D1's virtual-table export limitation.

@@ -1,5 +1,11 @@
 # FlareMail RC-1 release record
 
+> Historical record only. RC-1 branch and baseline details below describe the
+> original release and are not current production release gates. Use
+> [DEPLOY.md](../DEPLOY.md) for deployment and
+> [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) for the current release
+> checklist.
+
 ## Identity
 
 - Baseline branch: `codex/flaremail-next-release`
