@@ -1,5 +1,9 @@
 # FlareMail
 
+<p align="center">
+  <img src="./static/brand/flaremail-logo.svg" alt="FlareMail logo" width="286" />
+</p>
+
 FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户端。一个 Worker composition root 同时承载 SvelteKit Web/API 的 `fetch()` 与 Cloudflare Email Routing 的 `email()`，D1 保存结构化数据和状态，R2 保存原始 `.eml` 与附件，生产外发统一使用 Resend。
 
 仓库固定使用 Bun `1.3.14`。CI 和本地测试均可从没有 `.svelte-kit`、`build`、`.wrangler` 产物的 clean checkout 开始；`tsconfig.json` 保留 `$lib` 的显式源代码映射，避免测试命令依赖先启动过 SvelteKit。
@@ -184,6 +188,7 @@ bun run search:index -- --mode verify --json
 
 ## 文档
 
+- [品牌资源与 logo 来源记录](./docs/design-concepts/flaremail-logo/README.md)：生产 SVG、favicon 及设计概念素材说明。
 - [DESIGN.md](./DESIGN.md)：权威设计系统与响应式/可访问性规则。
 - [REFACTOR_PLAN.md](./REFACTOR_PLAN.md)：阶段实施、回滚点和最终验收边界。
 - [DEPLOY.md](./DEPLOY.md)：生产配置、migration、回滚与 smoke test。
