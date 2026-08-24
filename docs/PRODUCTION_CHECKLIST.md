@@ -141,14 +141,20 @@ recipient addresses or full R2 keys into shared evidence.
   `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`,
   `email.failed`, `email.complained`, and `email.suppressed`. `email.opened`
   and `email.clicked` are timeline-only events in the current code.
-- [ ] Both Resend secrets were set with `wrangler secret put`, then the final
-  `bun run deploy` was performed so code/config/bindings/secrets form one
-  reviewed release.
+- [ ] Both Resend secrets were uploaded with the final code using
+  `bun x wrangler deploy --secrets-file <secure-outside-repo-path>` so
+  code/config/bindings/secrets form one reviewed release. If the fallback
+  `secret put` process was used, Email Routing remained disabled while the
+  intermediate versions were incomplete and a final `bun run deploy` followed.
 - [ ] `GET https://<APP_ORIGIN_HOST>/api/health` returns HTTP 200.
+- [ ] Email Routing **Destination Addresses** contains an operator-controlled
+  mailbox whose verification email was completed. This is Cloudflare's setup
+  destination, not the incoming FlareMail recipient.
 - [ ] Only after health and dependency review passed was Email Routing enabled:
 
   ```text
-  Email Routing → Enable/Get started → Routing Rules → Create address
+  Email Routing → Enable/Get started → Destination Addresses → verify
+  → Routing Rules → Create address
   → Send to a Worker → flaremail
   ```
 

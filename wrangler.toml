@@ -31,8 +31,8 @@ INBOUND_MAX_ATTACHMENT_TOTAL_BYTES = "25165824"
 NOTIFICATION_EMAIL = "ops@example.com"
 NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
 
-# 生产环境请通过 `bun x wrangler secret put RESEND_API_KEY`
-# 和 `bun x wrangler secret put RESEND_WEBHOOK_SECRET` 注入真实密钥。
+# 生产环境请使用被忽略的 `wrangler.deploy.toml`，并遵循 `DEPLOY.md` 的
+# `wrangler deploy --secrets-file` 原子发布流程；不要把真实密钥写入此模板。
 #
 # 请不要把真实邮箱、资源 ID 或生产配置直接提交到仓库。
 # 推荐做法：

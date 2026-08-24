@@ -110,24 +110,37 @@ exist because the current private config does not declare Wrangler
 production values are absent, so a temporary `/api/health` 503 is expected at
 this checkpoint. Do not send traffic to it and do not enable Email Routing.
 
-After the Worker exists, attach the reviewed Custom Domain, create the Resend
-webhook for that public URL, and then set both secrets interactively:
+After the Worker exists, attach the reviewed Custom Domain and create the
+Resend webhook for that public URL. Prepare a mode-0600 secrets file through
+the operator's secret manager outside the repository. It must contain exactly
+the two values needed by this Worker, for example:
+
+```json
+{
+  "RESEND_API_KEY": "<value supplied by the secret manager>",
+  "RESEND_WEBHOOK_SECRET": "<value copied from Resend>"
+}
+```
+
+Do not commit this file, put it under the project directory, or paste its
+contents into a shell transcript. Then upload code and both secrets as one
+Worker version:
 
 ```bash
-bun x wrangler secret put RESEND_API_KEY --config wrangler.deploy.toml
-bun x wrangler secret put RESEND_WEBHOOK_SECRET --config wrangler.deploy.toml
+bun run build
+bun x wrangler deploy --strict \
+  --config wrangler.deploy.toml \
+  --secrets-file /secure/path/flaremail-secrets.json
 bun x wrangler secret list --config wrangler.deploy.toml --format pretty
 ```
 
-PAUSE: `secret list` may show names only; never print or record values. Current
-Wrangler can create a draft Worker when `secret put` targets a missing Worker,
-but this guide deploys the bootstrap Worker first so the procedure does not
-depend on that fallback. `secret put` can change the active Worker version;
-always perform the final deploy below so code, config, bindings and secrets
-are reviewed as one release:
+PAUSE: `secret list` may show names only; never print or record values. The
+`--secrets-file` upload is the first-deployment final release step: it makes
+the code, config, bindings and both Resend secrets available in one Worker
+version. Remove the temporary file through the secret manager after the
+operator has confirmed its retention policy.
 
 ```bash
-bun run deploy
 curl --fail --silent --show-error https://mail.example.com/api/health
 ```
 
@@ -185,9 +198,9 @@ bun --version
 bun install --frozen-lockfile
 ```
 
-The repository currently pins Wrangler `4.125.0` as a development dependency.
-The deploy and remote migration scripts run the repository's configured
-Wrangler through Bun; do not silently substitute a global version.
+The current lockfile resolves the `^4.125.0` Wrangler development dependency
+to `4.125.0`. The deploy and remote migration scripts run the repository's
+configured Wrangler through Bun; do not silently substitute a global version.
 
 ### 3. Cloudflare authentication
 
@@ -543,35 +556,59 @@ Subscribe to the event types handled by the current code:
 `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`,
 `email.failed`, `email.complained`, and `email.suppressed`. The code also
 records `email.opened` and `email.clicked` as timeline events without changing
-the delivery status. Copy the signing secret shown by Resend into Wrangler
-interactively:
-
-```bash
-bun x wrangler secret put RESEND_API_KEY --config wrangler.deploy.toml
-bun x wrangler secret put RESEND_WEBHOOK_SECRET --config wrangler.deploy.toml
-```
+the delivery status.
 
 The endpoint verifies the raw request body and Svix signature headers; do not
 parse and re-stringify webhook JSON before verification. Duplicate and
 out-of-order events are protected by the existing persistence logic. Never
 put either secret in TOML, `.dev.vars`, GitHub text or a log.
 
-Current Wrangler supports `secret put` for a missing Worker by creating a
-draft Worker, but the canonical sequence intentionally creates the Worker in
-Phase A first. `secret put` may change a deployed version, so setting secrets
-is not the final release step.
+Prepare a mode-0600 secrets file through the operator's secret manager outside
+the repository. It must contain exactly the two values needed by this Worker:
+
+```json
+{
+  "RESEND_API_KEY": "<value supplied by the secret manager>",
+  "RESEND_WEBHOOK_SECRET": "<value copied from Resend>"
+}
+```
+
+Upload the exact release code and both secrets as one Worker version:
+
+```bash
+bun run build
+bun x wrangler deploy --strict \
+  --config wrangler.deploy.toml \
+  --secrets-file /secure/path/flaremail-secrets.json
+bun x wrangler secret list --config wrangler.deploy.toml --format pretty
+```
+
+Current Wrangler documents `secret put` as an immediate new Worker-version
+deployment. Do not use it as the normal first-deployment path: sequential
+commands create an intermediate version missing the other secret. If a secret
+manager cannot materialize the file, the fallback is allowed only while Email
+Routing is disabled, and the final `bun run deploy` is still required:
+
+```bash
+bun x wrangler secret put RESEND_API_KEY --config wrangler.deploy.toml
+bun x wrangler secret put RESEND_WEBHOOK_SECRET --config wrangler.deploy.toml
+bun run deploy
+```
+
+Never print or record secret values. Remove the temporary file through the
+secret manager after its retention policy has been confirmed.
 
 #### Phase C — final production deployment
 
 ```bash
-bun run deploy
 bun x wrangler secret list --config wrangler.deploy.toml --format pretty
 curl --fail --silent --show-error https://mail.example.com/api/health
 ```
 
-The second `deploy` is the final reviewed release of the exact SHA with the
-private production bindings and both secrets available. Confirm the Worker
-version/release output and record only secret presence, never secret values.
+Confirm the Worker version/release output and record only secret presence,
+never secret values. With the canonical `--secrets-file` path, the deploy in
+Phase B is the final reviewed release of the exact SHA. With the fallback
+`secret put` path, the final `bun run deploy` in Phase B is that release.
 
 ### 12. Enable Cloudflare Email Routing last
 
@@ -581,19 +618,23 @@ reviewed D1, R2, Resend, Custom Domain and webhook configuration:
 1. Open the zone's **Email Routing** dashboard and choose **Enable/Get
    started**. Follow the current DNS instructions and confirm the MX/TXT
    records are active.
-2. Open **Routing Rules** (the dashboard may label this **Routes**) and choose
-   **Create address** for the intended recipient, for example
-   `mail@example.com`.
-3. Choose **Send to a Worker**, then select the deployed `flaremail` Worker.
+2. Open **Destination Addresses**, add an operator-controlled destination
+   mailbox, and complete the verification email. The destination address is a
+   Cloudflare Email Routing setup prerequisite and verification target; it is
+   not the incoming FlareMail recipient.
+3. Open **Routing Rules** (the dashboard may label this **Routes**) and choose
+   **Create address** for the intended incoming recipient, for example
+   `mail@example.com`. This address must still equal the bootstrapped
+   administrator email under the current owner lookup.
+4. Choose **Send to a Worker**, then select the deployed `flaremail` Worker.
    Do not choose **Forward to email**; forwarding bypasses the Worker
    `email()` handler.
-4. Confirm the rule is active, matches the intended recipient, and is not
+5. Confirm the rule is active, matches the intended recipient, and is not
    shadowed by a higher-priority catch-all or forwarding rule.
-5. Send the controlled inbound smoke message only after the route is active.
+6. Send the controlled inbound smoke message only after the route is active.
 
-Cloudflare's Email Routing setup requires the zone to be configured for Email
-Routing and at least one verified destination/route according to the current
-dashboard. See [Cloudflare route emails to a Worker](https://developers.cloudflare.com/email-routing/get-started/route-emails/).
+See [Cloudflare Email Routing destination addresses](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/)
+and [Cloudflare route emails to a Worker](https://developers.cloudflare.com/email-service/get-started/route-emails/).
 
 ### 13. Health check and production smoke
 
@@ -720,6 +761,7 @@ canonical; the FTS virtual layer is rebuilt after export/import or restore.
 - [Cloudflare D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/)
 - [Cloudflare Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
 - [Cloudflare Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)
-- [Cloudflare Email Routing to Workers](https://developers.cloudflare.com/email-routing/get-started/route-emails/)
+- [Cloudflare Email Routing destination addresses](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/)
+- [Cloudflare Email Routing to Workers](https://developers.cloudflare.com/email-service/get-started/route-emails/)
 - [Resend domain verification](https://resend.com/docs/dashboard/domains/introduction)
 - [Resend webhook verification](https://resend.com/docs/webhooks/verify-webhooks-requests)
