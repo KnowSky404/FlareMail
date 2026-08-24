@@ -29,7 +29,7 @@ git pull --ff-only origin main
 test -z "$(git status --porcelain=v1)"
 RELEASE_SHA="$(git rev-parse HEAD)"
 git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-bun --version                         # must print 1.3.14
+bun --version                         # must print 1.4.0
 bun install --frozen-lockfile
 ```
 
@@ -187,9 +187,9 @@ existence of a run.
 
 ### 2. Bun and Wrangler versions
 
-`package.json` declares `packageManager: "bun@1.3.14"` and an engine minimum of
-`>=1.3.14`. `scripts/release-preflight.ts` additionally requires the running
-Bun version to equal the exact `packageManager` version. Use Bun 1.3.14 for a
+`package.json` declares `packageManager: "bun@1.4.0"` and an engine minimum of
+`>=1.4.0`. `scripts/release-preflight.ts` additionally requires the running
+Bun version to equal the exact `packageManager` version. Use Bun 1.4.0 for a
 production release; do not infer an acceptable version from the looser engine
 range and do not upgrade Bun or Wrangler as part of deployment.
 
@@ -692,7 +692,7 @@ For every later release:
 
 1. Lock a clean `main` checkout and record the immutable SHA and exact CI
    result.
-2. Confirm Bun 1.3.14, run the release gates and review the private config.
+2. Confirm Bun 1.4.0, run the release gates and review the private config.
 3. Record the D1 target and a current Time Travel bookmark/timestamp before
    any migration.
 4. Review and apply new migrations in order with `bun run db:migrate:remote`.

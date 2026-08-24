@@ -26,7 +26,7 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] The exact SHA's required GitHub Actions jobs are completed and green.
 - [ ] No gate depends on a historical RC branch, old base SHA, closed PR, or
   feature-branch relationship.
-- [ ] The checkout uses Bun `1.3.14`, the exact `packageManager` version in
+- [ ] The checkout uses Bun `1.4.0`, the exact `packageManager` version in
   `package.json`.
 - [ ] `bun.lock` is committed and `bun install --frozen-lockfile` succeeds.
 - [ ] `bun run audit:dependencies` reports no high-severity dependency issue.
