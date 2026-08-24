@@ -37,7 +37,7 @@ NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
 # 请不要把真实邮箱、资源 ID 或生产配置直接提交到仓库。
 # 推荐做法：
 # - 本地开发：使用 `.dev.vars`（可参考 `.dev.vars.example`）
-# - 生产部署：在 Cloudflare Dashboard 或 CI/CD 中覆盖这些变量
+# - 生产部署：只使用被忽略的 `wrangler.deploy.toml`，参阅 `DEPLOY.md`
 # - production 必须显式使用 `OUTBOUND_PROVIDER = "resend"`；fake 仅允许本地开发和测试
 
 [assets]
