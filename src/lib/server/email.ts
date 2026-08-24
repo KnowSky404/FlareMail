@@ -1,11 +1,13 @@
 import type { CloudflareEnv } from './cloudflare';
-import { parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename } from '$lib/domain/mail';
+import { MAX_RECIPIENTS, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
+import { insertBodyObject } from '$lib/server/db/body';
 import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
 import { findUserInboundNotificationSettings } from '$lib/server/db/users';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 import { isInboundNotificationEnabled } from './workspace/profile';
+import { BodyCanonicalLimitError, prepareBodyObject, projectBody, putBodyObject } from '$lib/server/body';
 
 export const DEFAULT_INBOUND_LIMITS = Object.freeze({
   rawBytes: 25 * 1024 * 1024,
@@ -39,6 +41,9 @@ const addressLabel = (address: { name: string; address: string } | null, fallbac
 
 const addressList = (addresses: Array<{ name: string; address: string }>) =>
   addresses.map((address) => address.name ? `${address.name} <${address.address}>` : address.address).join(', ');
+
+const canonicalAddresses = (addresses: Array<{ name: string; address: string }>) =>
+  parseAddressList(addresses.map(({ name, address }) => ({ name, email: address }))).slice(0, MAX_RECIPIENTS);
 
 const bytesToBase64Url = (value: ArrayBuffer) => {
   let binary = '';
@@ -193,6 +198,7 @@ export async function handleInboundEmail(
   const ownerUserId = await findInboundOwnerId(env.DB, recipient);
   const ownerKey = ownerUserId ?? 'unassigned';
   const writtenKeys = [rawKey];
+  const projected = projectBody(parsed.text, parsed.html, parsed.snippet || '(empty body)');
   const attachmentRows = parsed.attachments.map((attachment, index) => {
     const id = `${storageId.slice(0, 24)}-${String(index + 1).padStart(3, '0')}`;
     const filename = sanitizeFilename(attachment.filename);
@@ -203,9 +209,27 @@ export async function handleInboundEmail(
   });
 
   let d1Finalized = false;
+  let bodyObject: Awaited<ReturnType<typeof prepareBodyObject>> = null;
   try {
+    try {
+      bodyObject = await prepareBodyObject('email_message', storageId, parsed.text, parsed.html);
+    } catch (error) {
+      if (!(error instanceof BodyCanonicalLimitError)) throw error;
+      // The original RFC822 object remains the lossless source of truth. For
+      // unusually expansive MIME decoding, persist bounded projections rather
+      // than failing before the raw message reaches R2.
+      safeLog('inbound_body_projection_only', {
+        correlationId,
+        code: error.code,
+        bytes: error.actual,
+        limit: error.limit
+      });
+      bodyObject = null;
+    }
+    if (bodyObject) writtenKeys.push(bodyObject.key);
     const r2StartedAt = Date.now();
     await env.BUCKET.put(rawKey, raw, { httpMetadata: { contentType: 'message/rfc822' }, customMetadata: { messageId: storageId } });
+    if (bodyObject) await putBodyObject(env.BUCKET, bodyObject);
     await Promise.all(attachmentRows.map((attachment) => env.BUCKET.put(attachment.r2Key, attachment.content, {
       httpMetadata: { contentType: attachment.contentType },
       customMetadata: { messageId: storageId, attachmentId: attachment.id }
@@ -214,25 +238,40 @@ export async function handleInboundEmail(
 
     const from = addressLabel(parsed.from, message.from);
     const subject = parsed.subject.trim() || message.headers.get('subject')?.trim() || '(no subject)';
+    const toAddresses = canonicalAddresses(parsed.to);
+    const ccAddresses = canonicalAddresses(parsed.cc);
+    const replyToAddresses = canonicalAddresses(parsed.replyTo);
     const statements = [insertInboundMessage(env.DB, {
       id: storageId,
       messageId,
       from,
       to: recipient,
-      cc: addressList(parsed.cc),
+      cc: serializeAddressList(ccAddresses) || addressList(parsed.cc),
+      toJson: serializeAddressJson(toAddresses),
+      ccJson: serializeAddressJson(ccAddresses),
+      replyToJson: serializeAddressJson(replyToAddresses),
+      returnPath: parsed.returnPath,
+      deliveredTo: parsed.deliveredTo,
+      headersJson: JSON.stringify(parsed.headers),
+      authenticationResultsJson: JSON.stringify(parsed.authenticationResults),
       subject,
       timestamp: date,
-      snippet: parsed.snippet || '(empty body)',
-      textBody: parsed.text,
-      htmlBody: parsed.html,
+      snippet: projected.snippet,
+      textBody: bodyObject ? projected.textBody : parsed.text,
+      htmlBody: bodyObject ? projected.htmlBody : parsed.html,
       inReplyTo: parsed.inReplyTo,
       references: parsed.references,
       threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from }),
       dedupeKey,
       rawKey,
       rawSize: raw.byteLength,
-      ownerUserId
-    }), ...attachmentRows.map(({ content: _content, ...attachment }) => insertAttachment(env.DB, attachment))];
+      ownerUserId,
+      bodyObjectId: bodyObject?.id ?? null
+    }), ...(bodyObject ? [insertBodyObject(env.DB, {
+      id: bodyObject.id, owner_user_id: ownerUserId, entity_type: 'email_message', entity_id: storageId,
+      r2_key: bodyObject.key, size_bytes: bodyObject.sizeBytes, sha256: bodyObject.sha256,
+      text_bytes: bodyObject.textBytes, html_bytes: bodyObject.htmlBytes, createdAt: date
+    })] : []), ...attachmentRows.map(({ content: _content, ...attachment }) => insertAttachment(env.DB, attachment))];
     const d1StartedAt = Date.now();
     await env.DB.batch(statements);
     safeLog('inbound_phase', { correlationId, phase: 'd1_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - d1StartedAt });

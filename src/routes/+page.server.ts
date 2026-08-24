@@ -4,6 +4,8 @@ import type { MailboxSection } from '$lib/domain/mail';
 import { loadWorkspaceSnapshot } from '$lib/server/workspace';
 import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
 import { parseBoolean } from '$lib/server/config/env';
+import { classifyRuntimeError, runtimeUnavailableState } from '$lib/server/http/api';
+import type { RuntimeState } from '$lib/domain/runtime-state';
 
 const mailFolders: MailboxSection[] = ['inbox', 'sent', 'drafts', 'archive'];
 
@@ -31,18 +33,31 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
   const dbBound = Boolean(env?.DB);
   const bucketBound = Boolean(env?.BUCKET);
   const context = locals.workspaceSession;
+  const requestId = locals.requestId ?? crypto.randomUUID();
 
-  if (!context || !env?.DB) {
-    return {
-      dbBound,
-      bucketBound,
-      workspace: null,
-      runtimeDiagnostics: null,
-      schemaReady: false,
-      totalMessages: 0,
-      lastSubject: null,
-      lastTimestamp: null
-    };
+  const emptyData = (runtimeState: RuntimeState) => ({
+    dbBound,
+    bucketBound,
+    snapshotIdentity: requestId,
+    workspace: null,
+    runtimeDiagnostics: null,
+    schemaReady: runtimeState.state === 'ready',
+    runtimeState,
+    totalMessages: 0,
+    lastSubject: null,
+    lastTimestamp: null
+  });
+
+  if (locals.runtimeState) {
+    return emptyData(locals.runtimeState);
+  }
+
+  if (!env?.DB) {
+    return emptyData(runtimeUnavailableState(new Error('D1 binding is unavailable.'), requestId));
+  }
+
+  if (!context) {
+    return emptyData({ state: 'unauthenticated', requestId });
   }
 
   try {
@@ -66,23 +81,27 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
     return {
       dbBound,
       bucketBound,
+      snapshotIdentity: requestId,
       workspace,
       runtimeDiagnostics: safeRuntimeDiagnostics(env),
       schemaReady: true,
+      runtimeState: { state: 'ready' as const, requestId },
       totalMessages: workspace.metrics.inboxCount + workspace.metrics.sentCount,
       lastSubject: latest?.subject ?? null,
       lastTimestamp: latest?.sentAt ?? null
     };
-  } catch {
-    return {
-      dbBound,
-      bucketBound,
-      workspace: null,
-      runtimeDiagnostics: null,
-      schemaReady: false,
-      totalMessages: 0,
-      lastSubject: null,
-      lastTimestamp: null
-    };
+  } catch (error) {
+    const classified = classifyRuntimeError(error);
+    if (classified.status < 500) throw error;
+    const runtimeState = runtimeUnavailableState(classified, requestId);
+    console.error(JSON.stringify({
+      level: 'error',
+      event: 'page_load_failed',
+      requestId,
+      path: url.pathname,
+      code: runtimeState.code,
+      errorName: error instanceof Error ? error.name : 'UnknownError'
+    }));
+    return emptyData(runtimeState);
   }
 };

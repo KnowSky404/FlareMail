@@ -21,6 +21,7 @@ import {
   type WorkspacePayload
 } from '$lib/domain/mail';
 import { fromInboundMessageId, isInboundMessageId, toInboundMessageId } from '$lib/domain/mail';
+import { parseAddressJson, parseAddressList, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { OutboundDeliveryState } from '$lib/server/outbound';
 
@@ -49,6 +50,7 @@ export interface WorkspaceCapabilities {
   outboundStatuses: boolean;
   outboundReceipts: boolean;
   outboundEvents: boolean;
+  recipientArrays: boolean;
 }
 
 export interface WorkspaceContext {
@@ -97,6 +99,7 @@ export interface WorkspaceMessageRow {
   from_email: string;
   to_name: string;
   to_email: string;
+  to_json?: string | null;
   subject: string;
   preview: string;
   body: string;
@@ -109,14 +112,23 @@ export interface WorkspaceMessageRow {
   references?: string | null;
   thread_key?: string | null;
   cc?: string;
+  cc_json?: string | null;
+  bcc_json?: string | null;
   idempotency_key?: string | null;
   archived_at?: string | null;
+  deleted_at?: string | null;
+  body_object_id?: string | null;
+  search_snippet?: string | null;
+  search_total?: number;
 }
 
 export interface WorkspaceDraftRow {
   id: string;
   to_email: string;
   cc: string;
+  to_json?: string | null;
+  cc_json?: string | null;
+  bcc_json?: string | null;
   subject: string;
   body: string;
   is_starred: number;
@@ -127,6 +139,11 @@ export interface WorkspaceDraftRow {
   references: string | null;
   thread_key: string | null;
   idempotency_key: string | null;
+  body_object_id?: string | null;
+  deleted_at?: string | null;
+  search_snippet?: string | null;
+  search_total?: number;
+  attachment_revision?: number;
 }
 
 export interface WorkspaceInboundRow {
@@ -143,7 +160,11 @@ export interface WorkspaceInboundRow {
   references?: string | null;
   thread_key?: string | null;
   text_body?: string;
+  body_object_id?: string | null;
   archived_at?: string | null;
+  deleted_at?: string | null;
+  search_snippet?: string | null;
+  search_total?: number;
 }
 
 export interface WorkspaceOutboundStatusRow {
@@ -221,15 +242,22 @@ export const mapUserRowToProfile = (row: WorkspaceUserRow): UserProfile => ({
 
 export const mapWorkspaceMessageRow = (
   row: WorkspaceMessageRow,
-  outboundStatus?: WorkspaceOutboundStatusRow
-): MailMessage => ({
+  outboundStatus?: WorkspaceOutboundStatusRow,
+  searchHitFields: MailMessage['searchHitFields'] = []
+): MailMessage => {
+  const storedToAddresses = parseAddressJson(row.to_json);
+  const storedCcAddresses = parseAddressJson(row.cc_json);
+  const toAddresses = storedToAddresses.length ? storedToAddresses : parseAddressList(row.to_email);
+  const ccAddresses = storedCcAddresses.length ? storedCcAddresses : parseAddressList(row.cc ?? '');
+  const bccAddresses = parseAddressJson(row.bcc_json);
+  return ({
   id: row.id,
   folder: row.folder,
   source: 'workspace',
   fromName: row.from_name,
   fromEmail: row.from_email,
-  toName: row.to_name,
-  toEmail: row.to_email,
+  toName: toAddresses[0]?.name || row.to_name,
+  toEmail: toAddresses[0]?.email || row.to_email,
   subject: row.subject,
   preview: row.preview,
   body: row.body,
@@ -254,25 +282,41 @@ export const mapWorkspaceMessageRow = (
   references: row.references ?? null,
   threadKey: row.thread_key ?? null,
   archivedAt: row.archived_at ?? null,
-  cc: row.cc ?? ''
-});
+  searchSnippet: row.search_snippet ?? undefined,
+  searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined,
+  cc: serializeAddressList(ccAddresses) || (row.cc ?? ''),
+  bcc: serializeAddressList(bccAddresses),
+  toAddresses,
+  ccAddresses,
+  bccAddresses
+  });
+};
 
-export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile): MailMessage =>
-  createDraftMessage({
+export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile, searchHitFields: MailMessage['searchHitFields'] = []): MailMessage => {
+  const storedToAddresses = parseAddressJson(row.to_json);
+  const storedCcAddresses = parseAddressJson(row.cc_json);
+  return {
+    ...createDraftMessage({
     id: row.id,
     from: profile,
+    to: storedToAddresses.length ? storedToAddresses : parseAddressList(row.to_email),
+    cc: storedCcAddresses.length ? storedCcAddresses : parseAddressList(row.cc),
+    bcc: parseAddressJson(row.bcc_json),
     toEmail: row.to_email,
-    cc: row.cc,
     subject: row.subject,
     body: row.body,
     starred: Boolean(row.is_starred),
     updatedAt: row.updated_at || row.created_at,
     messageId: row.message_id,
     inReplyTo: row.in_reply_to,
-    references: row.references
-  });
+      references: row.references
+    }),
+    searchSnippet: row.search_snippet ?? undefined,
+    searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined
+  };
+};
 
-export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile): MailMessage {
+export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, searchHitFields: MailMessage['searchHitFields'] = []): MailMessage {
   const sender = parseAddress(row.from);
   const recipient = parseAddress(row.to || profile.email);
   const snippet = row.snippet.trim() || '原始邮件已写入 R2，后续可以补充正文解析与预览。';
@@ -295,7 +339,9 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile): M
     inReplyTo: row.in_reply_to,
     references: row.references,
     threadKey: row.thread_key,
-    archivedAt: row.archived_at ?? null
+    archivedAt: row.archived_at ?? null,
+    searchSnippet: row.search_snippet ?? undefined,
+    searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined
   };
 }
 
@@ -358,21 +404,29 @@ export function memoryDeliveryDetail(message: MailMessage): DeliveryDetail {
 
 export function serializeMessageForInsert(userId: string, message: MailMessage, idempotencyKey = `flaremail:send:${message.id}`) {
   const timestamp = nowIso();
+  const toAddresses = message.toAddresses ?? parseAddressList(message.toEmail);
+  const ccAddresses = message.ccAddresses ?? parseAddressList(message.cc ?? '');
+  const bccAddresses = message.bccAddresses ?? parseAddressList(message.bcc ?? '');
   return { userId, id: message.id, folder: message.folder, fromName: message.fromName, fromEmail: message.fromEmail,
-    toName: message.toName, toEmail: message.toEmail, subject: message.subject, preview: message.preview, body: message.body,
+    toName: message.toName, toEmail: message.toEmail, subject: message.subject, preview: message.preview, body: message.body, bodyObjectId: null as string | null,
     sentAt: message.sentAt, labelsJson: JSON.stringify(message.labels), isRead: message.read ? 1 : 0,
     isStarred: message.starred ? 1 : 0, messageId: message.messageId ?? null, inReplyTo: message.inReplyTo ?? null,
-    references: message.references ?? null, threadKey: message.threadKey ?? null, cc: message.cc ?? '',
+    references: message.references ?? null, threadKey: message.threadKey ?? null, cc: serializeAddressList(ccAddresses),
+    toJson: serializeAddressJson(toAddresses), ccJson: serializeAddressJson(ccAddresses), bccJson: serializeAddressJson(bccAddresses),
     idempotencyKey, createdAt: timestamp, updatedAt: timestamp };
 }
 
-export function serializeDraftForInsert(userId: string, input: ComposeInput, starred: boolean) {
+export function serializeDraftForInsert(userId: string, draft: MailMessage) {
   const timestamp = nowIso();
-  const id = input.draftId ?? `draft-live-${crypto.randomUUID()}`;
-  return { userId, id, toEmail: input.toEmail.trim(),
-    cc: input.cc?.trim() ?? '', subject: input.subject.trim(), body: input.body.trim(), isStarred: starred ? 1 : 0,
-    messageId: input.messageId ?? null, inReplyTo: input.inReplyTo ?? null, references: input.references ?? null,
-    threadKey: input.references ?? input.inReplyTo ?? input.messageId ?? null,
+  const id = draft.id;
+  const toAddresses = draft.toAddresses ?? parseAddressList(draft.toEmail);
+  const ccAddresses = draft.ccAddresses ?? parseAddressList(draft.cc ?? '');
+  const bccAddresses = draft.bccAddresses ?? parseAddressList(draft.bcc ?? '');
+  return { userId, id, toEmail: toAddresses[0]?.email ?? '',
+    cc: serializeAddressList(ccAddresses), toJson: serializeAddressJson(toAddresses), ccJson: serializeAddressJson(ccAddresses), bccJson: serializeAddressJson(bccAddresses),
+    subject: draft.subject === '未命名草稿' ? '' : draft.subject, body: draft.body, bodyObjectId: null as string | null, isStarred: draft.starred ? 1 : 0,
+    messageId: draft.messageId ?? null, inReplyTo: draft.inReplyTo ?? null, references: draft.references ?? null,
+    threadKey: draft.references ?? draft.inReplyTo ?? draft.messageId ?? null,
     idempotencyKey: `flaremail:draft:${id}`,
     createdAt: timestamp, updatedAt: timestamp };
 }

@@ -19,8 +19,9 @@ R2 object contents, or access tokens to logs.
 ## Maintenance CLI
 
 The maintenance command is read-only by default. It reports expired/revoked
-sessions, stale inbound claims, delivery review windows, old `workspace_outbound_events`, and R2 objects that are not
-referenced by `email_messages.raw_key` or `workspace_attachments.r2_key`:
+sessions, stale inbound claims, delivery review windows, old `workspace_outbound_events`, durable
+`workspace_r2_cleanup_queue` retries, and R2 objects that are not referenced by
+live mail/body/attachment metadata:
 
 ```bash
 bun scripts/maintenance.ts --config wrangler.toml
@@ -51,15 +52,66 @@ bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest 
 bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest /secure/reviewed-r2-inventory.json --apply
 ```
 
-`--apply` deletes only managed `inbound/YYYY-MM-DD/<id>/...` keys that are
-unreferenced. Other key shapes are reported and skipped. The command never
+`--apply` deletes only unreferenced managed `inbound/YYYY-MM-DD/<id>/...`,
+`body/v1/...`, and `outbound/v1/YYYY-MM-DD/<uuid>/<uuid>.bin` keys. Expired
+`uploading`/`failed`/`delete_pending` outbound rows stop protecting their objects; after a
+reviewed R2 delete, their matching metadata rows and durable cleanup-queue rows
+are removed. Queue entries whose objects are absent from the reviewed manifest
+are also reconciled. Active and
+not-yet-expired rows remain references. Other key shapes are reported and
+skipped. The command never
 executes a remote operation unless `--remote` is supplied, and never executes
 any deletion unless `--apply` is supplied.
 
-Before production maintenance, export D1 and record the current commit. Keep
-the export in a protected operator directory and inspect the dry-run output.
-Production deployment and remote migration remain separate, explicitly
-authorized operations.
+Before production maintenance, create and list a managed D1 backup and record
+the current commit. D1 SQL export does not support databases containing FTS5
+virtual tables. Do not run a normal logical export after migration 0015 unless
+the explicit FTS export procedure below is in a maintenance window. Production
+deployment and remote migration remain separate, explicitly authorized
+operations.
+
+## Search index verification and D1 export
+
+`workspace_search_documents` is a bounded, owner-scoped projection of inbound,
+sent, and draft text. `workspace_search_fts` is an external-content FTS5 table
+that can always be recreated from that projection. Raw MIME, attachment bytes,
+BCC and secrets are never indexed.
+
+The index command is local and read-only by default:
+
+```bash
+bun run search:index -- --mode verify --json
+bun run search:index -- --mode rebuild --apply
+```
+
+`verify` reports canonical, projected, missing and orphan counts. `rebuild`
+upserts every bounded projection, removes orphan projection rows and asks FTS5
+to rebuild its virtual index. Remote use requires both `--remote` and, for a
+mutation, `--apply`.
+
+Prefer a managed backup for production:
+
+```bash
+bun x wrangler d1 backup create <DATABASE_ID> --name=flaremail-maintenance
+bun x wrangler d1 backup list <DATABASE_ID>
+```
+
+If a logical SQL export is mandatory, stop application writes and use this
+sequence. The canonical projection table remains intact while the unsupported
+virtual layer is absent:
+
+```bash
+bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --json
+bun run search:index -- --mode prepare-export --remote --config wrangler.deploy.toml --apply
+bun x wrangler d1 export flaremail-db --remote --config wrangler.deploy.toml --output /secure/path/flaremail-logical.sql
+bun run search:index -- --mode restore-export --remote --config wrangler.deploy.toml --apply
+bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --json
+```
+
+If export fails, restore the virtual layer before reopening traffic. After any
+SQL import, backup restore, or Time Travel restore, run the reviewed rebuild
+command. Backup restore overwrites the target database and always requires a
+fresh backup plus separate operator approval.
 
 ## Schema, claims, and delivery review
 
@@ -69,7 +121,12 @@ Migration `0010_mailbox_archive_and_bulk.sql` append-only adds `archived_at` and
 the mailbox indexes used by archive and bulk actions. Apply migrations in order;
 do not edit `0001` through `0010`. A stale claim report is
 read-only by default. Review the claim age and D1/R2 evidence before using the
-explicit `--apply` path to remove stale processing claims.
+explicit `--apply` path to remove stale processing claims. Migration
+`0015_search_fts.sql` adds the rebuildable FTS projection, virtual index and
+canonical-row synchronization triggers. Migration
+`0016_outbound_attachments.sql` adds draft/message attachment relations,
+upload/ready/failure/delete-pending states, SHA-256 metadata, cleanup deadlines,
+and the draft attachment revision used by guarded sends.
 
 The maintenance report also lists stale submitting attempts, attempts within
 one hour of the Resend 24-hour idempotency expiry, and expired attempts that

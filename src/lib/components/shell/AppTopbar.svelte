@@ -22,7 +22,12 @@
     unreadCount,
     draftCount,
     queuedCount,
+    delayedCount,
     failedCount,
+    bouncedCount,
+    complainedCount,
+    staleDeliveryCount,
+    serviceDegraded,
     pending = false,
     onEditProfile,
     onLogout,
@@ -33,7 +38,12 @@
     unreadCount: number;
     draftCount: number;
     queuedCount: number;
+    delayedCount: number;
     failedCount: number;
+    bouncedCount: number;
+    complainedCount: number;
+    staleDeliveryCount: number;
+    serviceDegraded: boolean;
     pending?: boolean;
     onEditProfile: () => void;
     onLogout: () => void | Promise<void>;
@@ -98,9 +108,14 @@
   <div class="actions">
     <ServiceStatusMenu
       {draftCount}
+      {bouncedCount}
+      {complainedCount}
+      {delayedCount}
       {failedCount}
       {queuedCount}
       {runtimeLabel}
+      {serviceDegraded}
+      {staleDeliveryCount}
       {unreadCount}
     />
     <button class="icon-button" type="button" aria-label={themeLabel} title={themeLabel} onclick={cycleTheme}>

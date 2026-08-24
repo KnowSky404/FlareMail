@@ -14,7 +14,7 @@
   import { StatusBadge } from '$lib/components/ui';
   import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
 
-  type AppSection = MailboxSection | 'profile';
+  type AppSection = MailboxSection | 'trash' | 'profile';
 
   let {
     activeSection,
@@ -39,16 +39,36 @@
   } = $props();
 
   const itemMessage = $derived(thread?.sectionLatestMessage ?? thread?.latestMessage ?? message);
-  const isDraft = $derived(activeSection === 'drafts');
+  const isDraft = $derived(itemMessage?.folder === 'drafts');
   const isUnread = $derived(Boolean(thread ? thread.unreadCount > 0 : itemMessage && !itemMessage.read));
   const isStarred = $derived(Boolean(itemMessage?.starred));
   const itemSubject = $derived(thread?.subject || itemMessage?.subject || '（无主题）');
-  const itemPreview = $derived(thread?.preview || itemMessage?.preview || '');
+  const itemPreview = $derived(itemMessage?.searchSnippet || thread?.preview || itemMessage?.preview || '');
   const itemCount = $derived(thread?.messageCount ?? 1);
+
+  const hitFieldLabels = {
+    all: '全文', from: '发件人', to: '收件人', cc: '抄送', subject: '主题', label: '标签',
+    state: '状态', attachment: '附件', date: '日期', status: '投递'
+  } as const;
+
+  function highlightedParts(value: string) {
+    const open = String.fromCharCode(57344);
+    const close = String.fromCharCode(57345);
+    const parts: Array<{ text: string; highlighted: boolean }> = [];
+    let highlighted = false;
+    for (const segment of value.split(new RegExp(`(${open}|${close})`, 'u'))) {
+      if (segment === open) highlighted = true;
+      else if (segment === close) highlighted = false;
+      else if (segment) parts.push({ text: segment, highlighted });
+    }
+    return parts;
+  }
 
   const counterpart = $derived(
     thread?.counterpartLabel ||
-      (isDraft ? itemMessage?.toEmail || '收件人未填写' : itemMessage?.fromName || itemMessage?.fromEmail || '未知发件人')
+      (isDraft || itemMessage?.folder === 'sent'
+        ? itemMessage?.toName || itemMessage?.toEmail || '收件人未填写'
+        : itemMessage?.fromName || itemMessage?.fromEmail || '未知发件人')
   );
 
   const formatDate = (value?: string) => {
@@ -139,7 +159,22 @@
         <span class="mt-0.5 flex min-w-0 items-center gap-1 text-xs leading-4 text-[var(--fm-text-muted)]">
           {#if isDraft}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">草稿</span>{/if}
           {#if itemMessage.labels.includes('attachment')}<Paperclip class="size-3 shrink-0" aria-label="含附件" />{/if}
-          <span class="truncate">{isDraft && !itemMessage.toEmail ? '尚未填写收件人' : itemPreview || '暂无预览'}</span>
+          {#if itemMessage.searchHitFields?.length}
+            <span class="shrink-0 rounded bg-[var(--fm-primary-soft)] px-1 py-0.5 text-[10px] font-medium text-[var(--fm-primary)]">
+              {itemMessage.searchHitFields.map((field) => hitFieldLabels[field]).join(' · ')}
+            </span>
+          {/if}
+          <span class="truncate">
+            {#if isDraft && !itemMessage.toEmail}
+              尚未填写收件人
+            {:else if itemPreview}
+              {#each highlightedParts(itemPreview) as part}
+                {#if part.highlighted}<mark class="rounded bg-[var(--fm-warning-soft)] px-0.5 text-inherit">{part.text}</mark>{:else}{part.text}{/if}
+              {/each}
+            {:else}
+              暂无预览
+            {/if}
+          </span>
         </span>
       </span>
       <span class="flex shrink-0 flex-col items-end justify-center gap-1">
@@ -151,16 +186,18 @@
         {#if itemMessage.source === 'inbound'}<Mail class="hidden size-3.5 text-[var(--fm-text-muted)] sm:block" aria-hidden="true" />{/if}
       </span>
     </button>
-    <button
-      type="button"
-      class="mr-1 grid min-h-11 min-w-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] transition-colors hover:bg-[var(--fm-surface)] hover:text-[var(--fm-brand-orange)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
-      aria-label={isStarred ? '取消星标' : '加星标'}
-      aria-pressed={isStarred}
-      title={isStarred ? '取消星标' : '加星标'}
-      onclick={handleStar}
-    >
-      <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)] text-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />
-    </button>
+    {#if activeSection !== 'trash'}
+      <button
+        type="button"
+        class="mr-1 grid min-h-11 min-w-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] transition-colors hover:bg-[var(--fm-surface)] hover:text-[var(--fm-brand-orange)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
+        aria-label={isStarred ? '取消星标' : '加星标'}
+        aria-pressed={isStarred}
+        title={isStarred ? '取消星标' : '加星标'}
+        onclick={handleStar}
+      >
+        <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)] text-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />
+      </button>
+    {/if}
     <ChevronRight class="mr-2 hidden size-4 shrink-0 text-[var(--fm-text-muted)] sm:block" aria-hidden="true" />
   </article>
 {:else}

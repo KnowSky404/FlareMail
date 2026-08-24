@@ -5,7 +5,7 @@
   import MailSearchBar from './MailSearchBar.svelte';
   import type { MailboxSection } from '$lib/domain/mail';
 
-  type AppSection = MailboxSection | 'profile';
+  type AppSection = MailboxSection | 'trash' | 'profile';
 
   let {
     activeSection,
@@ -36,11 +36,12 @@
     sent: '已发送',
     drafts: '草稿箱',
     archive: '归档',
+    trash: '垃圾箱',
     profile: '个人资料'
   };
 
   const heading = $derived(title || sectionLabels[activeSection]);
-  const countLabel = $derived(`${count} 封`);
+  const countLabel = $derived(query.trim() ? `${count} 个结果` : `${count} 封`);
 </script>
 
 <header class="border-b border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-3 sm:px-5">

@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  mapDraftRow,
   mapInboundRow,
   parseLabels,
   rowsToMailbox,
   serializeWorkspace
 } from './shared';
+import type { WorkspaceDraftRow } from './shared';
 
 describe('workspace shared compatibility contracts', () => {
   test('keeps malformed labels isolated and maps inbound messages to legacy ids', () => {
@@ -26,5 +28,20 @@ describe('workspace shared compatibility contracts', () => {
     expect(payload.profile.timezone).toBe('UTC');
     expect(payload.mailbox).toEqual({ inbox: [], sent: [], drafts: [] });
     expect(payload.metrics.draftsCount).toBe(0);
+  });
+
+  test('maps legacy draft recipient columns into canonical arrays', () => {
+    const profile = { name: 'Test User', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const draft = mapDraftRow({
+      id: 'draft-legacy', to_email: 'Legacy@Example.test', cc: 'Copy One <copy@example.test>; copy2@example.test',
+      to_json: null, cc_json: null, bcc_json: null, subject: 'Legacy draft', body: 'Body', is_starred: 0,
+      created_at: '2026-08-13T00:00:00.000Z', updated_at: '2026-08-13T00:01:00.000Z', message_id: null,
+      in_reply_to: null, references: null, thread_key: null, idempotency_key: null
+    } satisfies WorkspaceDraftRow, profile);
+    expect(draft.toAddresses).toEqual([{ name: '', email: 'legacy@example.test' }]);
+    expect(draft.ccAddresses).toEqual([
+      { name: 'Copy One', email: 'copy@example.test' },
+      { name: '', email: 'copy2@example.test' }
+    ]);
   });
 });

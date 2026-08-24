@@ -1,58 +1,50 @@
 # TODO
 
-## 当前优先级
+## 已完成，待操作者在隔离 preview / production 验证
 
-### 本轮可靠性收口（已实现，待操作者验证）
-- clean checkout CI preparation、bounded JSON、production origin/auth hardening、session touch throttle。
-- inbound claim lease/recovery、expected reject、RFC 3834 loop guard、schema readiness metadata。
-- workspace mutation deltas、targeted ownership queries、draft optimistic conflict actions、Resend expiry review。
-- active-folder workspace snapshot、一次性 metrics、入站列表正文隔离，以及用户级/全局入站通知开关。
-- 草稿 autosave 的版本/并发校验与可见冲突提示；Wrangler 生成类型和 CI 同步检查。
-- 邮箱归档/恢复、单条与批量读写/星标操作；批量请求具备 ownership preflight、去重、100 条上限和 D1 batch 原子性。
-- 仍需操作者在 isolated preview 运行 CPU/容量测量和生产 smoke checklist；本仓库不自动执行远程操作。
+- `0011`–`0016` append-only migrations：多收件人、R2 正文分层、统一垃圾箱、入站技术元数据、owner-scoped FTS5、草稿/外发附件与 R2 cleanup queue。
+- To/CC/BCC 地址数组、Reply / Reply All / Forward、RFC threading headers，以及不污染正文的结构化 provider envelope。
+- D1 UTF-8 byte 边界、大正文 R2 canonical storage、列表正文隔离、bounded detail cache 和 typed runtime unavailable state。
+- Trash / restore / permanent delete / undo 基础闭环，以及默认 dry-run 的 retention、body/attachment orphan inventory。
+- FTS5 高级搜索、受限 snippet、稳定 cursor、owner isolation、rebuild/repair 命令和备份/恢复说明。
+- 默认纯文本、安全 HTML sandbox、远程图片单封授权、CID ownership route、打印视图和显示问题报告。
+- 草稿/外发附件上传、刷新恢复、重命名、取消、失败重试、draft-to-sent 转换、下载与转发包含原附件。
+- typed toast、真实全局指标、delivery filter、客户端状态 controller 拆分、LRU/TTL 缓存和显式 snapshot identity。
+- clean-checkout CI、完整 Bun suite、typegen/build、Wrangler deploy dry-run、Chromium E2E、axe、320px/200% zoom 门禁。
 
-### 已完成
-- 线程与会话视图：已支持对话线程聚合、展开整段往来和线程内消息切换。
-- 生产发信 Provider：生产只允许 Resend；`demo`/fake 仅可在 development/test 显式启用。
-- 投递回执与状态同步：已支持 Resend webhook 校验、D1 回执落库和 UI 回执时间线展示。
-- 单管理员安全认证：PBKDF2、D1 session、Cookie、CSRF/Origin、登录限速和 bootstrap 流程。
-- 版本化 D1 migrations、入站去重、R2 原文/附件落库和 ownership 下载。
-- Cloudflare 风格响应式应用壳、light/dark/system、移动端 drill-in 与全屏纯文本写信。
-- 服务端 mailbox query/filter/cursor 分页、typed API envelope 与前端“加载更多”。
-- D1 原子登录限速、请求关联 ID、Workers observability 与只读优先的 retention/orphan maintenance。
-- Playwright 隔离 E2E、axe WCAG 2.1 A/AA、44px 触控目标、320px/200% 缩放和 CI 浏览器门禁。
-- 归档字段使用 append-only migration `0010`，不把归档状态伪装成 folder；归档页、批量选择和移动端触达区域已覆盖。
+仓库不会自动执行远程 migration、生产部署或真实邮件 smoke。操作者仍需在隔离 preview 测量近上限 MIME/附件的 CPU、内存和 subrequest，再按 `docs/DEPLOYMENT.md` 完成生产检查。
 
-## 第二阶段
+## 下一阶段核心能力
 
-### P2 草稿增强
-- 自动保存草稿：已支持写信停顿后自动保存，并在关闭前兜底保存。
-- 草稿冲突处理与最后编辑时间提示。
-- 收件人补全、最近联系人、常用抄送模板。
+### 邮箱效率
 
-### P2 收件箱效率功能
-- 标签/分类筛选。
-- D1 FTS5 或外部索引（当前服务端 query 为受控 `LIKE` 搜索，并已支持 cursor 分页）。
+- 自定义标签 CRUD、邮件映射、全局计数、保存搜索与智能文件夹。
+- 联系人、最近/常用收件人、地址自动补全和安全 CSV 导入导出。
+- 真正的 Command Palette、可调整列表栏宽、显示密度和跨会话设置同步。
+- 可访问的移动端 swipe actions，以及 WebKit/iPhone/iPad 浏览器矩阵。
 
-### P2 邮件内容能力
-- 完整 MIME 结构展示。
-- HTML / 纯文本安全切换（当前默认只渲染纯文本，HTML 不直接注入 DOM）。
-- 内嵌图片与附件预览。
-- 附件预览和批量下载（单附件与原始 `.eml` ownership 下载已完成）。
+### 写信与投递
 
-## 第三阶段
+- 纯文本 + sanitized HTML 富文本写信、双格式签名和发送前完整预览。
+- Durable outbox、Cloudflare Queue、publisher repair、bounded retry、DLQ 与人工 requeue。
+- Undo Send、定时发送、取消与修改时间；测试使用 fake clock/provider。
+- 多发件身份仅允许服务端 allowlist 中的已配置 sender。
 
-### P3 鉴权与账号体系
-- 支持多账号 / 多邮箱身份。
-- 密码重置、凭据轮换 UI 和 session 管理页面。
-- 个人资料、签名、发信身份、转发规则持久化完善。
+### 内容与运维
 
-### P3 运维与可观测性
-- 告警目标与 SLO：在 Cloudflare Dashboard 配置 D1 / R2 / Email Routing 错误率和延迟告警。
-- 定期运行 maintenance dry-run，人工审阅 retention 与 R2 orphan inventory。
-- 错误追踪与操作审计。
+- 完整 MIME 结构树、本地 `.eml` 只读预览。
+- 图片/PDF/受限文本附件预览和内存安全的批量下载；Office、压缩包、SVG 与未知二进制保持下载-only。
+- `scheduled()` maintenance：outbox/stale claims/session/FTS/trash/orphan/audit retention，破坏操作默认 dry-run。
+- 密码修改、session 管理、append-only 安全审计与安全导出。
+- 只读发件域 / webhook / Queue / Cron readiness checklist 和生产 SLO/告警。
 
-## 备注
-- 当前最推荐的下一步是 D1 FTS5/标签筛选和附件预览，同时补生产环境 SLO/告警。
-- 如果要跑通真实回执链路，需要在运行环境中配置 `RESEND_WEBHOOK_SECRET`，并让 Resend webhook 指向 `/api/webhooks/resend`。
-- 工作台发送、重试、自动回信与入站通知现已统一到 Resend gateway；development/test 可显式使用 fake provider，production 不再回退 Cloudflare 原生或 demo 外发。
+## 后续增强
+
+- Snooze、规则、模板、PWA 安全壳层、Web Push、受限导出、Passkey/Turnstile。
+- 规则默认不得永久删除；PWA/Service Worker 不缓存 authenticated API、正文、附件或 raw MIME。
+- 不引入开放注册、营销群发或复杂多租户/RBAC。
+
+## 已知硬化项
+
+- 入站附件下载目前按 ownership、size、MIME、disposition、`no-store` 与 `nosniff` 校验；未来在入站元数据普遍具备 SHA-256 后，再把 checksum 设为强制读取门禁。
+- R2 cleanup queue 在存储长期不可用时会保留待处理指针；需定期运行 maintenance 并监控 backlog。

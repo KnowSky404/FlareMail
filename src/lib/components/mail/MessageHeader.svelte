@@ -8,11 +8,18 @@
     Mail,
     MoreHorizontal,
     Reply,
+    ReplyAll,
     RotateCcw,
     Star,
     Trash2
   } from '@lucide/svelte';
-  import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/domain/mail';
+  import {
+    parseAddressList,
+    serializeAddressList,
+    type DeliveryDetail,
+    type InboundMessageDetail,
+    type MailMessage
+  } from '$lib/domain/mail';
   import { ConfirmDialog, DropdownMenu, StatusBadge } from '$lib/components/ui';
 
   let {
@@ -28,12 +35,16 @@
     onEditDraft,
     onForward,
     onReply,
+    onReplyAll,
     onToggleStar,
     onToggleRead,
     onRemove,
+    onRestore,
+    onPermanentDelete,
     onReloadInboundDetail,
     onReloadDeliveryDetail,
-    onRetryDelivery
+    onRetryDelivery,
+    trashMode = false
   }: {
     message?: MailMessage | null;
     deliveryDetail?: DeliveryDetail | null;
@@ -44,15 +55,19 @@
     deliveryDetailPending?: boolean;
     showBack?: boolean;
     onBack?: () => void;
-    onEditDraft?: (message: MailMessage) => void;
+    onEditDraft?: (message: MailMessage) => void | Promise<void>;
     onForward?: (message: MailMessage) => void;
     onReply?: (message: MailMessage) => void;
+    onReplyAll?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
+    onRestore?: (message: MailMessage) => void | Promise<void>;
+    onPermanentDelete?: (message: MailMessage) => void | Promise<void>;
     onReloadInboundDetail?: (message: MailMessage) => void | Promise<void>;
     onReloadDeliveryDetail?: (message: MailMessage) => void | Promise<void>;
     onRetryDelivery?: (message: MailMessage) => void | Promise<void>;
+    trashMode?: boolean;
   } = $props();
 
   let removeConfirmOpen = $state(false);
@@ -89,6 +104,18 @@
   const counterpartLabel = $derived(message?.folder === 'inbox' ? '发件人' : '收件人');
   const downloadHref = $derived(safeHref(rawDownloadHref));
   const deliveryStatus = $derived(message?.folder === 'sent' ? (message.deliveryStatus ?? 'submitted') : null);
+  const toSummary = $derived(message
+    ? serializeAddressList(message.toAddresses ?? [{ name: message.toName, email: message.toEmail }])
+    : '');
+  const ccSummary = $derived(message
+    ? serializeAddressList(message.ccAddresses ?? parseAddressList(message.cc ?? ''))
+    : '');
+  const bccSummary = $derived(message
+    ? serializeAddressList(message.bccAddresses ?? parseAddressList(message.bcc ?? ''))
+    : '');
+  const technicalToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.toAddresses) : '');
+  const technicalCcSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.ccAddresses) : '');
+  const replyToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.replyTo) : '');
 
   const deliveryLabel = (status: string | null) => {
     const labels: Record<string, string> = {
@@ -150,7 +177,7 @@
         <p class="truncate text-xs text-[var(--fm-text-muted)]">{message.preview || '无预览'}</p>
       </div>
       <div class="flex shrink-0 items-center gap-0.5">
-        <button
+        {#if !trashMode}<button
           class="grid size-11 place-items-center rounded-[var(--radius-md)] hover:bg-[var(--fm-surface-hover)]"
           class:text-[var(--fm-brand-orange)]={message.starred}
           class:text-[var(--fm-text-muted)]={!message.starred}
@@ -161,8 +188,8 @@
           disabled={pending}
         >
           <Star class="size-[18px]" fill={message.starred ? 'currentColor' : 'none'} aria-hidden="true" />
-        </button>
-        <button
+        </button>{/if}
+        {#if !trashMode}<button
           class="hidden size-11 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)] sm:grid"
           aria-label={message.read ? '标为未读' : '标为已读'}
           title={message.read ? '标为未读' : '标为已读'}
@@ -171,7 +198,7 @@
           disabled={pending}
         >
           <Mail class="size-[18px]" aria-hidden="true" />
-        </button>
+        </button>{/if}
         <DropdownMenu
           open={actionsMenuOpen}
           align="end"
@@ -183,13 +210,18 @@
             <span class="sr-only">更多邮件操作</span>
           {/snippet}
           {#snippet children()}
-            {#if message.folder === 'drafts'}
-              <button class="menu-action" role="menuitem" type="button" onclick={() => onEditDraft?.(message)}><Archive class="size-4" aria-hidden="true" />继续编辑草稿</button>
+            {#if trashMode}
+              <button class="menu-action" role="menuitem" type="button" onclick={() => onRestore?.(message)}><RotateCcw class="size-4" aria-hidden="true" />恢复到原位置</button>
+              <button class="menu-action text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />永久删除</button>
+            {:else}
+              {#if message.folder === 'drafts'}
+                <button class="menu-action" role="menuitem" type="button" onclick={() => onEditDraft?.(message)}><Archive class="size-4" aria-hidden="true" />继续编辑草稿</button>
+              {/if}
+              {#if message.folder === 'inbox'}
+                <button class="menu-action" role="menuitem" type="button" onclick={() => onToggleRead?.(message)}><Mail class="size-4" aria-hidden="true" />{message.read ? '标为未读' : '标为已读'}</button>
+              {/if}
+              <button class="menu-action text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />移入垃圾箱</button>
             {/if}
-            {#if message.folder === 'inbox'}
-              <button class="menu-action" role="menuitem" type="button" onclick={() => onToggleRead?.(message)}><Mail class="size-4" aria-hidden="true" />{message.read ? '标为未读' : '标为已读'}</button>
-            {/if}
-            <button class="menu-action text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{message.folder === 'drafts' ? '删除草稿' : '删除邮件'}</button>
           {/snippet}
         </DropdownMenu>
       </div>
@@ -211,11 +243,53 @@
             </summary>
             <dl class="mt-2 grid max-w-xl grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
               <dt>发件人</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.fromName} &lt;{message.fromEmail}&gt;</dd>
-              <dt>收件人</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.toName} &lt;{message.toEmail}&gt;</dd>
-              {#if message.cc}<dt>抄送</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.cc}</dd>{/if}
+              <dt>收件人</dt><dd class="break-words text-[var(--fm-text-secondary)]">{toSummary}</dd>
+              {#if ccSummary}<dt>抄送</dt><dd class="break-words text-[var(--fm-text-secondary)]">{ccSummary}</dd>{/if}
+              {#if bccSummary}<dt>密送</dt><dd class="break-words text-[var(--fm-text-secondary)]">{bccSummary}</dd>{/if}
               {#if message.messageId}<dt>Message-ID</dt><dd class="truncate font-mono text-[var(--fm-text-secondary)]">{message.messageId}</dd>{/if}
             </dl>
           </details>
+          {#if inboundDetail}
+            <details class="mt-1 text-xs text-[var(--fm-text-muted)]">
+              <summary class="inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
+                <span>技术详情</span><ChevronDown class="size-3" aria-hidden="true" />
+              </summary>
+              <div class="mt-2 max-w-3xl rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
+                <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                  <dt>To</dt><dd class="break-words text-[var(--fm-text-secondary)]">{technicalToSummary || '未提供'}</dd>
+                  {#if technicalCcSummary}<dt>CC</dt><dd class="break-words text-[var(--fm-text-secondary)]">{technicalCcSummary}</dd>{/if}
+                  {#if replyToSummary}<dt>Reply-To</dt><dd class="break-words text-[var(--fm-text-secondary)]">{replyToSummary}</dd>{/if}
+                  <dt>Date</dt><dd class="break-words font-mono text-[var(--fm-text-secondary)]">{inboundDetail.date}</dd>
+                  {#if inboundDetail.messageId}<dt>Message-ID</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.messageId}</dd>{/if}
+                  {#if inboundDetail.inReplyTo}<dt>In-Reply-To</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.inReplyTo}</dd>{/if}
+                  {#if inboundDetail.references}<dt>References</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.references}</dd>{/if}
+                  {#if inboundDetail.returnPath}<dt>Return-Path</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.returnPath}</dd>{/if}
+                  {#if inboundDetail.deliveredTo}<dt>Delivered-To</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{inboundDetail.deliveredTo}</dd>{/if}
+                </dl>
+                {#if inboundDetail.authenticationResults.length}
+                  <div class="mt-3 border-t border-[var(--fm-border)] pt-2">
+                    <p class="font-medium text-[var(--fm-text-secondary)]">上游邮件认证结果</p>
+                    <div class="mt-1 flex flex-wrap gap-1.5">
+                      {#each inboundDetail.authenticationResults as result}
+                        <span class="rounded-full border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-0.5 font-mono uppercase text-[var(--fm-text-secondary)]">{result.method}={result.result}</span>
+                      {/each}
+                    </div>
+                    <p class="mt-1 text-[11px]">这些状态来自上游邮件头，FlareMail 未独立执行 SPF、DKIM 或 DMARC 验证。</p>
+                  </div>
+                {/if}
+                {#if inboundDetail.headers.length}
+                  <details class="mt-3 border-t border-[var(--fm-border)] pt-2">
+                    <summary class="cursor-pointer font-medium text-[var(--fm-text-secondary)]">安全筛选后的原始头（{inboundDetail.headers.length}）</summary>
+                    <dl class="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                      {#each inboundDetail.headers as header}
+                        <dt class="font-mono">{header.name}</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{header.value}</dd>
+                      {/each}
+                    </dl>
+                  </details>
+                {/if}
+              </div>
+            </details>
+          {/if}
         </div>
         <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatDate(message.sentAt)}</time>
       </div>
@@ -233,21 +307,29 @@
       </div>
 
       <nav class="mt-4 flex flex-wrap items-center gap-2" aria-label="邮件操作">
-        {#if message.folder === 'inbox'}
+        {#if trashMode}
+          <button class="action-button action-button-primary" type="button" onclick={() => onRestore?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />恢复</button>
+          <button class="action-button" type="button" onclick={() => (removeConfirmOpen = true)} disabled={pending}><Trash2 class="size-4" aria-hidden="true" />永久删除</button>
+        {:else if message.folder !== 'drafts'}
           <button class="action-button action-button-primary" type="button" onclick={() => onReply?.(message)} disabled={pending}><Reply class="size-4" aria-hidden="true" />回复</button>
+          {#if onReplyAll}
+            <button class="action-button" type="button" onclick={() => onReplyAll?.(message)} disabled={pending}><ReplyAll class="size-4" aria-hidden="true" />回复全部</button>
+          {/if}
         {/if}
-        {#if message.folder !== 'drafts'}
-          <button class="action-button" type="button" onclick={() => onForward?.(message)} disabled={pending}><Forward class="size-4" aria-hidden="true" />转发</button>
-        {/if}
-        {#if message.source === 'inbound'}
-          <button class="action-button" type="button" onclick={() => onReloadInboundDetail?.(message)} disabled={pending || inboundDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{inboundDetailPending ? '刷新正文中' : '刷新正文'}</button>
-        {/if}
-        {#if message.folder === 'sent'}
-          <button class="action-button" type="button" onclick={() => onReloadDeliveryDetail?.(message)} disabled={pending || deliveryDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{deliveryDetailPending ? '刷新回执中' : '刷新回执'}</button>
-          {#if canRetry}<button class="action-button" type="button" onclick={() => onRetryDelivery?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />重试发送</button>{/if}
-        {/if}
-        {#if downloadHref}
-          <a class="action-button" href={downloadHref} download rel="noopener noreferrer"><ArrowUpRight class="size-4" aria-hidden="true" />下载原始邮件</a>
+        {#if !trashMode}
+          {#if message.folder !== 'drafts'}
+            <button class="action-button" type="button" onclick={() => onForward?.(message)} disabled={pending}><Forward class="size-4" aria-hidden="true" />转发</button>
+          {/if}
+          {#if message.source === 'inbound'}
+            <button class="action-button" type="button" onclick={() => onReloadInboundDetail?.(message)} disabled={pending || inboundDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{inboundDetailPending ? '刷新正文中' : '刷新正文'}</button>
+          {/if}
+          {#if message.folder === 'sent'}
+            <button class="action-button" type="button" onclick={() => onReloadDeliveryDetail?.(message)} disabled={pending || deliveryDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{deliveryDetailPending ? '刷新回执中' : '刷新回执'}</button>
+            {#if canRetry}<button class="action-button" type="button" onclick={() => onRetryDelivery?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />重试发送</button>{/if}
+          {/if}
+          {#if downloadHref}
+            <a class="action-button" href={downloadHref} download rel="noopener noreferrer"><ArrowUpRight class="size-4" aria-hidden="true" />下载原始邮件</a>
+          {/if}
         {/if}
       </nav>
     </div>
@@ -259,13 +341,14 @@
 {#if message}
   <ConfirmDialog
     open={removeConfirmOpen}
-    title={message.folder === 'drafts' ? '删除草稿？' : '删除邮件？'}
-    description={message.folder === 'drafts' ? '草稿删除后无法恢复。' : '这封邮件会从当前文件夹移除，且无法恢复。'}
-    confirmLabel={message.folder === 'drafts' ? '删除草稿' : '删除邮件'}
+    title={trashMode ? '永久删除此项目？' : '移入垃圾箱？'}
+    description={trashMode ? '此操作会永久删除邮件、正文和附件，且无法恢复。' : '邮件会移入垃圾箱，可在永久删除前恢复。'}
+    confirmLabel={trashMode ? '永久删除' : '移入垃圾箱'}
     {pending}
     onCancel={() => (removeConfirmOpen = false)}
     onConfirm={async () => {
-      await onRemove?.(message);
+      if (trashMode) await onPermanentDelete?.(message);
+      else await onRemove?.(message);
       removeConfirmOpen = false;
     }}
   />

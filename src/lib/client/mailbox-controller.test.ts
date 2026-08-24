@@ -13,7 +13,8 @@ import {
   workspaceViewStateFromSnapshot
 } from './mailbox-controller';
 
-const metrics: WorkspaceMetrics = { inboxCount: 1, sentCount: 0, draftsCount: 0, unreadCount: 1, starredCount: 0 };
+const metrics: WorkspaceMetrics = { inboxCount: 1, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 1, starredCount: 0,
+  queuedCount: 0, delayedCount: 0, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0 };
 const message = (id: string, folder: MailMessage['folder'], sentAt: string): MailMessage => ({
   id,
   folder,
@@ -73,6 +74,8 @@ describe('mailbox controller', () => {
       query: '',
       filter: 'all',
       deliveryStatus: null,
+      searchTotal: 2,
+      searchHitFields: ['all'],
       metrics
     }, false);
     const next = mergeMailboxPage(initial, {
@@ -88,6 +91,8 @@ describe('mailbox controller', () => {
 
     expect(next.mailbox.inbox.map((item) => item.id)).toEqual(['first', 'second']);
     expect(next.mailboxPages?.inbox?.messages.map((item) => item.id)).toEqual(['first', 'second']);
+    expect(next.mailboxPages?.inbox?.searchTotal).toBe(2);
+    expect(next.mailboxPages?.inbox?.searchHitFields).toEqual(['all']);
     expect(next.metrics).toEqual(metrics);
   });
 

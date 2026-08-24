@@ -103,22 +103,29 @@ describe('versioned D1 migrations', () => {
       '0007_outbound_contracts.sql',
       '0008_login_rate_limits.sql',
       '0009_inbound_ingest_claims.sql',
-      '0010_mailbox_archive_and_bulk.sql'
+      '0010_mailbox_archive_and_bulk.sql',
+      '0011_recipient_arrays.sql',
+      '0012_body_objects.sql',
+      '0013_trash.sql',
+      '0014_inbound_metadata.sql',
+      '0015_search_fts.sql',
+      '0016_outbound_attachments.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
       new Set([
         'id', 'message_id', 'from', 'to', 'subject', 'timestamp', 'snippet', 'raw_key', 'raw_size', 'created_at',
         'in_reply_to', 'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key',
-        'provider_message_id', 'idempotency_key', 'owner_user_id'
+        'provider_message_id', 'idempotency_key', 'owner_user_id', 'body_object_id', 'to_json', 'cc_json',
+        'reply_to_json', 'return_path', 'delivered_to', 'headers_json', 'authentication_results_json'
       ])
     );
     expect(tableColumns(db, 'workspace_messages')).toEqual(
       new Set([
         'id', 'user_id', 'folder', 'from_name', 'from_email', 'to_name', 'to_email', 'subject', 'preview', 'body',
         'sent_at', 'labels_json', 'is_read', 'is_starred', 'created_at', 'updated_at', 'message_id', 'in_reply_to',
-        'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key', 'provider_message_id',
-        'idempotency_key', 'archived_at'
+        'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'to_json', 'cc_json', 'bcc_json', 'dedupe_key', 'provider_message_id',
+        'idempotency_key', 'archived_at', 'deleted_at', 'body_object_id'
       ])
     );
     expect(tableColumns(db, 'workspace_users')).toEqual(
@@ -130,10 +137,17 @@ describe('versioned D1 migrations', () => {
     );
     expect(tableColumns(db, 'workspace_drafts')).toEqual(
       new Set([
-        'id', 'user_id', 'to_email', 'cc', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
-        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key'
+        'id', 'user_id', 'to_email', 'cc', 'to_json', 'cc_json', 'bcc_json', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
+        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id', 'deleted_at', 'attachment_revision'
       ])
     );
+    expect(tableColumns(db, 'workspace_search_documents')).toEqual(new Set([
+      'id', 'user_id', 'entity_kind', 'entity_id', 'from_text', 'to_text', 'cc_text',
+      'subject_text', 'body_text', 'labels_text', 'indexed_at'
+    ]));
+    expect(tableColumns(db, 'workspace_search_fts')).toEqual(new Set([
+      'from_text', 'to_text', 'cc_text', 'subject_text', 'body_text', 'labels_text'
+    ]));
     expect(tableColumns(db, 'workspace_sessions')).toEqual(
       new Set(['id', 'user_id', 'created_at', 'updated_at', 'token_hash', 'expires_at', 'revoked_at', 'last_seen_at'])
     );
@@ -152,9 +166,13 @@ describe('versioned D1 migrations', () => {
     );
     expect(tableColumns(db, 'workspace_attachments')).toEqual(
       new Set([
-        'id', 'user_id', 'message_id', 'filename', 'content_type', 'size', 'inline', 'content_id', 'r2_key', 'created_at'
+        'id', 'user_id', 'message_id', 'filename', 'content_type', 'size', 'inline', 'content_id', 'r2_key', 'created_at',
+        'relation_type', 'state', 'sha256', 'disposition', 'updated_at', 'delete_after'
       ])
     );
+    expect(tableColumns(db, 'workspace_r2_cleanup_queue')).toEqual(new Set([
+      'id', 'owner_user_id', 'entity_id', 'r2_key', 'reason', 'created_at', 'updated_at'
+    ]));
     expect(tableColumns(db, 'workspace_settings')).toEqual(
       new Set(['user_id', 'theme', 'settings_json', 'created_at', 'updated_at'])
     );
@@ -168,7 +186,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 10 }
+      { schema_name: 'flaremail', schema_version: 16 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -186,10 +204,21 @@ describe('versioned D1 migrations', () => {
       ])
     );
     expect(indexNames(db, 'workspace_messages')).toContain('idx_workspace_messages_user_folder_archived');
+    expect(indexNames(db, 'workspace_messages')).toContain('idx_workspace_messages_user_trash');
     expect(indexNames(db, 'workspace_email_states')).toContain('idx_workspace_email_states_user_archived');
+    expect(indexNames(db, 'workspace_email_states')).toContain('idx_workspace_email_states_user_trash');
+    expect(indexNames(db, 'workspace_drafts')).toContain('idx_workspace_drafts_user_trash');
+    expect(indexNames(db, 'workspace_search_documents')).toContain('idx_workspace_search_documents_owner');
     expect(indexNames(db, 'workspace_attachments')).toEqual(
-      new Set(['idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id'])
+      new Set([
+        'idx_workspace_attachments_user_message', 'idx_workspace_attachments_content_id',
+        'idx_workspace_attachments_user_relation', 'idx_workspace_attachments_cleanup'
+      ])
     );
+    expect(tableColumns(db, 'mail_body_objects')).toEqual(new Set([
+      'id', 'owner_user_id', 'entity_type', 'entity_id', 'r2_key', 'size_bytes', 'sha256',
+      'text_bytes', 'html_bytes', 'state', 'created_at', 'updated_at', 'delete_after'
+    ]));
     expect(indexNames(db, 'workspace_login_rate_limits')).toEqual(
       new Set(['idx_workspace_login_rate_limits_reset_at'])
     );
@@ -235,7 +264,8 @@ describe('versioned D1 migrations', () => {
     }
 
     const inbound = db.query(
-      `SELECT message_id, thread_key, dedupe_key, direction, text_body, html_body, owner_user_id
+      `SELECT message_id, thread_key, dedupe_key, direction, text_body, html_body, owner_user_id,
+        to_json, reply_to_json, headers_json, authentication_results_json
        FROM email_messages WHERE id = 'legacy-email-1'`
     ).get() as Record<string, string | null>;
     expect(inbound).toMatchObject({
@@ -245,7 +275,11 @@ describe('versioned D1 migrations', () => {
       direction: 'inbound',
       text_body: 'Legacy body',
       html_body: '',
-      owner_user_id: 'legacy-user-1'
+      owner_user_id: 'legacy-user-1',
+      to_json: '[{"name":"","email":"admin@example.test"}]',
+      reply_to_json: '[]',
+      headers_json: '[]',
+      authentication_results_json: '[]'
     });
 
     const workspaceInbound = db.query(
@@ -255,6 +289,22 @@ describe('versioned D1 migrations', () => {
     expect(workspaceInbound).toMatchObject({
       direction: 'inbound', text_body: 'Legacy body', thread_key: 'legacy:legacy-message-1', dedupe_key: 'legacy:legacy-message-1'
     });
+
+    expect(db.query(`SELECT to_json FROM workspace_messages WHERE id = 'legacy-message-2'`).get()).toEqual({
+      to_json: '[{"name":"","email":"recipient@example.test"}]'
+    });
+    expect(db.query(`SELECT to_json FROM workspace_drafts WHERE id = 'legacy-draft-1'`).get()).toEqual({
+      to_json: '[{"name":"","email":"recipient@example.test"}]'
+    });
+    expect(db.query(`SELECT entity_kind, entity_id FROM workspace_search_documents ORDER BY entity_kind, entity_id`).all())
+      .toEqual([
+        { entity_kind: 'draft', entity_id: 'legacy-draft-1' },
+        { entity_kind: 'inbound', entity_id: 'legacy-email-1' },
+        { entity_kind: 'message', entity_id: 'legacy-message-1' },
+        { entity_kind: 'message', entity_id: 'legacy-message-2' }
+      ]);
+    expect(db.query(`SELECT COUNT(*) AS count FROM workspace_search_fts WHERE workspace_search_fts MATCH 'legacy'`).get())
+      .toEqual({ count: 3 });
 
     const session = db.query(
       `SELECT token_hash, expires_at, last_seen_at FROM workspace_sessions WHERE id = 'legacy-session-1'`

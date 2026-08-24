@@ -489,7 +489,29 @@ Header：
 - 可提供带修饰键的发送快捷键，但必须明确且有文档；
 - Modal 模式 trap focus，关闭后恢复触发按钮焦点。
 
-### 11.5 投递时间线
+### 11.5 邮件能力交互契约
+
+地址与写信：
+
+- To、CC、BCC 使用同一地址 chip 交互；显示名中的空格必须保留，逗号、分号、换行和粘贴多地址负责提交 chip。
+- chip 必须支持键盘添加、移除、逐地址错误和去重；BCC 只在写信与明确允许的技术视图显示。
+- 草稿附件同时属于内容和乐观并发状态。上传中、失败、重试、取消、删除与重命名都必须可见；关闭或刷新后不得伪装为已完成。
+- Command Palette 尚未实现时，顶栏文案只能承诺搜索；实现后必须覆盖导航、写信、邮件动作、主题、刷新和诊断，并采用完整键盘与 ARIA combobox/dialog 语义。
+
+阅读与附件：
+
+- HTML reader 只消费服务端 allowlist 净化结果，并放入无 `allow-scripts`/`allow-same-origin` 的 sandbox iframe；纯文本始终是默认回退。
+- 远程图片默认阻止，只允许单封、可撤销的 HTTPS 授权；CID 图片走当前邮件的 owner-scoped capability route，不依赖 iframe Cookie。
+- 附件下载始终执行 ownership、size consistency、`no-store`、`nosniff` 和安全 disposition。未来预览必须按类型隔离；SVG、Office、压缩包与未知二进制不得内联执行。
+- “下载全部”必须使用经验证的客户端或流式 ZIP 策略，不能把全部大附件一次读入 Worker 内存。
+
+反馈与可恢复动作：
+
+- Toast 使用 `info`、`success`、`warning`、`error` tone，支持 action、timeout、persistent、request ID 和 ARIA live；持久错误还必须在页面上下文提供恢复入口。
+- 移入垃圾箱、恢复、归档和未来的标签/Snooze 操作应乐观更新并精确回滚；短期撤销不得替代服务端幂等与 ownership preflight。
+- 标签只改变映射，不删除邮件；Snooze 只改变可见时间并必须跨重启持久，恢复动作需由 Queue/Cron 或等价可靠调度驱动。
+
+### 11.6 投递时间线
 
 已发送邮件提供紧凑、可展开的时间线：
 
@@ -678,7 +700,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 | 文件夹标题、数量、搜索、筛选、刷新 | `src/lib/components/mail/MessageListPane.svelte` 内部标题区 | `src/lib/components/mail/FolderHeader.svelte`、`MailSearchBar.svelte`、`MailFilterBar.svelte`；状态放 Banner/状态菜单 |
 | 线程列表 | `src/lib/components/mail/MessageListPane.svelte` | `MessageList.svelte` + `MessageListItem.svelte`；行高 64–76 px，Skeleton/空/首次/错误/分页结束状态齐全 |
 | 邮件详情编排 | `src/lib/components/mail/MessageDetailPane.svelte` | `MessageDetail.svelte` + `MessageHeader.svelte` + `MessageBody.svelte`；详情面板独立滚动，手机采用 drill-in 与返回 |
-| 附件与原始邮件 | `MessageDetailPane.svelte`、`src/routes/api/workspace/messages/[id]/raw/+server.ts` | `AttachmentList.svelte` 与 API 保持安全下载；inline image 不默认信任，正文保持 plain text 默认安全视图 |
+| 附件、HTML 与原始邮件 | `MessageDetail.svelte`、`MessageBody.svelte`、`AttachmentList.svelte`、`src/routes/api/workspace/messages/[id]/**` | 已实现 plain-text 默认、安全 HTML iframe、CID capability 与 ownership 下载；类型化预览和批量下载仍按 11.5 的隔离与内存边界实施 |
 | 投递时间线 | `MessageDetailPane.svelte`、`src/routes/api/workspace/messages/[id]/delivery/+server.ts`、`src/lib/server/resend-webhook.ts` | `DeliveryTimeline.svelte`；展示 queued/submitted/sent/delivered/delayed/bounced/failed/complained/suppressed 及可选 opened/clicked，受理不得写成已送达 |
 | 写信、回复、转发、自动保存 | `src/lib/components/mail/ComposeModal.svelte`、`src/routes/api/workspace/drafts/+server.ts`、`src/routes/+page.svelte` | `ComposeDialog.svelte`；桌面 Dialog/Sheet、手机全屏，sticky header/footer、dirty 关闭确认、autosave 状态与字段级错误 |
 | 草稿空状态 | 当前由列表/页面条件分支提供 | `EmptyMailbox.svelte` 或对应 `EmptyState`；区分完成空、首次空、错误和分页结束 |
@@ -730,7 +752,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 - [ ] 文件夹标题有搜索/筛选/刷新/必要 Banner；技术 provider health 不常驻标题。
 - [ ] 列表包含未读、对端、主题、预览、时间、星标、线程数和已发送投递状态。
 - [ ] 列表具备 Skeleton、完成空、首次空、错误和分页结束状态；次级操作不误触主选择。
-- [ ] 详情正文默认 plain text；HTML sandbox、附件、原文下载、外链安全和远程图片显式加载规则均可验证。
+- [x] 详情正文默认 plain text；HTML sandbox、CID/附件/原文 ownership、外链安全和远程图片显式加载规则均可验证。
 - [ ] 已发送时间线准确区分 accepted/queued 与 delivered，并支持展开和失败重试。
 
 ### 阶段 3：写信、登录与设置

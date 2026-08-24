@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Inbox } from '@lucide/svelte';
-  import type { DeliveryDetail, InboundMessageDetail, MailMessage } from '$lib/domain/mail';
+  import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
   import { EmptyState } from '$lib/components/ui';
   import AttachmentList from './AttachmentList.svelte';
   import DeliveryTimeline from './DeliveryTimeline.svelte';
@@ -17,19 +17,28 @@
     deliveryDetail = null,
     deliveryDetailError = '',
     deliveryDetailPending = false,
+    workspaceBody = null,
+    workspaceAttachments = [],
+    workspaceBodyError = '',
+    workspaceBodyPending = false,
     pending = false,
     onEditDraft,
     onReply,
+    onReplyAll,
     onForward,
     onToggleStar,
     onToggleRead,
     onRemove,
+    onRestore,
+    onPermanentDelete,
+    onReportHtmlIssue,
     onReloadInboundDetail,
     onReloadDeliveryDetail,
     onRetryDelivery,
     onSelectThreadMessage,
     onBack,
-    showBack = false
+    showBack = false,
+    trashMode = false
   }: {
     message?: MailMessage | null;
     threadMessages?: MailMessage[];
@@ -40,26 +49,35 @@
     deliveryDetail?: DeliveryDetail | null;
     deliveryDetailError?: string;
     deliveryDetailPending?: boolean;
+    workspaceBody?: string | null;
+    workspaceAttachments?: MailAttachmentSummary[];
+    workspaceBodyError?: string;
+    workspaceBodyPending?: boolean;
     pending?: boolean;
-    onEditDraft?: (message: MailMessage) => void;
+    onEditDraft?: (message: MailMessage) => void | Promise<void>;
     onReply?: (message: MailMessage) => void;
+    onReplyAll?: (message: MailMessage) => void;
     onForward?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
+    onRestore?: (message: MailMessage) => void | Promise<void>;
+    onPermanentDelete?: (message: MailMessage) => void | Promise<void>;
+    onReportHtmlIssue?: (message: MailMessage) => void;
     onReloadInboundDetail?: (message: MailMessage) => void | Promise<void>;
     onReloadDeliveryDetail?: (message: MailMessage) => void | Promise<void>;
     onRetryDelivery?: (message: MailMessage) => void | Promise<void>;
     onSelectThreadMessage?: (message: MailMessage) => void | Promise<void>;
     onBack?: () => void;
     showBack?: boolean;
+    trashMode?: boolean;
   } = $props();
 
   const visibleBody = $derived(
     message
       ? message.source === 'inbound'
         ? inboundDetail?.body ?? message.body
-        : message.body
+        : workspaceBody ?? message.body
       : ''
   );
   const hasHtml = $derived(Boolean(inboundDetail?.hasHtml));
@@ -88,9 +106,13 @@
     {onEditDraft}
     {onForward}
     {onReply}
+    {onReplyAll}
     {onToggleStar}
     {onToggleRead}
     {onRemove}
+    {onRestore}
+    {onPermanentDelete}
+    {trashMode}
     {onReloadInboundDetail}
     {onReloadDeliveryDetail}
     {onRetryDelivery}
@@ -99,14 +121,23 @@
   {#if message}
     <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <article class="mx-auto w-full max-w-4xl px-4 py-6 sm:px-8 sm:py-8 lg:px-12" aria-label="邮件正文详情">
-        {#if inboundDetailError || deliveryDetailError}
+        {#if inboundDetailError || deliveryDetailError || workspaceBodyError}
           <div class="mb-5 grid gap-2" aria-live="polite">
             {#if inboundDetailError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">正文载入失败：{inboundDetailError}</p>{/if}
+            {#if workspaceBodyError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">正文载入失败：{workspaceBodyError}</p>{/if}
             {#if deliveryDetailError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">投递回执载入失败：{deliveryDetailError}</p>{/if}
           </div>
         {/if}
 
-        <MessageBody body={visibleBody} loading={isInbound && inboundDetailPending && !inboundDetail} hasHtml={hasHtml} />
+        {#key message.id}
+          <MessageBody
+            body={visibleBody}
+            loading={(isInbound && inboundDetailPending && !inboundDetail) || (!isInbound && workspaceBodyPending && workspaceBody === null)}
+            hasHtml={hasHtml}
+            messageId={message.id}
+            onReportIssue={() => onReportHtmlIssue?.(message)}
+          />
+        {/key}
 
         {#if isInbound}
           <div class="mt-8">
@@ -114,7 +145,13 @@
           </div>
         {/if}
 
-        {#if isSent}
+        {#if isSent && workspaceAttachments.length > 0}
+          <div class="mt-8">
+            <AttachmentList attachments={workspaceAttachments} loading={workspaceBodyPending} error={workspaceBodyError} />
+          </div>
+        {/if}
+
+        {#if isSent && !trashMode}
           <div class="mt-8">
             <DeliveryTimeline message={message} {deliveryDetail} loading={deliveryDetailPending} error={deliveryDetailError} {pending} onReload={onReloadDeliveryDetail} onRetry={onRetryDelivery} />
           </div>

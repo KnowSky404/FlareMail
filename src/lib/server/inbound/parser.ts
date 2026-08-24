@@ -1,5 +1,6 @@
 import PostalMime from 'postal-mime';
 import type { Address, Attachment, Email, Mailbox } from 'postal-mime';
+import { truncateUtf8, utf8ByteLength } from '$lib/domain/utf8';
 
 /** A mailbox address with a display name decoded by postal-mime. */
 export interface ParsedInboundAddress {
@@ -16,13 +17,28 @@ export interface ParsedInboundAttachment {
   size: number;
 }
 
+export interface ParsedInboundHeader {
+  name: string;
+  value: string;
+}
+
+export interface ParsedAuthenticationResult {
+  method: 'spf' | 'dkim' | 'dmarc';
+  result: 'pass' | 'fail' | 'softfail' | 'neutral' | 'none' | 'temperror' | 'permerror' | 'policy';
+}
+
 export interface ParsedInboundEmail {
   messageId: string | null;
   inReplyTo: string | null;
   references: string | null;
   from: ParsedInboundAddress | null;
+  replyTo: ParsedInboundAddress[];
   to: ParsedInboundAddress[];
   cc: ParsedInboundAddress[];
+  deliveredTo: string | null;
+  returnPath: string | null;
+  headers: ParsedInboundHeader[];
+  authenticationResults: ParsedAuthenticationResult[];
   subject: string;
   date: string | null;
   text: string;
@@ -68,10 +84,53 @@ export class InboundMimeParseError extends Error {
   }
 }
 
-const cleanHeader = (value: string | undefined | null): string | null => {
+const cleanHeader = (value: string | undefined | null, maxBytes = 4096): string | null => {
   const cleaned = value?.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim() ?? '';
-  return cleaned || null;
+  return cleaned ? truncateUtf8(cleaned, maxBytes) : null;
 };
+
+const safeTechnicalHeaderNames = new Set([
+  'arc-authentication-results', 'authentication-results', 'auto-submitted', 'content-language',
+  'content-type', 'date', 'delivered-to', 'from', 'in-reply-to', 'list-id', 'list-unsubscribe',
+  'message-id', 'mime-version', 'precedence', 'received-spf', 'references', 'reply-to',
+  'return-path', 'to', 'cc', 'x-forwarded-to', 'x-original-to'
+]);
+const authenticationMethods = new Set(['spf', 'dkim', 'dmarc']);
+const authenticationValues = new Set(['pass', 'fail', 'softfail', 'neutral', 'none', 'temperror', 'permerror', 'policy']);
+
+function safeTechnicalHeaders(email: Email): ParsedInboundHeader[] {
+  const result: ParsedInboundHeader[] = [];
+  let totalBytes = 0;
+  for (const header of email.headers) {
+    const name = header.key.trim().toLowerCase();
+    if (!safeTechnicalHeaderNames.has(name)) continue;
+    const value = cleanHeader(header.value, 2048);
+    if (!value) continue;
+    const bytes = utf8ByteLength(name) + utf8ByteLength(value);
+    if (result.length >= 64 || totalBytes + bytes > 32 * 1024) break;
+    result.push({ name, value });
+    totalBytes += bytes;
+  }
+  return result;
+}
+
+function parseAuthenticationResults(headers: ParsedInboundHeader[]): ParsedAuthenticationResult[] {
+  const results: ParsedAuthenticationResult[] = [];
+  const seen = new Set<string>();
+  for (const header of headers) {
+    if (header.name !== 'authentication-results' && header.name !== 'arc-authentication-results' && header.name !== 'received-spf') continue;
+    for (const match of header.value.matchAll(/\b(spf|dkim|dmarc)\s*=\s*([a-z][a-z0-9_-]*)/giu)) {
+      const method = match[1]?.toLowerCase() ?? '';
+      const result = match[2]?.toLowerCase() ?? '';
+      const key = `${method}:${result}`;
+      if (!authenticationMethods.has(method) || !authenticationValues.has(result) || seen.has(key)) continue;
+      seen.add(key);
+      results.push({ method, result } as ParsedAuthenticationResult);
+      if (results.length >= 12) return results;
+    }
+  }
+  return results;
+}
 
 const mailbox = (value: Mailbox): ParsedInboundAddress | null => {
   const address = value.address.trim();
@@ -159,6 +218,7 @@ const normalizeParsedEmail = (email: Email, options: ParseInboundMimeOptions): P
   const text = email.text?.trim() ?? '';
   const html = email.html?.trim() ?? '';
   const attachments = email.attachments.map(normalizeAttachment);
+  const headers = safeTechnicalHeaders(email);
   enforceLimits(attachments, options);
 
   return {
@@ -166,8 +226,13 @@ const normalizeParsedEmail = (email: Email, options: ParseInboundMimeOptions): P
     inReplyTo: cleanHeader(email.inReplyTo),
     references: cleanHeader(email.references),
     from: flattenAddress(email.from)[0] ?? null,
+    replyTo: flattenAddresses(email.replyTo),
     to: flattenAddresses(email.to),
     cc: flattenAddresses(email.cc),
+    deliveredTo: cleanHeader(email.deliveredTo, 512),
+    returnPath: cleanHeader(email.returnPath, 512),
+    headers,
+    authenticationResults: parseAuthenticationResults(headers),
     subject: email.subject?.trim() ?? '',
     date: cleanHeader(email.date),
     text,

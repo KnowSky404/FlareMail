@@ -6,7 +6,7 @@
   import MessageListItem from './MessageListItem.svelte';
   import type { MailFilter } from './MailFilterBar.svelte';
 
-  type AppSection = MailboxSection | 'profile';
+  type AppSection = MailboxSection | 'trash' | 'profile';
   type ListItem = { kind: 'thread'; value: MailThread } | { kind: 'message'; value: MailMessage };
 
   let {
@@ -62,18 +62,18 @@
     sent: '已发送',
     drafts: '草稿箱',
     archive: '归档',
+    trash: '垃圾箱',
     profile: '邮件'
   };
 
   const sourceItems = $derived.by<ListItem[]>(() => {
-    if (activeSection === 'drafts' || threads.length === 0) {
+    if (activeSection === 'drafts' || activeSection === 'trash' || threads.length === 0) {
       return messages.map((value) => ({ kind: 'message', value }));
     }
     return threads.map((value) => ({ kind: 'thread', value }));
   });
 
   const visibleItems = $derived.by(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
     return sourceItems.filter((item) => {
       const message = item.kind === 'thread' ? item.value.sectionLatestMessage : item.value;
       const thread = item.kind === 'thread' ? item.value : null;
@@ -82,30 +82,21 @@
         (filter === 'unread' && (thread ? thread.unreadCount > 0 : !message.read)) ||
         (filter === 'starred' && (thread ? thread.messages.some((entry) => entry.starred) : message.starred));
       if (!matchesFilter) return false;
-      if (!normalizedQuery) return true;
-      const haystack = [
-        thread?.counterpartLabel,
-        thread?.subject,
-        thread?.preview,
-        message.fromName,
-        message.fromEmail,
-        message.toName,
-        message.toEmail,
-        message.subject,
-        message.preview
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLocaleLowerCase();
-      return haystack.includes(normalizedQuery);
+      return true;
     });
   });
 
-  const selectedCount = $derived(activeSection === 'drafts' ? messages.length : threads.length || messages.length);
+  const selectedCount = $derived(activeSection === 'drafts' || activeSection === 'trash' ? messages.length : threads.length || messages.length);
   const isFiltered = $derived(Boolean(query.trim()) || filter !== 'all');
   const emptyTitle = $derived(isFiltered ? '没有匹配的邮件' : `${sectionLabels[activeSection]}为空`);
   const emptyDescription = $derived(
-    isFiltered ? '尝试更换关键词或清除当前筛选条件。' : activeSection === 'drafts' ? '保存的草稿会显示在这里。' : '新的邮件会显示在这里。'
+    isFiltered
+      ? '尝试更换关键词或清除当前筛选条件。'
+      : activeSection === 'drafts'
+        ? '保存的草稿会显示在这里。'
+        : activeSection === 'trash'
+          ? '移入垃圾箱的邮件和草稿会显示在这里。'
+          : '新的邮件会显示在这里。'
   );
 
   const itemKey = (item: ListItem) => (item.kind === 'thread' ? `thread:${item.value.id}` : `message:${item.value.id}`);

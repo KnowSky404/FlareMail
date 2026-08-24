@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ApiError } from '$lib/server/http/api';
 import {
+  buildD1LikeSearchPattern,
   decodeMailboxCursor,
   encodeMailboxCursor,
   parseMailboxQuery
@@ -41,5 +42,29 @@ describe('mailbox query contract', () => {
     expect(() => parseMailboxQuery(new URLSearchParams('folder=inbox&status=failed'))).toThrow(ApiError);
     expect(() => parseMailboxQuery(new URLSearchParams('limit=101'))).toThrow(ApiError);
     expect(() => parseMailboxQuery(new URLSearchParams(`q=${'x'.repeat(201)}`))).toThrow(ApiError);
+  });
+
+  test('bounds the complete LIKE pattern by UTF-8 bytes', () => {
+    expect(new TextEncoder().encode(buildD1LikeSearchPattern('x'.repeat(48))).byteLength).toBe(50);
+    expect(() => buildD1LikeSearchPattern('x'.repeat(49))).toThrow(ApiError);
+    expect(new TextEncoder().encode(buildD1LikeSearchPattern('中'.repeat(16))).byteLength).toBe(50);
+    expect(() => buildD1LikeSearchPattern('中'.repeat(17))).toThrow(ApiError);
+    expect(new TextEncoder().encode(buildD1LikeSearchPattern('😀'.repeat(12))).byteLength).toBe(50);
+    expect(() => buildD1LikeSearchPattern('😀'.repeat(13))).toThrow(ApiError);
+    expect(new TextEncoder().encode(buildD1LikeSearchPattern('e\u0301'.repeat(16))).byteLength).toBe(50);
+    expect(() => buildD1LikeSearchPattern('e\u0301'.repeat(17))).toThrow(ApiError);
+  });
+
+  test('routes long Unicode input to FTS and returns stable parser errors before repository execution', () => {
+    expect(parseMailboxQuery(new URLSearchParams(`q=${encodeURIComponent('中'.repeat(17))}`)).search?.terms)
+      .toEqual(['中'.repeat(17)]);
+    try {
+      parseMailboxQuery(new URLSearchParams(`q=${encodeURIComponent('unknown:value')}`));
+      throw new Error('expected query to be rejected');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 400, code: 'INVALID_SEARCH_QUERY' });
+      expect((error as ApiError).fieldErrors).toEqual({ query: ['搜索表达式包含不支持的操作符。'] });
+    }
   });
 });

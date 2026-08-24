@@ -1,3 +1,5 @@
+import type { MailAddress, MailAddressInput } from './addresses';
+
 /**
  * Provider and framework independent mail contracts.
  *
@@ -10,8 +12,9 @@ export type MailFolder = 'inbox' | 'sent' | 'drafts';
 /** A persisted mail folder plus the user-facing archive section. */
 export type MailboxSection = MailFolder | 'archive';
 export type MailSource = 'workspace' | 'inbound';
+export type MailSearchHitField = 'all' | 'from' | 'to' | 'cc' | 'subject' | 'label' | 'state' | 'attachment' | 'date' | 'status';
 
-export type MailboxMutationAction = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar';
+export type MailboxMutationAction = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar' | 'trash';
 
 export interface MailboxMutationRequest {
   action: MailboxMutationAction;
@@ -81,6 +84,19 @@ export interface MailAttachmentSummary {
   inline: boolean;
   contentId?: string | null;
   downloadUrl?: string;
+  disposition?: 'attachment' | 'inline';
+  state?: 'uploading' | 'ready' | 'failed' | 'delete_pending';
+  sha256?: string | null;
+}
+
+export interface MailTechnicalHeader {
+  name: string;
+  value: string;
+}
+
+export interface MailAuthenticationResult {
+  method: 'spf' | 'dkim' | 'dmarc';
+  result: 'pass' | 'fail' | 'softfail' | 'neutral' | 'none' | 'temperror' | 'permerror' | 'policy';
 }
 
 export interface InboundMessageDetail {
@@ -88,6 +104,17 @@ export interface InboundMessageDetail {
   attachments: MailAttachmentSummary[];
   rawSize: number;
   hasHtml?: boolean;
+  toAddresses: MailAddress[];
+  ccAddresses: MailAddress[];
+  replyTo: MailAddress[];
+  date: string;
+  messageId: string | null;
+  inReplyTo: string | null;
+  references: string | null;
+  returnPath: string | null;
+  deliveredTo: string | null;
+  headers: MailTechnicalHeader[];
+  authenticationResults: MailAuthenticationResult[];
 }
 
 export interface MailMessage extends MailRfcHeaders {
@@ -99,6 +126,11 @@ export interface MailMessage extends MailRfcHeaders {
   toName: string;
   toEmail: string;
   cc?: string;
+  /** Canonical recipients; legacy display strings remain for old UI/readers. */
+  toAddresses?: MailAddress[];
+  ccAddresses?: MailAddress[];
+  bccAddresses?: MailAddress[];
+  bcc?: string;
   subject: string;
   preview: string;
   body: string;
@@ -121,6 +153,9 @@ export interface MailMessage extends MailRfcHeaders {
   deliveryAttemptStartedAt?: string | null;
   /** Non-null only when an inbox message is in the archive section. */
   archivedAt?: string | null;
+  /** Safe plain text with private-use highlight delimiters from FTS5. */
+  searchSnippet?: string;
+  searchHitFields?: MailSearchHitField[];
 }
 
 export interface MailboxState {
@@ -149,6 +184,29 @@ export interface WorkspaceMetrics {
   inboxCount: number;
   sentCount: number;
   draftsCount: number;
+  trashCount: number;
+  queuedCount: number;
+  delayedCount: number;
+  failedCount: number;
+  bouncedCount: number;
+  complainedCount: number;
+  staleDeliveryCount: number;
+}
+
+export type TrashItemKind = 'workspace' | 'draft' | 'inbound';
+
+export interface TrashItem {
+  id: string;
+  kind: TrashItemKind;
+  deletedAt: string;
+  originalFolder: MailboxSection;
+  message: MailMessage;
+}
+
+export interface TrashListResult {
+  items: TrashItem[];
+  hasMore: boolean;
+  metrics: WorkspaceMetrics;
 }
 
 export interface UserProfile {
@@ -179,6 +237,9 @@ export interface MailboxPage {
   query: string;
   filter: MailboxFilter;
   deliveryStatus: DeliveryStatus | null;
+  /** Exact match count for the first page of a server-side search. */
+  searchTotal?: number;
+  searchHitFields?: MailSearchHitField[];
   metrics?: WorkspaceMetrics;
 }
 
@@ -241,10 +302,22 @@ export interface LoginInput {
 export interface ComposeInput extends MailRfcHeaders {
   draftId?: string;
   expectedUpdatedAt?: string;
+  /** Opaque pointer proving that the editor loaded the canonical draft body. */
+  bodyRevision?: string;
   overwrite?: boolean;
   saveAsCopy?: boolean;
-  toEmail: string;
-  cc?: string;
+  /** New payload shape. Strings are accepted only as a legacy compatibility input. */
+  to?: MailAddressInput[] | string;
+  cc?: MailAddressInput[] | string;
+  bcc?: MailAddressInput[] | string;
+  /** Legacy payload fields retained for old drafts and clients. */
+  toEmail?: string;
+  /** Metadata only. Attachment bytes are always uploaded directly to R2. */
+  attachments?: MailAttachmentSummary[];
+  /** Client-only source choices shown before original forward attachments are re-uploaded. */
+  forwardAttachmentCandidates?: MailAttachmentSummary[];
+  /** Optimistic concurrency token for the draft attachment relation. */
+  attachmentRevision?: number;
   subject: string;
   body: string;
 }
@@ -257,8 +330,10 @@ export interface MessagePatch {
 export interface DraftMessageInput {
   id?: string;
   from: UserProfile;
-  toEmail: string;
-  cc?: string;
+  to?: MailAddressInput[] | string;
+  cc?: MailAddressInput[] | string;
+  bcc?: MailAddressInput[] | string;
+  toEmail?: string;
   subject: string;
   body: string;
   starred?: boolean;
@@ -293,7 +368,13 @@ export interface DeliveryState {
 }
 
 export function cloneMessage(message: MailMessage): MailMessage {
-  return { ...message, labels: [...message.labels] };
+  return {
+    ...message,
+    labels: [...message.labels],
+    toAddresses: message.toAddresses?.map((address) => ({ ...address })),
+    ccAddresses: message.ccAddresses?.map((address) => ({ ...address })),
+    bccAddresses: message.bccAddresses?.map((address) => ({ ...address }))
+  };
 }
 
 export function cloneMailbox(mailbox: MailboxState = { inbox: [], sent: [], drafts: [] }): MailboxState {
@@ -326,7 +407,14 @@ export function getMailboxMetrics(mailbox: MailboxState): WorkspaceMetrics {
       mailbox.drafts.filter((message) => message.starred).length,
     inboxCount: mailbox.inbox.length,
     sentCount: mailbox.sent.length,
-    draftsCount: mailbox.drafts.length
+    draftsCount: mailbox.drafts.length,
+    trashCount: 0,
+    queuedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'queued' || message.deliveryStatus === 'submitting').length,
+    delayedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'delayed').length,
+    failedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'failed' || message.deliveryStatus === 'suppressed').length,
+    bouncedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'bounced').length,
+    complainedCount: mailbox.sent.filter((message) => message.deliveryStatus === 'complained').length,
+    staleDeliveryCount: 0
   };
 }
 

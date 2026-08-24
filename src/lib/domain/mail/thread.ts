@@ -111,7 +111,13 @@ class DisjointSet {
 }
 
 function cloneMessage(message: MailMessage): MailMessage {
-  return { ...message, labels: [...message.labels] };
+  return {
+    ...message,
+    labels: [...message.labels],
+    toAddresses: message.toAddresses?.map((address) => ({ ...address })),
+    ccAddresses: message.ccAddresses?.map((address) => ({ ...address })),
+    bccAddresses: message.bccAddresses?.map((address) => ({ ...address }))
+  };
 }
 
 function compareNewestFirst(left: MailMessage, right: MailMessage): number {

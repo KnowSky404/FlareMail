@@ -1,6 +1,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { applyResendDeliveryWebhook, reconcilePendingResendEvents } from './delivery';
 
 class TestStatement {
@@ -25,6 +26,8 @@ class TestD1 {
 const setup = () => {
   const database = new Database(':memory:');
   database.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
+  database.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', ?, '2026-08-19T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
   database.query(`INSERT INTO workspace_delivery_statuses
     (message_id, user_id, status, attempts, idempotency_key, provider, provider_message_id, submitted_at, last_event, last_event_at)
     VALUES ('message-1', 'user-1', 'submitted', 1, 'flaremail:send:user-1:compose-1', 'resend', 're_1',

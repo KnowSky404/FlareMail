@@ -27,6 +27,9 @@ const adminEmail = process.env.FLAREMAIL_E2E_EMAIL ?? 'e2e-admin@flaremail.test'
 const adminPassword = process.env.FLAREMAIL_E2E_PASSWORD ?? 'FlareMail-E2E-password-2026!';
 const userId = 'e2e-admin-user';
 const inboxId = 'e2e-inbox-message';
+const htmlInboxId = 'e2e-html-inbox-message';
+const htmlCidKey = 'e2e/html-cid.png';
+const htmlCidBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 const timestamp = '2026-08-13T08:00:00.000Z';
 const webhookSecret = `whsec_${btoa('FlareMail E2E webhook secret 2026')}`;
 
@@ -109,6 +112,31 @@ INSERT OR IGNORE INTO workspace_messages (
   'This message is seeded in the isolated local D1 database.', '', '', ${sql(`legacy:${inboxId}`)},
   ${sql(timestamp)}, ${sql(timestamp)}
 );
+INSERT OR IGNORE INTO email_messages (
+  id, message_id, "from", "to", subject, "timestamp", snippet, raw_key, raw_size,
+  direction, text_body, html_body, cc, to_json, cc_json, reply_to_json, return_path,
+  delivered_to, headers_json, authentication_results_json, dedupe_key, owner_user_id, created_at
+) VALUES (
+  ${sql(htmlInboxId)}, '<e2e-html-inbox-message@flaremail.test>',
+  'HTML Safety Sender <html-sender@flaremail.test>', ${sql(adminEmail)}, 'E2E HTML Safety',
+  ${sql(timestamp)}, 'A malicious HTML fixture for isolated browser QA.', 'e2e/html-message.eml', 512,
+  'inbound', 'Safe HTML fixture text fallback.',
+  ${sql('<p onclick="alert(1)"><strong>Safe HTML fixture</strong> <a href="https://example.com/login">https://different.example/login</a></p><script>alert(1)</script><img src="cid:e2e-logo@flaremail.test" alt="inline logo"><img src="https://tracker.example/pixel.png" alt="tracking pixel"><img src="http://insecure.example/pixel.png" alt="insecure pixel">')},
+  'Team <team@flaremail.test>',
+  ${sql(JSON.stringify([{ name: 'E2E Administrator', email: adminEmail }, { name: 'Observer', email: 'observer@flaremail.test' }]))},
+  ${sql(JSON.stringify([{ name: 'Team', email: 'team@flaremail.test' }]))},
+  ${sql(JSON.stringify([{ name: 'Support', email: 'support@flaremail.test' }]))},
+  'bounce@flaremail.test', ${sql(adminEmail)},
+  ${sql(JSON.stringify([{ name: 'authentication-results', value: 'mx.flaremail.test; spf=pass; dkim=pass; dmarc=pass' }]))},
+  ${sql(JSON.stringify([{ method: 'spf', result: 'pass' }, { method: 'dkim', result: 'pass' }, { method: 'dmarc', result: 'pass' }]))},
+  ${sql(`legacy:${htmlInboxId}`)}, ${sql(userId)}, ${sql(timestamp)}
+);
+INSERT OR IGNORE INTO workspace_attachments (
+  id, user_id, message_id, filename, content_type, size, inline, content_id, r2_key
+) VALUES (
+  'e2e-html-cid', ${sql(userId)}, ${sql(htmlInboxId)}, 'logo.png', 'image/png',
+  ${htmlCidBytes.byteLength}, 1, '<e2e-logo@flaremail.test>', ${sql(htmlCidKey)}
+);
 ${bulkInboxSeed}
 INSERT OR IGNORE INTO workspace_messages (
   id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body,
@@ -126,6 +154,13 @@ ${draftSeed}
 await run('bunx', [
   'wrangler', 'd1', 'execute', 'flaremail-db', '--local', '--config', 'wrangler.toml', '--persist-to', persistTo,
   '--command', seed
+]);
+
+const htmlCidFile = join(persistenceRoot, 'html-cid.png');
+await Bun.write(htmlCidFile, htmlCidBytes);
+await run('bunx', [
+  'wrangler', 'r2', 'object', 'put', `flaremail-bucket-preview/${htmlCidKey}`,
+  '--file', htmlCidFile, '--content-type', 'image/png', '--local', '--config', 'wrangler.toml', '--persist-to', persistTo
 ]);
 
 const worker = Bun.spawn(

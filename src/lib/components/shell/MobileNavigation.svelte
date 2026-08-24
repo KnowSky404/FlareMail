@@ -6,16 +6,18 @@
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import { Drawer } from '$lib/components/ui';
   import type { MailboxSection } from '$lib/domain/mail';
   import BrandMark from './BrandMark.svelte';
 
-  type AppSection = MailboxSection | 'profile';
+  type AppSection = MailboxSection | 'trash' | 'profile';
 
   let {
     activeSection,
     inboxCount,
     draftCount,
+    trashCount,
     pending = false,
     onCompose,
     onSelectSection
@@ -23,6 +25,7 @@
     activeSection: AppSection;
     inboxCount: number;
     draftCount: number;
+    trashCount: number;
     pending?: boolean;
     onCompose: () => void;
     onSelectSection: (section: AppSection) => void;
@@ -35,6 +38,7 @@
     sent: '已发送',
     drafts: '草稿箱',
     archive: '归档',
+    trash: '垃圾箱',
     profile: '设置'
   };
 
@@ -68,6 +72,9 @@
       </button>
       <button class:active={activeSection === 'archive'} type="button" onclick={() => select('archive')}>
         <Archive size={19} aria-hidden="true" /><span>归档</span>
+      </button>
+      <button class:active={activeSection === 'trash'} type="button" onclick={() => select('trash')}>
+        <Trash2 size={19} aria-hidden="true" /><span>垃圾箱</span><small>{trashCount || ''}</small>
       </button>
       <button class:active={activeSection === 'profile'} type="button" onclick={() => select('profile')}>
         <Settings size={19} aria-hidden="true" /><span>设置</span>

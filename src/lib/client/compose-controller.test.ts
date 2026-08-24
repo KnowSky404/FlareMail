@@ -35,8 +35,8 @@ describe('compose controller', () => {
   });
 
   test('carries the optimistic-concurrency version for existing and newly saved drafts', () => {
-    expect(composeInputFromSavedDraft(savedDraft())).toMatchObject({
-      draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:00.000Z'
+    expect(composeInputFromSavedDraft(savedDraft(), 'body-object-1')).toMatchObject({
+      draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:00.000Z', bodyRevision: 'body-object-1'
     });
     expect(withComposePersistence({ toEmail: '', subject: 'Latest edit', body: 'B' }, {
       draftId: 'draft-1', expectedUpdatedAt: '2026-08-19T10:00:01.000Z'
@@ -47,8 +47,22 @@ describe('compose controller', () => {
 
   test('updates only persisted metadata when an earlier request finishes after a later edit', () => {
     const local = { ...composeInputFromSavedDraft(savedDraft()), body: 'newer local edit' };
-    const merged = mergeSavedDraftMetadata(local, savedDraft({ sentAt: '2026-08-19T10:00:01.000Z', body: 'older request body' }));
+    const merged = mergeSavedDraftMetadata(local, savedDraft({ sentAt: '2026-08-19T10:00:01.000Z', body: 'older request body' }), 'body-object-2');
     expect(merged.body).toBe('newer local edit');
     expect(merged.expectedUpdatedAt).toBe('2026-08-19T10:00:01.000Z');
+    expect(merged.bodyRevision).toBe('body-object-2');
+  });
+
+  test('treats attachments as content and preserves their optimistic revision in draft metadata', () => {
+    const attachment = { id: 'attachment-1', filename: 'evidence.txt', contentType: 'text/plain', size: 8, inline: false };
+    const input = { ...createEmptyComposeInput(), attachments: [attachment], attachmentRevision: 3 };
+    expect(hasComposeContent(input)).toBe(true);
+    expect(serializeComposeInput(input)).toContain('attachment-1');
+    expect(composeInputFromSavedDraft(savedDraft(), null, [attachment], 3)).toMatchObject({
+      attachments: [attachment], attachmentRevision: 3
+    });
+    expect(mergeSavedDraftMetadata({ ...input, body: 'local' }, savedDraft(), null, [attachment], 4)).toMatchObject({
+      body: 'local', attachments: [attachment], attachmentRevision: 4
+    });
   });
 });

@@ -8,26 +8,36 @@
     unreadCount,
     draftCount,
     queuedCount,
-    failedCount
+    delayedCount,
+    failedCount,
+    bouncedCount,
+    complainedCount,
+    staleDeliveryCount,
+    serviceDegraded
   }: {
     runtimeLabel: string;
     unreadCount: number;
     draftCount: number;
     queuedCount: number;
+    delayedCount: number;
     failedCount: number;
+    bouncedCount: number;
+    complainedCount: number;
+    staleDeliveryCount: number;
+    serviceDegraded: boolean;
   } = $props();
 
-  const healthy = $derived(failedCount === 0);
+  const healthy = $derived(!serviceDegraded);
 </script>
 
 <details class="status-menu">
-  <summary aria-label="查看工作区服务状态">
+  <summary class:degraded={!healthy} aria-label="查看工作区服务状态">
     {#if healthy}
       <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
-      <span>已加载范围正常</span>
+      <span>全局状态正常</span>
     {:else}
       <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
-      <span>{failedCount} 封已加载邮件需处理</span>
+      <span>全局投递状态需处理</span>
     {/if}
     <ChevronDown class="chevron" size={14} aria-hidden="true" />
   </summary>
@@ -40,10 +50,14 @@
     <dl>
       <div><dt>未读邮件</dt><dd>{unreadCount}</dd></div>
       <div><dt>草稿</dt><dd>{draftCount}</dd></div>
-      <div><dt>等待投递（已加载）</dt><dd>{queuedCount}</dd></div>
-      <div><dt>投递失败（已加载）</dt><dd class:danger={failedCount > 0}>{failedCount}</dd></div>
+      <div><dt>等待投递</dt><dd>{queuedCount}</dd></div>
+      <div><dt>延迟投递</dt><dd class:danger={delayedCount > 0}>{delayedCount}</dd></div>
+      <div><dt>投递失败</dt><dd class:danger={failedCount > 0}>{failedCount}</dd></div>
+      <div><dt>退信</dt><dd class:danger={bouncedCount > 0}>{bouncedCount}</dd></div>
+      <div><dt>投诉</dt><dd class:danger={complainedCount > 0}>{complainedCount}</dd></div>
+      <div><dt>长时间提交中</dt><dd class:danger={staleDeliveryCount > 0}>{staleDeliveryCount}</dd></div>
     </dl>
-    <p>这里只显示安全的运行摘要，不展示凭据或 secret。</p>
+    <p>指标覆盖整个工作区，只显示安全的运行摘要，不展示凭据或 secret。</p>
   </div>
 </details>
 
@@ -74,6 +88,10 @@
 
   summary > :global(svg:first-child) {
     color: var(--fm-success);
+  }
+
+  summary.degraded > :global(svg:first-child) {
+    color: var(--fm-danger);
   }
 
   .status-menu[open] :global(.chevron) {

@@ -32,15 +32,33 @@ class TestD1 {
 
 class TestBucket {
   readonly objects = new Map<string, Uint8Array>();
+  readonly metadata = new Map<string, Record<string, string>>();
   putCount = 0;
+  getCount = 0;
   failPuts = false;
-  async put(key: string, value: ArrayBuffer | Uint8Array) {
+  failGets = false;
+  failDeletes = false;
+  async put(key: string, value: ArrayBuffer | Uint8Array, options?: R2PutOptions) {
     if (this.failPuts) throw new Error('simulated r2 write failure');
     this.putCount += 1;
     this.objects.set(key, value instanceof Uint8Array ? new Uint8Array(value) : new Uint8Array(value.slice(0)));
+    this.metadata.set(key, options?.customMetadata ?? {});
     return {} as R2Object;
   }
-  async delete(key: string) { this.objects.delete(key); }
+  async get(key: string) {
+    this.getCount += 1;
+    if (this.failGets) throw new Error('simulated r2 read failure');
+    const bytes = this.objects.get(key);
+    if (!bytes) return null;
+    const response = new Response(bytes.buffer as ArrayBuffer);
+    return { body: response.body, size: bytes.byteLength, arrayBuffer: () => bytes.slice().buffer,
+      httpMetadata: { contentType: 'application/octet-stream' }, customMetadata: this.metadata.get(key) ?? {} } as unknown as R2Object;
+  }
+  async delete(key: string) {
+    if (this.failDeletes) throw new Error('simulated r2 delete failure');
+    this.objects.delete(key);
+    this.metadata.delete(key);
+  }
 }
 
 const fixtureBytes = (name = 'base64-attachment') => {
@@ -131,6 +149,26 @@ const notificationEnvironment = () => {
 };
 
 describe('inbound email persistence', () => {
+  test('stores large UTF-8 text/html in a canonical R2 body and bounded D1 projections', async () => {
+    const test = environment();
+    const boundary = 'body-boundary';
+    const raw = new TextEncoder().encode([
+      'From: alice@example.com', 'To: owner@example.test', 'Subject: Large body',
+      `Content-Type: multipart/alternative; boundary="${boundary}"`, '',
+      `--${boundary}`, 'Content-Type: text/plain; charset=utf-8', '', '正文😀'.repeat(70_000),
+      `--${boundary}`, 'Content-Type: text/html; charset=utf-8', '', `<p>${'内容中文'.repeat(40_000)}</p>`,
+      `--${boundary}--`, ''
+    ].join('\r\n'));
+    await handleInboundEmail(message(raw).value, test.env);
+    const row = test.database.query('SELECT body_object_id, length(text_body) AS text_length, length(html_body) AS html_length FROM email_messages').get() as { body_object_id: string | null; text_length: number; html_length: number };
+    expect(row.body_object_id).toBeString();
+    const projection = test.database.query('SELECT text_body, html_body FROM email_messages').get() as { text_body: string; html_body: string };
+    expect(new TextEncoder().encode(projection.text_body).byteLength).toBeLessThanOrEqual(128 * 1024);
+    expect(new TextEncoder().encode(projection.html_body).byteLength).toBeLessThanOrEqual(64 * 1024);
+    expect(test.BUCKET.objects.size).toBe(2);
+    expect(test.database.query('SELECT COUNT(*) AS count FROM mail_body_objects').get()).toEqual({ count: 1 });
+  });
+
   test('stores raw, parsed metadata and attachment exactly once', async () => {
     const test = environment();
     const first = message();
@@ -145,6 +183,49 @@ describe('inbound email persistence', () => {
     await handleInboundEmail(message().value, test.env);
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
     expect(test.BUCKET.objects.size).toBe(2);
+  });
+
+  test('persists bounded Reply-To, recipient and upstream authentication metadata', async () => {
+    const test = environment();
+    const raw = new TextEncoder().encode([
+      'From: Sender <sender@example.com>',
+      'To: Owner <owner@example.test>, Observer <observer@example.com>',
+      'Cc: Team <team@example.com>',
+      'Reply-To: Support <support@example.com>',
+      'Return-Path: <bounce@example.net>',
+      'Delivered-To: owner@example.test',
+      'Authentication-Results: mx.example.net; spf=pass smtp.mailfrom=example.com; dkim=fail header.d=example.com; dmarc=pass header.from=example.com',
+      'X-Private-Trace: do-not-store',
+      'Message-ID: <reply-metadata@example.com>',
+      'Subject: Metadata',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      'Metadata body.',
+      ''
+    ].join('\r\n'));
+
+    await handleInboundEmail(message(raw, 'owner@example.test').value, test.env);
+    const row = test.database.query(`
+      SELECT to_json, cc_json, reply_to_json, return_path, delivered_to,
+        headers_json, authentication_results_json
+      FROM email_messages
+    `).get() as Record<string, string>;
+
+    expect(JSON.parse(row.to_json)).toEqual([
+      { name: 'Owner', email: 'owner@example.test' },
+      { name: 'Observer', email: 'observer@example.com' }
+    ]);
+    expect(JSON.parse(row.cc_json)).toEqual([{ name: 'Team', email: 'team@example.com' }]);
+    expect(JSON.parse(row.reply_to_json)).toEqual([{ name: 'Support', email: 'support@example.com' }]);
+    expect(row.return_path).toBe('bounce@example.net');
+    expect(row.delivered_to).toBe('owner@example.test');
+    expect(JSON.parse(row.authentication_results_json)).toEqual([
+      { method: 'spf', result: 'pass' },
+      { method: 'dkim', result: 'fail' },
+      { method: 'dmarc', result: 'pass' }
+    ]);
+    expect(row.headers_json).not.toContain('do-not-store');
+    expect(new TextEncoder().encode(row.headers_json).byteLength).toBeLessThanOrEqual(32 * 1024 + 4096);
   });
 
   test('cleans newly written R2 objects when D1 persistence fails', async () => {

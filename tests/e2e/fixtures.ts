@@ -41,14 +41,16 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
   expect(consoleErrors, `browser console errors: ${consoleErrors.join('\n')}`).toEqual([]);
 }
 
-export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱' | '归档') {
-  const folderValue = { 收件箱: 'inbox', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive' }[folder];
+export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱' | '归档' | '垃圾箱') {
+  const folderValue = { 收件箱: 'inbox', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive', 垃圾箱: 'trash' }[folder];
   const direct = page.getByRole('button', { name: folder, exact: true }).first();
   if (await direct.isVisible().catch(() => false)) {
     await direct.click();
     await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
     return;
   }
+  const backButton = page.getByRole('button', { name: '返回邮件列表' });
+  if (await backButton.isVisible().catch(() => false)) await backButton.click();
   await page.getByRole('button', { name: '打开导航' }).click();
   await page.getByRole('navigation', { name: '移动端导航' })
     .getByRole('button')

@@ -18,7 +18,11 @@ class D1 {
   prepare(sql: string) { return new Statement(this.db, sql) as unknown as D1PreparedStatement; }
 }
 
-const event = (env: unknown) => ({ platform: { env } }) as never;
+const event = (env: unknown, requestId = 'health-test') => ({
+  platform: { env },
+  request: new Request('https://mail.example.test/api/health', { headers: { 'X-Request-ID': requestId } }),
+  locals: {}
+}) as never;
 const repositoryRoot = resolve(import.meta.dir, '../../../..');
 const migrationsDirectory = join(repositoryRoot, 'migrations');
 
@@ -72,7 +76,7 @@ describe('/api/health readiness', () => {
       const response = await health(database);
       expect(response.status).toBe(503);
       const body = await response.json() as Record<string, unknown>;
-      expect(Object.keys(body).sort()).toEqual(['ok', 'timestamp', 'version']);
+      expect(Object.keys(body).sort()).toEqual(['error', 'ok', 'requestId', 'timestamp', 'version']);
       expect(JSON.stringify(body).toLowerCase()).not.toContain('sqlite');
       database.close();
     }
@@ -81,6 +85,21 @@ describe('/api/health readiness', () => {
   test('returns 503 without D1 and does not expose schema details', async () => {
     const response = await GET(event({ APP_ENV: 'test' }));
     expect(response.status).toBe(503);
-    expect(JSON.stringify(await response.json())).not.toContain('sqlite');
+    expect(await response.json()).toEqual(expect.objectContaining({
+      ok: false,
+      requestId: 'health-test',
+      error: expect.objectContaining({ code: 'D1_UNAVAILABLE', retryable: true })
+    }));
+    expect(JSON.stringify(await GET(event({ APP_ENV: 'test' }))).toLowerCase()).not.toContain('sqlite');
+  });
+
+  test('returns a typed configuration failure without exposing configuration values', async () => {
+    const response = await GET(event({ APP_ENV: 'production' }, 'config-failure'));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual(expect.objectContaining({
+      ok: false,
+      requestId: 'config-failure',
+      error: expect.objectContaining({ code: 'CONFIG_INVALID', retryable: false })
+    }));
   });
 });

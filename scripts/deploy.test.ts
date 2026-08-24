@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { tmpdir } from 'node:os';
 import { join, win32 } from 'node:path';
 import {
+  createCiDryRunConfig,
   createDeployInvocation,
   parseDeployMode,
   requireDeployConfig
@@ -31,7 +32,10 @@ describe('cross-platform Wrangler commands', () => {
     expect(dryRun.args).toContain('--dry-run');
     expect(dryRun.args).toContain('--outdir');
     expect(dryRun.outdir).toBe('/portable-temp/flaremail-dry-run');
-    expect(dryRun.env).toEqual(authEnvironment);
+    expect(dryRun.env).toEqual({
+      ...authEnvironment,
+      WRANGLER_LOG_PATH: '/portable-temp/flaremail-deploy-dry-run.log'
+    });
 
     const defaultDryRun = createDeployInvocation('dry-run', { environment: {} });
     expect(defaultDryRun.outdir).toBe(join(tmpdir(), 'flaremail-dry-run'));
@@ -46,7 +50,12 @@ describe('cross-platform Wrangler commands', () => {
     expect(invocation.outdir).toBe(
       'C:\\Users\\operator\\AppData\\Local\\Temp\\flaremail-dry-run'
     );
-    expect(invocation.env.XDG_CONFIG_HOME).toBeUndefined();
+    expect(invocation.env.XDG_CONFIG_HOME).toBe(
+      'C:\\Users\\operator\\AppData\\Local\\Temp\\flaremail-wrangler-config'
+    );
+    expect(invocation.env.WRANGLER_LOG_PATH).toBe(
+      'C:\\Users\\operator\\AppData\\Local\\Temp\\flaremail-deploy-dry-run.log'
+    );
   });
 
   test('inherits remote credentials exactly and isolates only explicit local commands', () => {
@@ -68,6 +77,22 @@ describe('cross-platform Wrangler commands', () => {
     );
     expect(requireDeployConfig('wrangler.deploy.toml', () => true)).toBe(
       'wrangler.deploy.toml'
+    );
+  });
+
+  test('generates a secret-free dry-run config with absolute project paths', () => {
+    const source = `name = "flaremail"\nmain = "worker/index.ts"\n[assets]\ndirectory = "build"\n[[d1_databases]]\nmigrations_dir = "migrations"\n`;
+    const generated = createCiDryRunConfig(source, '/workspace/flaremail', (...parts) => parts.join('/'));
+    expect(generated).toContain('main = "/workspace/flaremail/worker/index.ts"');
+    expect(generated).toContain('directory = "/workspace/flaremail/build"');
+    expect(generated).toContain('migrations_dir = "/workspace/flaremail/migrations"');
+    expect(generated).not.toContain('RESEND_API_KEY');
+    expect(generated).not.toContain('CLOUDFLARE_API_TOKEN');
+  });
+
+  test('rejects a public config that is missing required dry-run paths', () => {
+    expect(() => createCiDryRunConfig('name = "flaremail"\n', '/workspace')).toThrow(
+      'Unable to locate main'
     );
   });
 });

@@ -1,10 +1,25 @@
 import type { ComposeInput, UserProfile } from './types';
+import { utf8ByteLength } from '$lib/domain/utf8';
+import {
+  dedupeAddresses,
+  inspectAddressList,
+  isValidMailboxEmail,
+  MAX_RECIPIENTS,
+  normalizeMailboxEmail,
+  type MailAddress,
+  type MailAddressInput
+} from './addresses';
 
 export const MAIL_LIMITS = Object.freeze({
   email: 254,
+  to: 4_096,
   subject: 998,
-  body: 1_048_576,
+  // Keep compose parsing, JSON serialization and provider payloads well below
+  // the 128 MiB Worker isolate ceiling. Inbound MIME has a separate limit.
+  body: 8 * 1024 * 1024,
   cc: 4_096,
+  bcc: 4_096,
+  recipients: MAX_RECIPIENTS,
   name: 200,
   role: 120,
   company: 200,
@@ -33,29 +48,19 @@ const result = <T>(value: T, issues: ValidationIssue[]): ValidationResult<T> => 
 });
 
 export function normalizeEmail(value: string): string {
-  return value.trim().toLowerCase();
+  return normalizeMailboxEmail(value);
 }
 
 /** Deliberately conservative address validation for a single mailbox address. */
 export function isValidEmail(value: string): boolean {
-  const normalized = normalizeEmail(value);
-  if (normalized.length > MAIL_LIMITS.email || /[\r\n\0]/.test(normalized)) return false;
-  const at = normalized.lastIndexOf('@');
-  if (at <= 0 || at !== normalized.indexOf('@') || at === normalized.length - 1) return false;
-  const local = normalized.slice(0, at);
-  const domain = normalized.slice(at + 1);
-  if (local.length > 64 || local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
-  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(local)) return false;
-  if (domain.length > 253 || domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) return false;
-  const labels = domain.split('.');
-  return labels.length > 1 && labels[labels.length - 1].length >= 2 && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label));
+  return isValidMailboxEmail(value);
 }
 
 export function validateEmail(value: string, field = 'email'): ValidationResult<string> {
   const normalized = normalizeEmail(value);
   const issues: ValidationIssue[] = [];
   if (!normalized) issues.push({ field, message: '邮箱不能为空。' });
-  else if (!isValidEmail(normalized)) issues.push({ field, message: '请输入有效的邮箱地址。' });
+  else if (!isValidEmail(value)) issues.push({ field, message: '请输入有效的邮箱地址。' });
   return result(normalized, issues);
 }
 
@@ -70,21 +75,65 @@ function bounded(value: string, max: number, field: string, label: string, requi
   return [normalized, issues];
 }
 
-export function validateComposeInput(input: ComposeInput): ValidationResult<ComposeInput> {
-  const [subject, subjectIssues] = bounded(input.subject, MAIL_LIMITS.subject, 'subject', '主题', true);
-  const [body, bodyIssues] = bounded(input.body, MAIL_LIMITS.body, 'body', '正文', true);
-  const [cc, ccIssues] = bounded(input.cc ?? '', MAIL_LIMITS.cc, 'cc', '抄送');
-  const to = validateEmail(input.toEmail, 'toEmail');
-  const issues = [...to.issues, ...subjectIssues, ...bodyIssues, ...ccIssues];
-  const ccAddresses = cc
-    .split(/[;,\s]+/)
-    .map((address) => address.trim())
-    .filter(Boolean);
-  for (const address of ccAddresses) {
-    if (!isValidEmail(address)) issues.push({ field: 'cc', message: `抄送地址无效：${address}` });
-  }
+function boundedBody(value: string): [string, ValidationIssue[]] {
+  const normalized = value.trim();
+  const issues: ValidationIssue[] = [];
+  if (!normalized) issues.push({ field: 'body', message: '正文不能为空。' });
+  const bytes = utf8ByteLength(normalized);
+  if (bytes > MAIL_LIMITS.body) issues.push({ field: 'body', message: `正文不能超过 ${MAIL_LIMITS.body} 个 UTF-8 字节。` });
+  return [normalized, issues];
+}
 
-  return result({ ...input, toEmail: to.value, cc, subject, body }, issues);
+function validateMailInput(input: ComposeInput, requireSendFields: boolean): ValidationResult<ComposeInput> {
+  const [subject, subjectIssues] = bounded(input.subject, MAIL_LIMITS.subject, 'subject', '主题', requireSendFields);
+  const [body, bodyIssues] = boundedBody(input.body);
+  if (!requireSendFields && !body) bodyIssues.length = 0;
+  const issues = [...subjectIssues, ...bodyIssues];
+  const parsed: Record<'to' | 'cc' | 'bcc', MailAddress[]> = { to: [], cc: [], bcc: [] };
+  const sources: Array<['to' | 'cc' | 'bcc', string | MailAddressInput[] | undefined, number]> = [
+    ['to', input.to ?? input.toEmail ?? '', MAIL_LIMITS.to],
+    ['cc', input.cc, MAIL_LIMITS.cc],
+    ['bcc', input.bcc, MAIL_LIMITS.bcc]
+  ];
+  for (const [field, value, max] of sources) {
+    if (typeof value === 'string' && value.trim().length > max) {
+      issues.push({ field, message: `${field === 'to' ? '收件人' : field === 'cc' ? '抄送' : '密送'}不能超过 ${max} 个字符。` });
+    }
+    for (const entry of inspectAddressList(value)) {
+      if (!entry.address) {
+        const token = typeof entry.input === 'string'
+          ? entry.input
+          : typeof entry.input === 'object' && entry.input !== null && typeof (entry.input as Record<string, unknown>).email === 'string'
+            ? String((entry.input as Record<string, unknown>).email)
+            : '格式无效';
+        issues.push({ field, message: `${field === 'to' ? '收件人' : field === 'cc' ? '抄送' : '密送'}地址无效：${token}` });
+      } else {
+        parsed[field].push(entry.address);
+      }
+    }
+    parsed[field] = dedupeAddresses(parsed[field]);
+  }
+  const used = new Set<string>();
+  for (const field of ['to', 'cc', 'bcc'] as const) {
+    parsed[field] = parsed[field].filter((address) => {
+      if (used.has(address.email)) return false;
+      used.add(address.email);
+      return true;
+    });
+  }
+  const all = [...parsed.to, ...parsed.cc, ...parsed.bcc];
+  if (all.length > MAIL_LIMITS.recipients) issues.push({ field: 'recipients', message: `收件人总数不能超过 ${MAIL_LIMITS.recipients} 个。` });
+  if (requireSendFields && parsed.to.length === 0) issues.push({ field: 'to', message: '至少需要一个收件人。' });
+  return result({ ...input, to: parsed.to, cc: parsed.cc, bcc: parsed.bcc, toEmail: parsed.to[0]?.email ?? '', subject, body }, issues);
+}
+
+export function validateComposeInput(input: ComposeInput): ValidationResult<ComposeInput> {
+  return validateMailInput(input, true);
+}
+
+/** Drafts may be incomplete, but every supplied field must still be safe and bounded. */
+export function validateDraftInput(input: ComposeInput): ValidationResult<ComposeInput> {
+  return validateMailInput(input, false);
 }
 
 export function validateProfile(profile: UserProfile): ValidationResult<UserProfile> {

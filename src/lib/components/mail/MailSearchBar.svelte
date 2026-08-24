@@ -5,7 +5,7 @@
 
   let {
     query = '',
-    placeholder = '搜索邮件',
+    placeholder = '搜索邮件，支持 from:、subject:、is:',
     disabled = false,
     onQueryChange,
     id = 'mail-search'
@@ -40,6 +40,7 @@
     enterkeyhint="search"
     class="fm-field h-9 w-full pl-9 pr-10 text-sm"
     aria-label="搜索邮件"
+    aria-describedby={`${id}-hint`}
     oninput={(event) => onQueryChange?.(event.currentTarget.value)}
   />
   {#if query}
@@ -53,4 +54,5 @@
       <X class="size-4" aria-hidden="true" />
     </IconButton>
   {/if}
+  <span class="sr-only" id={`${id}-hint`}>支持发件人、收件人、抄送、主题、状态、附件、日期与标签高级搜索。</span>
 </div>

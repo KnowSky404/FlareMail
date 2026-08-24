@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import type { SQLQueryBindings } from 'bun:sqlite';
 import { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox } from './mailbox';
 import type { WorkspaceContext } from './shared';
+import { parseMailSearchQuery } from '$lib/domain/mail';
 
 class TestStatement {
   private bindings: unknown[] = [];
@@ -78,6 +79,7 @@ function fixture() {
     'sent-1', 'sent', 'Ada', 'ada@example.test', 'Bob', 'bob@example.test',
     'Delivery report', 'sent preview', 'sent body', '2026-08-13T09:00:00.000Z', 1, 0
   );
+  database.query(`UPDATE workspace_messages SET cc = 'Legacy Copy <legacy-copy@example.test>' WHERE id = 'sent-1'`).run();
   database.query(`
     INSERT INTO email_messages (
       id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key,
@@ -124,16 +126,21 @@ function fixture() {
   };
 }
 
-const query = (folder: 'inbox' | 'sent' | 'drafts', overrides: Record<string, unknown> = {}) => ({
-  folder,
-  section: folder,
-  cursor: null,
-  limit: 40,
-  query: '',
-  filter: 'all' as const,
-  deliveryStatus: null,
-  ...overrides
-});
+const query = (folder: 'inbox' | 'sent' | 'drafts', overrides: Record<string, unknown> = {}) => {
+  const result = {
+    folder,
+    section: folder,
+    cursor: null,
+    limit: 40,
+    query: '',
+    search: null as ReturnType<typeof parseMailSearchQuery> | null,
+    filter: 'all' as const,
+    deliveryStatus: null,
+    ...overrides
+  };
+  result.search = result.query ? parseMailSearchQuery(result.query) : null;
+  return result;
+};
 
 describe('D1 mailbox pages', () => {
   test('merges inbound and workspace messages with a stable opaque cursor', async () => {
@@ -162,14 +169,68 @@ describe('D1 mailbox pages', () => {
     expect(searched.messages.map(({ id }) => id)).toEqual(['inbox-z']);
     const inboundSearch = await loadMailboxPage(env, workspace, query('inbox', { query: 'carol@example.test' }));
     expect(inboundSearch.messages.map(({ id }) => id)).toEqual(['email:incoming-1']);
+    const legacyCcSearch = await loadMailboxPage(env, workspace, query('sent', { query: 'legacy-copy' }));
+    expect(legacyCcSearch.messages.map(({ id }) => id)).toEqual(['sent-1']);
     const unread = await loadMailboxPage(env, workspace, query('inbox', { filter: 'unread' }));
     expect(unread.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'inbox-z']);
     const starredDrafts = await loadMailboxPage(env, workspace, query('drafts', { filter: 'starred' }));
     expect(starredDrafts.messages.map(({ id }) => id)).toEqual(['draft-1']);
   });
 
-  test('joins delivery state without per-message queries and returns global metrics', async () => {
+  test('executes advanced FTS filters with bounded snippets, totals and owner isolation', async () => {
+    const { env, workspace, database } = fixture();
+    database.query(`UPDATE workspace_messages SET labels_json = '["Operations"]', bcc_json = '[{"name":"Hidden","email":"secret@example.test"}]' WHERE id = 'inbox-z'`).run();
+    database.query(`INSERT INTO workspace_attachments (id, user_id, message_id, filename, content_type, size, r2_key)
+      VALUES ('attachment-z', 'user-1', 'inbox-z', 'incident.txt', 'text/plain', 12, 'fixtures/incident.txt')`).run();
+    database.query(`INSERT INTO workspace_messages
+      (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at)
+      VALUES ('foreign-incident', 'user-2', 'inbox', 'Zed', 'zed@example.test', 'Other', 'other@example.test', 'Alpha incident', 'private', 'private', '2026-08-13T14:00:00.000Z')`).run();
+
+    const page = await loadMailboxPage(env, workspace, query('inbox', {
+      query: 'from:zed@example.test subject:incident label:Operations is:unread has:attachment after:2026-08-12'
+    }));
+    expect(page.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+    expect(page.searchTotal).toBe(1);
+    expect(page.searchHitFields).toEqual(['from', 'subject', 'label', 'state', 'attachment', 'date']);
+    expect(page.messages[0]?.searchSnippet).toContain(String.fromCharCode(57344));
+    expect(page.messages[0]?.searchHitFields).toEqual(page.searchHitFields);
+
+    const bccSearch = await loadMailboxPage(env, workspace, query('inbox', { query: 'secret@example.test' }));
+    expect(bccSearch.messages).toEqual([]);
+
+    database.query(`UPDATE workspace_drafts SET subject = 'Updated roadmap', body = 'FTS trigger refresh' WHERE id = 'draft-1'`).run();
+    const draftSearch = await loadMailboxPage(env, workspace, query('drafts', { query: 'subject:roadmap status:draft' }));
+    expect(draftSearch.messages.map(({ id }) => id)).toEqual(['draft-1']);
+  });
+
+  test('combines FTS with delivery, archive and trash state filters', async () => {
     const { env, workspace } = fixture();
+    const delivered = await loadMailboxPage(env, workspace, query('sent', { query: 'report status:delivered' }));
+    expect(delivered.messages.map(({ id }) => id)).toEqual(['sent-1']);
+
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['inbox-z'] });
+    const archived = await loadMailboxPage(env, workspace, query('inbox', { query: 'incident is:archived' }));
+    expect(archived.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+
+    await mutateWorkspaceMailbox(env, workspace, { action: 'trash', messageIds: ['inbox-z'] });
+    const trashed = await loadMailboxPage(env, workspace, query('inbox', { query: 'incident is:trash' }));
+    expect(trashed.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+  });
+
+  test('joins delivery state without per-message queries and returns global metrics', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, last_event_at) VALUES
+        ('queued-global', 'user-1', 'queued', datetime('now')),
+        ('submitting-fresh', 'user-1', 'submitting', datetime('now')),
+        ('submitting-stale', 'user-1', 'submitting', datetime('now', '-20 minutes')),
+        ('delayed-global', 'user-1', 'delayed', datetime('now')),
+        ('failed-global', 'user-1', 'failed', datetime('now')),
+        ('suppressed-global', 'user-1', 'suppressed', datetime('now')),
+        ('bounced-global', 'user-1', 'bounced', datetime('now')),
+        ('complained-global', 'user-1', 'complained', datetime('now')),
+        ('foreign-failed', 'user-2', 'failed', datetime('now'))
+    `);
     const page = await loadMailboxPage(env, workspace, query('sent', { deliveryStatus: 'delivered' }));
     expect(page.messages).toHaveLength(1);
     expect(page.messages[0].deliveryStatus).toBe('delivered');
@@ -178,8 +239,15 @@ describe('D1 mailbox pages', () => {
       inboxCount: 3,
       sentCount: 1,
       draftsCount: 1,
+      trashCount: 0,
       unreadCount: 2,
-      starredCount: 2
+      starredCount: 2,
+      queuedCount: 3,
+      delayedCount: 1,
+      failedCount: 2,
+      bouncedCount: 1,
+      complainedCount: 1,
+      staleDeliveryCount: 1
     });
   });
 
@@ -281,6 +349,19 @@ describe('D1 mailbox pages', () => {
       messageIds: ['inbox-z', 'not-owned']
     })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
     expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).toBeNull();
+  });
+
+  test('moves an owned mixed selection to trash and updates global metrics', async () => {
+    const { env, workspace, database } = fixture();
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'trash',
+      messageIds: ['inbox-z', 'email:incoming-1']
+    });
+
+    expect((database.query(`SELECT deleted_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { deleted_at: string | null }).deleted_at).not.toBeNull();
+    expect((database.query(`SELECT deleted_at FROM workspace_email_states WHERE user_id = 'user-1' AND email_message_id = 'incoming-1'`).get() as { deleted_at: string | null }).deleted_at).not.toBeNull();
+    expect(result.metrics.trashCount).toBe(2);
+    expect((await loadMailboxPage(env, workspace, query('inbox'))).messages.map(({ id }) => id)).not.toContain('inbox-z');
   });
 
   test.each([

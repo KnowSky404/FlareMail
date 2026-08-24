@@ -77,13 +77,26 @@ bun x wrangler r2 bucket create flaremail-bucket-preview
 
 ## 3. 初始化数据库并部署
 
-先记录当前提交、导出远程数据库并查看待应用 migrations。备份文件只保存在受保护的运维目录，不提交仓库：
+先记录当前提交、创建 D1 托管备份并查看待应用 migrations。`0015_search_fts.sql` 引入 FTS5 virtual table；Cloudflare D1 不支持直接导出含 virtual table 的数据库，因此迁移后不要把普通 `d1 export` 当作备份：
 
 ```bash
 git rev-parse HEAD
-bun x wrangler d1 export flaremail-db --remote --config wrangler.deploy.toml --output /secure/path/flaremail-before-migration.sql
+bun x wrangler d1 backup create <DATABASE_ID> --name=flaremail-before-migration
+bun x wrangler d1 backup list <DATABASE_ID>
 bun x wrangler d1 migrations list flaremail-db --remote --config wrangler.deploy.toml
 ```
+
+只有确实需要逻辑 SQL 导出时，才在已公告的只读维护窗口按顺序运行以下操作。`prepare-export` 仅删除可重建 FTS virtual table 和它的同步触发器，保留 canonical mail rows 与 `workspace_search_documents`；任何失败都必须先执行 `restore-export`，再恢复应用流量：
+
+```bash
+bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --json
+bun run search:index -- --mode prepare-export --remote --config wrangler.deploy.toml --apply
+bun x wrangler d1 export flaremail-db --remote --config wrangler.deploy.toml --output /secure/path/flaremail-logical.sql
+bun run search:index -- --mode restore-export --remote --config wrangler.deploy.toml --apply
+bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --json
+```
+
+这些远程命令均为操作者步骤，本地测试或 CI 不会自动执行。
 
 再按版本应用远程 D1 migrations。Wrangler 会逐个应用 migration；失败的 migration 会回滚，先前成功项仍保持已应用：
 
@@ -183,6 +196,7 @@ bun run deploy
 - 如果需要恢复数据，先停止写入并由操作者选择导入预迁移 SQL，或使用 D1 Time Travel 恢复到明确 bookmark/timestamp。
 - Time Travel 会覆盖数据库并取消进行中的请求，属于破坏性操作，执行前必须再次导出当前状态并取得明确批准。
 - R2 原始 `.eml` 和附件不要在代码回滚时删除；恢复 D1 后抽样核对 ownership、object key 与行数。
+- 恢复 SQL 或 D1 backup 后运行 `search:index --mode rebuild --apply`；FTS 是可重建 projection，不是邮件 source of truth。
 
 示例（必须把占位符替换为已确认目标，并在执行前审阅）：
 
@@ -207,7 +221,15 @@ bun run maintenance -- --config wrangler.toml --json
 bun run maintenance -- --remote --config wrangler.deploy.toml --r2-manifest /secure/reviewed-r2-inventory.json --json
 ```
 
-完整参数、安全边界和 apply 示例见 `docs/DEPLOYMENT.md`。生产维护前必须先导出 D1、记录提交 SHA，并人工审阅 dry-run 报告。
+完整参数、安全边界和 apply 示例见 `docs/DEPLOYMENT.md`。生产维护前必须先创建 D1 托管备份、记录提交 SHA，并人工审阅 dry-run 报告；逻辑 SQL 导出仅按上文的 FTS 维护窗口流程执行。
+
+FTS 健康检查默认也是只读、本地目标：
+
+```bash
+bun run search:index -- --mode verify --json
+```
+
+只有报告出现 missing/orphan projection 时才审阅并显式执行 `--mode rebuild --apply`；远程目标还必须加 `--remote`。
 
 ## 10. 生产 smoke checklist（仅供操作者执行，本轮不执行）
 

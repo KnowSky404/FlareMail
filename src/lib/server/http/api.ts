@@ -1,4 +1,10 @@
 import { json, type RequestEvent } from '@sveltejs/kit';
+import {
+  isRuntimeErrorCode,
+  unavailableState,
+  type RuntimeErrorCode,
+  type RuntimeUnavailableState
+} from '$lib/domain/runtime-state';
 
 export type ApiFieldErrors = Record<string, string[]>;
 
@@ -6,6 +12,8 @@ export interface ApiErrorBody {
   code: string;
   message: string;
   fieldErrors?: ApiFieldErrors;
+  retryable?: boolean;
+  details?: Record<string, string | number | boolean>;
 }
 
 export interface ApiSuccess<T> {
@@ -21,15 +29,19 @@ export interface ApiFailure {
 }
 
 export class ApiError extends Error {
+  readonly retryable: boolean;
+
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
     readonly fieldErrors?: ApiFieldErrors,
-    readonly details?: Record<string, unknown>
+    readonly details?: Record<string, unknown>,
+    retryable = status >= 500
   ) {
     super(message);
     this.name = 'ApiError';
+    this.retryable = retryable;
   }
 }
 
@@ -37,18 +49,42 @@ const safeRequestId = (value: string | null) =>
   value?.trim().match(/^[A-Za-z0-9._:-]{1,128}$/u)?.[0] ?? null;
 
 export function getRequestId(event: RequestEvent): string {
-  return (
+  const locals = event.locals as App.Locals | undefined;
+  if (locals?.requestId) return locals.requestId;
+  const requestId = (
     safeRequestId(event.request.headers.get('X-Request-ID')) ??
     safeRequestId(event.request.headers.get('CF-Ray')) ??
     crypto.randomUUID()
   );
+  if (locals) locals.requestId = requestId;
+  return requestId;
 }
 
-const responseHeaders = (requestId: string, headers?: HeadersInit) => ({
-  'cache-control': 'private, no-store',
-  'x-request-id': requestId,
-  ...Object.fromEntries(new Headers(headers))
-});
+const responseHeaders = (requestId: string, headers?: HeadersInit) => {
+  const result = new Headers(headers);
+  result.set('cache-control', 'private, no-store');
+  result.set('x-request-id', requestId);
+  return result;
+};
+
+function safeDetails(details?: Record<string, unknown>): Record<string, string | number | boolean> | undefined {
+  if (!details) return undefined;
+  const result: Record<string, string | number | boolean> = {};
+  if (typeof details.reason === 'string' && /^[a-z][a-z0-9_:-]{0,63}$/u.test(details.reason)) {
+    result.reason = details.reason;
+  }
+  if (typeof details.reviewRequired === 'boolean') result.reviewRequired = details.reviewRequired;
+  if (typeof details.providerWindowHours === 'number' && Number.isInteger(details.providerWindowHours) && details.providerWindowHours >= 0 && details.providerWindowHours <= 168) {
+    result.providerWindowHours = details.providerWindowHours;
+  }
+  if (typeof details.draftId === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(details.draftId)) {
+    result.draftId = details.draftId;
+  }
+  if (typeof details.updatedAt === 'string' && details.updatedAt.length <= 64 && Number.isFinite(Date.parse(details.updatedAt))) {
+    result.updatedAt = details.updatedAt;
+  }
+  return Object.keys(result).length ? result : undefined;
+}
 
 export function apiSuccess<T>(event: RequestEvent, data: T, init: ResponseInit = {}) {
   const requestId = getRequestId(event);
@@ -60,6 +96,7 @@ export function apiSuccess<T>(event: RequestEvent, data: T, init: ResponseInit =
 
 export function apiFailure(event: RequestEvent, error: ApiError, init: ResponseInit = {}) {
   const requestId = getRequestId(event);
+  const details = safeDetails(error.details);
   return json(
     {
       ok: false,
@@ -67,12 +104,37 @@ export function apiFailure(event: RequestEvent, error: ApiError, init: ResponseI
         code: error.code,
         message: error.message,
         ...(error.fieldErrors ? { fieldErrors: error.fieldErrors } : {}),
-        ...(error.details ? { details: error.details } : {})
+        ...(error.status >= 500 ? { retryable: error.retryable } : {}),
+        ...(details ? { details } : {})
       },
       requestId
     },
     { ...init, status: error.status, headers: responseHeaders(requestId, init.headers) }
   );
+}
+
+export function classifyRuntimeError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  const message = error instanceof Error ? error.message : '';
+  if (/no such table|no such column|schema.*migrat|migration.*schema/iu.test(message)) {
+    return new ApiError(503, 'SCHEMA_NOT_READY', '服务数据结构尚未就绪。');
+  }
+  if (/r2|bucket|object storage/iu.test(message)) {
+    return new ApiError(503, 'R2_UNAVAILABLE', '文件存储服务暂时不可用。');
+  }
+  if (/d1|sqlite|database|storage/iu.test(message)) {
+    return new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
+  }
+  if (/fetch|network|timeout|resend|provider/iu.test(message)) {
+    return new ApiError(503, 'NETWORK_FAILURE', '外部服务暂时不可用。');
+  }
+  return new ApiError(500, 'INTERNAL_ERROR', '服务器暂时无法完成请求。');
+}
+
+export function runtimeUnavailableState(error: unknown, requestId: string): RuntimeUnavailableState {
+  const classified = classifyRuntimeError(error);
+  const code: RuntimeErrorCode = isRuntimeErrorCode(classified.code) ? classified.code : 'INTERNAL_ERROR';
+  return unavailableState(code, classified.retryable, requestId);
 }
 
 export function withApiHandler(
@@ -82,27 +144,20 @@ export function withApiHandler(
     try {
       return await handler(event);
     } catch (error) {
-      if (error instanceof ApiError) return apiFailure(event, error);
-      if (error instanceof Error && /no such table|no such column|schema.*migrat/iu.test(error.message)) {
-        return apiFailure(event, new ApiError(503, 'SCHEMA_NOT_READY', '服务数据结构尚未就绪。'));
-      }
+      const classified = classifyRuntimeError(error);
       const requestId = getRequestId(event);
-      console.error(JSON.stringify({
-        level: 'error',
-        event: 'api_request_failed',
-        requestId,
-        method: event.request.method,
-        path: event.url.pathname,
-        errorName: error instanceof Error ? error.name : 'UnknownError'
-      }));
-      return json(
-        {
-          ok: false,
-          error: { code: 'INTERNAL_ERROR', message: '服务器暂时无法完成请求。' },
-          requestId
-        },
-        { status: 500, headers: responseHeaders(requestId) }
-      );
+      if (classified.status >= 500) {
+        console.error(JSON.stringify({
+          level: 'error',
+          event: 'api_request_failed',
+          requestId,
+          method: event.request.method,
+          path: event.url.pathname,
+          code: classified.code,
+          errorName: error instanceof Error ? error.name : 'UnknownError'
+        }));
+      }
+      return apiFailure(event, classified);
     }
   };
 }

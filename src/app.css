@@ -201,7 +201,7 @@ summary {
 
 .fm-workspace-body {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 28px;
+  grid-template-rows: minmax(0, 1fr);
   height: calc(100dvh - 50px);
   min-height: 0;
 }
@@ -212,34 +212,6 @@ summary {
   overflow: hidden;
   border-top: 1px solid var(--fm-border);
   background: var(--fm-surface);
-}
-
-.fm-workspace-status {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-4);
-  border-top: 1px solid var(--fm-border);
-  color: var(--fm-text-muted);
-  background: var(--fm-surface);
-  font-size: 12px;
-}
-
-.fm-workspace-status::before {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: var(--radius-pill);
-  background: var(--fm-success);
-  content: '';
-}
-
-.fm-workspace-status span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .fm-field {

@@ -25,6 +25,7 @@ describe('inbound MIME parser', () => {
       subject: 'Plain message',
       date: '2026-08-13T10:00:00.000Z',
       from: { name: 'Alice Example', address: 'alice@example.com' },
+      replyTo: [],
       to: [{ name: 'Bob Example', address: 'bob@example.com' }],
       cc: [{ name: 'Carol Example', address: 'carol@example.com' }]
     });
@@ -32,6 +33,40 @@ describe('inbound MIME parser', () => {
     expect(parsed.html).toBe('');
     expect(parsed.snippet).toBe('Hello Bob, This is a plain-text message.');
     expect(parsed.snippet).not.toContain('<');
+  });
+
+  test('decodes every Reply-To mailbox and address-group member', async () => {
+    const raw = new TextEncoder().encode([
+      'From: Sender <sender@example.com>',
+      'Reply-To: Support <support@example.com>, Team: One <one@example.com>, Two <two@example.com>;',
+      'To: Owner <owner@example.com>',
+      'Return-Path: <bounce@example.net>',
+      'Delivered-To: owner@example.com',
+      'Authentication-Results: mx.example.net; spf=pass smtp.mailfrom=example.com; dkim=fail header.d=example.com; dmarc=pass header.from=example.com',
+      'X-Private-Trace: must-not-be-persisted',
+      'Subject: Reply routing',
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      'Reply here.',
+      ''
+    ].join('\r\n'));
+    const parsed = await parseInboundMime(raw.buffer);
+
+    expect(parsed.replyTo).toEqual([
+      { name: 'Support', address: 'support@example.com' },
+      { name: 'One', address: 'one@example.com' },
+      { name: 'Two', address: 'two@example.com' }
+    ]);
+    expect(parsed.returnPath).toBe('bounce@example.net');
+    expect(parsed.deliveredTo).toBe('owner@example.com');
+    expect(parsed.authenticationResults).toEqual([
+      { method: 'spf', result: 'pass' },
+      { method: 'dkim', result: 'fail' },
+      { method: 'dmarc', result: 'pass' }
+    ]);
+    expect(parsed.headers).toContainEqual({ name: 'reply-to', value: 'Support <support@example.com>, Team: One <one@example.com>, Two <two@example.com>;' });
+    expect(parsed.headers.some(({ name }) => name === 'x-private-trace')).toBe(false);
   });
 
   test('retains both text and HTML parts for an alternative message', async () => {
@@ -130,13 +165,18 @@ describe('inbound MIME parser', () => {
 
     expect(Object.keys(parsed).sort()).toEqual([
       'attachments',
+      'authenticationResults',
       'cc',
       'date',
+      'deliveredTo',
       'from',
+      'headers',
       'html',
       'inReplyTo',
       'messageId',
       'references',
+      'replyTo',
+      'returnPath',
       'snippet',
       'subject',
       'text',

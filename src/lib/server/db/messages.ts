@@ -32,7 +32,7 @@ export async function listOwnedMailboxMutationRows(
     const result = await db.prepare(`
       SELECT id, 'workspace' AS source, folder, thread_key, is_read, is_starred, archived_at
       FROM workspace_messages
-      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND id IN (${placeholders(workspaceIds)})
+      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND deleted_at IS NULL AND id IN (${placeholders(workspaceIds)})
     `).bind(userId, ...workspaceIds).all<OwnedMailboxMutationRow>();
     rows.push(...(result.results ?? []));
   }
@@ -54,14 +54,15 @@ export async function listOwnedMailboxMutationRows(
 export async function resolveOwnedMailboxThreadMessageIds(
   db: D1Database,
   userId: string,
-  threadKeys: string[]
+  threadKeys: string[],
+  includeSent = false
 ): Promise<string[]> {
   if (!threadKeys.length) return [];
   const ids: string[] = [];
   const threadPlaceholders = placeholders(threadKeys);
   const workspaceRows = await db.prepare(`
     SELECT id FROM workspace_messages
-    WHERE user_id = ? AND folder = 'inbox' AND thread_key IN (${threadPlaceholders})
+    WHERE user_id = ? AND folder ${includeSent ? "IN ('inbox', 'sent')" : "= 'inbox'"} AND deleted_at IS NULL AND thread_key IN (${threadPlaceholders})
   `).bind(userId, ...threadKeys).all<{ id: string }>();
   ids.push(...(workspaceRows.results ?? []).map((row) => row.id));
   const inboundRows = await db.prepare(`
@@ -87,14 +88,16 @@ function inboundMutationStatement(
   const archiveExpression = action === 'archive'
     ? 'COALESCE(s.archived_at, ?)'
     : action === 'unarchive' ? 'NULL' : 's.archived_at';
+  const deletedExpression = action === 'trash' ? '?' : 'NULL';
   const bindings: unknown[] = [crypto.randomUUID(), userId];
   if (action === 'archive') bindings.push(timestamp);
+  if (action === 'trash') bindings.push(timestamp);
   bindings.push(timestamp, timestamp, userId, userId, inboundId);
   return db.prepare(`
     INSERT INTO workspace_email_states (
       id, user_id, email_message_id, is_read, is_starred, archived_at, deleted_at, created_at, updated_at
     )
-    SELECT ?, ?, e.id, ${readExpression}, ${starredExpression}, ${archiveExpression}, NULL, ?, ?
+    SELECT ?, ?, e.id, ${readExpression}, ${starredExpression}, ${archiveExpression}, ${deletedExpression}, ?, ?
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
@@ -103,7 +106,7 @@ function inboundMutationStatement(
       is_read = excluded.is_read,
       is_starred = excluded.is_starred,
       archived_at = excluded.archived_at,
-      deleted_at = NULL,
+      deleted_at = excluded.deleted_at,
       updated_at = excluded.updated_at
   `).bind(...bindings);
 }
@@ -123,15 +126,17 @@ export function buildMailboxMutationStatements(
       action === 'read' ? 'is_read = 1' : action === 'unread' ? 'is_read = 0' : '',
       action === 'star' ? 'is_starred = 1' : action === 'unstar' ? 'is_starred = 0' : '',
       action === 'archive' || action === 'unarchive' ? `archived_at = ${archiveExpression}` : '',
+      action === 'trash' ? 'deleted_at = COALESCE(deleted_at, ?)' : '',
       'updated_at = ?'
     ].filter(Boolean);
     const bindings: unknown[] = [];
     if (action === 'archive') bindings.push(timestamp);
+    if (action === 'trash') bindings.push(timestamp);
     bindings.push(timestamp, userId, ...workspaceIds);
     statements.push(db.prepare(`
       UPDATE workspace_messages
       SET ${setParts.join(', ')}
-      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND id IN (${placeholders(workspaceIds)})
+      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND deleted_at IS NULL AND id IN (${placeholders(workspaceIds)})
     `).bind(...bindings));
   }
   statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp)));
@@ -141,8 +146,8 @@ export function buildMailboxMutationStatements(
 export async function listMessages(db: D1Database, userId: string) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred,
-      message_id, in_reply_to, "references", thread_key, cc, idempotency_key, archived_at
-    FROM workspace_messages WHERE user_id = ? AND (folder <> 'inbox' OR archived_at IS NULL)
+      message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at
+    FROM workspace_messages WHERE user_id = ? AND deleted_at IS NULL AND (folder <> 'inbox' OR archived_at IS NULL)
     ORDER BY sent_at DESC, created_at DESC
   `).bind(userId).all<WorkspaceMessageRow>();
 }
@@ -162,19 +167,19 @@ export async function listInboundMessages(db: D1Database, userId: string, _login
 
 export function insertMessage(db: D1Database, payload: ReturnType<typeof import('$lib/server/workspace/shared').serializeMessageForInsert>) {
   return db.prepare(`
-    INSERT INTO workspace_messages (user_id, id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred,
-      message_id, in_reply_to, "references", thread_key, cc, idempotency_key, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workspace_messages (user_id, id, folder, from_name, from_email, to_name, to_email, to_json, subject, preview, body, sent_at, labels_json, is_read, is_starred,
+      message_id, in_reply_to, "references", thread_key, cc, cc_json, bcc_json, idempotency_key, body_object_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(payload.userId, payload.id, payload.folder, payload.fromName, payload.fromEmail, payload.toName, payload.toEmail,
-    payload.subject, payload.preview, payload.body, payload.sentAt, payload.labelsJson, payload.isRead, payload.isStarred,
-    payload.messageId, payload.inReplyTo, payload.references, payload.threadKey, payload.cc, payload.idempotencyKey,
+    payload.toJson, payload.subject, payload.preview, payload.body, payload.sentAt, payload.labelsJson, payload.isRead, payload.isStarred,
+    payload.messageId, payload.inReplyTo, payload.references, payload.threadKey, payload.cc, payload.ccJson, payload.bccJson, payload.idempotencyKey, payload.bodyObjectId,
     payload.createdAt, payload.updatedAt);
 }
 
 export async function findMessageByIdempotencyKey(db: D1Database, userId: string, idempotencyKey: string) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
-      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, idempotency_key, archived_at
+      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at
     FROM workspace_messages WHERE user_id = ? AND idempotency_key = ?
   `).bind(userId, idempotencyKey).first<WorkspaceMessageRow>();
 }
@@ -182,7 +187,7 @@ export async function findMessageByIdempotencyKey(db: D1Database, userId: string
 export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, messageId: string) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
-      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, idempotency_key, archived_at
+      labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at
     FROM workspace_messages WHERE user_id = ? AND id = ?
   `).bind(userId, messageId).first<WorkspaceMessageRow>();
 }

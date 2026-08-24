@@ -14,7 +14,7 @@ import {
 } from '$lib/domain/mail';
 import { LatestRequest } from './latest-request';
 
-export type WorkspaceSection = MailboxSection | 'profile';
+export type WorkspaceSection = MailboxSection | 'trash' | 'profile';
 
 export type MailFilter = 'all' | 'unread' | 'starred';
 
@@ -44,7 +44,20 @@ export function createEmptyWorkspaceViewState(): WorkspaceViewState {
     profile: cloneProfile(),
     mailbox: cloneMailbox(),
     mailboxPages: null,
-    metrics: { inboxCount: 0, sentCount: 0, draftsCount: 0, unreadCount: 0, starredCount: 0 },
+    metrics: {
+      inboxCount: 0,
+      sentCount: 0,
+      draftsCount: 0,
+      trashCount: 0,
+      unreadCount: 0,
+      starredCount: 0,
+      queuedCount: 0,
+      delayedCount: 0,
+      failedCount: 0,
+      bouncedCount: 0,
+      complainedCount: 0,
+      staleDeliveryCount: 0
+    },
     activeSection: 'inbox',
     selectedMessageId: null,
     selectedMessageIds: [],
@@ -59,7 +72,7 @@ export function workspaceViewStateFromSnapshot(
   options: { section?: WorkspaceSection; preferredMessageId?: string | null; clearMailView?: boolean } = {}
 ): WorkspaceViewState {
   const activeSection = options.section ?? snapshot.activeFolder;
-  const activePage = activeSection === 'profile' ? undefined : snapshot.mailboxPages[activeSection];
+  const activePage = activeSection === 'profile' || activeSection === 'trash' ? undefined : snapshot.mailboxPages[activeSection];
   const preferredMessageId = options.preferredMessageId ?? null;
   const selectedMessageId = activeSection === 'profile'
     ? null
@@ -111,7 +124,7 @@ export function selectNextMessage(
   section: WorkspaceSection,
   preferredMessageId: string | null = null
 ) {
-  if (section === 'profile') return preferredMessageId;
+  if (section === 'profile' || section === 'trash') return preferredMessageId;
 
   if (section === 'drafts') {
     const list = nextMailbox.drafts;
@@ -140,6 +153,8 @@ export function selectionCandidates(
     ? visibleMessages
     : section === 'profile'
       ? []
+      : section === 'trash'
+        ? visibleMessages
       : visibleThreads.map((thread) => thread.sectionLatestMessage);
 }
 
@@ -159,11 +174,18 @@ export function moveSelection(
 }
 
 export function mergeMailboxPage(snapshot: MailboxSnapshot, page: MailboxPage, append: boolean): MailboxSnapshot {
-  const existing = append ? snapshot.mailboxPages?.[page.folder]?.messages ?? [] : [];
+  const previousPage = snapshot.mailboxPages?.[page.folder];
+  const existing = append ? previousPage?.messages ?? [] : [];
   const byId = new Map(existing.map((message) => [message.id, message]));
   for (const message of page.messages) byId.set(message.id, message);
 
-  const mergedPage = { ...page, messages: sortMailboxMessages([...byId.values()]) };
+  const mergedPage = {
+    ...page,
+    ...(append && page.searchTotal === undefined && previousPage?.searchTotal !== undefined
+      ? { searchTotal: previousPage.searchTotal, searchHitFields: previousPage.searchHitFields }
+      : {}),
+    messages: sortMailboxMessages([...byId.values()])
+  };
   const nextMailbox = page.folder === 'archive'
     ? snapshot.mailbox
     : {

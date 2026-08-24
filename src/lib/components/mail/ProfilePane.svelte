@@ -7,7 +7,7 @@
   import Switch from '$lib/components/ui/Switch.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
-  import type { UserProfile } from '$lib/domain/mail';
+  import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
 
   const createProfileDraft = (profile: UserProfile): UserProfile => ({ ...profile });
@@ -27,12 +27,16 @@
   let {
     profile,
     diagnostics = null,
+    metrics,
+    serviceDegraded,
     status = '',
     pending = false,
     onSave
   }: {
     profile: UserProfile;
     diagnostics?: RuntimeDiagnostics | null;
+    metrics: WorkspaceMetrics;
+    serviceDegraded: boolean;
     status?: string;
     pending?: boolean;
     onSave: (next: UserProfile) => void | Promise<void>;
@@ -184,6 +188,10 @@
           <div><dt>R2</dt><dd>{diagnostics.r2Configured ? '已配置' : '缺失'}</dd></div>
           <div><dt>外发网关</dt><dd>{diagnostics.outboundConfigured ? '已配置' : '缺失'}</dd></div>
           <div><dt>Webhook 验签</dt><dd>{diagnostics.webhookConfigured ? '已配置' : '缺失'}</dd></div>
+          <div><dt>全局投递状态</dt><dd><Badge class={serviceDegraded ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-success)]'}>{serviceDegraded ? '需处理' : '正常'}</Badge></dd></div>
+          <div><dt>等待 / 延迟</dt><dd>{metrics.queuedCount} / {metrics.delayedCount}</dd></div>
+          <div><dt>失败 / 退信 / 投诉</dt><dd>{metrics.failedCount} / {metrics.bouncedCount} / {metrics.complainedCount}</dd></div>
+          <div><dt>长时间提交中</dt><dd>{metrics.staleDeliveryCount}</dd></div>
         </dl>
       {:else}
         <p class="section-note">诊断状态暂不可用，请稍后刷新。</p>

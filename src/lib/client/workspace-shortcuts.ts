@@ -9,6 +9,7 @@ export type WorkspaceShortcutAction =
   | 'next-message'
   | 'previous-message'
   | 'reply'
+  | 'reply-all'
   | 'forward'
   | 'open-help';
 
@@ -16,6 +17,7 @@ export type WorkspaceShortcutContext = {
   helpOpen: boolean;
   mobileDetailOpen: boolean;
   canReply: boolean;
+  canReplyAll: boolean;
   canForward: boolean;
 };
 
@@ -49,6 +51,7 @@ export class WorkspaceShortcutController {
       else if (key === 'j') action = 'next-message';
       else if (key === 'k') action = 'previous-message';
       else if (key === 'r' && context.canReply) action = 'reply';
+      else if (key === 'a' && context.canReplyAll) action = 'reply-all';
       else if (key === 'f' && context.canForward) action = 'forward';
       else if (event.key === '?') action = 'open-help';
     }

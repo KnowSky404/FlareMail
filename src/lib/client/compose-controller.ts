@@ -1,18 +1,23 @@
+import { parseAddressList } from '$lib/domain/mail';
 import type { ComposeInput, MailMessage } from '$lib/domain/mail';
 import { ComposeSaveSequence } from './compose-save-sequence';
 
 export function createEmptyComposeInput(): ComposeInput {
-  return { toEmail: '', cc: '', subject: '', body: '' };
+  return { to: [], cc: [], bcc: [], toEmail: '', attachments: [], attachmentRevision: 0, subject: '', body: '' };
 }
 
 export function serializeComposeInput(input: ComposeInput | null) {
   if (!input) return '';
   return JSON.stringify({
     draftId: input.draftId?.trim() || null,
-    toEmail: input.toEmail.trim(),
-    cc: (input.cc ?? '').trim(),
+    bodyRevision: input.bodyRevision ?? null,
+    to: parseAddressList(input.to ?? input.toEmail ?? ''),
+    cc: parseAddressList(input.cc ?? ''),
+    bcc: parseAddressList(input.bcc ?? ''),
     subject: input.subject,
     body: input.body,
+    attachmentIds: (input.attachments ?? []).map((attachment) => attachment.id).filter(Boolean),
+    attachmentRevision: input.attachmentRevision ?? 0,
     messageId: input.messageId ?? null,
     inReplyTo: input.inReplyTo ?? null,
     references: input.references ?? null
@@ -35,28 +40,49 @@ export function withComposePersistence(
 }
 
 export function hasComposeContent(input: ComposeInput | null) {
-  return Boolean(input && (input.toEmail.trim() || (input.cc ?? '').trim() || input.subject.trim() || input.body.trim()));
+  return Boolean(input && (parseAddressList(input.to ?? input.toEmail ?? '').length || parseAddressList(input.cc ?? '').length || parseAddressList(input.bcc ?? '').length || input.subject.trim() || input.body.trim() || input.attachments?.length));
 }
 
-export function composeInputFromSavedDraft(message: MailMessage): ComposeInput {
+export function composeInputFromSavedDraft(
+  message: MailMessage,
+  bodyRevision?: string | null,
+  attachments: ComposeInput['attachments'] = [],
+  attachmentRevision = 0
+): ComposeInput {
   return {
     draftId: message.id,
+    to: message.toAddresses ?? parseAddressList(message.toEmail),
+    cc: message.ccAddresses ?? parseAddressList(message.cc ?? ''),
+    bcc: message.bccAddresses ?? parseAddressList(message.bcc ?? ''),
     toEmail: message.toEmail,
-    cc: message.cc ?? '',
     subject: message.subject === '未命名草稿' ? '' : message.subject,
     body: message.body,
+    attachments,
+    attachmentRevision,
     messageId: message.messageId,
     inReplyTo: message.inReplyTo,
     references: message.references,
-    expectedUpdatedAt: message.sentAt
+    expectedUpdatedAt: message.sentAt,
+    ...(bodyRevision ? { bodyRevision } : {})
   };
 }
 
-export function mergeSavedDraftMetadata(input: ComposeInput, message: MailMessage): ComposeInput {
-  return withComposePersistence(input, {
-    draftId: message.id,
-    expectedUpdatedAt: message.sentAt
-  });
+export function mergeSavedDraftMetadata(
+  input: ComposeInput,
+  message: MailMessage,
+  bodyRevision?: string | null,
+  attachments: ComposeInput['attachments'] = input.attachments,
+  attachmentRevision = input.attachmentRevision ?? 0
+): ComposeInput {
+  return {
+    ...withComposePersistence(input, {
+      draftId: message.id,
+      expectedUpdatedAt: message.sentAt
+    }),
+    attachments,
+    attachmentRevision,
+    ...(bodyRevision ? { bodyRevision } : { bodyRevision: undefined })
+  };
 }
 
 export function formatComposeSavedAt(value: string) {

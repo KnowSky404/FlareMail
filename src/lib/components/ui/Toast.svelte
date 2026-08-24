@@ -1,45 +1,91 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
-  import { CheckCircle2, Info, TriangleAlert, X } from '@lucide/svelte';
-  import { cn } from './styles';
+  import CheckCircle2 from '@lucide/svelte/icons/circle-check-big';
+  import CircleAlert from '@lucide/svelte/icons/circle-alert';
+  import Info from '@lucide/svelte/icons/info';
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
+  import X from '@lucide/svelte/icons/x';
+  import type { ToastMessage } from '$lib/client/toast-controller';
 
-  type ToastVariant = 'info' | 'success' | 'warning' | 'danger';
   let {
-    open = false,
-    title,
-    message,
-    variant = 'info',
-    action,
-    duration = 5000,
-    onClose,
-    class: className = ''
+    toast,
+    onAction,
+    onDismiss
   }: {
-    open?: boolean;
-    title?: string;
-    message: string;
-    variant?: ToastVariant;
-    action?: Snippet;
-    duration?: number;
-    onClose?: () => void;
-    class?: string;
+    toast: ToastMessage;
+    onAction: () => void | Promise<void>;
+    onDismiss: () => void;
   } = $props();
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const icons = { info: Info, success: CheckCircle2, warning: TriangleAlert, danger: TriangleAlert };
-  const Icon = $derived(icons[variant]);
-  const variants = { info: 'border-[color-mix(in_srgb,var(--fm-info)_35%,var(--fm-surface))]', success: 'border-[color-mix(in_srgb,var(--fm-success)_35%,var(--fm-surface))]', warning: 'border-[color-mix(in_srgb,var(--fm-warning)_35%,var(--fm-surface))]', danger: 'border-[color-mix(in_srgb,var(--fm-danger)_35%,var(--fm-surface))]' };
-
-  $effect(() => {
-    if (timer) clearTimeout(timer);
-    if (open && duration > 0) timer = setTimeout(() => onClose?.(), duration);
-    return () => { if (timer) clearTimeout(timer); };
-  });
 </script>
 
-{#if open}
-  <div class={cn('pointer-events-auto flex w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-[var(--radius-lg)] border bg-[var(--fm-surface)] p-3 shadow-[var(--fm-shadow-overlay)]', variants[variant], className)} role="status" aria-live={variant === 'danger' ? 'assertive' : 'polite'}>
-    <Icon class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-    <div class="min-w-0 flex-1"><p class="text-sm font-medium">{title ?? message}</p>{#if title}<p class="mt-0.5 text-xs text-[var(--fm-text-muted)]">{message}</p>{/if}{#if action}<div class="mt-2">{@render action()}</div>{/if}</div>
-    <button type="button" class="rounded p-0.5 text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]" aria-label="关闭通知" onclick={() => onClose?.()}><X class="size-4" aria-hidden="true" /></button>
+<section
+  class="toast"
+  class:success={toast.tone === 'success'}
+  class:warning={toast.tone === 'warning'}
+  class:error={toast.tone === 'error'}
+  role={toast.tone === 'error' ? 'alert' : 'status'}
+>
+  <span class="icon" aria-hidden="true">
+    {#if toast.tone === 'success'}
+      <CheckCircle2 size={18} />
+    {:else if toast.tone === 'warning'}
+      <TriangleAlert size={18} />
+    {:else if toast.tone === 'error'}
+      <CircleAlert size={18} />
+    {:else}
+      <Info size={18} />
+    {/if}
+  </span>
+  <div class="content">
+    <p>{toast.message}</p>
+    {#if toast.requestId}<small>详情 ID：{toast.requestId}</small>{/if}
   </div>
-{/if}
+  {#if toast.actionLabel}
+    <button class="action" type="button" onclick={onAction}>{toast.actionLabel}</button>
+  {/if}
+  <button class="dismiss" type="button" aria-label="关闭通知" onclick={onDismiss}>
+    <X size={16} aria-hidden="true" />
+  </button>
+</section>
+
+<style>
+  .toast {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 8px 8px 8px 12px;
+    border: 1px solid var(--fm-border);
+    border-left: 3px solid var(--fm-primary);
+    border-radius: var(--radius-md);
+    color: var(--fm-text);
+    background: var(--fm-surface);
+    box-shadow: var(--fm-shadow-overlay);
+    pointer-events: auto;
+  }
+
+  .toast.success { border-left-color: var(--fm-success); }
+  .toast.warning { border-left-color: var(--fm-warning); }
+  .toast.error { border-left-color: var(--fm-danger); }
+  .icon { display: inline-flex; color: var(--fm-primary); }
+  .success .icon { color: var(--fm-success); }
+  .warning .icon { color: var(--fm-warning); }
+  .error .icon { color: var(--fm-danger); }
+  .content { min-width: 0; }
+  p { margin: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
+  small { display: block; margin-top: 2px; color: var(--fm-text-muted); font-size: 11px; }
+  button { min-width: 44px; min-height: 44px; border: 0; color: inherit; background: transparent; cursor: pointer; }
+  .action { padding: 0 8px; color: var(--fm-primary); font-size: 12px; font-weight: 650; }
+  .dismiss { display: grid; width: 44px; place-items: center; color: var(--fm-text-muted); }
+  button:hover { background: var(--fm-surface-hover); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .toast { animation: toast-in 140ms ease-out; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+  }
+
+  @media (max-width: 520px) {
+    .toast { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .action { grid-column: 2 / -1; justify-self: start; }
+  }
+</style>
