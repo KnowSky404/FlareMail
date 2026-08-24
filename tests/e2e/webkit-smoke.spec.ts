@@ -187,6 +187,11 @@ test('sends successfully and exposes a typed failure without claiming success', 
   }
   const failedDialog = page.getByRole('dialog', { name: '新邮件' });
   await failedDialog.getByRole('button', { name: '取消', exact: true }).click();
+  const closeConfirm = page.getByRole('dialog', { name: '未保存的改动' });
+  await expect.poll(async () => (await failedDialog.isHidden()) || (await closeConfirm.isVisible())).toBe(true);
+  if (await closeConfirm.isVisible()) {
+    await closeConfirm.getByRole('button', { name: '放弃改动', exact: true }).click();
+  }
   await expect(failedDialog).toBeHidden();
   await page.unroute('**/api/send');
   await page.getByRole('button', { name: '刷新邮件列表' }).click();
