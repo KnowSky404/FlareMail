@@ -267,4 +267,19 @@ describe('mail validation domain', () => {
     expect(sanitizeContentDisposition('你好.txt')).toContain("filename*=UTF-8''");
     expect(sanitizeContentDisposition('x\"\r\n.txt')).not.toMatch(/[\r\n]/);
   });
+
+  test('accepts HTML-only compose content, requires one body form, and measures subjects in UTF-8 bytes', () => {
+    expect(validateComposeInput({ toEmail: 'person@example.com', subject: '主题', body: '', html: '<p>内容</p>' }).ok).toBe(true);
+    expect(validateComposeInput({ toEmail: 'person@example.com', subject: 'Subject', body: '', html: '' }).ok).toBe(false);
+    expect(validateComposeInput({ toEmail: 'person@example.com', subject: '😀'.repeat(300), body: 'Body' }).ok).toBe(false);
+  });
+
+  test('rejects malformed compose JSON as validation issues instead of throwing', () => {
+    expect(validateComposeInput(null)).toMatchObject({ ok: false, issues: [{ field: 'request' }] });
+    expect(validateDraftInput(['not', 'an', 'object'])).toMatchObject({ ok: false, issues: [{ field: 'request' }] });
+    expect(validateComposeInput({ toEmail: 'person@example.com', subject: 42, body: [] })).toMatchObject({
+      ok: false,
+      issues: expect.arrayContaining([{ field: 'subject', message: expect.any(String) }, { field: 'body', message: expect.any(String) }])
+    });
+  });
 });

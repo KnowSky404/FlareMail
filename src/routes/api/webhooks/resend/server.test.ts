@@ -1,9 +1,40 @@
 import { describe, expect, test } from 'bun:test';
 import { ResendWebhookError } from '$lib/server/resend-webhook';
 import { DeliveryPersistenceError } from '$lib/server/workspace/delivery';
-import { _classifyWebhookProcessingError, POST } from './+server';
+import { _classifyWebhookProcessingError, _maxWebhookBodyBytes, POST, _readBoundedWebhookBody, _WebhookBodyTooLargeError } from './+server';
 
 describe('Resend webhook route errors', () => {
+  test('bounds streamed bodies without trusting Content-Length', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('x'.repeat(_maxWebhookBodyBytes + 1)));
+        controller.close();
+      }
+    });
+    await expect(_readBoundedWebhookBody(new Request('https://mail.example.test', {
+      method: 'POST',
+      body: body as unknown as BodyInit
+    }), _maxWebhookBodyBytes))
+      .rejects.toBeInstanceOf(_WebhookBodyTooLargeError);
+  });
+
+  test('returns 413 for an oversized streamed route request', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('x'.repeat(_maxWebhookBodyBytes + 1)));
+        controller.close();
+      }
+    });
+    const response = await POST({
+      request: new Request('https://mail.example.test/api/webhooks/resend', {
+        method: 'POST', body: body as unknown as BodyInit, headers: { 'content-length': '1' }
+      }),
+      platform: { env: { RESEND_WEBHOOK_SECRET: `whsec_${btoa('test-secret-with-enough-entropy')}` } }
+    } as never);
+    expect(response.status).toBe(413);
+    expect(await response.json() as unknown).toEqual({ ok: false, code: 'WEBHOOK_BODY_TOO_LARGE', error: 'Webhook body is too large.' });
+  });
+
   test('fails closed with 503 when the signing secret is absent', async () => {
     const response = await POST({
       request: new Request('https://mail.example.test/api/webhooks/resend', { method: 'POST', body: '{}' }),

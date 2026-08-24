@@ -21,7 +21,13 @@ class D1 {
 
 class Bucket {
   readonly objects = new Set<string>();
-  async put(key: string) { this.objects.add(key); }
+  readonly values = new Map<string, Uint8Array>();
+  async put(key: string, value?: Uint8Array) { this.objects.add(key); if (value) this.values.set(key, new Uint8Array(value)); }
+  async get(key: string) {
+    const bytes = this.values.get(key);
+    if (!bytes) return null;
+    return { size: bytes.byteLength, arrayBuffer: async () => bytes.buffer } as unknown as R2Object;
+  }
   async delete(key: string) { this.objects.delete(key); }
 }
 
@@ -101,5 +107,24 @@ describe('draft optimistic concurrency', () => {
       body: `${row.body}unsafe edit`
     }))).rejects.toBeInstanceOf(DraftBodyReloadRequiredError);
     void DB;
+  });
+
+  test('round-trips a small sanitized HTML draft through canonical storage', async () => {
+    const { env, session, database } = fixture();
+    const created = await saveWorkspaceDraft(env, session, input({ body: '', html: '<p>Hello</p><script>alert(1)</script>' }));
+    expect(created.html).toBe('<p>Hello</p>');
+    expect(created.message.body).toBe('Hello');
+    expect(created.bodyRevision).toBeString();
+    expect((database.query('SELECT body_object_id FROM workspace_drafts WHERE id = ?').get(created.message.id) as { body_object_id: string | null }).body_object_id)
+      .toBe(created.bodyRevision);
+
+    const updated = await saveWorkspaceDraft(env, session, input({
+      draftId: created.message.id,
+      expectedUpdatedAt: created.message.sentAt,
+      bodyRevision: created.bodyRevision,
+      body: 'Hello',
+      html: '<p>Hello <strong>again</strong></p>'
+    }));
+    expect(updated.html).toBe('<p>Hello <strong>again</strong></p>');
   });
 });

@@ -23,8 +23,8 @@ if (
 ) {
   throw new Error(`Refusing to clear non-isolated E2E persistence path: ${persistTo}`);
 }
-const adminEmail = process.env.FLAREMAIL_E2E_EMAIL ?? 'e2e-admin@flaremail.test';
-const adminPassword = process.env.FLAREMAIL_E2E_PASSWORD ?? 'FlareMail-E2E-password-2026!';
+const adminEmail = 'e2e-admin@flaremail.test';
+const adminPassword = 'FlareMail-E2E-password-2026!';
 const userId = 'e2e-admin-user';
 const inboxId = 'e2e-inbox-message';
 const htmlInboxId = 'e2e-html-inbox-message';
@@ -147,6 +147,21 @@ INSERT OR IGNORE INTO workspace_messages (
   'Recipient', 'recipient@flaremail.test', 'E2E Seeded Sent', 'Seeded sent preview', 'Seeded sent body',
   ${sql(timestamp)}, '[]', 1, 0, '<e2e-sent-message@flaremail.test>', 'legacy:e2e-sent-message',
   'outbound', 'Seeded sent body', '', '', 'legacy:e2e-sent-message', ${sql(timestamp)}, ${sql(timestamp)}
+);
+INSERT OR IGNORE INTO workspace_delivery_statuses (
+  message_id, user_id, status, attempts, idempotency_key, provider, provider_message_id,
+  last_error, submitted_at, sent_at, last_event, last_event_at, created_at, updated_at
+) VALUES (
+  'e2e-sent-message', ${sql(userId)}, 'sent', 1, 'e2e-sent-message-delivery', 'demo',
+  'demo-e2e-sent-message', '', ${sql(timestamp)}, ${sql(timestamp)}, 'email.sent', ${sql(timestamp)},
+  ${sql(timestamp)}, ${sql(timestamp)}
+);
+INSERT OR IGNORE INTO workspace_outbound_receipts (
+  message_id, user_id, provider, result_kind, remote_status, response_preview,
+  last_event, last_event_at, created_at, updated_at
+) VALUES (
+  'e2e-sent-message', ${sql(userId)}, 'demo', 'accepted', 202, 'Synthetic E2E delivery receipt.',
+  'email.sent', ${sql(timestamp)}, ${sql(timestamp)}, ${sql(timestamp)}
 );
 ${draftSeed}
 `;

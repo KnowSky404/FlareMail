@@ -86,10 +86,10 @@ function safeDetails(details?: Record<string, unknown>): Record<string, string |
   return Object.keys(result).length ? result : undefined;
 }
 
-export function apiSuccess<T>(event: RequestEvent, data: T, init: ResponseInit = {}) {
+export function apiSuccess<T>(event: RequestEvent, data: T, init: ResponseInit = {}, compatibilityFields?: Record<string, unknown>) {
   const requestId = getRequestId(event);
   return json(
-    { ok: true, data, requestId },
+    { ...(compatibilityFields ?? {}), ok: true, data, requestId },
     { ...init, headers: responseHeaders(requestId, init.headers) }
   );
 }

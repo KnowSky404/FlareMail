@@ -2,12 +2,27 @@ import { defineConfig, devices } from '@playwright/test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const requestedProject = process.env.FLAREMAIL_E2E_PROJECT;
 const port = Number(process.env.FLAREMAIL_E2E_PORT ?? 4173);
-const stateDirectory = process.env.FLAREMAIL_E2E_STATE_DIR ?? join(tmpdir(), 'flaremail-e2e', 'state');
+const stateDirectory = process.env.FLAREMAIL_E2E_STATE_DIR ?? join(
+  tmpdir(),
+  'flaremail-e2e',
+  requestedProject ?? 'default',
+  'state'
+);
 const baseURL = `http://127.0.0.1:${port}`;
+const chromiumLaunchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+  ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+  : undefined;
+const webkitLaunchOptions = process.env.PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH
+  ? { executablePath: process.env.PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH }
+  : undefined;
+const chromiumTestMatch = /workspace\.spec\.ts/u;
+const webkitSmokeTestMatch = /webkit-smoke\.spec\.ts/u;
 
 export default defineConfig({
   testDir: './tests/e2e',
+  outputDir: join('test-results', requestedProject ?? 'all'),
   timeout: 45_000,
   expect: { timeout: 8_000 },
   fullyParallel: false,
@@ -16,13 +31,10 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: [
     ['list'],
-    ['html', { outputFolder: 'playwright-report', open: 'never' }]
+    ['html', { outputFolder: join('playwright-report', requestedProject ?? 'all'), open: 'never' }]
   ],
   use: {
     baseURL,
-    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
-      : undefined,
     actionTimeout: 10_000,
     navigationTimeout: 20_000,
     trace: 'retain-on-failure',
@@ -41,25 +53,56 @@ export default defineConfig({
   projects: [
     {
       name: 'desktop',
+      testMatch: chromiumTestMatch,
       use: {
         ...devices['Desktop Chrome'],
-        viewport: { width: 1280, height: 900 }
+        viewport: { width: 1280, height: 900 },
+        launchOptions: chromiumLaunchOptions
       }
     },
     {
       name: 'mobile',
+      testMatch: chromiumTestMatch,
       use: {
         ...devices['Pixel 5'],
         viewport: { width: 390, height: 844 },
-        isMobile: true
+        isMobile: true,
+        launchOptions: chromiumLaunchOptions
       }
     },
     {
       name: 'narrow',
+      testMatch: chromiumTestMatch,
       use: {
         ...devices['Desktop Chrome'],
-        viewport: { width: 320, height: 720 }
+        viewport: { width: 320, height: 720 },
+        launchOptions: chromiumLaunchOptions
+      }
+    },
+    {
+      name: 'webkit-desktop',
+      testMatch: webkitSmokeTestMatch,
+      use: {
+        ...devices['Desktop Safari'],
+        viewport: { width: 1280, height: 900 },
+        launchOptions: webkitLaunchOptions
+      }
+    },
+    {
+      name: 'webkit-iphone',
+      testMatch: webkitSmokeTestMatch,
+      use: {
+        ...devices['iPhone 13'],
+        launchOptions: webkitLaunchOptions
+      }
+    },
+    {
+      name: 'webkit-ipad',
+      testMatch: webkitSmokeTestMatch,
+      use: {
+        ...devices['iPad (gen 7)'],
+        launchOptions: webkitLaunchOptions
       }
     }
-  ]
+  ].filter((project) => !requestedProject || project.name === requestedProject)
 });

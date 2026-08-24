@@ -68,7 +68,8 @@ describe('/api/health readiness', () => {
   test('rejects missing metadata and missing required tables without leaking details', async () => {
     for (const statement of [
       'DELETE FROM workspace_schema_metadata',
-      'DROP TABLE workspace_delivery_attempts'
+      'DROP TABLE workspace_delivery_attempts',
+      'DROP TABLE workspace_outbound_rate_limits'
     ]) {
       const database = new Database(':memory:');
       applyMigrations(database);

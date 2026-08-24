@@ -6,6 +6,7 @@ import { saveWorkspaceDraft } from '$lib/server/workspace';
 import { fieldErrorsFromIssues } from '$lib/server/http/api';
 import { MAIL_LIMITS, validateDraftInput } from '$lib/domain/mail';
 import { DraftBodyReloadRequiredError, DraftConflictError, DraftNotFoundError } from '$lib/server/workspace/draft';
+import { SafeHtmlError } from '$lib/server/mail/html-sanitize';
 
 export const POST: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
@@ -17,6 +18,9 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   try {
     return apiSuccess(event, await saveWorkspaceDraft(getRequestEnv(event), session, validation.value));
   } catch (error) {
+    if (error instanceof SafeHtmlError) {
+      throw new ApiError(400, 'VALIDATION_FAILED', error.message, fieldErrorsFromIssues([{ field: 'html', message: error.message }]));
+    }
     if (error instanceof DraftConflictError) {
       throw new ApiError(409, 'DRAFT_CONFLICT', '服务器版本已更新。', undefined, {
         draftId: error.current.id,

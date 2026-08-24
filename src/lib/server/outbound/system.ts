@@ -1,7 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { OutboundMailInput } from './gateway';
 import { createOutboundGateway } from './provider';
-import { parseBoolean } from '$lib/server/config/env';
+import { parseBoolean, resolveOutboundFromEmail } from '$lib/server/config/env';
 import { isValidEmail } from '$lib/domain/mail';
 
 const blockedLocalParts = new Set(['mailer-daemon', 'postmaster', 'bounce', 'noreply', 'no-reply', 'donotreply', 'do-not-reply']);
@@ -9,14 +9,14 @@ const blockedLocalParts = new Set(['mailer-daemon', 'postmaster', 'bounce', 'nor
 const cleanHeader = (value: string) => value.replace(/[\r\n]+/g, ' ').trim();
 
 const sender = (env: CloudflareEnv) => {
-  const email = env.OUTBOUND_FROM_EMAIL?.trim() ?? '';
-  if (!email) throw new Error('OUTBOUND_FROM_EMAIL is required for outbound email.');
+  const email = resolveOutboundFromEmail(env) ?? '';
+  if (!email) throw new Error('OUTBOUND_FROM_EMAIL or MAIL_FROM is required for outbound email.');
   const name = cleanHeader(env.OUTBOUND_FROM_NAME?.trim() || 'FlareMail');
   return name ? `${name} <${email}>` : email;
 };
 
 const messageId = (logicalId: string, env: CloudflareEnv) => {
-  const domain = env.OUTBOUND_FROM_EMAIL?.split('@')[1]?.trim() || 'flaremail.invalid';
+  const domain = resolveOutboundFromEmail(env)?.split('@')[1]?.trim() || 'flaremail.invalid';
   return `<${cleanHeader(logicalId)}@${domain}>`;
 };
 
@@ -52,7 +52,7 @@ export async function sendAutomaticReply(message: ForwardableEmailMessage, env: 
     to: [message.from.trim()],
     subject,
     text: body,
-    replyTo: env.OUTBOUND_FROM_EMAIL ? [env.OUTBOUND_FROM_EMAIL.trim()] : undefined,
+    replyTo: resolveOutboundFromEmail(env) ? [resolveOutboundFromEmail(env)!] : undefined,
     headers: {
       'Message-ID': messageId(logicalId, env),
       ...(originalMessageId ? { 'In-Reply-To': originalMessageId } : {}),

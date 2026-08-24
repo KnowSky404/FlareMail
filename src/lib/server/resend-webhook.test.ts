@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { normalizeResendWebhookEvent, ResendWebhookError, verifyResendWebhook } from './resend-webhook';
+import { isValidResendWebhookSecret, normalizeResendWebhookEvent, ResendWebhookError, verifyResendWebhook } from './resend-webhook';
 
 const secretRaw = new TextEncoder().encode('test webhook signing secret 1234');
 const secret = `whsec_${btoa(String.fromCharCode(...secretRaw))}`;
@@ -18,6 +18,15 @@ async function signedHeaders(value = body, time = timestamp) {
 }
 
 describe('Resend webhook verification', () => {
+  test('accepts padded standard and unpadded URL-safe Base64 secrets with sufficient entropy', () => {
+    const raw = new Uint8Array(32).fill(7);
+    const padded = btoa(String.fromCharCode(...raw));
+    expect(isValidResendWebhookSecret(`whsec_${padded}`)).toBe(true);
+    expect(isValidResendWebhookSecret(`whsec_${padded.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '')}`)).toBe(true);
+    expect(isValidResendWebhookSecret('whsec_AAA=')).toBe(false);
+    expect(isValidResendWebhookSecret('whsec_not valid')).toBe(false);
+  });
+
   test('verifies the raw body and any matching v1 rotation signature', async () => {
     const result = await verifyResendWebhook(body, await signedHeaders(), secret, timestamp);
     expect(result.svixId).toBe('msg_test_1');

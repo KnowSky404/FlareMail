@@ -8,6 +8,8 @@ declare global {
     APP_ORIGIN?: string;
     APP_VERSION?: string;
     RESEND_API_KEY?: string;
+    /** Legacy outbound sender alias retained for the compatibility send API. */
+    MAIL_FROM?: string;
     RESEND_API_BASE_URL?: string;
     RESEND_TIMEOUT_MS?: string;
     RESEND_WEBHOOK_SECRET?: string;

@@ -39,6 +39,6 @@ export {
 } from '$lib/server/workspace/session';
 export { updateWorkspaceProfile } from '$lib/server/workspace/profile';
 export { saveWorkspaceDraft } from '$lib/server/workspace/draft';
-export { sendWorkspaceMessage, retryWorkspaceMessageDelivery } from '$lib/server/workspace/outbound';
+export { OutboundRateLimitError, sendWorkspaceMessage, retryWorkspaceMessageDelivery } from '$lib/server/workspace/outbound';
 export { patchWorkspaceMessage, deleteWorkspaceMessage } from '$lib/server/workspace/message';
 export { getWorkspaceMessageDeliveryDetail, applyResendDeliveryWebhook } from '$lib/server/workspace/delivery';

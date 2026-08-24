@@ -1,7 +1,9 @@
 import { expect, test as base, type Page } from '@playwright/test';
 
-export const E2E_EMAIL = process.env.FLAREMAIL_E2E_EMAIL ?? 'e2e-admin@flaremail.test';
-export const E2E_PASSWORD = process.env.FLAREMAIL_E2E_PASSWORD ?? 'FlareMail-E2E-password-2026!';
+// Browser diagnostics are safe to retain only because every credential and
+// mailbox value is a fixed, non-routable synthetic fixture.
+export const E2E_EMAIL = 'e2e-admin@flaremail.test';
+export const E2E_PASSWORD = 'FlareMail-E2E-password-2026!';
 
 export const test = base.extend<{ consoleErrors: string[] }>({
   consoleErrors: async ({ page }, use) => {
@@ -43,15 +45,17 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
 
 export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱' | '归档' | '垃圾箱') {
   const folderValue = { 收件箱: 'inbox', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive', 垃圾箱: 'trash' }[folder];
+  const backButton = page.getByRole('button', { name: '返回邮件列表' });
+  if (await backButton.isVisible().catch(() => false)) await backButton.click();
   const direct = page.getByRole('button', { name: folder, exact: true }).first();
+  const navigationToggle = page.getByRole('button', { name: '打开导航' });
+  await expect(direct.or(navigationToggle)).toBeVisible();
   if (await direct.isVisible().catch(() => false)) {
     await direct.click();
     await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
     return;
   }
-  const backButton = page.getByRole('button', { name: '返回邮件列表' });
-  if (await backButton.isVisible().catch(() => false)) await backButton.click();
-  await page.getByRole('button', { name: '打开导航' }).click();
+  await navigationToggle.click();
   await page.getByRole('navigation', { name: '移动端导航' })
     .getByRole('button')
     .filter({ hasText: folder })

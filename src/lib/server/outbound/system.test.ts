@@ -4,7 +4,7 @@ import { sendAutomaticReply } from './system';
 const env = {
   APP_ENV: 'test', OUTBOUND_PROVIDER: 'fake', ALLOW_FAKE_SERVICES: 'true', AUTO_REPLY_ENABLED: 'true',
   OUTBOUND_FROM_EMAIL: 'mail@example.test', AUTO_REPLY_TEXT: 'Thanks'
-} as never;
+} as unknown as CloudflareEnv;
 
 function inbound(from: string, headers: Record<string, string> = {}) {
   return { from, to: 'mail@example.test', headers: new Headers(headers) } as unknown as ForwardableEmailMessage;
@@ -28,6 +28,12 @@ describe('automatic reply loop guard', () => {
   test('allows the RFC 3834 no token and preserves outbound loop headers', async () => {
     const result = await sendAutomaticReply(inbound('alice@example.com', { 'auto-submitted': 'no' }), env, 'storage-id');
     expect(result.sent).toBe(true);
+  });
+
+  test('uses MAIL_FROM as a runtime sender alias', async () => {
+    const aliasEnv = { ...env, OUTBOUND_FROM_EMAIL: undefined, MAIL_FROM: 'legacy@example.test' } as unknown as CloudflareEnv;
+    await expect(sendAutomaticReply(inbound('alice@example.com', { 'auto-submitted': 'no' }), aliasEnv, 'legacy-storage-id'))
+      .resolves.toMatchObject({ sent: true });
   });
 
   test('rejects empty and invalid envelope senders', async () => {

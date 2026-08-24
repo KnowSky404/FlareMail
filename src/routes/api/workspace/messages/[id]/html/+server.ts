@@ -3,8 +3,12 @@ import { classifyRuntimeError, getRequestId } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 import { renderOwnedSafeHtml } from '$lib/server/workspace/html';
 
-function responseHeaders(requestId: string, allowRemoteImages: boolean) {
-  const imageSources = allowRemoteImages ? "'self' https:" : "'self'";
+function responseHeaders(requestId: string, allowRemoteImages: boolean, requestOrigin: string) {
+  // A sandboxed iframe has an opaque origin in WebKit, so an explicit app
+  // origin is required in addition to 'self' for authenticated CID images.
+  const imageSources = allowRemoteImages
+    ? `'self' ${requestOrigin} https:`
+    : `'self' ${requestOrigin}`;
   return {
     'cache-control': 'private, no-store',
     'content-security-policy': `default-src 'none'; base-uri 'none'; connect-src 'none'; font-src 'none'; form-action 'none'; frame-ancestors 'self'; frame-src 'none'; img-src ${imageSources}; media-src 'none'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'; sandbox allow-popups allow-popups-to-escape-sandbox`,
@@ -25,7 +29,7 @@ export const GET: RequestHandler = async (event) => {
     const rendered = await renderOwnedSafeHtml(getRequestEnv(event), session, event.params.id, { allowRemoteImages });
     return new Response(rendered.document, {
       headers: {
-        ...responseHeaders(requestId, allowRemoteImages),
+        ...responseHeaders(requestId, allowRemoteImages, event.url.origin),
         'content-type': 'text/html; charset=utf-8'
       }
     });
@@ -34,7 +38,7 @@ export const GET: RequestHandler = async (event) => {
     return new Response(classified.message, {
       status: classified.status,
       headers: {
-        ...responseHeaders(requestId, false),
+        ...responseHeaders(requestId, false, event.url.origin),
         'content-type': 'text/plain; charset=utf-8'
       }
     });

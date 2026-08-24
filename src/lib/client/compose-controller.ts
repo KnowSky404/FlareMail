@@ -3,7 +3,7 @@ import type { ComposeInput, MailMessage } from '$lib/domain/mail';
 import { ComposeSaveSequence } from './compose-save-sequence';
 
 export function createEmptyComposeInput(): ComposeInput {
-  return { to: [], cc: [], bcc: [], toEmail: '', attachments: [], attachmentRevision: 0, subject: '', body: '' };
+  return { to: [], cc: [], bcc: [], toEmail: '', attachments: [], attachmentRevision: 0, subject: '', body: '', html: '' };
 }
 
 export function serializeComposeInput(input: ComposeInput | null) {
@@ -16,6 +16,7 @@ export function serializeComposeInput(input: ComposeInput | null) {
     bcc: parseAddressList(input.bcc ?? ''),
     subject: input.subject,
     body: input.body,
+    html: input.html ?? '',
     attachmentIds: (input.attachments ?? []).map((attachment) => attachment.id).filter(Boolean),
     attachmentRevision: input.attachmentRevision ?? 0,
     messageId: input.messageId ?? null,
@@ -30,17 +31,19 @@ export function withComposeDraftId(input: ComposeInput, draftId?: string) {
 
 export function withComposePersistence(
   input: ComposeInput,
-  persistence: Pick<ComposeInput, 'draftId' | 'expectedUpdatedAt'> | null
+  persistence: (Pick<ComposeInput, 'draftId' | 'expectedUpdatedAt'> & { bodyRevision?: string | null }) | null
 ) {
+  const hasBodyRevision = Boolean(persistence && Object.prototype.hasOwnProperty.call(persistence, 'bodyRevision'));
   return {
     ...input,
     draftId: persistence?.draftId ?? input.draftId,
-    expectedUpdatedAt: persistence?.expectedUpdatedAt ?? input.expectedUpdatedAt
+    expectedUpdatedAt: persistence?.expectedUpdatedAt ?? input.expectedUpdatedAt,
+    bodyRevision: hasBodyRevision ? persistence?.bodyRevision ?? undefined : input.bodyRevision
   };
 }
 
 export function hasComposeContent(input: ComposeInput | null) {
-  return Boolean(input && (parseAddressList(input.to ?? input.toEmail ?? '').length || parseAddressList(input.cc ?? '').length || parseAddressList(input.bcc ?? '').length || input.subject.trim() || input.body.trim() || input.attachments?.length));
+  return Boolean(input && (parseAddressList(input.to ?? input.toEmail ?? '').length || parseAddressList(input.cc ?? '').length || parseAddressList(input.bcc ?? '').length || input.subject.trim() || input.body.trim() || input.html?.trim() || input.attachments?.length));
 }
 
 export function composeInputFromSavedDraft(
@@ -57,6 +60,7 @@ export function composeInputFromSavedDraft(
     toEmail: message.toEmail,
     subject: message.subject === '未命名草稿' ? '' : message.subject,
     body: message.body,
+    html: message.html ?? '',
     attachments,
     attachmentRevision,
     messageId: message.messageId,

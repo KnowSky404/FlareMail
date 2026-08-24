@@ -4,7 +4,10 @@ import { validateEnvironment } from '$lib/server/config/env';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import {
   getWorkspaceSession,
-  workspaceSessionCookieNames
+  isSecureSessionRequest,
+  legacyWorkspaceSessionCookie,
+  secureWorkspaceSessionCookie,
+  workspaceSessionCookie
 } from '$lib/server/workspace';
 import { WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
@@ -20,6 +23,13 @@ const setSecurityHeaders = (response: Response, secure: boolean, requestId?: str
   if (secure) response.headers.set('strict-transport-security', 'max-age=63072000; includeSubDomains; preload');
   return response;
 };
+
+/** Do not accept a non-Host session cookie on a request that is externally HTTPS. */
+export function sessionCookieNamesForRequest(url: URL, env?: CloudflareEnv): readonly string[] {
+  return isSecureSessionRequest(url, env)
+    ? [secureWorkspaceSessionCookie]
+    : [workspaceSessionCookie, legacyWorkspaceSessionCookie];
+}
 
 export const handle: Handle = async ({ event, resolve }) => {
   const requestId = getRequestId(event);
@@ -38,7 +48,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (isApi) return failApi(error);
   }
   let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
-  const sessionToken = workspaceSessionCookieNames
+  const sessionToken = sessionCookieNamesForRequest(event.url, env)
     .map((name) => event.cookies.get(name))
     .find((value): value is string => Boolean(value)) ?? null;
 

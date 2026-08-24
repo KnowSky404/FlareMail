@@ -29,6 +29,15 @@ function applyMigrations(db: Database) {
   }
 }
 
+function applyMigrationsThrough(db: Database, lastFile: string) {
+  db.exec('CREATE TABLE IF NOT EXISTS _test_migrations (name TEXT PRIMARY KEY)');
+  for (const file of migrationFiles) {
+    db.exec(readFileSync(join(migrationsDirectory, file), 'utf8'));
+    db.query('INSERT INTO _test_migrations (name) VALUES (?)').run(file);
+    if (file === lastFile) break;
+  }
+}
+
 function tableColumns(db: Database, table: string) {
   return new Set(
     (db.query(`PRAGMA table_info("${table.replaceAll('"', '""')}")`).all() as Array<{ name: string }>)
@@ -109,7 +118,9 @@ describe('versioned D1 migrations', () => {
       '0013_trash.sql',
       '0014_inbound_metadata.sql',
       '0015_search_fts.sql',
-      '0016_outbound_attachments.sql'
+      '0016_outbound_attachments.sql',
+      '0017_r2_cleanup_queue_reliability.sql',
+      '0018_outbound_rate_limits.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -171,13 +182,18 @@ describe('versioned D1 migrations', () => {
       ])
     );
     expect(tableColumns(db, 'workspace_r2_cleanup_queue')).toEqual(new Set([
-      'id', 'owner_user_id', 'entity_id', 'r2_key', 'reason', 'created_at', 'updated_at'
+      'id', 'owner_user_id', 'entity_id', 'r2_key', 'reason', 'status', 'attempt_count', 'max_attempts',
+      'next_attempt_at', 'claim_token', 'lease_expires_at', 'last_error', 'completed_at', 'object_kind', 'source_id',
+      'source_owner_user_id', 'source_entity_id', 'created_at', 'updated_at'
     ]));
     expect(tableColumns(db, 'workspace_settings')).toEqual(
       new Set(['user_id', 'theme', 'settings_json', 'created_at', 'updated_at'])
     );
     expect(tableColumns(db, 'workspace_login_rate_limits')).toEqual(
       new Set(['identity_hash', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'])
+    );
+    expect(tableColumns(db, 'workspace_outbound_rate_limits')).toEqual(
+      new Set(['user_id', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'])
     );
     expect(tableColumns(db, 'workspace_inbound_ingest_claims')).toEqual(
       new Set(['dedupe_key', 'storage_id', 'claim_token', 'raw_key', 'status', 'created_at', 'updated_at', 'completed_at'])
@@ -186,7 +202,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 16 }
+      { schema_name: 'flaremail', schema_version: 18 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -222,6 +238,9 @@ describe('versioned D1 migrations', () => {
     expect(indexNames(db, 'workspace_login_rate_limits')).toEqual(
       new Set(['idx_workspace_login_rate_limits_reset_at'])
     );
+    expect(indexNames(db, 'workspace_outbound_rate_limits')).toEqual(
+      new Set(['idx_workspace_outbound_rate_limits_reset_at'])
+    );
 
     // The complete state CHECK and idempotency/dedupe uniqueness are real D1
     // constraints, not just names documented in a migration.
@@ -246,6 +265,15 @@ describe('versioned D1 migrations', () => {
       `INSERT INTO email_messages (id, "from", "to", "timestamp", raw_key, dedupe_key)
        VALUES ('e2', 'a@example.test', 'b@example.test', '2026-08-13T00:00:00Z', 'raw/e2', 'dedupe-1')`
     ).run()).toThrow();
+  });
+
+  test('quarantines unverifiable legacy cleanup rows during migration', () => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0016_outbound_attachments.sql');
+    db.query(`INSERT INTO workspace_r2_cleanup_queue (id, owner_user_id, entity_id, r2_key, reason, created_at, updated_at) VALUES ('legacy-job', 'owner-1', 'message-1', 'sent/att-1', 'trash_delete', '2026-08-20T00:00:00.000Z', '2026-08-20T00:00:00.000Z')`).run();
+    db.exec(readFileSync(join(migrationsDirectory, '0017_r2_cleanup_queue_reliability.sql'), 'utf8'));
+    expect(db.query(`SELECT status, object_kind, attempt_count, next_attempt_at, last_error FROM workspace_r2_cleanup_queue WHERE id = 'legacy-job'`).get())
+      .toEqual({ status: 'manual_review', object_kind: 'legacy', attempt_count: 0, next_attempt_at: '2026-08-20T00:00:00.000Z', last_error: 'invalid_key_scope' });
   });
 
   test('adds the schema to a legacy database without losing rows or values', () => {

@@ -3,8 +3,17 @@ import {
   createLocalWranglerEnvironment,
   inheritWranglerEnvironment
 } from './wrangler-environment';
+import {
+  CLEANUP_BACKOFF_MAX_MS,
+  CLEANUP_DEFAULT_LIMIT,
+  CLEANUP_DEFAULT_MAX_ATTEMPTS,
+  classifyCleanupKey,
+  cleanupKeyHasEntityScope,
+  cleanupBackoffMs
+} from '../src/lib/server/workspace/r2-cleanup';
 
 type MaintenanceOptions = {
+  command: 'retention' | 'cleanup-report' | 'cleanup-drain' | 'cleanup-retry';
   remote: boolean;
   apply: boolean;
   json: boolean;
@@ -15,6 +24,8 @@ type MaintenanceOptions = {
   webhookRetentionDays: number;
   trashRetentionDays: number;
   r2Manifest: string | null;
+  cleanupLimit: number;
+  cleanupMaxAttempts: number;
 };
 
 type R2Object = { key: string; size?: number; uploaded?: string };
@@ -38,7 +49,6 @@ type MaintenanceReport = {
     expiredAttachmentRows: number;
     cleanupQueueRows: number;
     skippedUnsafeDeletes: number;
-    keys: string[];
     note?: string;
   };
 };
@@ -55,6 +65,12 @@ Options:
   --webhook-retention-days <n>  Keep webhook events for n days (default: 180)
   --trash-retention-days <n>    Report trash older than n days (default: 30; dry-run)
   --r2-manifest <path>          JSON inventory of R2 objects (for offline/reviewed runs)
+  cleanup-report                Report queue counts without exposing object keys
+  cleanup-drain                 Drain a bounded queue batch (dry-run unless --apply)
+  cleanup-retry                 Requeue a bounded manual-review batch (dry-run unless --apply)
+  --limit <n>                   Cleanup batch size (default: 50)
+  --max-attempts <n>            Cleanup attempt ceiling (default: 8)
+  --dry-run                     Explicitly keep cleanup commands read-only
   --json                        Print machine-readable output
   --help                        Show this help
 
@@ -81,6 +97,15 @@ function positiveDays(value: string | undefined, flag: string, fallback: number)
   return parsed;
 }
 
+function boundedPositive(value: string | undefined, flag: string, fallback: number, maximum: number) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) {
+    throw new Error(`${flag} must be an integer between 1 and ${maximum}.`);
+  }
+  return parsed;
+}
+
 export function parseMaintenanceArgs(args: string[]): MaintenanceOptions {
   if (hasFlag(args, '--help')) {
     console.log(usage);
@@ -88,19 +113,46 @@ export function parseMaintenanceArgs(args: string[]): MaintenanceOptions {
   }
   const remote = hasFlag(args, '--remote');
   const apply = hasFlag(args, '--apply');
+  const command = (args.find((arg) => ['cleanup-report', 'cleanup-drain', 'cleanup-retry'].includes(arg)) ?? 'retention') as MaintenanceOptions['command'];
   const config = optionValue(args, '--config') ?? (remote ? 'wrangler.deploy.toml' : 'wrangler.toml');
+  const bucketOption = optionValue(args, '--bucket');
+  if (command !== 'retention' && bucketOption !== undefined) throw new Error('--bucket is not accepted by cleanup commands; use the configured FlareMail BUCKET binding.');
   return {
     remote,
     apply,
+    command,
     json: hasFlag(args, '--json'),
     config,
     database: optionValue(args, '--database') ?? 'flaremail-db',
-    bucket: optionValue(args, '--bucket') ?? 'flaremail-bucket',
+    bucket: bucketOption ?? 'flaremail-bucket',
     sessionRetentionDays: positiveDays(optionValue(args, '--session-retention-days'), '--session-retention-days', 30),
     webhookRetentionDays: positiveDays(optionValue(args, '--webhook-retention-days'), '--webhook-retention-days', 180),
     trashRetentionDays: positiveDays(optionValue(args, '--trash-retention-days'), '--trash-retention-days', 30),
-    r2Manifest: optionValue(args, '--r2-manifest') ?? null
+    r2Manifest: optionValue(args, '--r2-manifest') ?? null,
+    cleanupLimit: boundedPositive(optionValue(args, '--limit'), '--limit', CLEANUP_DEFAULT_LIMIT, 500),
+    cleanupMaxAttempts: boundedPositive(optionValue(args, '--max-attempts'), '--max-attempts', CLEANUP_DEFAULT_MAX_ATTEMPTS, 100)
   };
+}
+
+function configuredValue(source: string, key: string) {
+  return source.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"\\s*$`, 'mu'))?.[1] ?? null;
+}
+
+export function configuredCleanupBucket(source: string, remote: boolean) {
+  const vars = source.split(/^\[vars\]\s*$/mu)[1]?.split(/^\[/mu, 1)[0] ?? '';
+  const appEnv = configuredValue(vars, 'APP_ENV')?.toLowerCase() ?? null;
+  if (appEnv === 'production') throw new Error('Production cleanup is refused; use a separately reviewed operator workflow.');
+  if (remote && appEnv !== 'preview') throw new Error('Remote cleanup requires an explicit APP_ENV=preview config.');
+  if (!remote && appEnv !== 'development' && appEnv !== 'test') throw new Error('Local cleanup requires an APP_ENV=development or test config.');
+  const block = source.split(/^\[\[r2_buckets\]\]\s*$/mu).slice(1)
+    .map((part) => part.split(/^\[\[/mu, 1)[0])
+    .find((part) => configuredValue(part, 'binding') === 'BUCKET') ?? '';
+  const key = remote && appEnv === 'preview' ? 'preview_bucket_name' : 'bucket_name';
+  const bucket = configuredValue(block, key);
+  if (!bucket || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$/u.test(bucket)) {
+    throw new Error('The selected Wrangler config does not contain a valid FlareMail BUCKET binding.');
+  }
+  return bucket;
 }
 
 const sqlLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -172,6 +224,28 @@ export function d1Changes(value: unknown) {
   }, 0);
 }
 
+export function d1StatementResults(value: unknown, expectedStatements: number) {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  const results = Array.isArray(value)
+    ? value
+    : record && Array.isArray(record.result)
+      ? record.result
+      : [value];
+  if (results.length !== expectedStatements || results.some((item) => {
+    if (!item || typeof item !== 'object') return true;
+    const result = item as Record<string, unknown>;
+    return result.success === false || (!Array.isArray(result.results) && !result.meta);
+  })) {
+    throw new Error(`D1 returned ${results.length} result set(s) for ${expectedStatements} statement(s).`);
+  }
+  return results;
+}
+
+export function maintenanceD1TargetFlag(options: Pick<MaintenanceOptions, 'command' | 'remote'>) {
+  if (!options.remote) return '--local';
+  return options.command === 'retention' ? '--remote' : '--preview';
+}
+
 export function referencedKeys(value: unknown) {
   return new Set(d1Rows(value).flatMap((row) => {
     if (!row || typeof row !== 'object') return [];
@@ -195,7 +269,6 @@ export function isManagedR2Key(key: string) {
 }
 
 export function metadataDeleteSql(keys: string[]) {
-  const managedKeys = [...new Set(keys.filter((key) => isManagedR2Key(key)))];
   const bodyKeys = [...new Set(keys.filter((key) => /^body\/v1\//u.test(key) && isManagedR2Key(key)))];
   const attachmentKeys = [...new Set(keys.filter((key) => /^outbound\/v1\//u.test(key) && isManagedR2Key(key)))];
   const statements: string[] = [];
@@ -207,10 +280,8 @@ export function metadataDeleteSql(keys: string[]) {
     const values = attachmentKeys.slice(index, index + 50).map(sqlLiteral).join(', ');
     statements.push(`DELETE FROM workspace_attachments WHERE state IN ('uploading', 'failed', 'delete_pending') AND r2_key IN (${values})`);
   }
-  for (let index = 0; index < managedKeys.length; index += 50) {
-    const values = managedKeys.slice(index, index + 50).map(sqlLiteral).join(', ');
-    statements.push(`DELETE FROM workspace_r2_cleanup_queue WHERE r2_key IN (${values})`);
-  }
+  // Cleanup queue rows are append-only lifecycle history. Keep completed and
+  // retry/manual-review evidence; the queue drain owns status transitions.
   return statements;
 }
 
@@ -235,9 +306,15 @@ async function runWrangler(args: string[], remote: boolean) {
 }
 
 async function executeD1(options: MaintenanceOptions, sql: string, write = false) {
-  const args = ['d1', 'execute', options.database, options.remote ? '--remote' : '--local', '--config', options.config, '--command', sql, '--json'];
+  const args = ['d1', 'execute', options.database, maintenanceD1TargetFlag(options), '--config', options.config, '--command', sql, '--json'];
   if (write) args.push('--yes');
   return parseJsonOutput(await runWrangler(args, options.remote));
+}
+
+async function executeD1Batch(options: MaintenanceOptions, statements: string[], write = false) {
+  if (statements.length === 0) return [];
+  const sql = statements.map((statement) => statement.replace(/;\s*$/u, '')).join('; ');
+  return d1StatementResults(await executeD1(options, sql, write), statements.length);
 }
 
 function manifestKeys(value: unknown): R2Object[] {
@@ -294,6 +371,135 @@ async function deleteR2Objects(options: MaintenanceOptions, objects: R2Object[])
   return { deleted, skippedUnsafeDeletes, deletedKeys };
 }
 
+type CleanupMaintenanceReport = {
+  command: 'cleanup-report' | 'cleanup-drain' | 'cleanup-retry';
+  mode: 'dry-run' | 'apply';
+  target: 'local' | 'remote';
+  limit: number;
+  maxAttempts: number;
+  queue: {
+    total: number;
+    pending: number;
+    processing: number;
+    retryable: number;
+    completed: number;
+    manualReview: number;
+    retryEligible: number;
+    staleProcessing: number;
+    legacy: number;
+  };
+  drain?: { selected: number; claimed: number; completed: number; retryable: number; manualReview: number; lostClaim: number; skipped: number };
+  requeued?: number;
+};
+
+export function cleanupReportSql(now: string) {
+  return {
+    counts: `SELECT status, object_kind, COUNT(*) AS count FROM workspace_r2_cleanup_queue GROUP BY status, object_kind`,
+    stale: `SELECT COUNT(*) AS count FROM workspace_r2_cleanup_queue WHERE status = 'processing' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ${sqlLiteral(now)}`
+  };
+}
+
+export function cleanupCandidateSql(now: string, limit: number) {
+  return `SELECT id, owner_user_id, entity_id, source_id, source_owner_user_id, source_entity_id, r2_key, status, attempt_count, max_attempts, object_kind FROM workspace_r2_cleanup_queue WHERE status IN ('pending', 'retryable') AND object_kind <> 'legacy' AND attempt_count < max_attempts AND (next_attempt_at IS NULL OR next_attempt_at <= ${sqlLiteral(now)}) ORDER BY next_attempt_at ASC, created_at ASC, id ASC LIMIT ${Math.max(1, Math.min(500, Math.trunc(limit)))};`;
+}
+
+export function cleanupQueueSummary(countResult: unknown, staleResult: unknown) {
+  const rows = d1Rows(countResult).flatMap((row) => {
+    if (!row || typeof row !== 'object') return [];
+    const value = row as Record<string, unknown>;
+    return [{ status: String(value.status), objectKind: String(value.object_kind), count: Number(value.count ?? 0) }];
+  });
+  const count = (status: string) => rows.filter((row) => row.status === status).reduce((sum, row) => sum + row.count, 0);
+  return {
+    total: rows.reduce((sum, row) => sum + row.count, 0),
+    pending: count('pending'),
+    processing: count('processing'),
+    retryable: count('retryable'),
+    completed: count('completed'),
+    manualReview: count('manual_review'),
+    retryEligible: rows.filter((row) => row.status === 'manual_review' && row.objectKind !== 'legacy').reduce((sum, row) => sum + row.count, 0),
+    staleProcessing: d1Count(staleResult),
+    legacy: rows.filter((row) => row.objectKind === 'legacy').reduce((sum, row) => sum + row.count, 0)
+  };
+}
+
+function cleanupLog(event: string, detail: Record<string, string | number>) {
+  console.log(JSON.stringify({ event, ...detail }));
+}
+
+async function runCleanupMaintenance(options: MaintenanceOptions): Promise<CleanupMaintenanceReport> {
+  let configSource: string;
+  try { configSource = await readFile(options.config, 'utf8'); } catch {
+    throw new Error('Unable to read the selected Wrangler config.');
+  }
+  options = { ...options, bucket: configuredCleanupBucket(configSource, options.remote) };
+  const now = new Date().toISOString();
+  const reportSql = cleanupReportSql(now);
+  const [countResult, staleResult] = await executeD1Batch(options, [reportSql.counts, reportSql.stale]);
+  const queue = cleanupQueueSummary(countResult, staleResult);
+  const report: CleanupMaintenanceReport = {
+    command: options.command as CleanupMaintenanceReport['command'],
+    mode: options.apply ? 'apply' : 'dry-run',
+    target: options.remote ? 'remote' : 'local',
+    limit: options.cleanupLimit,
+    maxAttempts: options.cleanupMaxAttempts,
+    queue
+  };
+  if (options.command === 'cleanup-report') return report;
+  if (options.command === 'cleanup-retry') {
+    if (options.apply) {
+      const result = await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = 'retryable', attempt_count = 0, max_attempts = ${options.cleanupMaxAttempts}, next_attempt_at = ${sqlLiteral(now)}, claim_token = NULL, lease_expires_at = NULL, last_error = NULL, completed_at = NULL, updated_at = ${sqlLiteral(now)} WHERE id IN (SELECT id FROM workspace_r2_cleanup_queue WHERE status = 'manual_review' AND object_kind <> 'legacy' ORDER BY created_at ASC, id ASC LIMIT ${Math.max(1, Math.min(500, options.cleanupLimit))})`, true);
+      report.requeued = d1Changes(result);
+    } else report.requeued = Math.min(queue.retryEligible, options.cleanupLimit);
+    return report;
+  }
+  if (!options.apply) {
+    report.drain = { selected: d1Rows(await executeD1(options, cleanupCandidateSql(now, options.cleanupLimit))).length, claimed: 0, completed: 0, retryable: 0, manualReview: 0, lostClaim: 0, skipped: 0 };
+    return report;
+  }
+  await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = CASE WHEN attempt_count >= max_attempts THEN 'manual_review' ELSE 'retryable' END, next_attempt_at = ${sqlLiteral(now)}, claim_token = NULL, lease_expires_at = NULL, last_error = 'stale_lease', updated_at = ${sqlLiteral(now)} WHERE status = 'processing' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ${sqlLiteral(now)}`, true);
+  await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = 'manual_review', last_error = 'r2_delete_failed', updated_at = ${sqlLiteral(now)} WHERE status IN ('pending', 'retryable') AND attempt_count >= max_attempts`, true);
+  const candidates = d1Rows(await executeD1(options, cleanupCandidateSql(now, options.cleanupLimit))) as Array<Record<string, unknown>>;
+  const drain = { selected: candidates.length, claimed: 0, completed: 0, retryable: 0, manualReview: 0, lostClaim: 0, skipped: 0 };
+  for (const candidate of candidates) {
+    const id = typeof candidate.id === 'string' ? candidate.id : '';
+    const key = typeof candidate.r2_key === 'string' ? candidate.r2_key : '';
+    const kind = typeof candidate.object_kind === 'string' ? candidate.object_kind : 'legacy';
+    const entityId = typeof candidate.entity_id === 'string' ? candidate.entity_id : '';
+    const sourceId = typeof candidate.source_id === 'string' ? candidate.source_id : '';
+    const sourceOwnerUserId = typeof candidate.source_owner_user_id === 'string' ? candidate.source_owner_user_id : '';
+    const sourceEntityId = typeof candidate.source_entity_id === 'string' ? candidate.source_entity_id : '';
+    if (!id || !key || !entityId || !sourceId || sourceOwnerUserId !== String(candidate.owner_user_id ?? '') || sourceEntityId !== entityId || classifyCleanupKey(key) !== kind || !cleanupKeyHasEntityScope(key, entityId, sourceId)) {
+      if (id) await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = 'manual_review', last_error = 'invalid_key_scope', claim_token = NULL, lease_expires_at = NULL, updated_at = ${sqlLiteral(now)} WHERE id = ${sqlLiteral(id)} AND status IN ('pending', 'retryable')`, true);
+      drain.manualReview += 1;
+      continue;
+    }
+    const token = crypto.randomUUID();
+    const lease = new Date(Date.parse(now) + 5 * 60 * 1000).toISOString();
+    const claimed = await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = 'processing', attempt_count = attempt_count + 1, claim_token = ${sqlLiteral(token)}, lease_expires_at = ${sqlLiteral(lease)}, updated_at = ${sqlLiteral(now)} WHERE id = ${sqlLiteral(id)} AND status IN ('pending', 'retryable') AND object_kind <> 'legacy' AND attempt_count < max_attempts AND (next_attempt_at IS NULL OR next_attempt_at <= ${sqlLiteral(now)})`, true);
+    if (d1Changes(claimed) !== 1) { drain.skipped += 1; continue; }
+    drain.claimed += 1;
+    const started = Date.now();
+    try {
+      await runWrangler(['r2', 'object', 'delete', `${options.bucket}/${key}`, options.remote ? '--remote' : '--local', '--config', options.config], options.remote);
+      const finalized = await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = 'completed', completed_at = ${sqlLiteral(now)}, claim_token = NULL, lease_expires_at = NULL, last_error = NULL, updated_at = ${sqlLiteral(now)} WHERE id = ${sqlLiteral(id)} AND status = 'processing' AND claim_token = ${sqlLiteral(token)}`, true);
+      if (d1Changes(finalized) === 1) { drain.completed += 1; cleanupLog('cleanup_completed', { jobId: id, objectKind: kind, attempt: Number(candidate.attempt_count ?? 0) + 1, durationMs: Date.now() - started }); }
+      else { drain.lostClaim += 1; }
+    } catch {
+      const attempt = Number(candidate.attempt_count ?? 0) + 1;
+      const terminal = attempt >= Number(candidate.max_attempts ?? options.cleanupMaxAttempts);
+      const next = new Date(Date.parse(now) + Math.min(CLEANUP_BACKOFF_MAX_MS, cleanupBackoffMs(attempt))).toISOString();
+      const failed = await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = ${sqlLiteral(terminal ? 'manual_review' : 'retryable')}, next_attempt_at = ${sqlLiteral(next)}, claim_token = NULL, lease_expires_at = NULL, last_error = 'r2_delete_failed', updated_at = ${sqlLiteral(now)} WHERE id = ${sqlLiteral(id)} AND status = 'processing' AND claim_token = ${sqlLiteral(token)}`, true);
+      if (d1Changes(failed) === 1) {
+        if (terminal) drain.manualReview += 1; else drain.retryable += 1;
+        cleanupLog(terminal ? 'cleanup_manual_review' : 'cleanup_retry_scheduled', { jobId: id, objectKind: kind, attempt, durationMs: Date.now() - started, errorCode: 'r2_delete_failed' });
+      } else drain.lostClaim += 1;
+    }
+  }
+  report.drain = drain;
+  return report;
+}
+
 function reportOutput(report: MaintenanceReport, json: boolean) {
   if (json) return console.log(JSON.stringify(report));
   console.log(`Maintenance ${report.mode} (${report.target})`);
@@ -306,40 +512,48 @@ function reportOutput(report: MaintenanceReport, json: boolean) {
   else console.log(`R2: ${report.r2.objects} object(s), ${report.r2.orphaned} orphan(s), ${report.r2.deleted} deleted, ${report.r2.metadataDeleted} metadata row(s) deleted.`);
   console.log(`Outbound attachments: ${report.r2.expiredAttachmentRows} expired failed/delete-pending row(s).`);
   console.log(`R2 cleanup queue: ${report.r2.cleanupQueueRows} durable retry row(s).`);
-  if (report.r2.keys.length > 0) console.log(`R2 orphan keys: ${report.r2.keys.join(', ')}`);
   if (report.r2.skippedUnsafeDeletes > 0) console.log(`R2 skipped ${report.r2.skippedUnsafeDeletes} unmanaged object(s).`);
 }
 
+function cleanupReportOutput(report: CleanupMaintenanceReport, json: boolean) {
+  if (json) return console.log(JSON.stringify(report));
+  console.log(`Cleanup ${report.command} ${report.mode} (${report.target})`);
+  console.log(`Queue: ${report.queue.pending} pending, ${report.queue.processing} processing, ${report.queue.retryable} retryable, ${report.queue.manualReview} manual review, ${report.queue.completed} completed.`);
+  console.log(`Stale processing: ${report.queue.staleProcessing}; retry-eligible manual review: ${report.queue.retryEligible}; legacy/manual anomalies: ${report.queue.legacy}.`);
+  if (report.drain) console.log(`Drain: ${report.drain.selected} selected, ${report.drain.claimed} claimed, ${report.drain.completed} completed, ${report.drain.retryable} retryable, ${report.drain.manualReview} manual review, ${report.drain.lostClaim} lost claim, ${report.drain.skipped} skipped.`);
+  if (report.requeued !== undefined) console.log(`Requeued: ${report.requeued}.`);
+}
+
 export async function runMaintenance(options: MaintenanceOptions) {
+  if (options.command !== 'retention') return runCleanupMaintenance(options);
   const cutoffs = {
     sessions: cutoffIso(new Date(), options.sessionRetentionDays),
     webhookEvents: cutoffIso(new Date(), options.webhookRetentionDays),
     trash: cutoffIso(new Date(), options.trashRetentionDays)
   };
   const sql = maintenanceSql(cutoffs);
-  const [sessionCount, webhookCount, trashCount, staleClaimCount, staleSubmittingCount, approachingExpiryCount, expiredReviewCount, referencesResult, expiredAttachmentResult, cleanupQueueResult, r2Inventory] = await Promise.all([
-    executeD1(options, sql.sessionCandidates),
-    executeD1(options, sql.webhookCandidates),
-    executeD1(options, sql.trashCandidates),
-    executeD1(options, sql.staleClaimCandidates),
-    executeD1(options, sql.staleSubmittingCandidates),
-    executeD1(options, sql.approachingExpiryCandidates),
-    executeD1(options, sql.expiredReviewCandidates),
-    executeD1(options, sql.references),
-    executeD1(options, sql.expiredAttachmentKeys),
-    executeD1(options, sql.cleanupQueueKeys),
+  const [stateResults, r2Inventory] = await Promise.all([
+    executeD1Batch(options, [
+      sql.sessionCandidates,
+      sql.webhookCandidates,
+      sql.trashCandidates,
+      sql.staleClaimCandidates,
+      sql.staleSubmittingCandidates,
+      sql.approachingExpiryCandidates,
+      sql.expiredReviewCandidates,
+      sql.references,
+      sql.expiredAttachmentKeys,
+      sql.cleanupQueueKeys
+    ]),
     listR2Objects(options)
   ]);
+  const [sessionCount, webhookCount, trashCount, staleClaimCount, staleSubmittingCount, approachingExpiryCount, expiredReviewCount, referencesResult, expiredAttachmentResult, cleanupQueueResult] = stateResults;
   const references = referencedKeys(referencesResult);
   const expiredAttachmentKeys = referencedKeys(expiredAttachmentResult);
   const cleanupQueueKeys = referencedKeys(cleanupQueueResult);
   const orphaned = r2Inventory.inventory === 'unavailable' ? [] : orphanKeys(r2Inventory.objects, references);
   const applyD1 = options.apply
-    ? await Promise.all([
-      executeD1(options, sql.apply.split(';')[0], true),
-      executeD1(options, sql.apply.split(';')[1], true),
-      executeD1(options, sql.apply.split(';')[2], true)
-    ])
+    ? await executeD1Batch(options, sql.apply.split(';').map((statement) => statement.trim()).filter(Boolean), true)
     : null;
   const r2DeleteResult = options.apply && r2Inventory.inventory !== 'unavailable'
     ? await deleteR2Objects(options, orphaned)
@@ -351,7 +565,7 @@ export async function runMaintenance(options: MaintenanceOptions) {
     : [...new Set([...expiredAttachmentKeys, ...cleanupQueueKeys])]
       .filter((key) => !inventoryKeys.has(key) || deletedKeys.has(key));
   const metadataDeletes = options.apply
-    ? await Promise.all(metadataDeleteSql([...r2DeleteResult.deletedKeys, ...reconciledLifecycleKeys]).map((statement) => executeD1(options, statement, true)))
+    ? await executeD1Batch(options, metadataDeleteSql([...r2DeleteResult.deletedKeys, ...reconciledLifecycleKeys]), true)
     : [];
   const report: MaintenanceReport = {
     mode: options.apply ? 'apply' : 'dry-run',
@@ -376,7 +590,6 @@ export async function runMaintenance(options: MaintenanceOptions) {
       expiredAttachmentRows: expiredAttachmentKeys.size,
       cleanupQueueRows: cleanupQueueKeys.size,
       skippedUnsafeDeletes: r2DeleteResult.skippedUnsafeDeletes,
-      keys: orphaned.map((object) => object.key),
       ...(r2Inventory.note ? { note: r2Inventory.note } : {})
     }
   };
@@ -387,11 +600,12 @@ if (import.meta.main) {
   try {
     const options = parseMaintenanceArgs(process.argv.slice(2));
     const report = await runMaintenance(options);
-    reportOutput(report, options.json);
+    if (options.command === 'retention') reportOutput(report as MaintenanceReport, options.json);
+    else cleanupReportOutput(report as CleanupMaintenanceReport, options.json);
   } catch (error) {
     console.error(error instanceof Error ? error.message : 'Maintenance failed.');
     process.exitCode = 1;
   }
 }
 
-export type { MaintenanceOptions, MaintenanceReport, R2Object };
+export type { MaintenanceOptions, MaintenanceReport, R2Object, CleanupMaintenanceReport };

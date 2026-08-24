@@ -1,1 +1,1 @@
-export const FLAREMAIL_SCHEMA_VERSION = 16;
+export const FLAREMAIL_SCHEMA_VERSION = 18;

@@ -3,7 +3,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { MailboxSection } from '$lib/domain/mail';
 import { loadWorkspaceSnapshot } from '$lib/server/workspace';
 import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
-import { parseBoolean } from '$lib/server/config/env';
+import { parseBoolean, resolveOutboundFromEmail } from '$lib/server/config/env';
 import { classifyRuntimeError, runtimeUnavailableState } from '$lib/server/http/api';
 import type { RuntimeState } from '$lib/domain/runtime-state';
 
@@ -18,7 +18,7 @@ function safeRuntimeDiagnostics(env: CloudflareEnv) {
     outboundConfigured: provider === 'resend' ? Boolean(env.RESEND_API_KEY?.trim()) : /^(demo|fake)$/u.test(provider),
     outboundMode: provider === 'resend' ? 'Resend' : /^(demo|fake)$/u.test(provider) ? '开发假服务' : '未配置',
     webhookConfigured: Boolean(env.RESEND_WEBHOOK_SECRET?.trim()),
-    senderConfigured: Boolean(env.OUTBOUND_FROM_EMAIL?.trim()),
+    senderConfigured: Boolean(resolveOutboundFromEmail(env)),
     autoReplyEnabled: parseBoolean(env.AUTO_REPLY_ENABLED),
     notificationEnabled: parseBoolean(env.INBOUND_NOTIFICATION_ENABLED)
   };

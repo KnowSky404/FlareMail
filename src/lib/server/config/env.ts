@@ -1,3 +1,5 @@
+import { isValidResendWebhookSecret } from '$lib/server/resend-webhook';
+
 export const APP_ENV_VALUES = ['development', 'preview', 'test', 'production'] as const;
 export type AppEnv = (typeof APP_ENV_VALUES)[number];
 
@@ -22,6 +24,7 @@ export interface EnvironmentDiagnostic {
     | 'missing_resend_api_key'
     | 'missing_resend_webhook_secret'
     | 'missing_outbound_from'
+    | 'conflicting_outbound_from'
     | 'missing_outbound_provider'
     | 'invalid_outbound_provider'
     | 'fake_services_not_explicit'
@@ -45,6 +48,15 @@ type RawEnvironment = Record<string, unknown>;
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+export function resolveOutboundFromEmail(
+  environment: { OUTBOUND_FROM_EMAIL?: unknown; MAIL_FROM?: unknown } | undefined
+): string | null {
+  const preferred = asString(environment?.OUTBOUND_FROM_EMAIL);
+  const legacy = asString(environment?.MAIL_FROM);
+  if (preferred && legacy && preferred.toLowerCase() !== legacy.toLowerCase()) return null;
+  return preferred ?? legacy;
 }
 
 export function parseBoolean(value: unknown, fallback = false): boolean {
@@ -95,6 +107,8 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   const hasResendApiKey = Boolean(asString(environment.RESEND_API_KEY));
   const hasResendWebhookSecret = Boolean(asString(environment.RESEND_WEBHOOK_SECRET));
   const outboundFrom = asString(environment.OUTBOUND_FROM_EMAIL);
+  const mailFrom = asString(environment.MAIL_FROM);
+  const effectiveOutboundFrom = resolveOutboundFromEmail(environment);
   const notificationsEnabled = parseBoolean(environment.INBOUND_NOTIFICATION_ENABLED);
   const fakeServicesExplicit = parseBoolean(environment.ALLOW_FAKE_SERVICES) ||
     parseBoolean(environment.DEV_FAKE_SERVICES) || parseBoolean(environment.USE_FAKE_SERVICES);
@@ -113,8 +127,11 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   if (appEnv === 'production' && !hasR2) error('missing_r2', 'Production requires an R2 binding.');
   if (appEnv === 'production' && !hasResendApiKey) error('missing_resend_api_key', 'Production requires a Resend API key.');
   if (appEnv === 'production' && !hasResendWebhookSecret) error('missing_resend_webhook_secret', 'Production requires a Resend webhook secret.');
-  if (appEnv === 'production' && !outboundFrom) error('missing_outbound_from', 'Production requires OUTBOUND_FROM_EMAIL.');
-  if (appEnv === 'production' && outboundFrom && !isEmail(outboundFrom)) error('invalid_email', 'OUTBOUND_FROM_EMAIL must be a valid email address.');
+  if (outboundFrom && mailFrom && outboundFrom.toLowerCase() !== mailFrom.toLowerCase()) {
+    error('conflicting_outbound_from', 'OUTBOUND_FROM_EMAIL and MAIL_FROM must match when both are configured.');
+  }
+  if (appEnv === 'production' && !outboundFrom && !mailFrom) error('missing_outbound_from', 'Production requires OUTBOUND_FROM_EMAIL or MAIL_FROM.');
+  if (appEnv === 'production' && effectiveOutboundFrom && !isEmail(effectiveOutboundFrom)) error('invalid_email', 'The configured outbound sender must be a valid email address.');
   const notificationEmail = asString(environment.NOTIFICATION_EMAIL);
   if (notificationsEnabled && !notificationEmail) error('invalid_email', 'NOTIFICATION_EMAIL is required when notifications are enabled.');
   if (notificationsEnabled && notificationEmail && !isEmail(notificationEmail)) error('invalid_email', 'NOTIFICATION_EMAIL must be a valid email address.');
@@ -139,7 +156,7 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
     }
   }
   const webhookSecret = asString(environment.RESEND_WEBHOOK_SECRET);
-  if (appEnv === 'production' && webhookSecret && !/^whsec_[A-Za-z0-9._-]{8,}$/u.test(webhookSecret)) {
+  if (appEnv === 'production' && webhookSecret && (!webhookSecret.startsWith('whsec_') || !isValidResendWebhookSecret(webhookSecret))) {
     error('invalid_webhook_secret', 'RESEND_WEBHOOK_SECRET has an invalid format.');
   }
   const baseUrl = asString(environment.RESEND_API_BASE_URL);

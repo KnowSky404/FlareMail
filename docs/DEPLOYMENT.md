@@ -52,19 +52,72 @@ bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest 
 bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest /secure/reviewed-r2-inventory.json --apply
 ```
 
-`--apply` deletes only unreferenced managed `inbound/YYYY-MM-DD/<id>/...`,
+The retention/orphan `--apply` path deletes only unreferenced managed `inbound/YYYY-MM-DD/<id>/...`,
 `body/v1/...`, and `outbound/v1/YYYY-MM-DD/<uuid>/<uuid>.bin` keys. Expired
 `uploading`/`failed`/`delete_pending` outbound rows stop protecting their objects; after a
-reviewed R2 delete, their matching metadata rows and durable cleanup-queue rows
-are removed. Queue entries whose objects are absent from the reviewed manifest
-are also reconciled. Active and
+reviewed R2 delete, matching expired attachment/body metadata may be removed.
+Cleanup queue rows are append-only lifecycle evidence and are never removed by
+retention maintenance. Active and
 not-yet-expired rows remain references. Other key shapes are reported and
 skipped. The command never
 executes a remote operation unless `--remote` is supplied, and never executes
 any deletion unless `--apply` is supplied.
 
-Before production maintenance, create and list a managed D1 backup and record
-the current commit. D1 SQL export does not support databases containing FTS5
+## Durable cleanup queue
+
+Migration `0017_r2_cleanup_queue_reliability.sql` upgrades the existing queue
+with `pending`, `processing`, `retryable`, `completed`, and `manual_review`
+states; bounded attempt/backoff metadata; claim tokens and five-minute leases;
+completion/error summaries; and source ownership scope. Existing `0016` rows
+cannot prove those relations, so migration marks them `legacy/manual_review`
+instead of auto-deleting an object.
+
+Use the dedicated commands for local or isolated Preview queue work:
+
+```bash
+bun run maintenance -- cleanup-report --config wrangler.toml --json
+bun run maintenance -- cleanup-drain --dry-run --limit 50 --config wrangler.toml --json
+bun run maintenance -- cleanup-drain --apply --limit 50 --config wrangler.toml --json
+bun run maintenance -- cleanup-retry --dry-run --limit 50 --max-attempts 8 --config wrangler.toml --json
+```
+
+Remote execution requires both `--remote` and a separately maintained
+`APP_ENV=preview` config with Preview D1/R2 resources. The selected bucket is
+derived from its `BUCKET` binding; `--bucket` is rejected. A mutation requires
+the additional `--apply` flag. These commands refuse production configs, never
+process `legacy` keys automatically, never print complete keys, and handle at
+most 500 rows per invocation. Production cleanup remains a separately reviewed
+operator workflow; RC-1 does not create a Cron trigger.
+
+An R2 delete is followed by a claim-token-guarded D1 completion update. A
+temporary delete failure schedules exponential backoff; exhausted or unsafe
+jobs enter `manual_review`. If deletion succeeds but finalization fails, the
+lease expires and idempotent replay safely retries the missing-object delete.
+Completed rows remain as evidence.
+
+## Inbound attachment integrity repair
+
+New inbound attachments persist a lowercase SHA-256 in D1 and R2 put metadata.
+Downloads verify owner scope, object existence, actual size, and checksum before
+returning bytes. Historical checksum-null rows remain size-checked and can be
+audited or repaired in bounded batches:
+
+```bash
+bun run attachment:integrity -- --limit 100 --json
+bun run attachment:integrity -- --apply --limit 100 --cursor ATTACHMENT_ID --json
+```
+
+The default is local/report-only. An isolated Preview run additionally requires
+`--remote --config wrangler.preview.toml`; the config must declare
+`APP_ENV=preview` plus Preview D1/R2 resources. Replacing a non-null mismatched
+digest also requires `--repair-mismatches`. Production configs are refused.
+Reports contain internal IDs and stable result categories, never filenames,
+addresses, message bodies, object keys, cookies, or credentials.
+
+Before production maintenance, record a current D1 Time Travel bookmark and
+the exact commit. Time Travel is automatic on supported production databases;
+restoring a bookmark overwrites D1 in place and is a separately approved
+incident action. D1 SQL export does not support databases containing FTS5
 virtual tables. Do not run a normal logical export after migration 0015 unless
 the explicit FTS export procedure below is in a maintenance window. Production
 deployment and remote migration remain separate, explicitly authorized
@@ -89,12 +142,17 @@ upserts every bounded projection, removes orphan projection rows and asks FTS5
 to rebuild its virtual index. Remote use requires both `--remote` and, for a
 mutation, `--apply`.
 
-Prefer a managed backup for production:
+Prefer D1 Time Travel for production rollback evidence:
 
 ```bash
-bun x wrangler d1 backup create <DATABASE_ID> --name=flaremail-maintenance
-bun x wrangler d1 backup list <DATABASE_ID>
+bun x wrangler d1 info flaremail-db --remote --config wrangler.deploy.toml
+bun x wrangler d1 time-travel info flaremail-db --remote --config wrangler.deploy.toml
 ```
+
+Record the returned bookmark without running `time-travel restore`. Workers
+Paid retains up to 30 days and Workers Free up to 7 days under current D1
+limits; verify the active plan at release time. A logical export is appropriate
+only when a longer-lived SQL artifact is explicitly required.
 
 If a logical SQL export is mandatory, stop application writes and use this
 sequence. The canonical projection table remains intact while the unsupported
@@ -109,9 +167,9 @@ bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --j
 ```
 
 If export fails, restore the virtual layer before reopening traffic. After any
-SQL import, backup restore, or Time Travel restore, run the reviewed rebuild
-command. Backup restore overwrites the target database and always requires a
-fresh backup plus separate operator approval.
+SQL import or Time Travel restore, run the reviewed rebuild command. Time Travel
+restore overwrites the target database, cancels in-flight queries, and always
+requires the recorded pre-change bookmark plus separate operator approval.
 
 ## Schema, claims, and delivery review
 
@@ -127,6 +185,10 @@ canonical-row synchronization triggers. Migration
 `0016_outbound_attachments.sql` adds draft/message attachment relations,
 upload/ready/failure/delete-pending states, SHA-256 metadata, cleanup deadlines,
 and the draft attachment revision used by guarded sends.
+Migration `0017_r2_cleanup_queue_reliability.sql` append-only adds the durable
+claim/lease/retry/manual-review lifecycle and advances schema metadata to 17.
+Do not modify or downgrade migrations `0001` through `0017`; rollback restores
+Worker code while preserving the newer D1 columns and queue evidence.
 
 The maintenance report also lists stale submitting attempts, attempts within
 one hour of the Resend 24-hour idempotency expiry, and expired attempts that

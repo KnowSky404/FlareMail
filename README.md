@@ -7,15 +7,15 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 ## 已实现能力
 
 - Cloudflare Email Routing 入站：一次性读取 raw stream、大小限制、SHA-256 去重、RFC threading、MIME/中文/附件解析。
-- D1/R2 持久化：入站原文与附件、用户归属、已读/星标、归档、批量邮箱操作、草稿、已发送、投递状态和事件时间线。
+- D1/R2 持久化：入站原文与带 SHA-256 的附件、用户归属、已读/星标、归档、批量邮箱操作、草稿、已发送、投递状态和事件时间线；下载在返回 bytes 前验证 ownership、size 与 checksum。
 - Resend 出站：稳定幂等键、`reply_to`/RFC headers、R2 流式附件上传与完整性校验、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
-- 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
-- 版本化 D1 migration：`migrations/0001` 至 `0016`，包括登录限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5 与出站附件生命周期，并由 `schema.sql` 保存最新结构快照。
+- 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本回退与可选 HTML 写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
+- 版本化 D1 migration：`migrations/0001` 至 `0018`，包括登录与出站发送限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5、出站附件与 lease/retry/manual-review 清理队列，并由 `schema.sql` 保存最新结构快照。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
-- 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention 与 orphan 报告。
-- 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖桌面、移动端与 320px 窄屏。
+- 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention/orphan 报告，以及有界 claim、lease、backoff、max-attempts 和人工复核的 canonical R2 cleanup lifecycle。
+- 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖 Chromium 桌面/移动/320px、axe，以及 Desktop WebKit、iPhone 与 iPad 模拟 smoke。
 
 ## 运行环境边界
 
@@ -55,6 +55,7 @@ schema.sql                     最新 schema 快照
 
 ```bash
 bun install
+bun run audit:dependencies
 bun run db:migrate:local
 ```
 
@@ -75,34 +76,98 @@ bun run dev
 bun run preview
 ```
 
+### 本地 Email Routing 入站验证
+
+`bun run dev` 主要用于页面开发；要执行 Worker 的 `email()` handler，请使用
+`bun run preview`（它会构建 Worker 并启动本地 Wrangler）或先执行
+`bun run build`，再运行 `bun x wrangler dev worker/index.ts --local`。本地 Email Routing 的入口是
+`/cdn-cgi/handler/email`，`from` 和 `to` 查询参数代表 envelope，POST body
+必须是完整的 RFC5322 原文，而不是 JSON。下面的 body 包含稳定的
+`Message-ID`，可直接复制执行；它只向本机发送测试邮件，不调用外部邮箱：
+
+```bash
+curl --fail-with-body --silent --show-error \
+  --request POST \
+  'http://127.0.0.1:8787/cdn-cgi/handler/email?from=sender@example.test&to=admin@example.test' \
+  --header 'Content-Type: message/rfc822' \
+  --data-binary @- <<'EOF'
+Message-ID: <local-flaremail-demo-20260823@example.test>
+Date: Sat, 23 Aug 2026 12:00:00 +0000
+From: Sender <sender@example.test>
+To: admin@example.test
+Subject: Local FlareMail Email Routing demo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This message exercises the local Cloudflare Email Routing handler.
+EOF
+```
+
+示例中的 `admin@example.test` 必须与前面 bootstrap 的
+`FLAREMAIL_ADMIN_EMAIL` 一致；如果你使用了其他本地管理员地址，请同时替换
+URL 的 `to` 和 RFC5322 的 `To`，否则邮件只能作为未归属入站记录保存，不会
+出现在该管理员的 Inbox。
+
+入站验证应按 D1、R2、UI 三层分别留证：
+
+1. `curl http://127.0.0.1:8787/api/health` 应返回本地 readiness；只读查询
+   `bun x wrangler d1 execute flaremail-db --local --config wrangler.toml --command="SELECT message_id, \"from\", \"to\" FROM email_messages ORDER BY created_at DESC LIMIT 1"`
+   确认 envelope、`Message-ID` 和 owner 记录已保存。
+2. 在已登录工作台打开该邮件并下载 raw `.eml` 或附件，确认正文不是列表
+   projection；这次下载本身就是 R2 binding smoke。若已从受控的本地 D1
+   metadata 得到对象 key，也可用 Wrangler 读取该单个对象：
+   `bun x wrangler r2 object get flaremail-bucket-preview/<KNOWN_R2_KEY> --local --config wrangler.toml --file /tmp/flaremail-r2-smoke.eml`。
+3. 在 UI 中确认邮件出现在 Inbox，进入详情、切换纯文本/安全 HTML（若有
+   HTML）、下载 raw，并验证刷新后仍可见。测试账号通过
+   `bun run auth:bootstrap:local` 创建，不能把密码写入仓库。
+
+本地 `OUTBOUND_PROVIDER=demo`/`fake` 只验证 compose、D1 状态机、R2 附件和
+UI；它不会访问 Resend、不会证明 DNS、真实投递或 `delivered`。真实 Resend
+验证必须使用独立 preview/production 配置、Resend secret 和已验证域名，且
+不能把 `submitted` 当作已送达；只有收到 signed `email.delivered` webhook
+才能完成 delivered 闭环。
+
 ## 验证
 
 ```bash
+bun install --frozen-lockfile
 bun test
 bun run test:unit
 bun run test:integration
 bun run test:remaining
 bun run check
+bun run cf:typegen -- --check
 bun run build
+bun run db:migrate:local
+bun run search:index -- --mode verify --json
+bun run release:preflight
+bun run release:preflight -- --json
 bun run test:e2e
+bun run test:e2e:webkit
 bun run test:a11y
 bun run deploy:dry-run
+git diff --check
 ```
 
-`deploy:dry-run` 需要先从 `wrangler.deploy.toml.example` 创建本地私有的 `wrangler.deploy.toml`。它只构建和校验 Worker，不会发布。
+`deploy:dry-run` 从 checked-in development config 在操作系统临时目录生成结构合法、无效资源 ID、无 secret 的 CI 配置；不需要也不会读取私有 `wrangler.deploy.toml`，只构建和校验 Worker，不会发布。
 
 Wrangler 远程命令继承当前 OAuth keyring 或 `CLOUDFLARE_API_TOKEN` 环境；本地命令的隔离目录和 dry-run 输出均通过操作系统临时目录生成，因此同一组 `bun run` 命令可由 PowerShell、cmd、bash 或 zsh 调用。
 
-`test:e2e`/`test:a11y` 不读取生产配置、不调用真实 Resend，也不会访问远程 D1/R2。若 Playwright 未自动找到 Chromium，可显式设置 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`。
+`test:e2e`/`test:e2e:webkit`/`test:a11y` 不读取生产配置、不调用真实 Resend，也不会访问远程 D1/R2。每个浏览器项目使用独立端口与临时状态；Linux Playwright WebKit 结果不等同于真实 iOS/iPadOS Safari 验证。
 
-CI 与本地统一以 `bun test` 运行完整的 `src/` 与 `scripts/` 测试集合，避免新增测试文件遗漏出门禁。
+本地 `bun test` 聚合运行完整 `src/` 与 `scripts/` 集合；CI 的 unit、integration、remaining 三组互不重叠并合计覆盖同一集合，避免重复执行掩盖分组遗漏。
 
 运维清理默认仅生成报告；只有显式 `--remote` 才访问远程资源，只有再加 `--apply` 才执行经过范围保护的删除：
 
 ```bash
 bun run maintenance -- --config wrangler.toml
+bun run maintenance -- cleanup-report --config wrangler.toml --json
+bun run attachment:integrity -- --limit 100 --json
 bun run search:index -- --mode verify --json
 ```
+
+附件修复和 cleanup drain 默认 local、bounded、report-only。远程只接受显式 `APP_ENV=preview` 的独立配置；`--apply` 必须再次显式给出，production 目标由命令硬拒绝。
 
 邮件搜索使用 owner-scoped D1 FTS5，支持 `from:`、`to:`、`cc:`、`subject:`、
 `is:`、`has:attachment`、`after:`、`before:`、`status:` 与 `label:`。索引校验
@@ -125,5 +190,8 @@ bun run search:index -- --mode verify --json
 - [docs/API.md](./docs/API.md)：工作区 snapshot、邮箱分页、草稿并发、批量操作和投递重试契约。
 - [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)：维护 dry-run、stale claim 和投递 review 报告。
 - [docs/RUNTIME_BUDGET.md](./docs/RUNTIME_BUDGET.md)：Workers CPU 预算与 preview 人工测量流程。
+- [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md)：RC-1 Preview、生产审批与回滚操作门禁。
+- [docs/RC1_RELEASE.md](./docs/RC1_RELEASE.md)：RC-1 行为、schema、验证边界与残余风险。
+- [docs/SLO.md](./docs/SLO.md)：建议性 SLO、阻塞阈值与无 PII 可观测性契约。
 - [TODO.md](./TODO.md)：重构完成后的剩余产品路线。
 - [GEMINI_UI_PROMPT.md](./GEMINI_UI_PROMPT.md)：已归档的旧视觉提示，不再是实现依据。

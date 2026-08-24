@@ -1,7 +1,10 @@
 APP_ENV=development
 ALLOW_FAKE_SERVICES=true
 OUTBOUND_PROVIDER=demo
+# Recommended sender configuration. MAIL_FROM is accepted as a legacy runtime
+# alias; configure only one name, or give both the same value.
 OUTBOUND_FROM_EMAIL=dev@example.com
+# MAIL_FROM=dev@example.com
 OUTBOUND_FROM_NAME=FlareMail
 AUTO_REPLY_ENABLED=true
 AUTO_REPLY_SUBJECT_PREFIX=Re:

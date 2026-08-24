@@ -47,4 +47,10 @@ describe('canonical body storage', () => {
     expect(first?.sha256).toBe(second?.sha256);
     expect(first?.key).not.toBe(second?.key);
   });
+
+  test('forces small HTML bodies into canonical storage for draft recovery', async () => {
+    const object = await prepareBodyObject('draft', 'draft-html', '', '<p>small</p>', { force: true });
+    expect(object).not.toBeNull();
+    expect(object?.htmlBytes).toBeGreaterThan(0);
+  });
 });

@@ -32,6 +32,8 @@ const session: WorkspaceContext = {
   id: 'session-1', userId: 'owner-1', storage: 'd1', incomingSequence: 0, createdAt: '', updatedAt: '',
   profile: { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' }
 };
+const attachmentKey = 'outbound/v1/2026-08-19/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222.bin';
+const bodyKey = `body/v1/workspace_message/sent-1/33333333-3333-4333-8333-333333333333-${'a'.repeat(64)}.json`;
 
 function fixture() {
   const db = new Database(':memory:');
@@ -40,10 +42,10 @@ function fixture() {
   db.query(`INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at) VALUES ('sent-1', 'owner-1', 'sent', 'Owner', 'owner@example.test', 'Bob', 'bob@example.test', 'Subject', 'Preview', 'Body', '2026-08-19T00:00:00Z')`).run();
   db.query(`INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at) VALUES ('other-1', 'other', 'sent', 'Other', 'other@example.test', 'Bob', 'bob@example.test', 'Other', 'Preview', 'Body', '2026-08-19T00:00:00Z')`).run();
   db.query(`INSERT INTO workspace_drafts (id, user_id, to_email, subject, body, updated_at) VALUES ('draft-1', 'owner-1', 'bob@example.test', 'Draft', 'Body', '2026-08-19T00:00:00Z')`).run();
-  db.query(`INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key, text_body, direction) VALUES ('in-1', 'owner-1', 'bob@example.test', 'owner@example.test', 'Inbound', '2026-08-19T00:00:00Z', 'Snippet', 'inbound/in-1/message.eml', 'Body', 'inbound')`).run();
-  db.query(`INSERT INTO workspace_attachments (id, user_id, message_id, filename, r2_key) VALUES ('att-1', 'owner-1', 'sent-1', 'a.txt', 'sent/att-1')`).run();
+  db.query(`INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key, text_body, direction) VALUES ('in-1', 'owner-1', 'bob@example.test', 'owner@example.test', 'Inbound', '2026-08-19T00:00:00Z', 'Snippet', 'inbound/2026-08-19/in-1/message.eml', 'Body', 'inbound')`).run();
+  db.query(`INSERT INTO workspace_attachments (id, user_id, message_id, filename, r2_key) VALUES ('11111111-1111-4111-8111-111111111111', 'owner-1', 'sent-1', 'a.txt', '${attachmentKey}')`).run();
   db.query(`INSERT INTO workspace_outbound_statuses (message_id, user_id, status) VALUES ('sent-1', 'owner-1', 'sent')`).run();
-  db.query(`INSERT INTO mail_body_objects (id, owner_user_id, entity_type, entity_id, r2_key, size_bytes, sha256, created_at, updated_at) VALUES ('body-1', 'owner-1', 'workspace_message', 'sent-1', 'body/sent-1', 1, 'hash', '2026-08-19T00:00:00Z', '2026-08-19T00:00:00Z')`).run();
+  db.query(`INSERT INTO mail_body_objects (id, owner_user_id, entity_type, entity_id, r2_key, size_bytes, sha256, created_at, updated_at) VALUES ('33333333-3333-4333-8333-333333333333', 'owner-1', 'workspace_message', 'sent-1', '${bodyKey}', 1, 'hash', '2026-08-19T00:00:00Z', '2026-08-19T00:00:00Z')`).run();
   return { db, DB: new D1(db), bucket: new Bucket() };
 }
 
@@ -65,7 +67,7 @@ describe('workspace trash', () => {
 
   test('prevents cross-owner mutation and permanently cleans D1 and R2 resources idempotently', async () => {
     const { db, DB, bucket } = fixture();
-    bucket.objects.add('inbound/in-1/message.eml'); bucket.objects.add('sent/att-1'); bucket.objects.add('body/sent-1');
+    bucket.objects.add('inbound/in-1/message.eml'); bucket.objects.add(attachmentKey); bucket.objects.add(bodyKey);
     const env = { DB, BUCKET: bucket } as never;
     expect(await moveWorkspaceMessageToTrash(env, session, 'other-1')).toBeNull();
     await moveWorkspaceMessageToTrash(env, session, 'sent-1');
@@ -89,8 +91,8 @@ describe('workspace trash', () => {
 
   test('persists and retries R2 cleanup after the owned D1 deletion commits', async () => {
     const { db, DB, bucket } = fixture();
-    bucket.objects.add('sent/att-1');
-    bucket.objects.add('body/sent-1');
+    bucket.objects.add(attachmentKey);
+    bucket.objects.add(bodyKey);
     bucket.failDelete = true;
     const env = { DB, BUCKET: bucket } as never;
     await moveWorkspaceMessageToTrash(env, session, 'sent-1');
@@ -98,16 +100,29 @@ describe('workspace trash', () => {
     expect(result).toMatchObject({ deletedId: 'sent-1', idempotent: false, cleanupPending: true });
     expect(db.query(`SELECT id FROM workspace_messages WHERE id = 'sent-1'`).get()).toBeNull();
     expect(db.query(`SELECT id FROM workspace_attachments WHERE message_id = 'sent-1'`).get()).toBeNull();
-    expect(bucket.objects.has('sent/att-1')).toBe(true);
+    expect(bucket.objects.has(attachmentKey)).toBe(true);
     expect(db.query(`SELECT COUNT(*) AS count FROM workspace_r2_cleanup_queue WHERE entity_id = 'sent-1'`).get())
       .toEqual({ count: 2 });
 
     bucket.failDelete = false;
+    db.query(`UPDATE workspace_r2_cleanup_queue SET next_attempt_at = '1970-01-01T00:00:00.000Z' WHERE entity_id = 'sent-1'`).run();
     expect(await permanentlyDeleteWorkspaceTrash(env, session, 'sent-1')).toMatchObject({
       deletedId: 'sent-1', idempotent: true
     });
-    expect(bucket.objects.has('sent/att-1')).toBe(false);
-    expect(db.query(`SELECT COUNT(*) AS count FROM workspace_r2_cleanup_queue WHERE entity_id = 'sent-1'`).get())
-      .toEqual({ count: 0 });
+    expect(bucket.objects.has(attachmentKey)).toBe(false);
+    expect(db.query(`SELECT COUNT(*) AS count FROM workspace_r2_cleanup_queue WHERE entity_id = 'sent-1' AND status = 'completed'`).get())
+      .toEqual({ count: 2 });
+  });
+
+  test('permanently deletes inbound raw objects through the canonical queue scope', async () => {
+    const { db, DB, bucket } = fixture();
+    const rawKey = 'inbound/2026-08-19/in-1/message.eml';
+    bucket.objects.add(rawKey);
+    const env = { DB, BUCKET: bucket } as never;
+    await moveWorkspaceMessageToTrash(env, session, 'email:in-1');
+    expect((await permanentlyDeleteWorkspaceTrash(env, session, 'email:in-1')).idempotent).toBe(false);
+    expect(bucket.objects.has(rawKey)).toBe(false);
+    expect(db.query(`SELECT entity_id, source_id, status, object_kind FROM workspace_r2_cleanup_queue WHERE r2_key = ?`).get(rawKey))
+      .toEqual({ entity_id: 'in-1', source_id: 'in-1', status: 'completed', object_kind: 'raw' });
   });
 });

@@ -49,11 +49,11 @@ export async function prepareBodyObject(
   entityId: string,
   textBody: string,
   htmlBody = '',
-  options: { canonicalBytes?: number } = {}
+  options: { canonicalBytes?: number; force?: boolean } = {}
 ): Promise<PreparedBodyObject | null> {
   const body: CanonicalBody = { version: 1, textBody, htmlBody };
   const bytes = encoder.encode(JSON.stringify(body));
-  if (bytes.byteLength <= BODY_LIMITS.inlineBytes) return null;
+  if (!options.force && bytes.byteLength <= BODY_LIMITS.inlineBytes) return null;
   const canonicalLimit = options.canonicalBytes ?? BODY_LIMITS.canonicalBytes;
   if (bytes.byteLength > canonicalLimit) {
     throw new BodyCanonicalLimitError(canonicalLimit, bytes.byteLength);

@@ -14,12 +14,16 @@ import {
 } from '$lib/server/db/deliveries';
 import { findMessageByIdempotencyKey, findOwnedWorkspaceMessage, insertMessage } from '$lib/server/db/messages';
 import {
+  MAX_OUTBOUND_ATTACHMENT_BYTES,
+  MAX_OUTBOUND_ATTACHMENT_COUNT,
+  MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES,
   OutboundGatewayError,
   isOutboundGatewayError,
   type OutboundMailGateway,
   type OutboundMailAttachment,
   type OutboundMailInput
 } from '$lib/server/outbound/gateway';
+import { consumeOutboundSend } from '$lib/server/outbound/rate-limit';
 import { createOutboundGateway, outboundProviderName } from '$lib/server/outbound/provider';
 import {
   createSentMessage,
@@ -43,10 +47,19 @@ import {
   reconcilePendingResendEvents
 } from '$lib/server/workspace/delivery';
 import { DraftBodyReloadRequiredError, DraftConflictError } from '$lib/server/workspace/draft';
+import { sanitizeComposeInput } from '$lib/server/workspace/compose-body';
+import { resolveOutboundFromEmail } from '$lib/server/config/env';
 
 export interface OutboundSubmissionOptions {
   requestId?: string | null;
   gateway?: OutboundMailGateway;
+}
+
+export class OutboundRateLimitError extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super(`Outbound send rate limit exceeded. Retry in ${retryAfterSeconds} seconds.`);
+    this.name = 'OutboundRateLimitError';
+  }
 }
 
 const safeRequestId = (value: string | null | undefined) => value?.trim().match(/^[A-Za-z0-9._:-]{1,128}$/u)?.[0];
@@ -54,13 +67,13 @@ const headerValue = (value: string | null | undefined) => value?.replace(/[\r\n]
 const isUniqueConstraintError = (error: unknown) => error instanceof Error && /unique constraint|constraint failed/iu.test(error.message);
 
 const sender = (env: CloudflareEnv | undefined, message: MailMessage) => {
-  const email = env?.OUTBOUND_FROM_EMAIL?.trim() || message.fromEmail.trim();
+  const email = resolveOutboundFromEmail(env) || message.fromEmail.trim();
   const name = headerValue(env?.OUTBOUND_FROM_NAME || message.fromName);
   return name ? `${name} <${email}>` : email;
 };
 
 const localMessageId = (id: string, env: CloudflareEnv | undefined, fallbackEmail: string) => {
-  const domain = (env?.OUTBOUND_FROM_EMAIL || fallbackEmail).split('@')[1]?.trim() || 'flaremail.invalid';
+  const domain = (resolveOutboundFromEmail(env) || fallbackEmail).split('@')[1]?.trim() || 'flaremail.invalid';
   return `<${id.replace(/[^A-Za-z0-9._-]/g, '-')}@${domain}>`;
 };
 
@@ -86,11 +99,24 @@ async function loadOutboundAttachments(
     throw new OutboundGatewayError('client_error', 'Wait for every attachment upload to finish before sending.', { retryable: false });
   }
   const readyRows = rows.filter((row) => row.state === 'ready');
+  if (readyRows.length > MAX_OUTBOUND_ATTACHMENT_COUNT) {
+    throw new OutboundGatewayError('configuration', 'Outbound attachment metadata exceeds the supported count.', { retryable: false });
+  }
+  let declaredTotalBytes = 0;
+  for (const row of readyRows) {
+    if (!Number.isSafeInteger(row.size) || row.size < 0 || row.size > MAX_OUTBOUND_ATTACHMENT_BYTES) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment metadata exceeds the supported size.', { retryable: false });
+    }
+    declaredTotalBytes += row.size;
+    if (!Number.isSafeInteger(declaredTotalBytes) || declaredTotalBytes > MAX_OUTBOUND_ATTACHMENT_TOTAL_BYTES) {
+      throw new OutboundGatewayError('configuration', 'Outbound attachment metadata exceeds the supported total size.', { retryable: false });
+    }
+  }
   const provider: OutboundMailAttachment[] = [];
   for (const row of readyRows) {
     if (!row.sha256) throw new OutboundGatewayError('configuration', 'Outbound attachment metadata is incomplete.', { retryable: false });
     const object = await env.BUCKET.get(row.r2_key);
-    if (!object || object.size !== row.size) {
+    if (!object || object.size !== row.size || object.size > MAX_OUTBOUND_ATTACHMENT_BYTES) {
       throw new OutboundGatewayError('configuration', 'Outbound attachment integrity verification failed.', { retryable: false });
     }
     const bytes = new Uint8Array(await object.arrayBuffer());
@@ -124,7 +150,7 @@ const gatewayInput = (
   subject: message.subject,
   text: body?.textBody ?? message.body,
   html: body?.htmlBody || undefined,
-  replyTo: env?.OUTBOUND_FROM_EMAIL?.trim() ? [env.OUTBOUND_FROM_EMAIL.trim()] : [message.fromEmail.trim()],
+  replyTo: resolveOutboundFromEmail(env) ? [resolveOutboundFromEmail(env)!] : [message.fromEmail.trim()],
   headers: Object.fromEntries([
     ['Message-ID', headerValue(message.messageId)],
     ['In-Reply-To', headerValue(message.inReplyTo)],
@@ -257,7 +283,8 @@ export async function sendWorkspaceMessage(
   }
   const capabilities = await getWorkspaceCapabilities(env);
   if (!capabilities.outboundStatuses) throw new Error('The delivery schema is not migrated.');
-  const draftId = input.draftId?.trim() || undefined;
+  const composeInput = sanitizeComposeInput(input);
+  const draftId = composeInput.draftId?.trim() || undefined;
   const messageId = draftId || `sent-live-${crypto.randomUUID()}`;
   const requestId = safeRequestId(options.requestId);
   if (!draftId && !requestId) {
@@ -272,6 +299,8 @@ export async function sendWorkspaceMessage(
     }
     return refreshedResult(env, session, existing.id);
   }
+  const rateLimit = await consumeOutboundSend(env.DB, session.userId);
+  if (!rateLimit.allowed) throw new OutboundRateLimitError(rateLimit.retryAfterSeconds);
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? 'injected' : outboundProviderName(env);
 
@@ -282,18 +311,18 @@ export async function sendWorkspaceMessage(
   const attachmentRevision = Number(existingDraft?.attachment_revision ?? 0);
   if (
     existingDraft
-    && (draftAttachments.rows.length > 0 || input.attachmentRevision !== undefined)
-    && input.attachmentRevision !== attachmentRevision
+    && (draftAttachments.rows.length > 0 || composeInput.attachmentRevision !== undefined)
+    && composeInput.attachmentRevision !== attachmentRevision
   ) {
     throw new DraftConflictError(mapDraftRow(existingDraft, session.profile));
   }
-  let canonicalBody: CanonicalBody = { version: 1, textBody: input.body, htmlBody: '' };
+  let canonicalBody: CanonicalBody = { version: 1, textBody: composeInput.body, htmlBody: composeInput.html ?? '' };
   if (existingDraft?.body_object_id) {
-    const requestedBodyRevision = input.bodyRevision?.trim() || null;
+    const requestedBodyRevision = composeInput.bodyRevision?.trim() || null;
     if (requestedBodyRevision && requestedBodyRevision !== existingDraft.body_object_id) {
       throw new DraftConflictError(mapDraftRow(existingDraft, session.profile));
     }
-    if (!requestedBodyRevision && input.body !== existingDraft.body) {
+    if (!requestedBodyRevision && composeInput.body !== existingDraft.body) {
       throw new DraftBodyReloadRequiredError();
     }
     if (!requestedBodyRevision) {
@@ -304,13 +333,13 @@ export async function sendWorkspaceMessage(
     }
   }
 
-  const message = createSentMessage({ id: messageId, from: session.profile, to: input.to, toEmail: input.toEmail, subject: input.subject,
-    body: canonicalBody.textBody, cc: input.cc, bcc: input.bcc, messageId: input.messageId || localMessageId(messageId, env, session.profile.email),
-    inReplyTo: input.inReplyTo, references: input.references, deliveryStatus: 'submitting', deliveryAttempts: 0 });
+  const message = createSentMessage({ id: messageId, from: session.profile, to: composeInput.to, toEmail: composeInput.toEmail, subject: composeInput.subject,
+    body: canonicalBody.textBody, html: canonicalBody.htmlBody, cc: composeInput.cc, bcc: composeInput.bcc, messageId: composeInput.messageId || localMessageId(messageId, env, session.profile.email),
+    inReplyTo: composeInput.inReplyTo, references: composeInput.references, deliveryStatus: 'submitting', deliveryAttempts: 0 });
   message.threadKey = threadKey(message);
   if (draftAttachments.rows.length) message.labels = [...message.labels, 'Attachment'];
   const timestamp = nowIso();
-  const bodyObject = await prepareBodyObject('workspace_message', message.id, canonicalBody.textBody, canonicalBody.htmlBody);
+  const bodyObject = await prepareBodyObject('workspace_message', message.id, canonicalBody.textBody, canonicalBody.htmlBody, { force: Boolean(canonicalBody.htmlBody.trim()) });
   if (bodyObject && !env.BUCKET) throw new Error('BODY_STORAGE_UNAVAILABLE');
   if (bodyObject) await putBodyObject(env.BUCKET, bodyObject);
   const projected = projectBody(canonicalBody.textBody, canonicalBody.htmlBody, message.preview);
@@ -417,6 +446,8 @@ export async function retryWorkspaceMessageDelivery(
     }
     throw error;
   }
+  const rateLimit = await consumeOutboundSend(env.DB, session.userId);
+  if (!rateLimit.allowed) throw new OutboundRateLimitError(rateLimit.retryAfterSeconds);
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? delivery.provider || 'injected' : outboundProviderName(env);
   let body: CanonicalBody | undefined;

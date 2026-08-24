@@ -75,9 +75,10 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
 });
 
 export const DELETE: RequestHandler = withApiHandler(async (event) => {
-  await destroyWorkspaceSession(getRequestEnv(event), event.locals.workspaceSessionToken);
+  const revoked = await destroyWorkspaceSession(getRequestEnv(event), event.locals.workspaceSessionToken);
   event.cookies.delete(secureWorkspaceSessionCookie, clearSessionCookieOptions(true));
   event.cookies.delete(workspaceSessionCookie, clearSessionCookieOptions(false));
   event.cookies.delete(legacyWorkspaceSessionCookie, clearSessionCookieOptions(false));
+  if (!revoked) throw new ApiError(503, 'SESSION_REVOCATION_UNAVAILABLE', '退出登录暂时无法完成，请稍后重试。');
   return apiSuccess(event, { authenticated: false, workspace: null });
 });

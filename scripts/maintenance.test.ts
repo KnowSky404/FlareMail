@@ -2,9 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import {
   bodyMetadataDeleteSql,
   cutoffIso,
+  cleanupCandidateSql,
+  cleanupQueueSummary,
+  cleanupReportSql,
+  configuredCleanupBucket,
   d1Changes,
   d1Count,
+  d1StatementResults,
   isManagedR2Key,
+  maintenanceD1TargetFlag,
   maintenanceSql,
   metadataDeleteSql,
   orphanKeys,
@@ -41,6 +47,17 @@ describe('maintenance CLI safety helpers', () => {
     expect(referencedKeys({ results: [{ key: 'inbound/one/message.eml' }, { key: '' }] })).toEqual(new Set(['inbound/one/message.eml']));
   });
 
+  test('preserves and validates ordered D1 batch result sets', () => {
+    const results = [
+      { results: [{ count: 1 }], success: true, meta: { changes: 0 } },
+      { results: [{ count: 2 }], success: true, meta: { changes: 0 } }
+    ];
+    expect(d1StatementResults(results, 2)).toEqual(results);
+    expect(d1StatementResults({ result: results }, 2)).toEqual(results);
+    expect(() => d1StatementResults(results, 1)).toThrow('2 result set(s) for 1 statement(s)');
+    expect(() => d1StatementResults([{ success: false }], 1)).toThrow('1 result set(s) for 1 statement(s)');
+  });
+
   test('reports only unreferenced keys and restricts apply deletion shape', () => {
     const objects = [
       { key: 'inbound/2026-08-01/abc/message.eml' },
@@ -57,16 +74,56 @@ describe('maintenance CLI safety helpers', () => {
   test('deletes metadata only for reviewed managed body keys', () => {
     const key = `body/v1/draft/draft-1/object-id-${'a'.repeat(64)}.json`;
     expect(bodyMetadataDeleteSql([key, key, 'unmanaged/private'])).toEqual([
-      `DELETE FROM mail_body_objects WHERE state = 'delete_pending' AND r2_key IN ('${key}')`,
-      `DELETE FROM workspace_r2_cleanup_queue WHERE r2_key IN ('${key}')`
+      `DELETE FROM mail_body_objects WHERE state = 'delete_pending' AND r2_key IN ('${key}')`
     ]);
   });
 
   test('deletes only expired outbound lifecycle metadata after the reviewed object delete', () => {
     const key = 'outbound/v1/2026-08-19/019d1234-5678-4abc-8def-0123456789ab/019d1234-5678-4abc-8def-1123456789ab.bin';
     expect(metadataDeleteSql([key, 'outbound/v1/not-managed.bin'])).toEqual([
-      `DELETE FROM workspace_attachments WHERE state IN ('uploading', 'failed', 'delete_pending') AND r2_key IN ('${key}')`,
-      `DELETE FROM workspace_r2_cleanup_queue WHERE r2_key IN ('${key}')`
+      `DELETE FROM workspace_attachments WHERE state IN ('uploading', 'failed', 'delete_pending') AND r2_key IN ('${key}')`
     ]);
+  });
+
+  test('parses bounded cleanup commands with safe dry-run defaults', () => {
+    expect(parseMaintenanceArgs(['cleanup-report'])).toMatchObject({ command: 'cleanup-report', apply: false, cleanupLimit: 50, cleanupMaxAttempts: 8 });
+    expect(parseMaintenanceArgs(['cleanup-drain', '--limit', '7', '--max-attempts', '3', '--json'])).toMatchObject({ command: 'cleanup-drain', cleanupLimit: 7, cleanupMaxAttempts: 3, json: true });
+    expect(() => parseMaintenanceArgs(['cleanup-drain', '--limit', '0'])).toThrow('--limit');
+    expect(() => parseMaintenanceArgs(['cleanup-drain', '--limit', '501'])).toThrow('--limit');
+    expect(() => parseMaintenanceArgs(['cleanup-drain', '--bucket', 'other-bucket'])).toThrow('--bucket');
+  });
+
+  test('derives cleanup buckets only from the selected BUCKET binding', () => {
+    const localConfig = `[vars]\nAPP_ENV = "development"\n\n[[r2_buckets]]\nbinding = "BUCKET"\nbucket_name = "mail-local"\npreview_bucket_name = "mail-preview"`;
+    const previewConfig = localConfig.replace('development', 'preview');
+    expect(configuredCleanupBucket(localConfig, false)).toBe('mail-local');
+    expect(configuredCleanupBucket(previewConfig, true)).toBe('mail-preview');
+    expect(() => configuredCleanupBucket(`[vars]\nAPP_ENV = "production"\n\n[[r2_buckets]]\nbinding = "BUCKET"\nbucket_name = "mail-production"`, true)).toThrow('Production cleanup is refused');
+    expect(() => configuredCleanupBucket(localConfig, true)).toThrow('APP_ENV=preview');
+    expect(maintenanceD1TargetFlag({ command: 'cleanup-report', remote: true })).toBe('--preview');
+    expect(maintenanceD1TargetFlag({ command: 'retention', remote: true })).toBe('--remote');
+    expect(maintenanceD1TargetFlag({ command: 'cleanup-drain', remote: false })).toBe('--local');
+  });
+
+  test('cleanup SQL is bounded and never selects legacy keys for automatic deletion', () => {
+    const now = '2026-08-20T00:00:00.000Z';
+    expect(cleanupCandidateSql(now, 10)).toContain("object_kind <> 'legacy'");
+    expect(cleanupCandidateSql(now, 10)).toContain('LIMIT 10');
+    expect(cleanupReportSql(now).counts).toContain('GROUP BY status, object_kind');
+    expect(cleanupReportSql(now).stale).toContain('lease_expires_at');
+  });
+
+  test('counts only non-legacy manual-review rows as retry eligible', () => {
+    expect(cleanupQueueSummary({ results: [
+      { status: 'manual_review', object_kind: 'legacy', count: 3 },
+      { status: 'manual_review', object_kind: 'attachment', count: 2 },
+      { status: 'completed', object_kind: 'raw', count: 4 }
+    ] }, { results: [{ count: 1 }] })).toMatchObject({
+      total: 9,
+      manualReview: 5,
+      retryEligible: 2,
+      legacy: 3,
+      staleProcessing: 1
+    });
   });
 });

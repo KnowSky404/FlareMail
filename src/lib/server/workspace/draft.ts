@@ -1,10 +1,11 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
-import { deleteBodyObjectRow, insertBodyObject, markBodyObjectDeletePending } from '$lib/server/db/body';
-import { prepareBodyObject, projectBody, putBodyObject } from '$lib/server/body';
+import { deleteBodyObjectRow, findBodyObject, insertBodyObject, markBodyObjectDeletePending } from '$lib/server/db/body';
+import { prepareBodyObject, projectBody, putBodyObject, readBodyObject } from '$lib/server/body';
 import { findOwnedDraft, insertDraft, overwriteDraft, updateDraftIfVersion } from '$lib/server/db/drafts';
 import { createDraftMessage, mapDraftRow, serializeDraftForInsert, type ComposeInput, type WorkspaceContext } from '$lib/server/workspace/shared';
 import { draftAttachmentSnapshot } from '$lib/server/workspace/attachment';
+import { sanitizeComposeInput } from '$lib/server/workspace/compose-body';
 
 export class DraftConflictError extends Error {
   readonly code = 'DRAFT_CONFLICT';
@@ -32,23 +33,25 @@ export class DraftBodyReloadRequiredError extends Error {
 
 export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session: WorkspaceContext, input: ComposeInput) {
   if (session.storage !== 'd1' || !env?.DB) throw new Error('工作区存储未配置，无法保存草稿。');
-  const requestedId = input.saveAsCopy ? undefined : input.draftId;
+  const normalizedInput = sanitizeComposeInput(input);
+  const requestedId = normalizedInput.saveAsCopy ? undefined : normalizedInput.draftId;
   const currentRow = requestedId ? await findOwnedDraft(env.DB, session.userId, requestedId) : null;
   if (requestedId && !currentRow) throw new DraftNotFoundError();
   if (
     currentRow
-    && input.attachmentRevision !== undefined
-    && Number(currentRow.attachment_revision ?? 0) !== input.attachmentRevision
-    && !input.overwrite
+    && normalizedInput.attachmentRevision !== undefined
+    && Number(currentRow.attachment_revision ?? 0) !== normalizedInput.attachmentRevision
+    && !normalizedInput.overwrite
   ) {
     throw new DraftConflictError(mapDraftRow(currentRow, session.profile));
   }
   const currentBodyRevision = currentRow?.body_object_id ?? null;
-  const requestedBodyRevision = input.bodyRevision?.trim() || null;
+  const requestedBodyRevision = normalizedInput.bodyRevision?.trim() || null;
   const preserveCanonicalBody = Boolean(
-    currentBodyRevision && !requestedBodyRevision && input.body === currentRow?.body
+    currentBodyRevision && !requestedBodyRevision && normalizedInput.body === currentRow?.body
+    && (!normalizedInput.html || !normalizedInput.html.trim())
   );
-  if (currentBodyRevision && requestedBodyRevision && requestedBodyRevision !== currentBodyRevision && !input.overwrite) {
+  if (currentBodyRevision && requestedBodyRevision && requestedBodyRevision !== currentBodyRevision && !normalizedInput.overwrite) {
     throw new DraftConflictError(mapDraftRow(currentRow!, session.profile));
   }
   if (currentBodyRevision && !requestedBodyRevision && !preserveCanonicalBody) {
@@ -59,13 +62,22 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
   const timestamp = currentRow && now <= currentRow.updated_at
     ? new Date(Date.parse(currentRow.updated_at) + 1).toISOString()
     : now;
-  const draft = createDraftMessage({ id: requestedId, from: session.profile, to: input.to, toEmail: input.toEmail, cc: input.cc, bcc: input.bcc,
-    subject: input.subject, body: input.body, starred: Boolean(currentRow?.is_starred), updatedAt: timestamp,
-    messageId: input.messageId, inReplyTo: input.inReplyTo, references: input.references });
+  const draft = createDraftMessage({ id: requestedId, from: session.profile, to: normalizedInput.to, toEmail: normalizedInput.toEmail, cc: normalizedInput.cc, bcc: normalizedInput.bcc,
+    subject: normalizedInput.subject, body: normalizedInput.body, html: normalizedInput.html, starred: Boolean(currentRow?.is_starred), updatedAt: timestamp,
+    messageId: normalizedInput.messageId, inReplyTo: normalizedInput.inReplyTo, references: normalizedInput.references });
   const serialized = serializeDraftForInsert(session.userId, draft);
   serialized.createdAt = currentRow?.created_at ?? timestamp;
   serialized.updatedAt = timestamp;
-  const bodyObject = preserveCanonicalBody ? null : await prepareBodyObject('draft', draft.id, draft.body);
+  let responseHtml = draft.html ?? '';
+  if (preserveCanonicalBody && currentBodyRevision) {
+    if (env.BUCKET && typeof env.BUCKET.get === 'function') {
+      const currentObject = await findBodyObject(env.DB, currentBodyRevision, session.userId, 'draft', draft.id);
+      if (!currentObject) throw new Error('BODY_OBJECT_NOT_FOUND');
+      responseHtml = (await readBodyObject(env.BUCKET, currentObject.r2_key, currentObject.size_bytes, currentObject.sha256)).htmlBody;
+      draft.html = responseHtml;
+    }
+  }
+  const bodyObject = preserveCanonicalBody ? null : await prepareBodyObject('draft', draft.id, draft.body, draft.html ?? '', { force: Boolean(draft.html?.trim()) });
   if (bodyObject && !env.BUCKET) throw new Error('BODY_STORAGE_UNAVAILABLE');
   if (bodyObject) await putBodyObject(env.BUCKET, bodyObject);
   const projection = projectBody(draft.body);
@@ -88,11 +100,11 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
       throw error;
     }
   } else {
-    const statement = input.overwrite
+    const statement = normalizedInput.overwrite
       ? overwriteDraft(env.DB, serialized)
-      : input.expectedUpdatedAt ? updateDraftIfVersion(env.DB, { ...serialized, expectedUpdatedAt: input.expectedUpdatedAt }) : null;
+      : normalizedInput.expectedUpdatedAt ? updateDraftIfVersion(env.DB, { ...serialized, expectedUpdatedAt: normalizedInput.expectedUpdatedAt }) : null;
     if (!statement) throw new DraftConflictError(mapDraftRow(currentRow, session.profile));
-    if (!input.overwrite && input.expectedUpdatedAt) {
+    if (!normalizedInput.overwrite && normalizedInput.expectedUpdatedAt) {
       // The CAS is deliberately executed before any pointer/cleanup mutation.
       // A conflict therefore leaves both the old pointer and its R2 metadata untouched.
       if (newBodyStatement) {
@@ -136,6 +148,7 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
   const attachmentSnapshot = await draftAttachmentSnapshot(env.DB, session.userId, draft.id);
   return {
     message: draft,
+    html: responseHtml,
     metrics: await getMailboxMetrics(env.DB, session.userId),
     bodyRevision: serialized.bodyObjectId,
     attachments: attachmentSnapshot.attachments,

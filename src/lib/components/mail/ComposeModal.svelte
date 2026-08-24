@@ -27,6 +27,7 @@
     toEmail: value?.toEmail ?? '',
     subject: value?.subject ?? '',
     body: value?.body ?? '',
+    html: value?.html ?? '',
     attachments: value?.attachments ?? [],
     attachmentRevision: value?.attachmentRevision ?? 0
   });
@@ -41,6 +42,7 @@
       toEmail: value.toEmail ?? '',
       subject: value.subject,
       body: value.body,
+      html: value.html ?? '',
       attachmentIds: (value.attachments ?? []).map((attachment) => attachment.id).filter(Boolean),
       attachmentRevision: value.attachmentRevision ?? 0,
       messageId: value.messageId ?? null,
@@ -52,6 +54,7 @@
     initialInput = null,
     draftId = undefined,
     expectedUpdatedAt = undefined,
+    bodyRevision = undefined,
     mode = 'new',
     profile,
     senderEmail = null,
@@ -79,6 +82,7 @@
     autosaveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
     autosaveMessage?: string;
     expectedUpdatedAt?: string | undefined;
+    bodyRevision?: string | null | undefined;
     onClose: (input: ComposeInput) => void | Promise<void>;
     /** Optional discard path; the parent can clear the live compose state without autosaving. */
     onDiscard?: () => void;
@@ -135,9 +139,14 @@
   $effect(() => {
     if (
       (draftId && input.draftId !== draftId) ||
-      (expectedUpdatedAt && input.expectedUpdatedAt !== expectedUpdatedAt)
+      (expectedUpdatedAt && input.expectedUpdatedAt !== expectedUpdatedAt) ||
+      (bodyRevision !== undefined && input.bodyRevision !== (bodyRevision ?? undefined))
     ) {
-      input = withComposePersistence(input, { draftId, expectedUpdatedAt });
+      input = withComposePersistence(input, {
+        draftId,
+        expectedUpdatedAt,
+        ...(bodyRevision !== undefined ? { bodyRevision } : {})
+      });
     }
   });
 
@@ -163,7 +172,7 @@
   });
   const validation = $derived(validateComposeInput(inputWithRecipientDrafts));
   const hasPendingRecipient = $derived(Object.values(recipientDraft).some((value) => value.trim().length > 0));
-  const isEmpty = $derived(!(Array.isArray(inputWithRecipientDrafts.to) ? inputWithRecipientDrafts.to.length : parseAddressList(inputWithRecipientDrafts.to ?? inputWithRecipientDrafts.toEmail ?? '').length) && !(Array.isArray(inputWithRecipientDrafts.cc) ? inputWithRecipientDrafts.cc.length : parseAddressList(inputWithRecipientDrafts.cc ?? '').length) && !(Array.isArray(inputWithRecipientDrafts.bcc) ? inputWithRecipientDrafts.bcc.length : parseAddressList(inputWithRecipientDrafts.bcc ?? '').length) && !inputWithRecipientDrafts.subject.trim() && !inputWithRecipientDrafts.body.trim() && !(inputWithRecipientDrafts.attachments?.length) && attachmentTasks.length === 0);
+  const isEmpty = $derived(!(Array.isArray(inputWithRecipientDrafts.to) ? inputWithRecipientDrafts.to.length : parseAddressList(inputWithRecipientDrafts.to ?? inputWithRecipientDrafts.toEmail ?? '').length) && !(Array.isArray(inputWithRecipientDrafts.cc) ? inputWithRecipientDrafts.cc.length : parseAddressList(inputWithRecipientDrafts.cc ?? '').length) && !(Array.isArray(inputWithRecipientDrafts.bcc) ? inputWithRecipientDrafts.bcc.length : parseAddressList(inputWithRecipientDrafts.bcc ?? '').length) && !inputWithRecipientDrafts.subject.trim() && !inputWithRecipientDrafts.body.trim() && !inputWithRecipientDrafts.html?.trim() && !(inputWithRecipientDrafts.attachments?.length) && attachmentTasks.length === 0);
   const isDirty = $derived(
     !isEmpty &&
       (hasPendingRecipient ||
@@ -479,7 +488,7 @@
   <form class="flex min-h-[34rem] flex-col gap-5 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
     <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)]">
       <span>工作区身份：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
-      <span class="hidden shrink-0 sm:inline">实际投递：{senderEmail ?? '尚未配置'} · 纯文本</span>
+      <span class="hidden shrink-0 sm:inline">实际投递：{senderEmail ?? '尚未配置'} · 纯文本回退，可选 HTML</span>
     </div>
 
     <div class="grid gap-4">
@@ -552,6 +561,18 @@
       error={fieldError('body')}
       class="min-h-[18rem] flex-1 max-sm:min-h-[12rem]"
       oninput={(event) => updateInput('body', event.currentTarget.value)}
+    />
+
+    <TextArea
+      id="compose-html"
+      label="HTML 源码（可选）"
+      hint="可选 HTML 源码；允许的标签会在服务端清洗。不填写时使用纯文本正文。"
+      rows={8}
+      placeholder="例如：<p>你好，<strong>世界</strong>。</p>"
+      value={input.html ?? ''}
+      error={fieldError('html')}
+      class="min-h-[10rem] max-w-full font-mono text-xs"
+      oninput={(event) => updateInput('html', event.currentTarget.value)}
     />
 
     <section class="grid gap-3" aria-labelledby="compose-attachments-title">

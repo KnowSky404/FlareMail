@@ -87,10 +87,10 @@
     position: relative;
     z-index: 40;
     display: none;
-    height: 52px;
+    height: calc(52px + env(safe-area-inset-top));
     align-items: center;
     gap: var(--space-2);
-    padding: 0 var(--space-2);
+    padding: env(safe-area-inset-top) var(--space-2) 0;
     border-bottom: 1px solid var(--fm-border);
     background: var(--fm-surface);
   }

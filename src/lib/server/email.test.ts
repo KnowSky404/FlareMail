@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createInboundDedupeKey, InboundRawLimitError, readBoundedRawEmail } from './email';
+import { createInboundDedupeKey, InboundRawLimitError, readBoundedRawEmail, resolveInboundCorrelationId } from './email';
+import { sha256Hex } from './attachment-integrity';
 
 const stream = (chunks: string[]) => new ReadableStream<Uint8Array>({
   start(controller) {
@@ -31,5 +32,19 @@ describe('inbound ingestion primitives', () => {
       .toBe(await createInboundDedupeKey(null, 'a@example.test', raw));
     expect(await createInboundDedupeKey(null, 'a@example.test', raw))
       .not.toBe(await createInboundDedupeKey(null, 'b@example.test', raw));
+  });
+
+  test('computes a stable lowercase SHA-256 for bounded attachment bytes', async () => {
+    expect(await sha256Hex(new TextEncoder().encode('attachment bytes')))
+      .toBe('2508f58332a50c3fee16cc39d28bd45b17d7c3d65ec32b7ebd024d55b7a1393d');
+  });
+
+  test('accepts only preview runtime correlation headers', () => {
+    const valid = 'flaremail-rc1-multiple-attachments';
+    expect(resolveInboundCorrelationId(new Headers({ 'X-FlareMail-Runtime-Correlation': valid }), 'preview')).toBe(valid);
+    expect(resolveInboundCorrelationId(new Headers({ 'X-FlareMail-Runtime-Correlation': valid }), 'production')).not.toBe(valid);
+    expect(resolveInboundCorrelationId(new Headers({ 'X-FlareMail-Runtime-Correlation': valid }))).not.toBe(valid);
+    expect(resolveInboundCorrelationId(new Headers({ 'X-FlareMail-Runtime-Correlation': valid }), 'staging')).not.toBe(valid);
+    expect(resolveInboundCorrelationId(new Headers({ 'X-FlareMail-Runtime-Correlation': 'operator-supplied' }), 'preview')).not.toBe('operator-supplied');
   });
 });

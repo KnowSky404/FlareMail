@@ -134,6 +134,8 @@ export interface MailMessage extends MailRfcHeaders {
   subject: string;
   preview: string;
   body: string;
+  /** Sanitized HTML body when the message was composed with rich content. */
+  html?: string;
   sentAt: string;
   labels: string[];
   read: boolean;
@@ -144,6 +146,7 @@ export interface MailMessage extends MailRfcHeaders {
   deliveryError?: string;
   deliveredAt?: string | null;
   deliveryProvider?: string | null;
+  deliveryProviderMessageId?: string | null;
   deliveryResultKind?: DeliveryResultKind | null;
   deliveryRemoteStatus?: number | null;
   deliveryResponsePreview?: string;
@@ -320,6 +323,8 @@ export interface ComposeInput extends MailRfcHeaders {
   attachmentRevision?: number;
   subject: string;
   body: string;
+  /** Optional HTML body. The server sanitizes it before persistence or delivery. */
+  html?: string;
 }
 
 export interface MessagePatch {
@@ -336,6 +341,7 @@ export interface DraftMessageInput {
   toEmail?: string;
   subject: string;
   body: string;
+  html?: string;
   starred?: boolean;
   updatedAt?: string;
   messageId?: string | null;

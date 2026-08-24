@@ -36,11 +36,20 @@ export function buildD1LikeSearchPattern(query: string): string {
 }
 
 export interface MailboxCursor {
-  version: 1;
+  version: 2;
   folder: MailFolder;
   section?: MailboxSection;
   timestamp: string;
   id: string;
+  query: string;
+  filter: MailboxFilter;
+  deliveryStatus: DeliveryStatus | null;
+}
+
+export interface MailboxCursorContext {
+  query: string;
+  filter: MailboxFilter;
+  deliveryStatus: DeliveryStatus | null;
 }
 
 export interface MailboxQuery {
@@ -60,25 +69,37 @@ const isIsoTimestamp = (value: string) => {
 };
 
 export function encodeMailboxCursor(cursor: Omit<MailboxCursor, 'version'>): string {
-  return btoa(JSON.stringify({ version: 1, ...cursor }))
+  return btoa(JSON.stringify({ version: 2, ...cursor }))
     .replaceAll('+', '-')
     .replaceAll('/', '_')
     .replace(/=+$/u, '');
 }
 
-export function decodeMailboxCursor(value: string, folder: MailFolder, section: MailboxSection = folder): MailboxCursor {
+export function decodeMailboxCursor(
+  value: string,
+  folder: MailFolder,
+  section: MailboxSection = folder,
+  expected: MailboxCursorContext
+): MailboxCursor {
   try {
     const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
     const parsed = JSON.parse(atob(padded)) as Partial<MailboxCursor>;
     if (
-      parsed.version !== 1 ||
+      parsed.version !== 2 ||
       parsed.folder !== folder ||
       (parsed.section !== undefined && parsed.section !== section) ||
       typeof parsed.timestamp !== 'string' ||
       !isIsoTimestamp(parsed.timestamp) ||
       typeof parsed.id !== 'string' ||
-      !/^[A-Za-z0-9:._-]{1,256}$/u.test(parsed.id)
+      !/^[A-Za-z0-9:._-]{1,256}$/u.test(parsed.id) ||
+      typeof parsed.query !== 'string' ||
+      parsed.query.length > 200 ||
+      !filters.has(parsed.filter as MailboxFilter) ||
+      (parsed.deliveryStatus !== null && !deliveryStatuses.has(parsed.deliveryStatus as DeliveryStatus)) ||
+      parsed.query !== expected.query ||
+      parsed.filter !== expected.filter ||
+      parsed.deliveryStatus !== expected.deliveryStatus
     ) throw new Error('invalid cursor');
     return parsed as MailboxCursor;
   } catch {
@@ -155,15 +176,20 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
     });
   }
 
+  const deliveryStatus = statusValue ? statusValue as DeliveryStatus : null;
   const cursorValue = params.get('cursor');
   return {
     folder,
-    cursor: cursorValue ? decodeMailboxCursor(cursorValue, folder, section) : null,
+    cursor: cursorValue ? decodeMailboxCursor(cursorValue, folder, section, {
+      query,
+      filter: filterValue as MailboxFilter,
+      deliveryStatus
+    }) : null,
     section,
     limit,
     query,
     search,
     filter: filterValue as MailboxFilter,
-    deliveryStatus: statusValue as DeliveryStatus | null
+    deliveryStatus
   };
 }

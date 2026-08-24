@@ -40,7 +40,11 @@ class Bucket {
     const bytes = this.objects.get(key);
     if (!bytes) return null;
     const body = new Response(bytes.slice().buffer as ArrayBuffer).body;
-    return { body, size: bytes.byteLength } as R2ObjectBody;
+    return {
+      body,
+      size: bytes.byteLength,
+      arrayBuffer: async () => bytes.slice().buffer as ArrayBuffer
+    } as R2ObjectBody;
   }
 }
 
@@ -137,6 +141,7 @@ describe('safe HTML workspace routes', () => {
     expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
     expect(response.headers.get('content-security-policy')).toContain("img-src 'self'");
+    expect(response.headers.get('content-security-policy')).toContain("img-src 'self' https://flaremail.test");
     expect(response.headers.get('content-security-policy')).toContain('sandbox allow-popups allow-popups-to-escape-sandbox');
     expect(response.headers.get('cross-origin-resource-policy')).toBe('same-origin');
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
@@ -161,7 +166,7 @@ describe('safe HTML workspace routes', () => {
     const html = await response.text();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-security-policy')).toContain("img-src 'self' https:");
+    expect(response.headers.get('content-security-policy')).toContain("img-src 'self' https://flaremail.test https:");
     expect(response.headers.get('content-security-policy')).not.toContain('http:');
     expect(html).toContain('https://tracker.example/pixel');
     expect(html).not.toContain('http://insecure.example/pixel');
