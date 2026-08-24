@@ -31,13 +31,14 @@ export function withComposeDraftId(input: ComposeInput, draftId?: string) {
 
 export function withComposePersistence(
   input: ComposeInput,
-  persistence: Pick<ComposeInput, 'draftId' | 'expectedUpdatedAt' | 'bodyRevision'> | null
+  persistence: (Pick<ComposeInput, 'draftId' | 'expectedUpdatedAt'> & { bodyRevision?: string | null }) | null
 ) {
+  const hasBodyRevision = Boolean(persistence && Object.prototype.hasOwnProperty.call(persistence, 'bodyRevision'));
   return {
     ...input,
     draftId: persistence?.draftId ?? input.draftId,
     expectedUpdatedAt: persistence?.expectedUpdatedAt ?? input.expectedUpdatedAt,
-    bodyRevision: persistence?.bodyRevision ?? input.bodyRevision
+    bodyRevision: hasBodyRevision ? persistence?.bodyRevision ?? undefined : input.bodyRevision
   };
 }
 

@@ -61,6 +61,7 @@ describe('compose controller', () => {
       expectedUpdatedAt: '2026-08-19T10:00:02.000Z',
       bodyRevision: 'body-object-3'
     });
+    expect(withComposePersistence(closing, { bodyRevision: null }).bodyRevision).toBeUndefined();
   });
 
   test('updates only persisted metadata when an earlier request finishes after a later edit', () => {

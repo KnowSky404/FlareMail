@@ -1828,6 +1828,7 @@
         autosaveStatus={composeAutosaveStatus}
         draftId={composeDraftId}
         expectedUpdatedAt={composeLiveInput?.expectedUpdatedAt}
+        bodyRevision={composeLiveInput ? composeLiveInput.bodyRevision ?? null : undefined}
         initialInput={composeInitialInput}
         mode={composeMode}
         pending={composeBusy}

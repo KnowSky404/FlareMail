@@ -54,6 +54,7 @@
     initialInput = null,
     draftId = undefined,
     expectedUpdatedAt = undefined,
+    bodyRevision = undefined,
     mode = 'new',
     profile,
     senderEmail = null,
@@ -81,6 +82,7 @@
     autosaveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
     autosaveMessage?: string;
     expectedUpdatedAt?: string | undefined;
+    bodyRevision?: string | null | undefined;
     onClose: (input: ComposeInput) => void | Promise<void>;
     /** Optional discard path; the parent can clear the live compose state without autosaving. */
     onDiscard?: () => void;
@@ -137,9 +139,14 @@
   $effect(() => {
     if (
       (draftId && input.draftId !== draftId) ||
-      (expectedUpdatedAt && input.expectedUpdatedAt !== expectedUpdatedAt)
+      (expectedUpdatedAt && input.expectedUpdatedAt !== expectedUpdatedAt) ||
+      (bodyRevision !== undefined && input.bodyRevision !== (bodyRevision ?? undefined))
     ) {
-      input = withComposePersistence(input, { draftId, expectedUpdatedAt });
+      input = withComposePersistence(input, {
+        draftId,
+        expectedUpdatedAt,
+        ...(bodyRevision !== undefined ? { bodyRevision } : {})
+      });
     }
   });
 
