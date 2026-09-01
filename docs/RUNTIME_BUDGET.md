@@ -7,9 +7,12 @@ Workers Free plan is supported only as best-effort after a real remote preview
 measurement; local wall time is not a substitute for Cloudflare `cpuTime` or
 invocation outcome.
 
-Do not lower PBKDF2 password-hash strength to fit a plan limit. If a workload is
-too expensive, change the deployment plan or workload shape deliberately and
-record the evidence.
+Authentication uses scrypt with `N=2^16`, `r=8`, and `p=2`: OWASP's 64 MiB
+profile and a combination verified in a real Workers remote preview. Workers
+rejects the previous 600,000-iteration PBKDF2 policy at runtime because its
+PBKDF2 implementation is capped at 100,000 iterations. Do not lower password-
+hash strength to fit a plan limit. If a workload is too expensive, change the
+deployment plan or workload shape deliberately and record the evidence.
 
 ## Persisted text and object budgets
 

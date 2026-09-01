@@ -1,4 +1,4 @@
-import { hashPassword, PASSWORD_HASH_ITERATIONS } from '../src/lib/server/auth/password';
+import { hashPassword, PASSWORD_HASH_COST } from '../src/lib/server/auth/password';
 import {
   createLocalWranglerEnvironment,
   inheritWranglerEnvironment
@@ -33,7 +33,7 @@ const statement = `
     credential_iterations, credential_updated_at, created_at, updated_at
   ) VALUES (
     ${sqlText(id)}, ${sqlText(email)}, ${sqlText(name)}, 'Workspace Owner', ${sqlText(email)},
-    '', '', 'UTC', 0, '', 0, ${sqlText(credentialHash)}, ${PASSWORD_HASH_ITERATIONS},
+    '', '', 'UTC', 0, '', 0, ${sqlText(credentialHash)}, ${PASSWORD_HASH_COST},
     ${sqlText(timestamp)}, ${sqlText(timestamp)}, ${sqlText(timestamp)}
   )
   ON CONFLICT(login_email) DO UPDATE SET

@@ -85,7 +85,7 @@ await run('bunx', [
   'wrangler', 'd1', 'migrations', 'apply', 'flaremail-db', '--local', '--config', 'wrangler.toml', '--persist-to', persistTo
 ]);
 
-const { hashPassword, PASSWORD_HASH_ITERATIONS } = await import('../../src/lib/server/auth/password');
+const { hashPassword, PASSWORD_HASH_COST } = await import('../../src/lib/server/auth/password');
 const credentialHash = await hashPassword(adminPassword);
 const seed = `
 INSERT OR IGNORE INTO workspace_users (
@@ -94,7 +94,7 @@ INSERT OR IGNORE INTO workspace_users (
   credential_iterations, credential_updated_at, created_at, updated_at
 ) VALUES (
   ${sql(userId)}, ${sql(adminEmail)}, 'E2E Administrator', 'Workspace Owner', ${sql(adminEmail)},
-  'FlareMail E2E', '', 'UTC', 1, '', 0, ${sql(credentialHash)}, ${PASSWORD_HASH_ITERATIONS},
+  'FlareMail E2E', '', 'UTC', 1, '', 0, ${sql(credentialHash)}, ${PASSWORD_HASH_COST},
   ${sql(timestamp)}, ${sql(timestamp)}, ${sql(timestamp)}
 );
 INSERT OR IGNORE INTO workspace_settings (user_id, theme, settings_json, created_at, updated_at)
