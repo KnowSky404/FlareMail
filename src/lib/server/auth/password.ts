@@ -1,9 +1,6 @@
-/**
- * Password hashing primitives that are available in both Workers and the
- * browser.  In particular, this module deliberately does not import
- * Node's `crypto` module: Cloudflare's Web Crypto implementation is the
- * runtime used in production.
- */
+import { pbkdf2 } from 'node:crypto';
+
+/** Password hashing primitives for server-side Workers code. */
 
 export const PASSWORD_HASH_ALGORITHM = 'PBKDF2-HMAC-SHA-256' as const;
 export const PASSWORD_HASH_VERSION = 1 as const;
@@ -53,8 +50,30 @@ function assertIterations(iterations: number): void {
 }
 
 async function derivePasswordKey(password: string, salt: Uint8Array, iterations: number): Promise<ArrayBuffer> {
-  const key = await crypto.subtle.importKey('raw', copyBuffer(encoder.encode(password)), { name: 'PBKDF2' }, false, ['deriveBits']);
-  return crypto.subtle.deriveBits({ name: 'PBKDF2', salt: copyBuffer(salt), iterations, hash: 'SHA-256' }, key, PASSWORD_KEY_BITS);
+  // Workers Web Crypto rejects PBKDF2 iteration counts above 100,000. The
+  // node:crypto implementation supports our 600,000-iteration policy while
+  // keeping the derivation asynchronous and the encoded hash compatible.
+  return new Promise((resolve, reject) => {
+    pbkdf2(encoder.encode(password), salt, iterations, PASSWORD_KEY_BITS / 8, 'sha256', (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(copyBuffer(derivedKey));
+    });
+  });
+}
+
+const DUMMY_PASSWORD_HASH = [
+  HASH_PREFIX,
+  String(PASSWORD_HASH_ITERATIONS),
+  toBase64Url(new Uint8Array(PASSWORD_SALT_BYTES)),
+  toBase64Url(new Uint8Array(PASSWORD_KEY_BITS / 8))
+].join('$');
+
+/** A valid non-secret hash used to equalise work for unknown login accounts. */
+export function getDummyPasswordHash(): string {
+  return DUMMY_PASSWORD_HASH;
 }
 
 /** Hash a password as `algorithm$iterations$salt$digest` using base64url. */

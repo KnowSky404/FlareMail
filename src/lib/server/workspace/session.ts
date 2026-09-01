@@ -1,7 +1,7 @@
 import type { Cookies } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { generateSessionToken, hashSessionToken } from '$lib/server/auth/token';
-import { hashPassword, verifyPassword } from '$lib/server/auth/password';
+import { getDummyPasswordHash, verifyPassword } from '$lib/server/auth/password';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import { createSession, revokeSessionByTokenHash, touchSession } from '$lib/server/db/sessions';
 import { findAuthUserByLogin } from '$lib/server/db/users';
@@ -16,12 +16,6 @@ export type CookieOptions = Parameters<Cookies['set']>[2];
 
 const SESSION_HOURS = 12;
 const REMEMBER_SESSION_DAYS = 7;
-let dummyCredentialHash: Promise<string> | null = null;
-
-async function getDummyCredentialHash() {
-  dummyCredentialHash ??= hashPassword(generateSessionToken());
-  return dummyCredentialHash;
-}
 
 export class WorkspaceAuthUnavailableError extends Error {
   constructor() {
@@ -80,7 +74,7 @@ export async function authenticateWorkspaceUser(
   } catch {
     throw new WorkspaceAuthUnavailableError();
   }
-  const credentialHash = user?.credential_hash ?? await getDummyCredentialHash();
+  const credentialHash = user?.credential_hash ?? getDummyPasswordHash();
   const passwordMatches = await verifyPassword(password, credentialHash);
   console.log(JSON.stringify({ event: 'auth_verify', outcome: user?.credential_hash && passwordMatches ? 'success' : 'rejected', durationMs: Date.now() - startedAt }));
   if (!user?.credential_hash || !passwordMatches) return null;
