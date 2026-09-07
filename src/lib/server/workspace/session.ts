@@ -29,15 +29,7 @@ export interface AuthenticatedWorkspace {
   token: string;
 }
 
-export function isSecureSessionRequest(url: URL, env?: CloudflareEnv): boolean {
-  if (url.protocol === 'https:') return true;
-  if (env?.APP_ORIGIN) {
-    try {
-      return new URL(env.APP_ORIGIN).protocol === 'https:';
-    } catch {
-      return url.protocol === 'https:';
-    }
-  }
+export function isSecureSessionRequest(url: URL): boolean {
   return url.protocol === 'https:';
 }
 

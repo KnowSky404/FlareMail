@@ -11,8 +11,5 @@ describe('request session cookie policy', () => {
   test('accepts legacy cookies only on local HTTP requests', () => {
     expect(sessionCookieNamesForRequest(new URL('http://127.0.0.1:8787')))
       .toEqual([workspaceSessionCookie, legacyWorkspaceSessionCookie]);
-    expect(sessionCookieNamesForRequest(new URL('http://127.0.0.1:8787'), {
-      APP_ORIGIN: 'https://mail.example.test'
-    } as never)).toEqual([secureWorkspaceSessionCookie]);
   });
 });

@@ -16,7 +16,6 @@ head_sampling_rate = 0.05
 
 [vars]
 APP_ENV = "production"
-APP_ORIGIN = "https://mail.example.com"
 OUTBOUND_PROVIDER = "resend"
 OUTBOUND_FROM_EMAIL = "flaremail@send.example.com"
 OUTBOUND_FROM_NAME = "FlareMail"

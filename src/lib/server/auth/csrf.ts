@@ -3,24 +3,18 @@ export type CsrfMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' |
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export interface CsrfCheckOptions {
-  /** The configured public origin, or an environment object containing APP_ORIGIN. */
-  appOrigin?: string | { APP_ORIGIN?: unknown };
   /** Webhook handlers must set this only after their provider signature check. */
   webhook?: boolean;
 }
-
-export type CsrfOptionsInput = CsrfCheckOptions | string | { APP_ORIGIN?: unknown };
 
 export interface CsrfCheckResult {
   ok: boolean;
   reason?: 'safe-method' | 'webhook' | 'missing-origin' | 'invalid-origin' | 'origin-mismatch';
 }
 
-function configuredOrigin(request: Request, appOrigin?: string | { APP_ORIGIN?: unknown }): string | null {
-  const configured = typeof appOrigin === 'object' ? appOrigin.APP_ORIGIN : appOrigin;
-  const value = typeof configured === 'string' && configured.trim() ? configured.trim() : new URL(request.url).origin;
+function requestOrigin(request: Request): string | null {
   try {
-    const parsed = new URL(value);
+    const parsed = new URL(request.url);
     if (!/^https?:$/u.test(parsed.protocol)) return null;
     return parsed.origin;
   } catch {
@@ -28,15 +22,12 @@ function configuredOrigin(request: Request, appOrigin?: string | { APP_ORIGIN?: 
   }
 }
 
-function normalizeOptions(options: CsrfOptionsInput): CsrfCheckOptions {
-  if (typeof options === 'string') return { appOrigin: options };
-  if ('APP_ORIGIN' in options && !('appOrigin' in options)) return { appOrigin: options };
-  return options as CsrfCheckOptions;
-}
-
-/** Check Origin for state-changing browser requests. */
-export function validateCsrfOrigin(request: Request, options: CsrfOptionsInput = {}): CsrfCheckResult {
-  options = normalizeOptions(options);
+/**
+ * Require state-changing browser requests to be same-origin with the actual
+ * incoming URL. This automatically supports every hostname routed to the
+ * Worker without maintaining a separate hostname allowlist.
+ */
+export function validateCsrfOrigin(request: Request, options: CsrfCheckOptions = {}): CsrfCheckResult {
   const method = request.method.toUpperCase();
   if (SAFE_METHODS.has(method)) return { ok: true, reason: 'safe-method' };
   if (options.webhook) {
@@ -46,7 +37,7 @@ export function validateCsrfOrigin(request: Request, options: CsrfOptionsInput =
 
   const origin = request.headers.get('Origin');
   if (!origin) return { ok: false, reason: 'missing-origin' };
-  const expected = configuredOrigin(request, options.appOrigin);
+  const expected = requestOrigin(request);
   if (!expected) return { ok: false, reason: 'invalid-origin' };
   try {
     return new URL(origin).origin === expected
@@ -57,11 +48,11 @@ export function validateCsrfOrigin(request: Request, options: CsrfOptionsInput =
   }
 }
 
-export function isValidCsrfOrigin(request: Request, options: CsrfOptionsInput = {}): boolean {
+export function isValidCsrfOrigin(request: Request, options: CsrfCheckOptions = {}): boolean {
   return validateCsrfOrigin(request, options).ok;
 }
 
-export function assertCsrfOrigin(request: Request, options: CsrfOptionsInput = {}): void {
+export function assertCsrfOrigin(request: Request, options: CsrfCheckOptions = {}): void {
   const result = validateCsrfOrigin(request, options);
   if (!result.ok) throw new Error(`CSRF origin validation failed: ${result.reason ?? 'unknown'}.`);
 }

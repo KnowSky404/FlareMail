@@ -28,7 +28,7 @@ describe('release preflight', () => {
     });
     expect(report.checks.find(({ category }) => category === 'config')).toMatchObject({
       status: 'PASS', details: {
-        appOriginConfigured: true,
+        browserOriginPolicy: 'request-url',
         officialResendOrigin: 'https://api.resend.com',
         resendCredentialPresent: false,
         webhookCredentialPresent: false

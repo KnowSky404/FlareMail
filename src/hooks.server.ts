@@ -25,8 +25,8 @@ const setSecurityHeaders = (response: Response, secure: boolean, requestId?: str
 };
 
 /** Do not accept a non-Host session cookie on a request that is externally HTTPS. */
-export function sessionCookieNamesForRequest(url: URL, env?: CloudflareEnv): readonly string[] {
-  return isSecureSessionRequest(url, env)
+export function sessionCookieNamesForRequest(url: URL): readonly string[] {
+  return isSecureSessionRequest(url)
     ? [secureWorkspaceSessionCookie]
     : [workspaceSessionCookie, legacyWorkspaceSessionCookie];
 }
@@ -48,7 +48,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (isApi) return failApi(error);
   }
   let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
-  const sessionToken = sessionCookieNamesForRequest(event.url, env)
+  const sessionToken = sessionCookieNamesForRequest(event.url)
     .map((name) => event.cookies.get(name))
     .find((value): value is string => Boolean(value)) ?? null;
 
@@ -81,7 +81,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   const isApiMutation = event.url.pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(event.request.method.toUpperCase());
   const isSignedWebhook = event.url.pathname === '/api/webhooks/resend';
   if (isApiMutation && !isSignedWebhook) {
-    const csrf = validateCsrfOrigin(event.request, { appOrigin: env?.APP_ORIGIN });
+    const csrf = validateCsrfOrigin(event.request);
     if (!csrf.ok) {
       return setSecurityHeaders(apiFailure(
         event,

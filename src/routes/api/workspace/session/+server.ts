@@ -62,7 +62,7 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   if (!authenticated) throw new ApiError(401, 'INVALID_CREDENTIALS', '账号或密码错误。');
 
   await clearLoginAttempts(env.DB, attemptKey);
-  const secure = isSecureSessionRequest(event.url, env);
+  const secure = isSecureSessionRequest(event.url);
   const cookieName = getWorkspaceSessionCookieName(secure);
   event.cookies.set(cookieName, authenticated.token, sessionCookieOptions(Boolean(payload.remember), secure));
   if (cookieName !== workspaceSessionCookie) event.cookies.delete(workspaceSessionCookie, clearSessionCookieOptions(false));

@@ -276,7 +276,6 @@ binding and observability settings, and must set reviewed values for at least:
 
 ```toml
 APP_ENV = "production"
-APP_ORIGIN = "https://mail.example.com"
 OUTBOUND_PROVIDER = "resend"
 OUTBOUND_FROM_EMAIL = "flaremail@send.example.com"
 OUTBOUND_FROM_NAME = "FlareMail"
@@ -286,11 +285,12 @@ INBOUND_NOTIFICATION_ENABLED = "true"
 NOTIFICATION_EMAIL = "ops@example.com"
 ```
 
-`APP_ORIGIN` must be the credential-free HTTPS origin with no path, query or
-fragment. Set notification and auto-reply switches deliberately; they are
-real outbound behavior. The `DB` binding must use the production D1 ID and the
-`BUCKET` binding must use the production R2 name. Keep `ASSETS`, logs, traces,
-and the checked-in compatibility date/flag aligned with the example.
+Browser mutation origin validation is derived from each incoming request URL,
+so production does not require a hostname allowlist variable. Set notification
+and auto-reply switches deliberately; they are real outbound behavior. The
+`DB` binding must use the production D1 ID and the `BUCKET` binding must use
+the production R2 name. Keep `ASSETS`, logs, traces, and the checked-in
+compatibility date/flag aligned with the example.
 
 Never put `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`,
 `CLOUDFLARE_API_TOKEN`, an administrator password or any other secret in TOML.
@@ -325,18 +325,17 @@ FLAREMAIL_ADMIN_EMAIL:              mail@example.com
 The lookup is case-insensitive, but do not rely on aliases or plus-addressing
 unless the current code and a controlled smoke test explicitly support them.
 
-#### APP_ORIGIN ↔ Worker Custom Domain
+#### Browser origin ↔ incoming Worker domain
 
-If the Worker Custom Domain is `mail.example.com`, configure:
+Every state-changing browser request must send an `Origin` that exactly
+matches that request's own URL origin. The application derives this value from
+the incoming Worker request, so all HTTPS Custom Domains attached to the Worker
+and its enabled `.workers.dev` hostname work without a separately maintained
+allowlist. Removing a domain or disabling `.workers.dev` makes that endpoint
+unreachable without requiring an application configuration change.
 
-```text
-APP_ORIGIN=https://mail.example.com
-```
-
-This origin participates in secure session-cookie selection, CSRF/Origin
-validation and the public webhook/API URL. A `.workers.dev` hostname may be
-used for an isolated bootstrap check, but production `APP_ORIGIN` must match
-the actual HTTPS Custom Domain exactly.
+Sessions use host-only cookies and are intentionally not shared across
+different domains. A user must sign in separately on each hostname.
 
 #### OUTBOUND_FROM_EMAIL ↔ Resend verified domain
 
@@ -541,9 +540,10 @@ Workers & Pages → flaremail → Settings → Domains & Routes
 → Add → Custom Domain → mail.example.com
 ```
 
-Verify that the public URL exactly matches `APP_ORIGIN`. `.workers.dev` can
-remain available as a diagnostic endpoint, but it is not a substitute for the
-configured production origin.
+Verify every intended public hostname over HTTPS. The same-origin policy will
+accept browser mutations on each hostname that actually reaches this Worker;
+`.workers.dev` may remain available as a separate endpoint or be disabled in
+Cloudflare when only Custom Domains should be exposed.
 
 Create the Resend webhook only after the Custom Domain resolves:
 

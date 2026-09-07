@@ -27,13 +27,9 @@ describe('workspace session cookie policy', () => {
     expect(sessionCookieOptions(false, false).maxAge).toBeUndefined();
   });
 
-  test('treats the configured public origin as authoritative', () => {
-    expect(isSecureSessionRequest(new URL('http://127.0.0.1:8787'), {
-      APP_ORIGIN: 'https://mail.example.test'
-    } as never)).toBe(true);
-  });
-
-  test('never downgrades an HTTPS request because APP_ORIGIN is malformed', () => {
-    expect(isSecureSessionRequest(new URL('https://mail.example.test'), { APP_ORIGIN: 'http://bad.example.test' } as never)).toBe(true);
+  test('derives cookie security from each incoming request URL', () => {
+    expect(isSecureSessionRequest(new URL('https://mail.example.test'))).toBe(true);
+    expect(isSecureSessionRequest(new URL('https://mail-secondary.example.test'))).toBe(true);
+    expect(isSecureSessionRequest(new URL('http://127.0.0.1:8787'))).toBe(false);
   });
 });

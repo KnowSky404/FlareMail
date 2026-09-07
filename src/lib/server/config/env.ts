@@ -5,7 +5,6 @@ export type AppEnv = (typeof APP_ENV_VALUES)[number];
 
 export interface RuntimeConfig {
   appEnv: AppEnv;
-  appOrigin: string | null;
   outboundProvider: string | null;
   hasD1: boolean;
   hasR2: boolean;
@@ -17,8 +16,6 @@ export interface RuntimeConfig {
 export interface EnvironmentDiagnostic {
   code:
     | 'invalid_app_env'
-    | 'missing_app_origin'
-    | 'invalid_app_origin'
     | 'missing_d1'
     | 'missing_r2'
     | 'missing_resend_api_key'
@@ -65,19 +62,6 @@ export function parseBoolean(value: unknown, fallback = false): boolean {
   return fallback;
 }
 
-function parseOrigin(value: string | null): { value: string | null; invalid: boolean } {
-  if (!value) return { value: null, invalid: false };
-  try {
-    const parsed = new URL(value);
-    if (!/^https?:$/u.test(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') {
-      return { value: null, invalid: true };
-    }
-    return { value: parsed.origin, invalid: false };
-  } catch {
-    return { value: null, invalid: true };
-  }
-}
-
 export function parseAppEnv(value: unknown): AppEnv {
   if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) return 'development';
   if (typeof value === 'string' && APP_ENV_VALUES.includes(value.trim().toLowerCase() as AppEnv)) {
@@ -100,7 +84,6 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
     // constructing them. An invalid value is still an error below.
     appEnv = 'development';
   }
-  const origin = parseOrigin(asString(environment.APP_ORIGIN));
   const provider = asString(environment.OUTBOUND_PROVIDER);
   const hasD1 = Boolean(environment.DB);
   const hasR2 = Boolean(environment.BUCKET);
@@ -119,10 +102,6 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   if (rawEnvValue && !APP_ENV_VALUES.includes(rawEnvValue.toLowerCase() as AppEnv)) {
     error('invalid_app_env', 'APP_ENV must be development, preview, test, or production.');
   }
-  if (origin.invalid || (appEnv === 'production' && origin.value && new URL(origin.value).protocol !== 'https:')) {
-    error('invalid_app_origin', 'APP_ORIGIN must be a credential-free HTTPS origin in production.');
-  }
-  if (appEnv === 'production' && !origin.value) error('missing_app_origin', 'Production requires APP_ORIGIN.');
   if (appEnv === 'production' && !hasD1) error('missing_d1', 'Production requires a D1 binding.');
   if (appEnv === 'production' && !hasR2) error('missing_r2', 'Production requires an R2 binding.');
   if (appEnv === 'production' && !hasResendApiKey) error('missing_resend_api_key', 'Production requires a Resend API key.');
@@ -175,7 +154,6 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
 
   const config: RuntimeConfig = {
     appEnv,
-    appOrigin: origin.value,
     outboundProvider: provider,
     hasD1,
     hasR2,

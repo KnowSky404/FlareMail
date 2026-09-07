@@ -5,7 +5,6 @@
  */
 declare global {
   interface CloudflareEnv {
-    APP_ORIGIN?: string;
     APP_VERSION?: string;
     RESEND_API_KEY?: string;
     /** Legacy outbound sender alias retained for the compatibility send API. */

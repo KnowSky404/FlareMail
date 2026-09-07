@@ -224,7 +224,7 @@ async function checkConfig(root: string): Promise<PreflightCheck> {
   const deployProvider = tomlValue(deployExample, 'OUTBOUND_PROVIDER');
   const compatibilityDate = tomlValue(publicConfig, 'compatibility_date');
   const deployCompatibilityDate = tomlValue(deployExample, 'compatibility_date');
-  const appOrigin = tomlValue(deployExample, 'APP_ORIGIN');
+  const legacyAppOrigin = tomlValue(deployExample, 'APP_ORIGIN');
   const resendBaseUrl = tomlValue(deployExample, 'RESEND_API_BASE_URL');
   const d1StructuralPlaceholder = /database_id\s*=\s*"0{8}-0{4}-0{4}-0{4}-0{12}"/u.test(publicConfig);
   const r2StructuralPlaceholder = /bucket_name\s*=\s*"flaremail-bucket"/u.test(publicConfig);
@@ -235,7 +235,7 @@ async function checkConfig(root: string): Promise<PreflightCheck> {
   const valid = publicEnv === 'development' && /^(demo|fake)$/u.test(publicProvider ?? '') &&
     deployEnv === 'production' && deployProvider === 'resend' &&
     /^\d{4}-\d{2}-\d{2}$/u.test(compatibilityDate ?? '') && compatibilityDate === deployCompatibilityDate &&
-    Boolean(appOrigin?.startsWith('https://')) &&
+    !legacyAppOrigin &&
     (!resendBaseUrl || resendBaseUrl === 'https://api.resend.com') &&
     d1StructuralPlaceholder && r2StructuralPlaceholder && !unsafeSecret;
   if (!valid) return fail('config', 'Checked-in development/deploy-example boundaries are invalid.');
@@ -245,7 +245,7 @@ async function checkConfig(root: string): Promise<PreflightCheck> {
     exampleEnvironment: deployEnv,
     exampleProvider: deployProvider,
     compatibilityDate,
-    appOriginConfigured: Boolean(appOrigin),
+    browserOriginPolicy: 'request-url',
     officialResendOrigin: resendBaseUrl ?? 'https://api.resend.com',
     d1StructuralPlaceholder,
     r2StructuralPlaceholder,

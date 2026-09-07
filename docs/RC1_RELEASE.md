@@ -60,8 +60,9 @@ attempting a destructive downgrade.
 
 - No production secret, resource identifier, bucket name, or private Wrangler
   file is added to Git.
-- Production still requires `APP_ENV=production`, HTTPS `APP_ORIGIN`, D1/R2,
-  Resend secrets, and `OUTBOUND_PROVIDER=resend`; fake providers fail closed.
+- Production still requires `APP_ENV=production`, D1/R2, Resend secrets, and
+  `OUTBOUND_PROVIDER=resend`; browser origins are validated dynamically against
+  each incoming request URL, and fake providers fail closed.
 - The public product surface remains compatible. Integrity failures now return
   controlled missing/size/checksum errors and never return corrupt bytes.
 - Maintenance and repair mutations require explicit environment and apply

@@ -39,8 +39,7 @@ recipient addresses or full R2 keys into shared evidence.
   `wrangler.deploy.toml.example` and `git check-ignore wrangler.deploy.toml`
   confirms it is ignored.
 - [ ] `wrangler.toml` is not being used for a production deploy.
-- [ ] `APP_ENV=production` and `APP_ORIGIN` is the credential-free HTTPS origin
-  of the actual Worker Custom Domain.
+- [ ] `APP_ENV=production`; every browser-facing Worker hostname is HTTPS.
 - [ ] `OUTBOUND_PROVIDER=resend` and `RESEND_API_BASE_URL` is the official
   `https://api.resend.com` origin or is omitted to use the code default.
 - [ ] `DB`, `BUCKET` and `ASSETS` bindings point to the reviewed production
@@ -53,8 +52,8 @@ recipient addresses or full R2 keys into shared evidence.
   `NOTIFICATION_EMAIL` were reviewed as real outbound behavior.
 - [ ] The Email Routing recipient exactly matches the bootstrapped
   administrator's `login_email`/`email` under the current owner lookup.
-- [ ] `APP_ORIGIN` exactly matches the Custom Domain used by the Web UI and
-  webhook endpoint.
+- [ ] Browser mutations are same-origin on every intended Worker hostname;
+  cross-origin and missing-`Origin` mutations are rejected.
 
 ## D1 target and migration evidence
 
@@ -135,8 +134,8 @@ recipient addresses or full R2 keys into shared evidence.
 
 - [ ] Resend sending domain DNS is verified; SPF is merged into one SPF record,
   DKIM uses the dashboard-generated selector/target, and DMARC is reviewed.
-- [ ] Resend webhook endpoint is exactly
-  `https://<APP_ORIGIN_HOST>/api/webhooks/resend`.
+- [ ] Resend webhook endpoint uses one stable Worker hostname:
+  `https://<PUBLIC_HOST>/api/webhooks/resend`.
 - [ ] The webhook subscribes to the code-supported events:
   `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`,
   `email.failed`, `email.complained`, and `email.suppressed`. `email.opened`
@@ -146,7 +145,7 @@ recipient addresses or full R2 keys into shared evidence.
   code/config/bindings/secrets form one reviewed release. If the fallback
   `secret put` process was used, Email Routing remained disabled while the
   intermediate versions were incomplete and a final `bun run deploy` followed.
-- [ ] `GET https://<APP_ORIGIN_HOST>/api/health` returns HTTP 200.
+- [ ] `GET https://<PUBLIC_HOST>/api/health` returns HTTP 200.
 - [ ] Email Routing **Destination Addresses** contains an operator-controlled
   mailbox whose verification email was completed. This is Cloudflare's setup
   destination, not the incoming FlareMail recipient.

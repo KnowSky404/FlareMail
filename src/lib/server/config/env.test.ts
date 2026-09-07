@@ -4,7 +4,6 @@ import { assertValidEnvironment, parseAppEnv, parseEnvironment, resolveOutboundF
 const bindings = {
   DB: {},
   BUCKET: {},
-  APP_ORIGIN: 'https://mail.example.test',
   RESEND_API_KEY: 'placeholder',
   RESEND_WEBHOOK_SECRET: `whsec_${btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))}`,
   OUTBOUND_FROM_EMAIL: 'mail@example.test',
@@ -24,8 +23,7 @@ describe('runtime environment validation', () => {
       ['BUCKET', 'missing_r2'],
       ['RESEND_API_KEY', 'missing_resend_api_key'],
       ['RESEND_WEBHOOK_SECRET', 'missing_resend_webhook_secret'],
-      ['OUTBOUND_FROM_EMAIL', 'missing_outbound_from'],
-      ['APP_ORIGIN', 'missing_app_origin']
+      ['OUTBOUND_FROM_EMAIL', 'missing_outbound_from']
     ] as const;
 
     for (const [input, diagnostic] of requiredProductionInputs) {
@@ -75,9 +73,7 @@ describe('runtime environment validation', () => {
     expect(validateEnvironment({ ...bindings, APP_ENV: 'production', OUTBOUND_PROVIDER: 'fake' }).errors.map(({ code }) => code)).toContain('fake_services_in_production');
   });
 
-  test('rejects insecure or decorated production origins and unsafe provider settings', () => {
-    expect(validateEnvironment({ ...bindings, APP_ENV: 'production', OUTBOUND_PROVIDER: 'resend', APP_ORIGIN: 'http://mail.example.test' }).errors.map(({ code }) => code)).toContain('invalid_app_origin');
-    expect(validateEnvironment({ ...bindings, APP_ENV: 'production', OUTBOUND_PROVIDER: 'resend', APP_ORIGIN: 'https://user:pass@mail.example.test/?x=1' }).errors.map(({ code }) => code)).toContain('invalid_app_origin');
+  test('rejects unsafe provider settings', () => {
     expect(validateEnvironment({ ...bindings, APP_ENV: 'production', OUTBOUND_PROVIDER: 'resend', RESEND_WEBHOOK_SECRET: 'placeholder' }).errors.map(({ code }) => code)).toContain('invalid_webhook_secret');
     expect(validateEnvironment({ ...bindings, APP_ENV: 'production', OUTBOUND_PROVIDER: 'resend', RESEND_API_BASE_URL: 'https://resend.example.test' }).errors.map(({ code }) => code)).toContain('invalid_resend_api_base_url');
     expect(validateEnvironment({ ...bindings, APP_ENV: 'production', OUTBOUND_PROVIDER: 'resend', INBOUND_NOTIFICATION_ENABLED: 'yes' }).errors.map(({ code }) => code)).toContain('invalid_boolean');
