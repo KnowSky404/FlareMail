@@ -226,6 +226,12 @@ async function checkConfig(root: string): Promise<PreflightCheck> {
   const deployCompatibilityDate = tomlValue(deployExample, 'compatibility_date');
   const legacyAppOrigin = tomlValue(deployExample, 'APP_ORIGIN');
   const resendBaseUrl = tomlValue(deployExample, 'RESEND_API_BASE_URL');
+  const publicTelegramEnabled = tomlValue(publicConfig, 'TELEGRAM_ENABLED');
+  const deployTelegramEnabled = tomlValue(deployExample, 'TELEGRAM_ENABLED');
+  const publicTelegramUsername = tomlValue(publicConfig, 'TELEGRAM_BOT_USERNAME');
+  const deployTelegramUsername = tomlValue(deployExample, 'TELEGRAM_BOT_USERNAME');
+  const publicCron = /\[triggers\][\s\S]*?crons\s*=\s*\[\s*"\* \* \* \* \*"\s*\]/u.test(publicConfig);
+  const deployCron = /\[triggers\][\s\S]*?crons\s*=\s*\[\s*"\* \* \* \* \*"\s*\]/u.test(deployExample);
   const d1StructuralPlaceholder = /database_id\s*=\s*"0{8}-0{4}-0{4}-0{4}-0{12}"/u.test(publicConfig);
   const r2StructuralPlaceholder = /bucket_name\s*=\s*"flaremail-bucket"/u.test(publicConfig);
   const unsafeSecret = hasAny(`${publicConfig}\n${deployExample}`, [
@@ -235,6 +241,9 @@ async function checkConfig(root: string): Promise<PreflightCheck> {
   const valid = publicEnv === 'development' && /^(demo|fake)$/u.test(publicProvider ?? '') &&
     deployEnv === 'production' && deployProvider === 'resend' &&
     /^\d{4}-\d{2}-\d{2}$/u.test(compatibilityDate ?? '') && compatibilityDate === deployCompatibilityDate &&
+    publicTelegramEnabled === 'false' && deployTelegramEnabled === 'false' &&
+    publicTelegramUsername === 'replace_with_bot_username' && deployTelegramUsername === 'replace_with_bot_username' &&
+    publicCron && deployCron &&
     !legacyAppOrigin &&
     (!resendBaseUrl || resendBaseUrl === 'https://api.resend.com') &&
     d1StructuralPlaceholder && r2StructuralPlaceholder && !unsafeSecret;
@@ -247,6 +256,8 @@ async function checkConfig(root: string): Promise<PreflightCheck> {
     compatibilityDate,
     browserOriginPolicy: 'request-url',
     officialResendOrigin: resendBaseUrl ?? 'https://api.resend.com',
+    telegramDisabledInTemplates: publicTelegramEnabled === 'false' && deployTelegramEnabled === 'false',
+    scheduledDispatcher: publicCron && deployCron,
     d1StructuralPlaceholder,
     r2StructuralPlaceholder,
     resendCredentialPresent: false,

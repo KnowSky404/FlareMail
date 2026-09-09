@@ -120,7 +120,8 @@ describe('versioned D1 migrations', () => {
       '0015_search_fts.sql',
       '0016_outbound_attachments.sql',
       '0017_r2_cleanup_queue_reliability.sql',
-      '0018_outbound_rate_limits.sql'
+      '0018_outbound_rate_limits.sql',
+      '0019_telegram_notifications.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -195,6 +196,33 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_outbound_rate_limits')).toEqual(
       new Set(['user_id', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'])
     );
+    expect(tableColumns(db, 'workspace_telegram_bindings')).toEqual(new Set([
+      'user_id', 'binding_id', 'state', 'telegram_user_id', 'telegram_chat_id',
+      'telegram_username', 'telegram_display_name', 'candidate_challenge_id',
+      'candidate_expires_at', 'enabled', 'privacy_mode', 'summary_enabled',
+      'authorization_version', 'bound_at', 'confirmed_at', 'revoked_at',
+      'last_sent_at', 'last_error_code', 'last_error_at', 'created_at', 'updated_at'
+    ]));
+    expect(tableColumns(db, 'workspace_telegram_bind_challenges')).toEqual(new Set([
+      'id', 'owner_user_id', 'token_hash', 'status', 'expires_at', 'consumed_at',
+      'replaced_at', 'created_at', 'updated_at'
+    ]));
+    expect(tableColumns(db, 'workspace_telegram_updates')).toEqual(new Set([
+      'update_id', 'processing_token', 'status', 'result_code', 'created_at', 'processed_at'
+    ]));
+    expect(tableColumns(db, 'workspace_telegram_deliveries')).toEqual(new Set([
+      'id', 'owner_user_id', 'email_message_id', 'channel', 'binding_id',
+      'authorization_version', 'status', 'attempts', 'max_attempts', 'next_attempt_at',
+      'claim_token', 'lease_expires_at', 'external_started', 'external_started_at',
+      'telegram_message_id', 'last_error_code', 'last_error_at', 'completed_at',
+      'created_at', 'updated_at'
+    ]));
+    expect(tableColumns(db, 'workspace_telegram_rate_limits')).toEqual(new Set([
+      'user_id', 'action', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'
+    ]));
+    expect(tableColumns(db, 'workspace_telegram_delivery_limits')).toEqual(new Set([
+      'scope', 'next_allowed_at', 'cooldown_until', 'updated_at'
+    ]));
     expect(tableColumns(db, 'workspace_inbound_ingest_claims')).toEqual(
       new Set(['dedupe_key', 'storage_id', 'claim_token', 'raw_key', 'status', 'created_at', 'updated_at', 'completed_at'])
     );
@@ -202,7 +230,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 18 }
+      { schema_name: 'flaremail', schema_version: 19 }
     ]);
 
     expect(indexNames(db, 'email_messages')).toEqual(
@@ -240,6 +268,17 @@ describe('versioned D1 migrations', () => {
     );
     expect(indexNames(db, 'workspace_outbound_rate_limits')).toEqual(
       new Set(['idx_workspace_outbound_rate_limits_reset_at'])
+    );
+    expect(indexNames(db, 'workspace_telegram_bind_challenges')).toEqual(
+      new Set(['idx_workspace_telegram_challenges_owner', 'idx_workspace_telegram_challenges_expiry'])
+    );
+    expect(indexNames(db, 'workspace_telegram_deliveries')).toEqual(
+      new Set([
+        'idx_workspace_telegram_deliveries_claim',
+        'idx_workspace_telegram_deliveries_lease',
+        'idx_workspace_telegram_deliveries_owner_history',
+        'idx_workspace_telegram_deliveries_email'
+      ])
     );
 
     // The complete state CHECK and idempotency/dedupe uniqueness are real D1

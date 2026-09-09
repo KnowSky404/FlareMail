@@ -66,6 +66,42 @@ do not turn a storage or schema failure into the login page.
 and `workspace_schema_metadata` equals the exact application schema version.
 Otherwise it returns HTTP `503` with a typed safe error and correlation ID.
 
+## Telegram notification API
+
+Telegram routes are authenticated workspace operations and use the standard
+`{ ok, data, requestId }` envelope with `cache-control: private, no-store`.
+They never return the Bot token or Telegram chat ID and cannot select another
+user's binding or delivery rows.
+
+- `GET /api/workspace/notifications/telegram/settings` returns global enabled
+  state, configuration/schema readiness, the current user's candidate/active
+  binding state, privacy/summary switches, and a small recent-delivery list.
+- `POST /api/workspace/notifications/telegram/bind` creates a 10-minute,
+  one-time deep link. The token is returned only in that authenticated response
+  and is stored only as a hash. An active binding must be explicitly unbound
+  before it can be replaced.
+- `POST /api/workspace/notifications/telegram/confirm` promotes the current
+  candidate to an active but disabled binding.
+- `PATCH /api/workspace/notifications/telegram/settings` accepts boolean
+  `enabled`, `privacyMode`, and/or `summaryEnabled`. Enabling requires an
+  active binding; `forwardingEnabled` and `INBOUND_NOTIFICATION_ENABLED` are
+  separate legacy controls.
+- `POST /api/workspace/notifications/telegram/test` sends only a fixed safe
+  test line to the current active/enabled chat.
+- `POST /api/workspace/notifications/telegram/unbind` revokes the binding,
+  increments its authorization version, and cancels pending/not-started rows.
+- `GET /api/workspace/notifications/telegram/deliveries?limit=...` returns
+  owner-scoped status metadata without body or attachment content.
+- `POST /api/workspace/notifications/telegram/deliveries/:id/retry` is a
+  manual owner-scoped retry for failed/retryable/unknown rows. The response
+  carries a manual-duplicate warning for `unknown_delivery`.
+
+`POST /api/webhooks/telegram` is not a browser API. It validates
+`X-Telegram-Bot-Api-Secret-Token` before parsing or D1 access, accepts only
+private non-bot chats, and deduplicates by Telegram `update_id`. See
+[docs/TELEGRAM.md](./TELEGRAM.md) for setup, Cron and production evidence
+limits.
+
 ## `/api/send` compatibility contract
 
 `POST /api/send` is a compatibility adapter for the first-generation compose

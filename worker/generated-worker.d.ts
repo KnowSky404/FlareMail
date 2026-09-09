@@ -6,6 +6,11 @@ declare module '*build/_worker.js' {
       env: import('../src/lib/server/cloudflare').CloudflareEnv,
       ctx: ExecutionContext
     ): Promise<Response> | Response;
+    scheduled(
+      controller: ScheduledController,
+      env: import('../src/lib/server/cloudflare').CloudflareEnv,
+      ctx: ExecutionContext
+    ): Promise<void> | void;
   };
 
   export default worker;

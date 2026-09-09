@@ -9,6 +9,12 @@ export interface RuntimeConfig {
   hasD1: boolean;
   hasR2: boolean;
   hasResendApiKey: boolean;
+  hasTelegramBotToken: boolean;
+  hasTelegramWebhookSecret: boolean;
+  telegramEnabled: boolean;
+  telegramConfigured: boolean;
+  telegramBotUsername: string | null;
+  appBaseUrl: string | null;
   fakeServicesExplicit: boolean;
   diagnostics: EnvironmentDiagnostic[];
 }
@@ -29,7 +35,15 @@ export interface EnvironmentDiagnostic {
     | 'invalid_boolean'
     | 'invalid_email'
     | 'invalid_webhook_secret'
-    | 'invalid_resend_api_base_url';
+    | 'invalid_resend_api_base_url'
+    | 'missing_telegram_bot_token'
+    | 'missing_telegram_webhook_secret'
+    | 'missing_telegram_bot_username'
+    | 'missing_app_base_url'
+    | 'invalid_telegram_bot_token'
+    | 'invalid_telegram_webhook_secret'
+    | 'invalid_telegram_bot_username'
+    | 'invalid_app_base_url';
   severity: 'error' | 'warning';
   message: string;
 }
@@ -45,6 +59,31 @@ type RawEnvironment = Record<string, unknown>;
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+const TELEGRAM_USERNAME_PATTERN = /^[A-Za-z0-9_]{5,32}$/u;
+
+export function parseTrustedAppBaseUrl(value: unknown, appEnv: AppEnv): string | null {
+  const raw = asString(value);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    const localHttp = appEnv !== 'production' && appEnv !== 'preview' && parsed.protocol === 'http:' &&
+      (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost' || parsed.hostname === '[::1]');
+    if ((!['https:'].includes(parsed.protocol) && !localHttp) || parsed.pathname !== '/' ||
+      parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function isValidTelegramBotToken(value: unknown): value is string {
+  return typeof value === 'string' && /^[^\s:]{3,64}:[A-Za-z0-9_-]{16,256}$/u.test(value.trim());
+}
+
+export function isValidTelegramWebhookSecret(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length >= 16 && value.trim().length <= 256 && !/[\r\n]/u.test(value);
 }
 
 export function resolveOutboundFromEmail(
@@ -89,6 +128,12 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   const hasR2 = Boolean(environment.BUCKET);
   const hasResendApiKey = Boolean(asString(environment.RESEND_API_KEY));
   const hasResendWebhookSecret = Boolean(asString(environment.RESEND_WEBHOOK_SECRET));
+  const hasTelegramBotToken = Boolean(asString(environment.TELEGRAM_BOT_TOKEN));
+  const hasTelegramWebhookSecret = Boolean(asString(environment.TELEGRAM_WEBHOOK_SECRET));
+  const telegramEnabled = parseBoolean(environment.TELEGRAM_ENABLED);
+  const telegramBotUsername = asString(environment.TELEGRAM_BOT_USERNAME);
+  const hasTelegramBotUsername = Boolean(telegramBotUsername);
+  const appBaseUrl = parseTrustedAppBaseUrl(environment.APP_BASE_URL, appEnv);
   const outboundFrom = asString(environment.OUTBOUND_FROM_EMAIL);
   const mailFrom = asString(environment.MAIL_FROM);
   const effectiveOutboundFrom = resolveOutboundFromEmail(environment);
@@ -111,6 +156,16 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   }
   if (appEnv === 'production' && !outboundFrom && !mailFrom) error('missing_outbound_from', 'Production requires OUTBOUND_FROM_EMAIL or MAIL_FROM.');
   if (appEnv === 'production' && effectiveOutboundFrom && !isEmail(effectiveOutboundFrom)) error('invalid_email', 'The configured outbound sender must be a valid email address.');
+  if (telegramEnabled) {
+    if (!hasTelegramBotToken) error('missing_telegram_bot_token', 'TELEGRAM_BOT_TOKEN is required when Telegram notifications are enabled.');
+    if (!hasTelegramWebhookSecret) error('missing_telegram_webhook_secret', 'TELEGRAM_WEBHOOK_SECRET is required when Telegram notifications are enabled.');
+    if (!hasTelegramBotUsername) error('missing_telegram_bot_username', 'TELEGRAM_BOT_USERNAME is required when Telegram notifications are enabled.');
+    if (!asString(environment.APP_BASE_URL)) error('missing_app_base_url', 'APP_BASE_URL is required when Telegram notifications are enabled.');
+    if (hasTelegramBotToken && !isValidTelegramBotToken(environment.TELEGRAM_BOT_TOKEN)) error('invalid_telegram_bot_token', 'TELEGRAM_BOT_TOKEN has an invalid format.');
+    if (hasTelegramWebhookSecret && !isValidTelegramWebhookSecret(environment.TELEGRAM_WEBHOOK_SECRET)) error('invalid_telegram_webhook_secret', 'TELEGRAM_WEBHOOK_SECRET has an invalid format.');
+    if (telegramBotUsername && !TELEGRAM_USERNAME_PATTERN.test(telegramBotUsername)) error('invalid_telegram_bot_username', 'TELEGRAM_BOT_USERNAME has an invalid format.');
+    if (asString(environment.APP_BASE_URL) && !appBaseUrl) error('invalid_app_base_url', 'APP_BASE_URL must be a credential-free HTTPS origin.');
+  }
   const notificationEmail = asString(environment.NOTIFICATION_EMAIL);
   if (notificationsEnabled && !notificationEmail) error('invalid_email', 'NOTIFICATION_EMAIL is required when notifications are enabled.');
   if (notificationsEnabled && notificationEmail && !isEmail(notificationEmail)) error('invalid_email', 'NOTIFICATION_EMAIL must be a valid email address.');
@@ -128,7 +183,7 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   } else if (provider && /^(demo|fake)$/iu.test(provider) && !fakeServicesExplicit) {
     error('fake_services_not_explicit', 'Fake outbound services require ALLOW_FAKE_SERVICES=true (or an equivalent explicit flag).');
   }
-  for (const name of ['AUTO_REPLY_ENABLED', 'INBOUND_NOTIFICATION_ENABLED', 'ALLOW_FAKE_SERVICES', 'DEV_FAKE_SERVICES', 'USE_FAKE_SERVICES']) {
+  for (const name of ['AUTO_REPLY_ENABLED', 'INBOUND_NOTIFICATION_ENABLED', 'TELEGRAM_ENABLED', 'ALLOW_FAKE_SERVICES', 'DEV_FAKE_SERVICES', 'USE_FAKE_SERVICES']) {
     const raw = environment[name];
     if (raw !== undefined && raw !== null && typeof raw !== 'boolean' && !['true', 'false'].includes(String(raw).trim().toLowerCase())) {
       error('invalid_boolean', `${name} must be true or false.`);
@@ -158,6 +213,14 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
     hasD1,
     hasR2,
     hasResendApiKey,
+    hasTelegramBotToken,
+    hasTelegramWebhookSecret,
+    telegramEnabled,
+    telegramConfigured: telegramEnabled && hasTelegramBotToken && hasTelegramWebhookSecret && Boolean(telegramBotUsername && appBaseUrl) &&
+      isValidTelegramBotToken(environment.TELEGRAM_BOT_TOKEN) && isValidTelegramWebhookSecret(environment.TELEGRAM_WEBHOOK_SECRET) &&
+      Boolean(telegramBotUsername && TELEGRAM_USERNAME_PATTERN.test(telegramBotUsername)),
+    telegramBotUsername,
+    appBaseUrl,
     fakeServicesExplicit,
     diagnostics
   };

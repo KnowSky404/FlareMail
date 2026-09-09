@@ -16,7 +16,8 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
 - 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本回退与可选 HTML 写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
-- 版本化 D1 migration：`migrations/0001` 至 `0018`，包括登录与出站发送限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5、出站附件与 lease/retry/manual-review 清理队列，并由 `schema.sql` 保存最新结构快照。
+- 版本化 D1 migration：`migrations/0001` 至 `0019`，包括登录与出站发送限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5、出站附件与 lease/retry/manual-review 清理队列，以及 Telegram 绑定、webhook 去重和持久 outbox，并由 `schema.sql` 保存最新结构快照。
+- Telegram 入站通知：一个部署级 Bot、每个工作区用户一个私聊绑定、一次性深链确认、隐私/摘要开关、D1 durable outbox、每分钟 Cron、429/backoff/unknown-delivery 状态和现有邮件详情链接；实现边界与真实投递验证见 [docs/TELEGRAM.md](./docs/TELEGRAM.md)。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
 - 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention/orphan 报告，以及有界 claim、lease、backoff、max-attempts 和人工复核的 canonical R2 cleanup lifecycle。
 - 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖 Chromium 桌面/移动/320px、axe，以及 Desktop WebKit、iPhone 与 iPad 模拟 smoke。
@@ -40,7 +41,8 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 ```text
 worker/index.ts
 ├── fetch  -> SvelteKit build/_worker.js
-└── email  -> src/lib/server/email.ts
+├── email  -> src/lib/server/email.ts
+└── scheduled -> Telegram durable outbox dispatcher
 
 src/lib/domain/mail/           纯邮件领域契约、线程、写信、投递状态与校验
 src/lib/client/                typed API client、请求竞态与快捷键/草稿控制器
@@ -131,6 +133,7 @@ Domain、Resend、D1 Time Travel 与 Email Routing 顺序的唯一权威说明�
 - [REFACTOR_PLAN.md](./REFACTOR_PLAN.md)：阶段实施、回滚点和最终验收边界。
 - [DEPLOY.md](./DEPLOY.md)：权威生产首次部署、升级、回滚与 smoke test。
 - [docs/API.md](./docs/API.md)：工作区 snapshot、邮箱分页、草稿并发、批量操作和投递重试契约。
+- [docs/TELEGRAM.md](./docs/TELEGRAM.md)：Telegram Bot、绑定、Webhook、outbox、Cron、隐私、限速与生产运维边界。
 - [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)：维护 dry-run、stale claim 和投递 review 报告。
 - [docs/RUNTIME_BUDGET.md](./docs/RUNTIME_BUDGET.md)：Workers CPU 预算与 preview 人工测量流程。
 - [docs/PRODUCTION_CHECKLIST.md](./docs/PRODUCTION_CHECKLIST.md)：所有未来生产 release 的审批与回滚操作门禁。

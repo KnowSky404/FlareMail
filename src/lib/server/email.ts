@@ -2,13 +2,16 @@ import type { CloudflareEnv } from './cloudflare';
 import { MAX_RECIPIENTS, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
 import { insertBodyObject } from '$lib/server/db/body';
-import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, findInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
+import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, findInboundOwnerId, findTrustedInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
+import { hasTelegramTables, insertTelegramDeliveryIfEligible } from '$lib/server/db/telegram';
 import { findUserInboundNotificationSettings } from '$lib/server/db/users';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 import { isInboundNotificationEnabled } from './workspace/profile';
 import { BodyCanonicalLimitError, prepareBodyObject, projectBody, putBodyObject } from '$lib/server/body';
 import { sha256Hex } from '$lib/server/attachment-integrity';
+import { resolveTelegramConfig } from '$lib/server/telegram/config';
+import { dispatchTelegramOutbox } from '$lib/server/telegram/dispatcher';
 
 export const DEFAULT_INBOUND_LIMITS = Object.freeze({
   rawBytes: 25 * 1024 * 1024,
@@ -209,6 +212,17 @@ export async function handleInboundEmail(
   }
   const rawKey = `inbound/${date.slice(0, 10)}/${storageId}/message.eml`;
   const ownerUserId = await findInboundOwnerId(env.DB, recipient);
+  let telegramOwnerUserId: string | null = null;
+  const telegramConfig = resolveTelegramConfig(env);
+  if (telegramConfig.ready) {
+    try {
+      if (await hasTelegramTables(env.DB)) telegramOwnerUserId = await findTrustedInboundOwnerId(env.DB, recipient);
+    } catch {
+      // Telegram is an optional secondary channel. A missing or unavailable
+      // notification schema must never reject accepted inbound mail.
+      telegramOwnerUserId = null;
+    }
+  }
   const ownerKey = ownerUserId ?? 'unassigned';
   const writtenKeys = [rawKey];
   const projected = projectBody(parsed.text, parsed.html, parsed.snippet || '(empty body)');
@@ -259,7 +273,7 @@ export async function handleInboundEmail(
     const toAddresses = canonicalAddresses(parsed.to);
     const ccAddresses = canonicalAddresses(parsed.cc);
     const replyToAddresses = canonicalAddresses(parsed.replyTo);
-    const statements = [insertInboundMessage(env.DB, {
+    const coreStatements = [insertInboundMessage(env.DB, {
       id: storageId,
       messageId,
       from,
@@ -294,8 +308,25 @@ export async function handleInboundEmail(
       r2_key: bodyObject.key, size_bytes: bodyObject.sizeBytes, sha256: bodyObject.sha256,
       text_bytes: bodyObject.textBytes, html_bytes: bodyObject.htmlBytes, createdAt: date
     })] : []), ...attachmentRows.map(({ content: _content, ...attachment }) => insertAttachment(env.DB, attachment))];
+    const telegramStatement = telegramOwnerUserId ? insertTelegramDeliveryIfEligible(env.DB, {
+      deliveryId: crypto.randomUUID(),
+      ownerUserId: telegramOwnerUserId,
+      emailMessageId: storageId,
+      nextAttemptAt: new Date().toISOString(),
+      now: new Date().toISOString()
+    }) : null;
+    const statements = telegramStatement ? [...coreStatements, telegramStatement] : coreStatements;
     const d1StartedAt = Date.now();
-    await env.DB.batch(statements);
+    try {
+      await env.DB.batch(statements);
+    } catch (error) {
+      if (!telegramStatement) throw error;
+      // Telegram is additive. If its optional statement is unavailable or
+      // malformed on a partially upgraded database, retry only the core mail
+      // transaction so accepted mail and R2 remain durable.
+      safeLog('telegram_enqueue_failed', { correlationId, code: 'TELEGRAM_ENQUEUE_SKIPPED' });
+      await env.DB.batch(coreStatements);
+    }
     safeLog('inbound_phase', { correlationId, phase: 'd1_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - d1StartedAt });
     d1Finalized = true;
     await completeInboundIngestClaim(env.DB, dedupeKey, claim.claimToken);
@@ -341,6 +372,10 @@ export async function handleInboundEmail(
       safeLog('inbound_notification_failed', { correlationId, messageId: storageId });
       return null;
     }),
+    ...(telegramOwnerUserId && telegramConfig.ready ? [dispatchTelegramOutbox(env, { limit: 1, timeBudgetMs: 2_000 }).catch(() => {
+      safeLog('telegram_dispatch_quick_failed', { correlationId, messageId: storageId });
+      return null;
+    })] : []),
     sendAutomaticReply(message, env, storageId).catch(() => {
       safeLog('inbound_auto_reply_failed', { correlationId, messageId: storageId });
       return null;

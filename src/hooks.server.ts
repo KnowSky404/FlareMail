@@ -35,6 +35,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   const requestId = getRequestId(event);
   const env = event.platform?.env as CloudflareEnv | undefined;
   const isHealth = event.url.pathname === '/api/health';
+  const isTelegramWebhook = event.url.pathname === '/api/webhooks/telegram';
   const isApi = event.url.pathname.startsWith('/api/');
   const secure = event.url.protocol === 'https:';
   const failApi = (error: ApiError) => setSecurityHeaders(apiFailure(event, error), secure);
@@ -42,7 +43,10 @@ export const handle: Handle = async ({ event, resolve }) => {
     event.locals.runtimeState = runtimeUnavailableState(error, requestId);
   };
   const environment = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
-  if (!environment.ok && !isHealth) {
+  // The Telegram handler must validate its secret before parsing the body or
+  // touching D1. This exception is exact-path only; the route performs its
+  // own configuration and schema checks after authentication.
+  if (!environment.ok && !isHealth && !isTelegramWebhook) {
     const error = new ApiError(503, 'CONFIG_INVALID', '服务配置尚未完成。', undefined, undefined, false);
     markUnavailable(error);
     if (isApi) return failApi(error);
@@ -52,7 +56,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     .map((name) => event.cookies.get(name))
     .find((value): value is string => Boolean(value)) ?? null;
 
-  if (!isHealth && environment.ok) {
+  if (!isHealth && !isTelegramWebhook && environment.ok) {
     try {
       if (!env?.DB) {
         const error = new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
@@ -80,7 +84,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   const isApiMutation = event.url.pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(event.request.method.toUpperCase());
   const isSignedWebhook = event.url.pathname === '/api/webhooks/resend';
-  if (isApiMutation && !isSignedWebhook) {
+  if (isApiMutation && !isSignedWebhook && !isTelegramWebhook) {
     const csrf = validateCsrfOrigin(event.request);
     if (!csrf.ok) {
       return setSecurityHeaders(apiFailure(

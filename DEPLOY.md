@@ -297,6 +297,41 @@ Never put `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`,
 Use Wrangler secrets for the two Resend values. `.dev.vars` is for local
 development only and is not a production input.
 
+### Telegram notification channel (optional, additive)
+
+Telegram is disabled in the checked-in templates. Read
+[docs/TELEGRAM.md](./docs/TELEGRAM.md) completely before enabling it. The
+feature requires migration 0019, a single deployment-level Bot, and these
+values in the private production config/secrets:
+
+```toml
+TELEGRAM_ENABLED = "true"
+TELEGRAM_BOT_USERNAME = "your_bot_username"
+APP_BASE_URL = "https://mail.example.com"
+TELEGRAM_TIMEOUT_MS = "5000"
+```
+
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` are Wrangler secrets, never
+TOML values. Apply migration 0019 and verify schema metadata 19 before the
+first enabled deployment. Keep Email Routing disabled while checking
+`/api/health`, `getMe`, the exact HTTPS webhook route, and
+`getWebhookInfo`. Register only `/api/webhooks/telegram` with
+`allowed_updates=["message"]`; do not run `getUpdates` for the same Bot.
+
+After the Worker and webhook are verified, users bind through the authenticated
+settings page. `/start <token>` creates a disabled candidate, the user clicks
+**确认绑定**, and the user separately enables notifications. The channel
+trusts `login_email`, not the editable profile email. `/stop`, UI unbind, token
+rotation, and disabling the global var are additive and do not alter inbound
+mail, Resend, or the legacy email notification channel.
+
+Do not count local fake-fetch tests, a local scheduled request, health 200, or
+an accepted Bot API response as real production delivery proof. Unknown
+transport/finalization outcomes are recorded as `unknown_delivery`; manual
+retry may duplicate a message and is explicitly warned in the UI. No
+production webhook registration, Telegram send, or remote migration is part
+of ordinary repository verification without separate authorization.
+
 ### 6. Deployment invariants
 
 Check these relationships before creating routes or sending mail.
@@ -394,9 +429,9 @@ and [Resend DMARC guidance](https://resend.com/docs/dashboard/domains/dmarc).
 
 ### 8. D1 migrations and pre-migration evidence
 
-At the current `main` release, `migrations/0001_baseline.sql` through
-`migrations/0018_outbound_rate_limits.sql` are present and
-`src/lib/server/db/schema-version.ts` declares schema version `18`. Treat this
+At the current checkout, `migrations/0001_baseline.sql` through
+`migrations/0019_telegram_notifications.sql` are present and
+`src/lib/server/db/schema-version.ts` declares schema version `19`. Treat this
 as a checked-in fact for this release, not a permanent promise: derive the
 latest migration and schema version from the checkout before every release.
 

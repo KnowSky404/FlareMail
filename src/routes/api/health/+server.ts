@@ -24,7 +24,13 @@ const REQUIRED_TABLES = [
   'workspace_delivery_attempts',
   'mail_body_objects',
   'workspace_r2_cleanup_queue',
-  'workspace_schema_metadata'
+  'workspace_schema_metadata',
+  'workspace_telegram_bindings',
+  'workspace_telegram_bind_challenges',
+  'workspace_telegram_updates',
+  'workspace_telegram_deliveries',
+  'workspace_telegram_rate_limits',
+  'workspace_telegram_delivery_limits'
 ] as const;
 export const GET: RequestHandler = async (event) => {
   const requestId = getRequestId(event);

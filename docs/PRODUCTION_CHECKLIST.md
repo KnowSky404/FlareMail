@@ -79,7 +79,7 @@ recipient addresses or full R2 keys into shared evidence.
   ```
 
 - [ ] The checkout's latest migration filename and schema version are recorded
-  (currently migrations `0001` through `0018` and schema version `18`); the
+  (currently migrations `0001` through `0019` and schema version `19`); the
   repository's `schema-version.ts` and preflight output were checked rather
   than relying on an old number.
 - [ ] Every unapplied migration is approved and applied in numeric order:
@@ -176,6 +176,9 @@ recipient addresses or full R2 keys into shared evidence.
   duplicate/out-of-order events did not move delivery state backwards.
 - [ ] `/api/health = 200` was not used as proof of login, inbound, R2,
   outbound, webhook or mailbox delivery.
+- [ ] If Telegram is enabled, a private-chat bind/confirm/enable test was
+  separately approved and observed; local fake fetch, Cron invocation, and
+  health 200 were not recorded as real Telegram delivery proof.
 - [ ] Evidence contains no secrets, message body, raw MIME or complete R2 key.
 
 ## Rollback readiness and incident recovery
@@ -185,6 +188,10 @@ recipient addresses or full R2 keys into shared evidence.
   bookmark are recorded.
 - [ ] Production D1/R2 binding names, Resend webhook endpoint/event set,
   Email Routing rule and secret-present status are recorded without values.
+- [ ] If Telegram is enabled, migration 0019/schema version 19 is applied,
+  `APP_BASE_URL` is a credential-free HTTPS origin, Bot token/webhook secret
+  are present only as secrets, and the one-Bot webhook is reviewed with
+  `getMe`/`getWebhookInfo`.
 - [ ] Normal code rollback will deploy the previous Worker while preserving
   append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.
 - [ ] No older Worker rollback plan requires dropping new D1 columns or deleting

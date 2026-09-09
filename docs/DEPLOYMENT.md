@@ -21,6 +21,29 @@ sampling and 5% trace sampling. Application logs contain correlation IDs and
 stable internal IDs only. Do not add credentials, email bodies, raw headers,
 R2 object contents, or access tokens to logs.
 
+## Telegram operational checks
+
+Telegram setup and the full threat/data boundary are documented in
+[TELEGRAM.md](./TELEGRAM.md). For maintenance, treat these as separate
+checks from the existing Resend and Email Routing checks:
+
+- verify migration 0019 and schema metadata version 19 before enabling the
+  global switch;
+- inspect only safe Bot API metadata with `getMe` and `getWebhookInfo`;
+- confirm the exact HTTPS webhook has no Access/WAF authentication challenge
+  and no redirect;
+- inspect outbox counts/statuses and Cron execution without selecting message
+  bodies or raw MIME;
+- distinguish local fake-fetch/isolated D1 evidence from authenticated
+  production Bot API evidence; and
+- treat `unknown_delivery` as an operator review state, never as proof that a
+  Telegram message was absent.
+
+Disabling the global var or deploying a previous Worker is additive. Do not
+drop Telegram tables, delete outbox history, or reuse a production Bot for a
+local `getUpdates` session during rollback. A token rotation requires a
+reviewed secret update, `getMe`, `setWebhook`, and `getWebhookInfo` sequence.
+
 ## Maintenance CLI
 
 The maintenance command is read-only by default. It reports expired/revoked
@@ -204,7 +227,10 @@ and the draft attachment revision used by guarded sends.
 Migration `0017_r2_cleanup_queue_reliability.sql` append-only adds the durable
 claim/lease/retry/manual-review lifecycle. Migration
 `0018_outbound_rate_limits.sql` adds the per-user outbound rate-limit state and
-advances the current schema metadata to 18. Do not modify or downgrade
+advances the current schema metadata to 18. Migration
+`0019_telegram_notifications.sql` adds the optional Telegram binding, webhook
+deduplication, durable notification outbox, and persistent delivery limits and
+advances the current schema metadata to 19. Do not modify or downgrade
 published migrations; rollback restores Worker code while preserving newer D1
 columns and queue evidence.
 

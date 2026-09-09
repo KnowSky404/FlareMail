@@ -9,7 +9,11 @@ class TestStatement {
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this as unknown as D1PreparedStatement; }
   async first<T>() { return (this.database.query(this.sql).get(...this.values) as T | null) ?? null; }
   async all<T>() { return { success: true, results: this.database.query(this.sql).all(...this.values) as T[] }; }
-  async run<T>() { this.database.query(this.sql).run(...this.values); return { success: true, results: [] as T[] }; }
+  runSync<T>() {
+    const result = this.database.query(this.sql).run(...this.values);
+    return { success: true, results: [] as T[], meta: { changes: Number(result.changes ?? 0) } };
+  }
+  async run<T>() { return this.runSync<T>(); }
 }
 
 class TestD1 {
@@ -24,9 +28,11 @@ class TestD1 {
   }
   async batch(statements: D1PreparedStatement[]) {
     if (this.failBatch) throw new Error('simulated d1 write failure');
-    const results = [];
-    for (const statement of statements) results.push(await statement.run());
-    return results;
+    return this.database.transaction(() => {
+      const results = [];
+      for (const statement of statements) results.push((statement as unknown as TestStatement).runSync());
+      return results;
+    })();
   }
 }
 

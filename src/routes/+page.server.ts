@@ -4,6 +4,7 @@ import type { MailboxSection } from '$lib/domain/mail';
 import { loadWorkspaceSnapshot } from '$lib/server/workspace';
 import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
 import { parseBoolean, resolveOutboundFromEmail } from '$lib/server/config/env';
+import { telegramConfigurationSummary } from '$lib/server/telegram/config';
 import { classifyRuntimeError, runtimeUnavailableState } from '$lib/server/http/api';
 import type { RuntimeState } from '$lib/domain/runtime-state';
 
@@ -11,6 +12,7 @@ const mailFolders: MailboxSection[] = ['inbox', 'sent', 'drafts', 'archive'];
 
 function safeRuntimeDiagnostics(env: CloudflareEnv) {
   const provider = env.OUTBOUND_PROVIDER?.trim().toLowerCase() ?? '';
+  const telegram = telegramConfigurationSummary(env);
   return {
     environment: env.APP_ENV?.trim() || 'development',
     d1Configured: Boolean(env.DB),
@@ -20,7 +22,9 @@ function safeRuntimeDiagnostics(env: CloudflareEnv) {
     webhookConfigured: Boolean(env.RESEND_WEBHOOK_SECRET?.trim()),
     senderConfigured: Boolean(resolveOutboundFromEmail(env)),
     autoReplyEnabled: parseBoolean(env.AUTO_REPLY_ENABLED),
-    notificationEnabled: parseBoolean(env.INBOUND_NOTIFICATION_ENABLED)
+    notificationEnabled: parseBoolean(env.INBOUND_NOTIFICATION_ENABLED),
+    telegramEnabled: telegram.enabled,
+    telegramConfigured: telegram.configured
   };
 }
 

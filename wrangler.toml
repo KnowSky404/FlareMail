@@ -14,6 +14,9 @@ head_sampling_rate = 0.25
 enabled = true
 head_sampling_rate = 0.05
 
+[triggers]
+crons = ["* * * * *"]
+
 [vars]
 APP_ENV = "development"
 ALLOW_FAKE_SERVICES = "true"
@@ -24,6 +27,10 @@ AUTO_REPLY_ENABLED = "false"
 AUTO_REPLY_SUBJECT_PREFIX = "Re:"
 AUTO_REPLY_TEXT = "你好，我们已经收到你的邮件，会尽快处理。\n\nThis is an automated reply from FlareMail on Cloudflare Workers."
 INBOUND_NOTIFICATION_ENABLED = "false"
+TELEGRAM_ENABLED = "false"
+TELEGRAM_BOT_USERNAME = "replace_with_bot_username"
+APP_BASE_URL = "http://127.0.0.1:8787"
+TELEGRAM_TIMEOUT_MS = "5000"
 INBOUND_MAX_RAW_BYTES = "26214400"
 INBOUND_MAX_ATTACHMENT_COUNT = "50"
 INBOUND_MAX_ATTACHMENT_BYTES = "15728640"

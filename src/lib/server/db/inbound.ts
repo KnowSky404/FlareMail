@@ -100,6 +100,17 @@ export async function findInboundOwnerId(db: D1Database, recipient: string) {
   return row?.id ?? null;
 }
 
+/** Telegram enqueueing trusts only the login address used for authentication.
+ * The editable profile email remains intentionally excluded from this path. */
+export async function findTrustedInboundOwnerId(db: D1Database, recipient: string) {
+  const row = await db.prepare(`
+    SELECT id FROM workspace_users
+    WHERE lower(login_email) = lower(?)
+    LIMIT 1
+  `).bind(recipient).first<{ id: string }>();
+  return row?.id ?? null;
+}
+
 export function insertInboundMessage(db: D1Database, message: InboundMessageInsert) {
   return db.prepare(`
     INSERT INTO email_messages (

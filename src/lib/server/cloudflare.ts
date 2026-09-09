@@ -12,6 +12,12 @@ declare global {
     RESEND_API_BASE_URL?: string;
     RESEND_TIMEOUT_MS?: string;
     RESEND_WEBHOOK_SECRET?: string;
+    TELEGRAM_BOT_TOKEN?: string;
+    TELEGRAM_WEBHOOK_SECRET?: string;
+    TELEGRAM_ENABLED?: string;
+    TELEGRAM_BOT_USERNAME?: string;
+    TELEGRAM_TIMEOUT_MS?: string;
+    APP_BASE_URL?: string;
   }
 }
 

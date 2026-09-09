@@ -7,6 +7,7 @@
   import Switch from '$lib/components/ui/Switch.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
+  import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
 
@@ -22,6 +23,8 @@
     senderConfigured: boolean;
     autoReplyEnabled: boolean;
     notificationEnabled: boolean;
+    telegramEnabled: boolean;
+    telegramConfigured: boolean;
   };
 
   let {
@@ -189,6 +192,7 @@
           <div><dt>外发网关</dt><dd>{diagnostics.outboundConfigured ? '已配置' : '缺失'}</dd></div>
           <div><dt>Webhook 验签</dt><dd>{diagnostics.webhookConfigured ? '已配置' : '缺失'}</dd></div>
           <div><dt>全局投递状态</dt><dd><Badge class={serviceDegraded ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-success)]'}>{serviceDegraded ? '需处理' : '正常'}</Badge></dd></div>
+          <div><dt>Telegram 通知</dt><dd>{diagnostics.telegramEnabled ? (diagnostics.telegramConfigured ? '已配置' : '需配置') : '未启用'}</dd></div>
           <div><dt>等待 / 延迟</dt><dd>{metrics.queuedCount} / {metrics.delayedCount}</dd></div>
           <div><dt>失败 / 退信 / 投诉</dt><dd>{metrics.failedCount} / {metrics.bouncedCount} / {metrics.complainedCount}</dd></div>
           <div><dt>长时间提交中</dt><dd>{metrics.staleDeliveryCount}</dd></div>
@@ -205,6 +209,7 @@
       {/if}
     </div>
   </form>
+  <TelegramNotificationPanel />
 </div>
 
 <style>
