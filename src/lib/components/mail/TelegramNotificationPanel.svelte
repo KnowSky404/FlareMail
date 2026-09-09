@@ -175,7 +175,7 @@
     <div class="stack">
       <div class="notice"><Badge>待确认</Badge><span>Telegram 已识别此私聊；请在 FlareMail 点击确认。</span></div>
       {#if bindingLink}
-        <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">重新打开 Telegram 绑定链接</a>
+        <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">打开 Telegram 继续绑定</a>
       {/if}
       <p class="muted">链接有效至 {formatDate(telegramState.binding.candidateExpiresAt ?? bindingExpiresAt)}。确认后通知仍默认关闭。</p>
       <div class="actions"><Button loading={action === 'confirm'} onclick={() => void confirmBinding()}>确认绑定</Button><Button variant="secondary" onclick={() => void refresh()}>刷新状态</Button></div>

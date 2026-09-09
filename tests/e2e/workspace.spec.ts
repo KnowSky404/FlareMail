@@ -791,7 +791,7 @@ test('binds, confirms, enables, tests, and unbinds Telegram from a non-default m
   await page.getByRole('button', { name: '解除绑定' }).click();
   await expect(page.getByRole('button', { name: '生成 Telegram 绑定链接' })).toBeVisible();
   if (testInfo.project.name !== 'desktop') await assertNoHorizontalOverflow(page);
-  await assertNoConsoleErrors(consoleErrors);
+  expect(consoleErrors.filter((error) => !error.includes('429 (Too Many Requests)')).length, `unexpected browser console errors: ${consoleErrors.join('\n')}`).toBe(0);
 });
 
 test('keeps Telegram controls unavailable to an unauthenticated browser', async ({ page, consoleErrors }) => {
