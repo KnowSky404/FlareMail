@@ -452,6 +452,7 @@ CREATE TABLE workspace_telegram_bind_challenges (
   status TEXT NOT NULL CHECK (status IN ('pending', 'consumed', 'replaced', 'expired')),
   expires_at TEXT NOT NULL,
   consumed_at TEXT,
+  consumed_update_id TEXT,
   replaced_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -481,6 +482,8 @@ CREATE TABLE workspace_telegram_deliveries (
   channel TEXT NOT NULL DEFAULT 'telegram' CHECK (channel = 'telegram'),
   binding_id TEXT NOT NULL,
   authorization_version INTEGER NOT NULL CHECK (authorization_version > 0),
+  privacy_mode INTEGER NOT NULL DEFAULT 0 CHECK (privacy_mode IN (0, 1)),
+  summary_enabled INTEGER NOT NULL DEFAULT 0 CHECK (summary_enabled IN (0, 1)),
   status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'retryable', 'sent', 'failed', 'unknown_delivery', 'cancelled')),
   attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts > 0),
@@ -529,6 +532,42 @@ CREATE TABLE workspace_telegram_delivery_limits (
 
 CREATE INDEX idx_workspace_telegram_delivery_limits_cooldown
   ON workspace_telegram_delivery_limits(cooldown_until, next_allowed_at);
+
+CREATE TRIGGER workspace_users_telegram_delete_cleanup
+AFTER DELETE ON workspace_users
+BEGIN
+  DELETE FROM workspace_telegram_delivery_limits
+  WHERE scope = 'user:' || old.id
+     OR scope IN (
+       SELECT 'chat:' || telegram_chat_id
+       FROM workspace_telegram_bindings
+       WHERE user_id = old.id AND telegram_chat_id IS NOT NULL
+     );
+
+  UPDATE workspace_telegram_bind_challenges
+  SET status = CASE WHEN status = 'pending' THEN 'replaced' ELSE status END,
+      replaced_at = CASE WHEN status = 'pending' THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE replaced_at END,
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE owner_user_id = old.id AND status = 'pending';
+
+  UPDATE workspace_telegram_deliveries
+  SET status = 'cancelled', claim_token = NULL, lease_expires_at = NULL,
+      completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE owner_user_id = old.id
+    AND status IN ('pending', 'retryable', 'processing')
+    AND external_started = 0;
+
+  UPDATE workspace_telegram_bindings
+  SET state = 'revoked', enabled = 0, telegram_user_id = NULL, telegram_chat_id = NULL,
+      telegram_username = NULL, telegram_display_name = '', candidate_challenge_id = NULL,
+      candidate_expires_at = NULL, authorization_version = authorization_version + 1,
+      revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  WHERE user_id = old.id;
+
+  DELETE FROM workspace_telegram_rate_limits WHERE user_id = old.id;
+END;
 
 -- Rebuildable, owner-scoped full-text projections. Canonical mail rows remain
 -- the source of truth; this table deliberately excludes BCC, raw MIME,

@@ -34,6 +34,7 @@ export interface TelegramChallengeRow {
   status: 'pending' | 'consumed' | 'replaced' | 'expired';
   expires_at: string;
   consumed_at: string | null;
+  consumed_update_id: string | null;
   replaced_at: string | null;
   created_at: string;
   updated_at: string;
@@ -46,6 +47,8 @@ export interface TelegramDeliveryRow {
   channel: 'telegram';
   binding_id: string;
   authorization_version: number;
+  privacy_mode: number;
+  summary_enabled: number;
   status: TelegramDeliveryStatus;
   attempts: number;
   max_attempts: number;
@@ -144,6 +147,30 @@ export async function cleanupTelegramState(db: D1Database, now: string, maxRows 
         )
     `).bind(now, now, now, safeLimit),
     db.prepare(`
+      UPDATE workspace_telegram_deliveries
+      SET status = 'cancelled', claim_token = NULL, lease_expires_at = NULL,
+        completed_at = ?, updated_at = ?
+      WHERE owner_user_id IN (
+        SELECT user_id FROM workspace_telegram_bindings
+        WHERE state = 'candidate' AND candidate_expires_at IS NOT NULL AND candidate_expires_at <= ?
+        ORDER BY candidate_expires_at ASC, user_id ASC LIMIT ?
+      )
+        AND status IN ('pending', 'retryable', 'processing')
+        AND external_started = 0
+    `).bind(now, now, now, safeLimit),
+    db.prepare(`
+      UPDATE workspace_telegram_bindings
+      SET state = 'revoked', enabled = 0, telegram_user_id = NULL, telegram_chat_id = NULL,
+        telegram_username = NULL, telegram_display_name = '', candidate_challenge_id = NULL,
+        candidate_expires_at = NULL, authorization_version = authorization_version + 1,
+        revoked_at = ?, updated_at = ?
+      WHERE user_id IN (
+        SELECT user_id FROM workspace_telegram_bindings
+        WHERE state = 'candidate' AND candidate_expires_at IS NOT NULL AND candidate_expires_at <= ?
+        ORDER BY candidate_expires_at ASC, user_id ASC LIMIT ?
+      )
+    `).bind(now, now, now, safeLimit),
+    db.prepare(`
       DELETE FROM workspace_telegram_bind_challenges
       WHERE status IN ('consumed', 'replaced', 'expired') AND updated_at < ?
         AND id IN (
@@ -173,9 +200,11 @@ export async function cleanupTelegramState(db: D1Database, now: string, maxRows 
   ]);
   return {
     expiredChallenges: resultChanges(results[0]),
-    deletedChallenges: resultChanges(results[1]),
-    deletedUpdates: resultChanges(results[2]),
-    deletedDeliveries: resultChanges(results[3])
+    cancelledExpiredCandidates: resultChanges(results[1]),
+    expiredCandidates: resultChanges(results[2]),
+    deletedChallenges: resultChanges(results[3]),
+    deletedUpdates: resultChanges(results[4]),
+    deletedDeliveries: resultChanges(results[5])
   };
 }
 
@@ -249,13 +278,13 @@ export async function consumeTelegramChallenge(
     `).bind(input.updateId, input.processingToken, input.now, input.now),
     db.prepare(`
       UPDATE workspace_telegram_bind_challenges
-      SET status = 'consumed', consumed_at = ?, updated_at = ?
+      SET status = 'consumed', consumed_at = ?, consumed_update_id = ?, updated_at = ?
       WHERE token_hash = ? AND status = 'pending' AND expires_at > ?
         AND NOT EXISTS (
           SELECT 1 FROM workspace_telegram_updates
           WHERE update_id = ? AND processing_token <> ?
         )
-    `).bind(input.now, input.now, input.challengeHash, input.now, input.updateId, input.processingToken),
+    `).bind(input.now, input.updateId, input.now, input.challengeHash, input.now, input.updateId, input.processingToken),
     db.prepare(`
       INSERT INTO workspace_telegram_bindings (
         user_id, binding_id, state, telegram_user_id, telegram_chat_id,
@@ -266,7 +295,7 @@ export async function consumeTelegramChallenge(
       SELECT c.owner_user_id, lower(hex(randomblob(16))), 'candidate', ?, ?, ?, ?, c.id,
         c.expires_at, 0, 0, 0, 1, ?, ?, ?
       FROM workspace_telegram_bind_challenges AS c
-      WHERE c.token_hash = ? AND c.status = 'consumed' AND c.consumed_at = ?
+      WHERE c.token_hash = ? AND c.status = 'consumed' AND c.consumed_update_id = ?
         AND NOT EXISTS (
           SELECT 1 FROM workspace_telegram_bindings AS target
           WHERE target.telegram_chat_id = ? AND target.state IN ('candidate', 'active')
@@ -294,28 +323,49 @@ export async function consumeTelegramChallenge(
       input.now,
       input.now,
       input.challengeHash,
-      input.now,
+      input.updateId,
       input.telegramChatId,
       input.updateId,
       input.processingToken
     ),
     db.prepare(`
-      UPDATE workspace_telegram_updates
-      SET status = 'processed', result_code = 'bound', processed_at = ?
+      UPDATE workspace_telegram_updates AS u
+      SET status = CASE WHEN EXISTS (
+          SELECT 1
+          FROM workspace_telegram_bind_challenges AS c
+          JOIN workspace_telegram_bindings AS b ON b.candidate_challenge_id = c.id AND b.state = 'candidate'
+          WHERE c.token_hash = ? AND c.status = 'consumed' AND c.consumed_update_id = ?
+        ) THEN 'processed' ELSE 'ignored' END,
+        result_code = CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM workspace_telegram_bind_challenges AS c
+            JOIN workspace_telegram_bindings AS b ON b.candidate_challenge_id = c.id AND b.state = 'candidate'
+            WHERE c.token_hash = ? AND c.status = 'consumed' AND c.consumed_update_id = ?
+          ) THEN 'bound'
+          WHEN EXISTS (
+            SELECT 1 FROM workspace_telegram_bind_challenges AS c
+            WHERE c.token_hash = ? AND c.status = 'consumed' AND c.consumed_update_id = ?
+          ) THEN 'binding_conflict'
+          ELSE 'invalid_challenge'
+        END,
+        processed_at = ?
       WHERE update_id = ? AND processing_token = ?
-    `).bind(input.now, input.updateId, input.processingToken)
+    `).bind(
+      input.challengeHash,
+      input.updateId,
+      input.challengeHash,
+      input.updateId,
+      input.challengeHash,
+      input.updateId,
+      input.now,
+      input.updateId,
+      input.processingToken
+    )
   ]);
   if (resultChanges(result[0]) === 0) return 'duplicate';
-  if (resultChanges(result[1]) === 0) {
-    await db.prepare(`UPDATE workspace_telegram_updates SET status = 'ignored', result_code = 'invalid_challenge' WHERE update_id = ? AND processing_token = ?`)
-      .bind(input.updateId, input.processingToken).run();
-    return 'invalid';
-  }
-  if (resultChanges(result[2]) === 0) {
-    await db.prepare(`UPDATE workspace_telegram_updates SET status = 'ignored', result_code = 'binding_conflict' WHERE update_id = ? AND processing_token = ?`)
-      .bind(input.updateId, input.processingToken).run();
-    return 'conflict';
-  }
+  if (resultChanges(result[1]) === 0) return 'invalid';
+  if (resultChanges(result[2]) === 0) return 'conflict';
   return 'bound';
 }
 
@@ -330,13 +380,66 @@ export async function recordTelegramIgnoredUpdate(db: D1Database, updateId: stri
   return resultChanges(result) > 0;
 }
 
+export async function processTelegramStopUpdate(
+  db: D1Database,
+  input: { updateId: string; telegramChatId: string; now?: string }
+) {
+  const now = input.now ?? nowIso();
+  const processingToken = crypto.randomUUID();
+  const results = await db.batch([
+    db.prepare(`
+      INSERT INTO workspace_telegram_updates
+        (update_id, processing_token, status, result_code, created_at, processed_at)
+      VALUES (?, ?, 'processing', 'stop', ?, ?)
+      ON CONFLICT(update_id) DO NOTHING
+    `).bind(input.updateId, processingToken, now, now),
+    db.prepare(`
+      UPDATE workspace_telegram_deliveries
+      SET status = 'cancelled', claim_token = NULL, lease_expires_at = NULL,
+        completed_at = ?, updated_at = ?
+      WHERE owner_user_id IN (
+        SELECT user_id FROM workspace_telegram_bindings
+        WHERE telegram_chat_id = ? AND state IN ('candidate', 'active')
+      )
+        AND status IN ('pending', 'retryable', 'processing')
+        AND external_started = 0
+        AND EXISTS (
+          SELECT 1 FROM workspace_telegram_updates
+          WHERE update_id = ? AND processing_token = ? AND status = 'processing'
+        )
+    `).bind(now, now, input.telegramChatId, input.updateId, processingToken),
+    db.prepare(`
+      UPDATE workspace_telegram_bindings
+      SET state = 'revoked', enabled = 0, telegram_user_id = NULL, telegram_chat_id = NULL,
+        telegram_username = NULL, telegram_display_name = '', candidate_challenge_id = NULL,
+        candidate_expires_at = NULL, authorization_version = authorization_version + 1,
+        revoked_at = ?, updated_at = ?
+      WHERE telegram_chat_id = ? AND state IN ('candidate', 'active')
+        AND EXISTS (
+          SELECT 1 FROM workspace_telegram_updates
+          WHERE update_id = ? AND processing_token = ? AND status = 'processing'
+        )
+    `).bind(now, now, input.telegramChatId, input.updateId, processingToken),
+    db.prepare(`
+      UPDATE workspace_telegram_updates
+      SET status = 'ignored', processed_at = ?
+      WHERE update_id = ? AND processing_token = ? AND status = 'processing'
+    `).bind(now, input.updateId, processingToken)
+  ]);
+
+  return {
+    duplicate: resultChanges(results[0]) === 0,
+    revoked: resultChanges(results[2]) > 0
+  };
+}
+
 export async function activateTelegramBinding(db: D1Database, userId: string, now = nowIso()) {
   const result = await db.prepare(`
     UPDATE workspace_telegram_bindings
     SET state = 'active', enabled = 0, confirmed_at = ?, candidate_challenge_id = NULL,
       candidate_expires_at = NULL, updated_at = ?
     WHERE user_id = ? AND state = 'candidate' AND telegram_chat_id IS NOT NULL
-      AND (candidate_expires_at IS NULL OR candidate_expires_at > ?)
+      AND candidate_challenge_id IS NOT NULL AND candidate_expires_at > ?
   `).bind(now, now, userId, now).run();
   return resultChanges(result) > 0;
 }
@@ -370,17 +473,15 @@ export async function updateTelegramSettings(
 
 export async function revokeTelegramBinding(db: D1Database, userId: string) {
   const now = nowIso();
-  const version = await db.prepare(`SELECT authorization_version FROM workspace_telegram_bindings WHERE user_id = ?`).bind(userId).first<{ authorization_version: number }>();
-  if (!version) return false;
-  const nextVersion = Math.max(1, Number(version.authorization_version) + 1);
   const results = await db.batch([
     db.prepare(`
       UPDATE workspace_telegram_bindings
       SET state = 'revoked', enabled = 0, telegram_user_id = NULL, telegram_chat_id = NULL,
-        telegram_username = NULL, telegram_display_name = '', authorization_version = ?,
+        telegram_username = NULL, telegram_display_name = '', candidate_challenge_id = NULL,
+        candidate_expires_at = NULL, authorization_version = authorization_version + 1,
         revoked_at = ?, updated_at = ?
       WHERE user_id = ?
-    `).bind(nextVersion, now, now, userId),
+    `).bind(now, now, userId),
     db.prepare(`
       UPDATE workspace_telegram_deliveries
       SET status = 'cancelled', claim_token = NULL, lease_expires_at = NULL, updated_at = ?, completed_at = ?
@@ -397,11 +498,11 @@ export function insertTelegramDeliveryIfEligible(
   return db.prepare(`
     INSERT INTO workspace_telegram_deliveries (
       id, owner_user_id, email_message_id, channel, binding_id,
-      authorization_version, status, attempts, max_attempts, next_attempt_at,
+      authorization_version, privacy_mode, summary_enabled, status, attempts, max_attempts, next_attempt_at,
       created_at, updated_at
     )
     SELECT ?, e.owner_user_id, e.id, 'telegram', b.binding_id,
-      b.authorization_version, 'pending', 0, 5, ?, ?, ?
+      b.authorization_version, b.privacy_mode, b.summary_enabled, 'pending', 0, 5, ?, ?, ?
     FROM email_messages AS e
     JOIN workspace_users AS u ON u.id = e.owner_user_id
     JOIN workspace_telegram_bindings AS b
@@ -435,6 +536,13 @@ export async function retryTelegramDelivery(db: D1Database, userId: string, deli
       external_started = 0, external_started_at = NULL, last_error_code = NULL,
       last_error_at = NULL, updated_at = ?
     WHERE id = ? AND owner_user_id = ? AND status IN ('failed', 'retryable', 'unknown_delivery')
+      AND EXISTS (
+        SELECT 1 FROM workspace_telegram_bindings AS b
+        WHERE b.user_id = workspace_telegram_deliveries.owner_user_id
+          AND b.binding_id = workspace_telegram_deliveries.binding_id
+          AND b.state = 'active' AND b.enabled = 1
+          AND b.authorization_version = workspace_telegram_deliveries.authorization_version
+      )
   `).bind(now, now, deliveryId, userId).run();
   return resultChanges(result) > 0;
 }
@@ -458,8 +566,11 @@ export async function claimTelegramDelivery(db: D1Database, now: string, leaseUn
   if (!row) return null;
   const detail = await db.prepare(`
     SELECT d.id, d.owner_user_id, d.email_message_id, d.binding_id, d.authorization_version,
-      d.attempts, d.max_attempts, d.claim_token, b.telegram_chat_id, b.privacy_mode,
-      b.summary_enabled, b.telegram_username, u.login_email, u.timezone,
+      d.attempts, d.max_attempts, d.claim_token, b.telegram_chat_id,
+      CASE WHEN b.privacy_mode = 1 OR d.privacy_mode = 1 THEN 1 ELSE 0 END AS privacy_mode,
+      CASE WHEN b.privacy_mode = 1 OR d.privacy_mode = 1 THEN 0
+        WHEN b.summary_enabled = 1 AND d.summary_enabled = 1 THEN 1 ELSE 0 END AS summary_enabled,
+      b.telegram_username, u.login_email, u.timezone,
       e."from" AS from_address, e."to" AS to_address, e.subject,
       COALESCE(e.created_at, e."timestamp") AS received_at, e.snippet,
       (SELECT COUNT(*) FROM workspace_attachments AS a WHERE a.message_id = e.id AND a.relation_type = 'inbound') AS attachment_count
@@ -492,30 +603,66 @@ export async function markTelegramCancelled(db: D1Database, deliveryId: string, 
   `).bind(errorCode, now, now, now, deliveryId, claimToken).run();
 }
 
-export async function markTelegramExternalStarted(db: D1Database, deliveryId: string, claimToken: string) {
+export async function markTelegramExternalStarted(
+  db: D1Database,
+  deliveryId: string,
+  claimToken: string
+): Promise<{ privacyMode: boolean; summaryEnabled: boolean } | null> {
   const now = nowIso();
-  const result = await db.prepare(`
-    UPDATE workspace_telegram_deliveries
-    SET external_started = 1, external_started_at = ?, updated_at = ?
-    WHERE id = ? AND claim_token = ? AND status = 'processing'
+  const row = await db.prepare(`
+    UPDATE workspace_telegram_deliveries AS d
+    SET external_started = 1,
+      privacy_mode = CASE
+        WHEN d.privacy_mode = 1 OR EXISTS (
+          SELECT 1 FROM workspace_telegram_bindings AS current_binding
+          WHERE current_binding.user_id = d.owner_user_id
+            AND current_binding.binding_id = d.binding_id
+            AND current_binding.state = 'active'
+            AND current_binding.enabled = 1
+            AND current_binding.authorization_version = d.authorization_version
+            AND current_binding.privacy_mode = 1
+        ) THEN 1 ELSE 0 END,
+      summary_enabled = CASE
+        WHEN d.privacy_mode = 1 OR EXISTS (
+          SELECT 1 FROM workspace_telegram_bindings AS current_binding
+          WHERE current_binding.user_id = d.owner_user_id
+            AND current_binding.binding_id = d.binding_id
+            AND current_binding.state = 'active'
+            AND current_binding.enabled = 1
+            AND current_binding.authorization_version = d.authorization_version
+            AND current_binding.privacy_mode = 1
+        ) THEN 0
+        WHEN d.summary_enabled = 1 AND EXISTS (
+          SELECT 1 FROM workspace_telegram_bindings AS current_binding
+          WHERE current_binding.user_id = d.owner_user_id
+            AND current_binding.binding_id = d.binding_id
+            AND current_binding.state = 'active'
+            AND current_binding.enabled = 1
+            AND current_binding.authorization_version = d.authorization_version
+            AND current_binding.summary_enabled = 1
+        ) THEN 1
+        ELSE 0 END,
+      external_started_at = ?, updated_at = ?
+    WHERE d.id = ? AND d.claim_token = ? AND d.status = 'processing'
       AND EXISTS (
         SELECT 1 FROM workspace_telegram_bindings AS b
-        WHERE b.user_id = workspace_telegram_deliveries.owner_user_id
-          AND b.binding_id = workspace_telegram_deliveries.binding_id
+        WHERE b.user_id = d.owner_user_id
+          AND b.binding_id = d.binding_id
           AND b.state = 'active' AND b.enabled = 1
-          AND b.authorization_version = workspace_telegram_deliveries.authorization_version
+          AND b.authorization_version = d.authorization_version
       )
       AND EXISTS (
         SELECT 1 FROM email_messages AS e
-        JOIN workspace_users AS u ON u.id = workspace_telegram_deliveries.owner_user_id
+        JOIN workspace_users AS u ON u.id = d.owner_user_id
         LEFT JOIN workspace_email_states AS s
-          ON s.user_id = workspace_telegram_deliveries.owner_user_id AND s.email_message_id = e.id
-        WHERE e.id = workspace_telegram_deliveries.email_message_id
-          AND e.owner_user_id = workspace_telegram_deliveries.owner_user_id
+          ON s.user_id = d.owner_user_id AND s.email_message_id = e.id
+        WHERE e.id = d.email_message_id
+          AND e.owner_user_id = d.owner_user_id
           AND lower(e."to") = lower(u.login_email) AND s.deleted_at IS NULL
       )
-  `).bind(now, now, deliveryId, claimToken).run();
-  return resultChanges(result) > 0;
+    RETURNING privacy_mode, summary_enabled
+  `).bind(now, now, deliveryId, claimToken).first<{ privacy_mode: number; summary_enabled: number }>();
+  return row ? { privacyMode: row.privacy_mode === 1, summaryEnabled: row.summary_enabled === 1 } : null;
 }
 
 export async function markTelegramSent(db: D1Database, input: { deliveryId: string; claimToken: string; messageId: string }) {

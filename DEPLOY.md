@@ -301,7 +301,7 @@ development only and is not a production input.
 
 Telegram is disabled in the checked-in templates. Read
 [docs/TELEGRAM.md](./docs/TELEGRAM.md) completely before enabling it. The
-feature requires migration 0019, a single deployment-level Bot, and these
+feature requires migrations 0019-0022, a single deployment-level Bot, and these
 values in the private production config/secrets:
 
 ```toml
@@ -312,7 +312,7 @@ TELEGRAM_TIMEOUT_MS = "5000"
 ```
 
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` are Wrangler secrets, never
-TOML values. Apply migration 0019 and verify schema metadata 19 before the
+TOML values. Apply migrations 0019-0022 and verify schema metadata 22 before the
 first enabled deployment. Keep Email Routing disabled while checking
 `/api/health`, `getMe`, the exact HTTPS webhook route, and
 `getWebhookInfo`. Register only `/api/webhooks/telegram` with
@@ -430,8 +430,8 @@ and [Resend DMARC guidance](https://resend.com/docs/dashboard/domains/dmarc).
 ### 8. D1 migrations and pre-migration evidence
 
 At the current checkout, `migrations/0001_baseline.sql` through
-`migrations/0019_telegram_notifications.sql` are present and
-`src/lib/server/db/schema-version.ts` declares schema version `19`. Treat this
+`migrations/0022_telegram_delivery_privacy_snapshot.sql` are present and
+`src/lib/server/db/schema-version.ts` declares schema version `22`. Treat this
 as a checked-in fact for this release, not a permanent promise: derive the
 latest migration and schema version from the checkout before every release.
 

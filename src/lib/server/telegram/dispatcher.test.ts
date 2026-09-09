@@ -32,8 +32,8 @@ function fixture(status: 'pending' | 'retryable' = 'pending') {
   db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id, created_at)
     VALUES ('email-1', 'Sender <sender@example.test>', 'owner@example.test', 'Subject', '2000-01-01T00:00:00.000Z', 'A bounded summary.', 'raw/email-1', 'dedupe-1', 'user-1', '2026-09-09T12:34:00.000Z')`).run();
   db.query(`INSERT INTO workspace_telegram_deliveries
-    (id, owner_user_id, email_message_id, channel, binding_id, authorization_version, status, next_attempt_at, created_at, updated_at)
-    VALUES ('delivery-1', 'user-1', 'email-1', 'telegram', 'binding-1', 1, ?, '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z')`).run(status);
+    (id, owner_user_id, email_message_id, channel, binding_id, authorization_version, privacy_mode, summary_enabled, status, next_attempt_at, created_at, updated_at)
+    VALUES ('delivery-1', 'user-1', 'email-1', 'telegram', 'binding-1', 1, 0, 1, ?, '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z')`).run(status);
   const DB = new TestD1(db);
   return {
     db,
@@ -88,6 +88,34 @@ describe('Telegram outbox dispatcher', () => {
     const unknownResult = await dispatchTelegramOutbox(unknown.env as unknown as CloudflareEnv, { limit: 1, now: () => Date.parse('2026-09-09T12:00:00.000Z'), fetchImpl: async () => { throw new Error('socket closed'); } });
     expect(unknownResult.unknown).toBe(1);
     expect(unknown.db.query('SELECT status, last_error_code FROM workspace_telegram_deliveries').get()).toEqual({ status: 'unknown_delivery', last_error_code: 'unknown_transport' });
+  });
+
+  test('does not expand a queued summary and applies a newly enabled privacy mode', async () => {
+    const queued = fixture();
+    queued.db.query(`UPDATE workspace_telegram_deliveries SET summary_enabled = 0 WHERE id = 'delivery-1'`).run();
+    const queuedRequests: Array<Record<string, unknown>> = [];
+    await dispatchTelegramOutbox(queued.env as unknown as CloudflareEnv, {
+      limit: 1,
+      now: () => Date.parse('2026-09-09T12:00:00.000Z'),
+      fetchImpl: async (_input, init) => {
+        queuedRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 9002 } }), { status: 200 });
+      }
+    });
+    expect(String(queuedRequests[0]?.text)).not.toContain('摘要：');
+
+    const privateMode = fixture();
+    privateMode.db.query(`UPDATE workspace_telegram_bindings SET privacy_mode = 1 WHERE user_id = 'user-1'`).run();
+    const privateRequests: Array<Record<string, unknown>> = [];
+    await dispatchTelegramOutbox(privateMode.env as unknown as CloudflareEnv, {
+      limit: 1,
+      now: () => Date.parse('2026-09-09T12:00:00.000Z'),
+      fetchImpl: async (_input, init) => {
+        privateRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 9003 } }), { status: 200 });
+      }
+    });
+    expect(privateRequests[0]?.text).toBe('FlareMail：收到一封新邮件。');
   });
 
   test('does not claim a row whose binding authorization was revoked', async () => {

@@ -94,6 +94,11 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       continue;
     }
 
+    const sendSettings = await markTelegramExternalStarted(env.DB, claimed.id, claimed.claim_token);
+    if (!sendSettings) {
+      await markTelegramCancelled(env.DB, claimed.id, claimed.claim_token, 'binding_or_message_changed').catch(() => undefined);
+      continue;
+    }
     const payload = buildTelegramNotification({
       appBaseUrl: config.appBaseUrl!,
       emailMessageId: claimed.email_message_id,
@@ -103,14 +108,10 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       receivedAt: claimed.received_at,
       attachmentCount: claimed.attachment_count,
       snippet: claimed.snippet,
-      privacyMode: claimed.privacy_mode === 1,
-      summaryEnabled: claimed.summary_enabled === 1,
+      privacyMode: sendSettings.privacyMode,
+      summaryEnabled: sendSettings.summaryEnabled,
       timezone: claimed.timezone
     });
-    if (!await markTelegramExternalStarted(env.DB, claimed.id, claimed.claim_token)) {
-      await markTelegramCancelled(env.DB, claimed.id, claimed.claim_token, 'binding_or_message_changed').catch(() => undefined);
-      continue;
-    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort('telegram timeout'), config.timeoutMs);

@@ -121,7 +121,10 @@ describe('versioned D1 migrations', () => {
       '0016_outbound_attachments.sql',
       '0017_r2_cleanup_queue_reliability.sql',
       '0018_outbound_rate_limits.sql',
-      '0019_telegram_notifications.sql'
+      '0019_telegram_notifications.sql',
+      '0020_telegram_user_delete_cleanup.sql',
+      '0021_telegram_challenge_provenance.sql',
+      '0022_telegram_delivery_privacy_snapshot.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -204,7 +207,7 @@ describe('versioned D1 migrations', () => {
       'last_sent_at', 'last_error_code', 'last_error_at', 'created_at', 'updated_at'
     ]));
     expect(tableColumns(db, 'workspace_telegram_bind_challenges')).toEqual(new Set([
-      'id', 'owner_user_id', 'token_hash', 'status', 'expires_at', 'consumed_at',
+      'id', 'owner_user_id', 'token_hash', 'status', 'expires_at', 'consumed_at', 'consumed_update_id',
       'replaced_at', 'created_at', 'updated_at'
     ]));
     expect(tableColumns(db, 'workspace_telegram_updates')).toEqual(new Set([
@@ -212,7 +215,7 @@ describe('versioned D1 migrations', () => {
     ]));
     expect(tableColumns(db, 'workspace_telegram_deliveries')).toEqual(new Set([
       'id', 'owner_user_id', 'email_message_id', 'channel', 'binding_id',
-      'authorization_version', 'status', 'attempts', 'max_attempts', 'next_attempt_at',
+      'authorization_version', 'privacy_mode', 'summary_enabled', 'status', 'attempts', 'max_attempts', 'next_attempt_at',
       'claim_token', 'lease_expires_at', 'external_started', 'external_started_at',
       'telegram_message_id', 'last_error_code', 'last_error_at', 'completed_at',
       'created_at', 'updated_at'
@@ -230,8 +233,11 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 19 }
+      { schema_name: 'flaremail', schema_version: 22 }
     ]);
+
+    expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
+      .toEqual({ name: 'workspace_users_telegram_delete_cleanup' });
 
     expect(indexNames(db, 'email_messages')).toEqual(
       new Set([

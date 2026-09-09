@@ -14,7 +14,7 @@ forward the original message.
 ## Data and delivery boundary
 
 The inbound Worker first stores the accepted message in D1/R2. When Telegram
-is enabled, configured, and schema 19 is present, the same D1 batch inserts a
+is enabled, configured, and schema 22 is present, the same D1 batch inserts a
 small Telegram outbox row only when all of these checks pass:
 
 - the recipient matches `workspace_users.login_email` case-insensitively;
@@ -78,7 +78,16 @@ verified, rotate the Bot token after any suspected exposure.
 When `TELEGRAM_ENABLED=false`, inbound receive processing performs no Telegram
 table scan and makes no Telegram network request. Enabling the switch with
 incomplete credentials fails closed at runtime/preflight and leaves accepted
-mail independent of the optional channel.
+mail independent of the optional channel. Migration 0020 also installs a D1
+delete trigger: deleting a workspace user revokes its retained Telegram
+binding, replaces pending bind challenges, clears user/chat rate-limit state,
+and cancels outbox work that has not started an external request. An already
+started external request is preserved for delivery reconciliation. Migration
+0021 records the consuming webhook update on each challenge so invalid,
+conflicting, and successful update states are finalized atomically. Migration
+0022 snapshots the least-privileged privacy and summary settings on each
+outbox row; current stricter settings still apply before send, but an old row
+cannot gain a summary merely because the user enabled it while the row waited.
 
 ## Production setup order
 
@@ -87,8 +96,8 @@ This repository change does not run migrations, deploy a Worker, register a
 webhook, or send a real Telegram message.
 
 1. Review the release commit, create/verify the intended D1 Time Travel
-   bookmark, and apply migration 0019 to the intended D1 database. Confirm
-   `workspace_schema_metadata.schema_version = 19` before enabling the
+   bookmark, and apply migrations 0019 through 0022 to the intended D1 database.
+   Confirm `workspace_schema_metadata.schema_version = 22` before enabling the
    feature.
 2. Create a Bot with BotFather. Record the username without `@`. Keep the
    returned token in the secret manager only.
@@ -167,7 +176,8 @@ action, unbind action, recent deliveries with localized status labels, and
 manual retry warnings. API responses are the normal `{ ok, data, requestId }`
 no-store envelope.
 
-The scheduled dispatcher also expires pending challenges and removes terminal
+The scheduled dispatcher also expires pending challenges and candidate
+bindings, cancels their not-yet-started delivery work, and removes terminal
 challenge/update rows older than 30 days plus sent/failed/cancelled delivery
 rows older than 180 days. Each category is capped at 500 rows per Cron run;
 `unknown_delivery` rows are retained for operator review. This is a bounded
@@ -183,7 +193,7 @@ Cloudflare Cron execution or Telegram delivery.
 | Symptom | Checks |
 | --- | --- |
 | `401` webhook | Secret header, exact route, no proxy rewrite, no Access challenge, and no redirect |
-| `TELEGRAM_NOT_READY` | Enabled var, Bot token/username, webhook secret, HTTPS `APP_BASE_URL`, and schema 19 |
+| `TELEGRAM_NOT_READY` | Enabled var, Bot token/username, webhook secret, HTTPS `APP_BASE_URL`, and schema 22 |
 | Bot never sees `/start` | `getWebhookInfo`, webhook URL, pending errors, Bot blocked by the user, and production/local Bot conflict |
 | Candidate expires | Generate a new link and send `/start` from the same private chat within 10 minutes |
 | Confirm fails | The candidate update was not accepted, the chat is not private, or the candidate was replaced |
@@ -191,7 +201,7 @@ Cloudflare Cron execution or Telegram delivery.
 | Telegram `403` | The user blocked the Bot or the chat is no longer reachable; the row is terminal until the user rebinds |
 | Telegram `429` | Inspect persistent Bot/user/chat cooldowns and wait for the stored retry time |
 | `unknown_delivery` | Do not assume absence. Inspect Telegram manually, then use the UI's warned manual retry only if a duplicate is acceptable |
-| Schema/readiness failure | Apply migrations in order, verify schema version 19 and all Telegram tables, then rerun health locally |
+| Schema/readiness failure | Apply migrations in order, verify schema version 22, the Telegram tables, account-delete cleanup trigger, challenge provenance column, and privacy snapshot columns, then rerun health locally |
 | `getUpdates` conflict | Delete polling or webhook mode and use only one update transport for this Bot |
 
 Do not treat `/api/health = 200`, local unit/integration tests, a mocked

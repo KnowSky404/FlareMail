@@ -30,7 +30,7 @@ Telegram setup and the full threat/data boundary are documented in
 [TELEGRAM.md](./TELEGRAM.md). For maintenance, treat these as separate
 checks from the existing Resend and Email Routing checks:
 
-- verify migration 0019 and schema metadata version 19 before enabling the
+- verify migrations 0019-0022 and schema metadata version 22 before enabling the
   global switch;
 - inspect only safe Bot API metadata with `getMe` and `getWebhookInfo`;
 - confirm the exact HTTPS webhook has no Access/WAF authentication challenge
@@ -232,9 +232,13 @@ claim/lease/retry/manual-review lifecycle. Migration
 `0018_outbound_rate_limits.sql` adds the per-user outbound rate-limit state and
 advances the current schema metadata to 18. Migration
 `0019_telegram_notifications.sql` adds the optional Telegram binding, webhook
-deduplication, durable notification outbox, and persistent delivery limits and
-advances the current schema metadata to 19. Do not modify or downgrade
-published migrations; rollback restores Worker code while preserving newer D1
+deduplication, durable notification outbox, and persistent delivery limits.
+Migration `0020_telegram_user_delete_cleanup.sql` adds the account-delete
+cleanup trigger. Migration `0021_telegram_challenge_provenance.sql` records
+the consuming update ID. Migration `0022_telegram_delivery_privacy_snapshot.sql`
+stores the least-privileged privacy/summary snapshot and advances the current
+schema metadata to 22. Do not modify
+or downgrade published migrations; rollback restores Worker code while preserving newer D1
 columns and queue evidence.
 
 The maintenance report also lists stale submitting attempts, attempts within

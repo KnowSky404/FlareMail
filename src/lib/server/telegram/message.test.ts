@@ -49,13 +49,14 @@ describe('Telegram notification formatting', () => {
     const payload = buildTelegramNotification({
       ...input,
       subject: '<b>https://subject.example.test</b>',
-      snippet: 'line one\nhttps://body.example.test/path <a href="https://link.example.test">link</a>'
+      snippet: 'line one\nhttps://body.example.test/path mailto:private@example.test <a href="https://link.example.test">link</a>'
     });
     expect(payload.text).not.toContain('<b>');
     expect(payload.text).not.toContain('<a ');
     expect(payload.text).not.toContain('https://subject.example.test');
     expect(payload.text).not.toContain('https://body.example.test');
     expect(payload.text).not.toContain('https://link.example.test');
+    expect(payload.text).not.toContain('mailto:private@example.test');
     expect(payload.text).not.toContain('\nline');
     expect(payload.text).toContain('[链接已省略]');
   });

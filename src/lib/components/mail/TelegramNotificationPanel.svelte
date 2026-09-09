@@ -178,7 +178,7 @@
         <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">打开 Telegram 继续绑定</a>
       {/if}
       <p class="muted">链接有效至 {formatDate(telegramState.binding.candidateExpiresAt ?? bindingExpiresAt)}。确认后通知仍默认关闭。</p>
-      <div class="actions"><Button loading={action === 'confirm'} onclick={() => void confirmBinding()}>确认绑定</Button><Button variant="secondary" onclick={() => void refresh()}>刷新状态</Button></div>
+      <div class="actions"><Button loading={action === 'confirm'} disabled={action !== ''} onclick={() => void confirmBinding()}>确认绑定</Button><Button variant="secondary" loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>重新生成链接</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新状态</Button></div>
     </div>
   {:else if telegramState.binding?.state === 'active'}
     <div class="stack">

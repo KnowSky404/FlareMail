@@ -23,13 +23,23 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
       throw new ApiError(429, 'TELEGRAM_RATE_LIMITED', 'Telegram 通知发送过于频繁，请稍后重试。', undefined, undefined, false);
     }
   }
+  // The binding snapshot used to reserve rate-limit scopes can become stale
+  // while the user unbinds or rebinds. Revalidate the exact authorization
+  // version immediately before this direct, fixed-content test send.
+  const latestBinding = await findTelegramBinding(env.DB, session.userId);
+  if (!latestBinding || latestBinding.state !== 'active' || latestBinding.enabled !== 1 ||
+    latestBinding.binding_id !== binding.binding_id ||
+    latestBinding.authorization_version !== binding.authorization_version ||
+    latestBinding.telegram_chat_id !== binding.telegram_chat_id) {
+    throw new ApiError(409, 'TELEGRAM_BINDING_CHANGED', 'Telegram 绑定已变化，请刷新后重试。', undefined, undefined, false);
+  }
   const config = resolveTelegramConfig(env);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort('telegram timeout'), config.timeoutMs);
   try {
     try {
       await sendTelegramMessage(env, {
-        chatId: binding.telegram_chat_id,
+        chatId: latestBinding.telegram_chat_id,
         text: 'FlareMail 测试通知：Telegram 通道工作正常。',
         disableWebPagePreview: true
       }, { signal: controller.signal });

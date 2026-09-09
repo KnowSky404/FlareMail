@@ -1,7 +1,7 @@
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu;
 const HTML_TAG = /<\/?[a-z][a-z0-9-]*(?:\s[^>]*)?>/giu;
 const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
-const RAW_URL = /\b(?:https?:\/\/|ftp:\/\/|www\.)[^\s<>"']+/giu;
+const RAW_URL = /\b(?:https?:\/\/|ftp:\/\/|www\.|mailto:)[^\s<>"']+/giu;
 
 export function base64Url(bytes: Uint8Array) {
   let binary = '';
