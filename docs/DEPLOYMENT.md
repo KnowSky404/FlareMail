@@ -15,11 +15,14 @@ directory. Authenticate with `bun x wrangler login --use-keyring` (add
 `--device` for a remote terminal when needed), then verify the active identity
 with `bun x wrangler whoami` before any explicitly authorized remote command.
 
-Both templates enable Workers Observability logs and traces. Development uses
-25% log sampling and 5% trace sampling; the deployment template uses 50% log
-sampling and 5% trace sampling. Application logs contain correlation IDs and
-stable internal IDs only. Do not add credentials, email bodies, raw headers,
-R2 object contents, or access tokens to logs.
+The local template enables Workers Observability logs and traces for isolated
+debugging. The deployment template keeps application logs but disables Worker
+traces by default because Telegram's Bot API requires the bot token in the
+provider URL and this repository cannot verify URL-path redaction in every
+Observability surface. If traces are enabled after an account-level redaction
+review, do not export or persist unredacted request URLs. Application logs
+contain correlation IDs and stable internal IDs only. Do not add credentials,
+email bodies, raw headers, R2 object contents, or access tokens to logs.
 
 ## Telegram operational checks
 

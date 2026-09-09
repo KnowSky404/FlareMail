@@ -29,9 +29,12 @@ version, not raw MIME, body, attachment bytes, or a copied notification
 payload. The dispatcher reloads the message and binding before every send.
 
 The Telegram message contains either a privacy-mode line or the sender,
-recipient, subject, received time, attachment count, and an optional bounded
-plain-text summary. It never includes the full body or attachments. A single
-inline button points to the existing FlareMail mailbox URL state:
+recipient, subject, server-persisted receive time rendered in the user's
+stored timezone, attachment count, and an optional bounded plain-text summary.
+The receive time is `email_messages.created_at`; an untrusted RFC 5322
+`Date` header is not used as the delivery clock. Invalid user timezone values
+fall back to UTC. The message never includes the full body or attachments. A
+single inline button points to the existing FlareMail mailbox URL state:
 `?folder=inbox&message=email:<storage-id>`. Web page previews and Telegram
 markup parsing are disabled.
 
@@ -58,7 +61,19 @@ below belong in the ignored private deployment config or Wrangler secrets:
 `APP_BASE_URL` must be an origin with no path, credentials, query, or
 fragment. Production and preview require HTTPS. Development/test may use
 `http://127.0.0.1`, `http://localhost`, or `http://[::1]`. Tokens and webhook
-secrets must never enter Git, a client response, a URL, or application logs.
+secrets must never enter Git, a client response, a user-visible or persisted
+application URL, or application logs.
+
+The Bot API requires the bot token in the provider endpoint URL, for example
+`https://api.telegram.org/bot<token>/sendMessage`. The Worker does not log
+that URL, but this repository cannot prove that every Cloudflare
+Observability trace, subrequest view, or account export redacts URL path
+segments. The current Workers documentation describes sampling and optional
+trace/log persistence, not a guaranteed Bot-token URL redaction control. Before
+enabling Telegram in production, either verify an account-level redaction
+policy with a safe canary or keep Worker traces disabled and do not export or
+persist request URLs; never share trace artifacts. If that boundary cannot be
+verified, rotate the Bot token after any suspected exposure.
 
 When `TELEGRAM_ENABLED=false`, inbound receive processing performs no Telegram
 table scan and makes no Telegram network request. Enabling the switch with
@@ -146,9 +161,17 @@ actions, plus Bot/user/chat delivery scopes. Telegram 429 responses honor
 and max attempts; 401/403 and other permanent failures become terminal
 `failed` rows.
 
-The UI shows candidate/active/enabled state, privacy and summary switches,
-test action, unbind action, recent deliveries, and manual retry warnings. API
-responses are the normal `{ ok, data, requestId }` no-store envelope.
+The UI shows candidate/active/enabled state, the bound Telegram display-name
+and username summary (never the chat ID), privacy and summary switches, test
+action, unbind action, recent deliveries with localized status labels, and
+manual retry warnings. API responses are the normal `{ ok, data, requestId }`
+no-store envelope.
+
+The scheduled dispatcher also expires pending challenges and removes terminal
+challenge/update rows older than 30 days plus sent/failed/cancelled delivery
+rows older than 180 days. Each category is capped at 500 rows per Cron run;
+`unknown_delivery` rows are retained for operator review. This is a bounded
+retention pass, not a destructive live-mail cleanup.
 
 For local Worker preview, use the Wrangler local scheduled endpoint for the
 configured Cron expression after starting the preview Worker. This proves only

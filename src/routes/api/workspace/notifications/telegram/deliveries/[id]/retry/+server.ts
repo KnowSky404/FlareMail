@@ -16,8 +16,11 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   const limit = await consumeTelegramActionLimit(env.DB, session.userId, 'retry', Date.now(), 10 * 60 * 1000, 10);
   if (!limit.allowed) throw new ApiError(429, 'TELEGRAM_RATE_LIMITED', `操作过于频繁，请在 ${limit.retryAfterSeconds} 秒后重试。`, undefined, undefined, false);
   const id = requirePathParam(event, 'id');
+  const current = await env.DB.prepare(`
+    SELECT status FROM workspace_telegram_deliveries WHERE id = ? AND owner_user_id = ?
+  `).bind(id, session.userId).first<{ status: string }>();
   if (!await retryTelegramDelivery(env.DB, session.userId, id)) throw new ApiError(404, 'TELEGRAM_DELIVERY_NOT_RETRYABLE', '通知不存在、已发送或不允许重试。', undefined, undefined, false);
   const ctx = event.platform?.context ?? event.platform?.ctx;
   ctx?.waitUntil(dispatchTelegramOutbox(env, { limit: 1, timeBudgetMs: 2_000 }));
-  return apiSuccess(event, { queued: true, warning: 'unknown_delivery' });
+  return apiSuccess(event, { queued: true, warning: current?.status === 'unknown_delivery' ? 'unknown_delivery' : null });
 });

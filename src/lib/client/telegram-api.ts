@@ -21,6 +21,7 @@ export interface TelegramSettingsStatus {
   configReady: boolean;
   schemaReady: boolean;
   botUsername: string | null;
+  timezone: string;
   userBound: boolean;
   userEnabled: boolean;
   binding: {
@@ -28,6 +29,8 @@ export interface TelegramSettingsStatus {
     enabled: boolean;
     privacyMode: boolean;
     summaryEnabled: boolean;
+    telegramUsername: string | null;
+    telegramDisplayName: string;
     candidateExpiresAt: string | null;
     boundAt: string | null;
     confirmedAt: string | null;
@@ -72,5 +75,5 @@ export function fetchTelegramDeliveries(signal?: AbortSignal) {
 }
 
 export function retryTelegramDelivery(id: string) {
-  return requestJson<{ queued: true; warning: 'unknown_delivery' }>(`${settingsPath}/deliveries/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+  return requestJson<{ queued: true; warning: 'unknown_delivery' | null }>(`${settingsPath}/deliveries/${encodeURIComponent(id)}/retry`, { method: 'POST' });
 }

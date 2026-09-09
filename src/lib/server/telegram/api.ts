@@ -37,7 +37,7 @@ async function boundedText(response: Response) {
       total += value.byteLength;
       if (total > MAX_RESPONSE_BYTES) {
         await reader.cancel('telegram response too large').catch(() => undefined);
-        throw new TelegramApiError('temporary', 'response_too_large');
+        throw new TelegramApiError('unknown', 'response_too_large');
       }
       chunks.push(value);
     }
@@ -96,11 +96,13 @@ export async function callTelegramApi(
     parsed = JSON.parse(body) as TelegramApiResponse;
   } catch (error) {
     if (error instanceof TelegramApiError) throw error;
-    throw new TelegramApiError(response.status >= 500 ? 'temporary' : 'permanent', 'invalid_response', undefined, response.status);
+    throw new TelegramApiError('unknown', 'invalid_response', undefined, response.status);
   }
 
   if (response.ok && parsed.ok === true) return parsed.result;
-  const errorCode = typeof parsed.error_code === 'number' && Number.isSafeInteger(parsed.error_code) ? parsed.error_code : response.status;
+  const hasErrorCode = typeof parsed.error_code === 'number' && Number.isSafeInteger(parsed.error_code);
+  if (!hasErrorCode) throw new TelegramApiError('unknown', 'missing_error_code', undefined, response.status);
+  const errorCode = parsed.error_code as number;
   const retryAfter = responseParameters(parsed.parameters);
   if (errorCode === 429 || response.status === 429) throw new TelegramApiError('rate_limited', 'rate_limited', retryAfter ?? 60, response.status);
   if (response.status >= 500 || errorCode >= 500) throw new TelegramApiError('temporary', 'telegram_server_error', undefined, response.status);
@@ -120,6 +122,6 @@ export async function sendTelegramMessage(
     ...(input.replyMarkup ? { reply_markup: input.replyMarkup } : {})
   }, options);
   const id = messageId(result);
-  if (!id) throw new TelegramApiError('temporary', 'missing_message_id');
+  if (!id) throw new TelegramApiError('unknown', 'missing_message_id');
   return { messageId: id };
 }

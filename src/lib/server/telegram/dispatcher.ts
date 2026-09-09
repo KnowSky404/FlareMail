@@ -1,6 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import {
   claimTelegramDelivery,
+  cleanupTelegramState,
   hasTelegramTables,
   markTelegramCancelled,
   markTelegramExternalStarted,
@@ -20,6 +21,7 @@ export interface TelegramDispatchOptions {
   timeBudgetMs?: number;
   fetchImpl?: TelegramFetch;
   now?: () => number;
+  cleanup?: boolean;
 }
 
 const LEASE_MS = 45_000;
@@ -27,8 +29,8 @@ const BOT_INTERVAL_MS = 1_000;
 const USER_INTERVAL_MS = 1_000;
 const CHAT_INTERVAL_MS = 1_000;
 
-function isoAfter(ms: number) {
-  return new Date(Date.now() + Math.max(0, ms)).toISOString();
+function isoAfter(ms: number, baseMs = Date.now()) {
+  return new Date(baseMs + Math.max(0, ms)).toISOString();
 }
 
 function retryDelayMs(attempts: number) {
@@ -66,6 +68,7 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
   const budget = Math.max(250, Math.min(25_000, Math.trunc(options.timeBudgetMs ?? 20_000)));
   const result = { processed: 0, sent: 0, failed: 0, retryable: 0, unknown: 0 };
   const now = new Date(started).toISOString();
+  if (options.cleanup) await cleanupTelegramState(env.DB, now).catch(() => undefined);
   await markTelegramStaleUnknown(env.DB, now);
 
   while (result.processed < limit && (options.now ?? Date.now)() - started < budget) {
@@ -81,7 +84,7 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
           claimToken: claimed.claim_token,
           status: 'retryable',
           errorCode: 'local_rate_limited',
-          nextAttemptAt: isoAfter(5_000)
+          nextAttemptAt: isoAfter(5_000, Date.parse(current))
         });
         result.retryable += 1;
       } catch {
@@ -101,7 +104,8 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       attachmentCount: claimed.attachment_count,
       snippet: claimed.snippet,
       privacyMode: claimed.privacy_mode === 1,
-      summaryEnabled: claimed.summary_enabled === 1
+      summaryEnabled: claimed.summary_enabled === 1,
+      timezone: claimed.timezone
     });
     if (!await markTelegramExternalStarted(env.DB, claimed.id, claimed.claim_token)) {
       await markTelegramCancelled(env.DB, claimed.id, claimed.claim_token, 'binding_or_message_changed').catch(() => undefined);
@@ -129,7 +133,7 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       clearTimeout(timeout);
       if (error instanceof TelegramApiError && error.kind === 'rate_limited') {
         const retryAfter = Math.max(1, error.retryAfterSeconds ?? 60);
-        const cooldownUntil = new Date(Date.now() + retryAfter * 1000 + Math.floor(Math.random() * 1_000)).toISOString();
+        const cooldownUntil = new Date(Date.parse(current) + retryAfter * 1000 + Math.floor(Math.random() * 1_000)).toISOString();
         await setTelegramDeliveryCooldown(env.DB, 'bot', cooldownUntil).catch(() => undefined);
         await setTelegramDeliveryCooldown(env.DB, `chat:${claimed.telegram_chat_id}`, cooldownUntil).catch(() => undefined);
         try {
@@ -162,7 +166,7 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
             claimToken: claimed.claim_token,
             status: terminal ? 'failed' : 'retryable',
             errorCode: error.code,
-            nextAttemptAt: isoAfter(retryDelayMs(claimed.attempts))
+            nextAttemptAt: isoAfter(retryDelayMs(claimed.attempts), Date.parse(current))
           });
           if (terminal) result.failed += 1;
           else result.retryable += 1;

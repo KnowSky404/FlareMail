@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   activateTelegramBinding,
   claimTelegramDelivery,
+  cleanupTelegramState,
   consumeTelegramActionLimit,
   consumeTelegramChallenge,
   createTelegramChallenge,
@@ -105,6 +106,24 @@ describe('Telegram D1 state', () => {
     expect(await retryTelegramDelivery(d1 as unknown as D1Database, 'user-1', 'delivery-1')).toBe(false);
   });
 
+  test('does not claim a pending row after it reaches its maximum attempts', async () => {
+    const { db, d1 } = database();
+    db.query(`INSERT INTO workspace_telegram_bindings
+      (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, authorization_version, created_at, updated_at)
+      VALUES ('user-1', 'binding-1', 'active', '42', '42', 1, 1, '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z')`).run();
+    db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id)
+      VALUES ('email-max', 'sender@example.test', 'owner@example.test', 'Subject', '2026-09-09T12:00:00.000Z', 'Summary', 'raw/email-max', 'dedupe-max', 'user-1')`).run();
+    db.query(`INSERT INTO workspace_telegram_deliveries
+      (id, owner_user_id, email_message_id, channel, binding_id, authorization_version, status, attempts, max_attempts, next_attempt_at, created_at, updated_at)
+      VALUES ('delivery-max', 'user-1', 'email-max', 'telegram', 'binding-1', 1, 'failed', 5, 5,
+        '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:00.000Z')`).run();
+
+    expect(await claimTelegramDelivery(d1 as unknown as D1Database, '2026-09-09T12:00:01.000Z', '2026-09-09T12:01:01.000Z')).toBeNull();
+    expect(await retryTelegramDelivery(d1 as unknown as D1Database, 'user-1', 'delivery-max')).toBe(true);
+    expect(db.query(`SELECT status, attempts FROM workspace_telegram_deliveries WHERE id = 'delivery-max'`).get())
+      .toEqual({ status: 'pending', attempts: 0 });
+  });
+
   test('keeps action limits durable and enables a candidate only through confirmation', async () => {
     const { db, d1 } = database();
     const first = await consumeTelegramActionLimit(d1 as unknown as D1Database, 'user-1', 'bind', 1_000, 60_000, 1);
@@ -128,5 +147,37 @@ describe('Telegram D1 state', () => {
     expect(await activateTelegramBinding(d1 as unknown as D1Database, 'user-1', '2026-09-09T12:00:00.000Z')).toBe(false);
     expect(db.query(`SELECT state, enabled FROM workspace_telegram_bindings WHERE user_id = 'user-1'`).get())
       .toEqual({ state: 'candidate', enabled: 0 });
+  });
+
+  test('expires and bounded-cleans retained Telegram state without removing unknown delivery reviews', async () => {
+    const { db, d1 } = database();
+    db.query(`INSERT INTO workspace_telegram_bind_challenges
+      (id, owner_user_id, token_hash, status, expires_at, created_at, updated_at)
+      VALUES ('challenge-old', 'user-1', 'hash-old', 'consumed', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+    db.query(`INSERT INTO workspace_telegram_bind_challenges
+      (id, owner_user_id, token_hash, status, expires_at, created_at, updated_at)
+      VALUES ('challenge-expired', 'user-1', 'hash-expired', 'pending', '2026-09-08T00:00:00.000Z', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z')`).run();
+    db.query(`INSERT INTO workspace_telegram_updates
+      (update_id, processing_token, status, result_code, created_at, processed_at)
+      VALUES ('update-old', 'processing-old', 'processed', 'bound', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+    db.query(`INSERT INTO workspace_telegram_deliveries
+      (id, owner_user_id, email_message_id, channel, binding_id, authorization_version, status,
+       next_attempt_at, completed_at, created_at, updated_at)
+      VALUES ('delivery-old', 'user-1', 'email-old', 'telegram', 'binding-old', 1, 'sent',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+    db.query(`INSERT INTO workspace_telegram_deliveries
+      (id, owner_user_id, email_message_id, channel, binding_id, authorization_version, status,
+       next_attempt_at, completed_at, created_at, updated_at)
+      VALUES ('delivery-unknown', 'user-1', 'email-unknown', 'telegram', 'binding-old', 1, 'unknown_delivery',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+
+    await expect(cleanupTelegramState(d1 as unknown as D1Database, '2026-09-09T00:00:00.000Z', 1)).resolves.toMatchObject({
+      expiredChallenges: 1,
+      deletedChallenges: 1,
+      deletedUpdates: 1,
+      deletedDeliveries: 1
+    });
+    expect(db.query(`SELECT status FROM workspace_telegram_bind_challenges WHERE id = 'challenge-expired'`).get()).toEqual({ status: 'expired' });
+    expect(db.query(`SELECT status FROM workspace_telegram_deliveries WHERE id = 'delivery-unknown'`).get()).toEqual({ status: 'unknown_delivery' });
   });
 });

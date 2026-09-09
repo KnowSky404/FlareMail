@@ -11,8 +11,10 @@ enabled = true
 head_sampling_rate = 0.5
 
 [observability.traces]
-enabled = true
-head_sampling_rate = 0.05
+# Telegram Bot API tokens are part of the provider URL. Keep tracing disabled
+# unless the account's URL redaction/export boundary has been reviewed.
+enabled = false
+head_sampling_rate = 0
 
 [triggers]
 crons = ["* * * * *"]

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildTelegramNotification } from './message';
+import { buildTelegramNotification, formatTelegramReceivedAt } from './message';
 
 const input = {
   appBaseUrl: 'https://mail.example.test',
@@ -43,5 +43,30 @@ describe('Telegram notification formatting', () => {
   test('caps long summaries below the Telegram message limit', () => {
     const payload = buildTelegramNotification({ ...input, snippet: '摘要'.repeat(5_000) });
     expect(Array.from(payload.text).length).toBeLessThanOrEqual(3900);
+  });
+
+  test('keeps untrusted notification fields plain and non-clickable', () => {
+    const payload = buildTelegramNotification({
+      ...input,
+      subject: '<b>https://subject.example.test</b>',
+      snippet: 'line one\nhttps://body.example.test/path <a href="https://link.example.test">link</a>'
+    });
+    expect(payload.text).not.toContain('<b>');
+    expect(payload.text).not.toContain('<a ');
+    expect(payload.text).not.toContain('https://subject.example.test');
+    expect(payload.text).not.toContain('https://body.example.test');
+    expect(payload.text).not.toContain('https://link.example.test');
+    expect(payload.text).not.toContain('\nline');
+    expect(payload.text).toContain('[链接已省略]');
+  });
+
+  test('formats the persisted server receipt time in the workspace timezone and falls back safely', () => {
+    const receivedAt = '2026-09-09T12:00:00.000Z';
+    expect(formatTelegramReceivedAt(receivedAt, 'Europe/Berlin')).toBe(
+      new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Berlin' }).format(new Date(receivedAt))
+    );
+    expect(formatTelegramReceivedAt(receivedAt, 'not/a-timezone')).toBe(
+      new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(new Date(receivedAt))
+    );
   });
 });

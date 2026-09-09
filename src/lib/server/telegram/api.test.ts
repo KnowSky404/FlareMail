@@ -33,11 +33,17 @@ describe('Telegram Bot API client', () => {
     })).rejects.toMatchObject({ kind: 'rate_limited', retryAfterSeconds: 17 });
   });
 
-  test('bounds provider response bodies without reclassifying the limit as permanent', async () => {
+  test('treats an unreadable provider response as unknown delivery', async () => {
     await expect(sendTelegramMessage(env, {
       chatId: '42', text: 'safe test', disableWebPagePreview: true
     }, {
       fetchImpl: async () => new Response('x'.repeat(32 * 1024 + 1), { status: 200 })
-    })).rejects.toMatchObject({ kind: 'temporary', code: 'response_too_large' });
+    })).rejects.toMatchObject({ kind: 'unknown', code: 'response_too_large' });
+
+    await expect(sendTelegramMessage(env, {
+      chatId: '42', text: 'safe test', disableWebPagePreview: true
+    }, {
+      fetchImpl: async () => new Response('{}', { status: 200 })
+    })).rejects.toMatchObject({ kind: 'unknown', code: 'missing_error_code' });
   });
 });

@@ -15,6 +15,6 @@ export default {
   },
 
   scheduled(_controller, env, ctx) {
-    ctx.waitUntil(dispatchTelegramOutbox(env, { limit: 10, timeBudgetMs: 20_000 }));
+    ctx.waitUntil(dispatchTelegramOutbox(env, { limit: 10, timeBudgetMs: 20_000, cleanup: true }));
   }
 } satisfies ExportedHandler<CloudflareEnv>;

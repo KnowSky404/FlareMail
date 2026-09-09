@@ -26,7 +26,26 @@
   let pollCount = 0;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—';
+  const deliveryStatusLabels: Record<TelegramSettingsStatus['recentDeliveries'][number]['status'], string> = {
+    pending: '已排队',
+    processing: '处理中',
+    retryable: '等待重试',
+    sent: '已发送',
+    failed: '发送失败',
+    unknown_delivery: '结果未知',
+    cancelled: '已取消'
+  };
+
+  function formatDate(value: string | null, timezone = telegramState?.timezone ?? 'UTC') {
+    if (!value) return '—';
+    const date = new Date(value);
+    if (Number.isNaN(date.valueOf())) return '—';
+    try {
+      return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone || 'UTC' }).format(date);
+    } catch {
+      return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(date);
+    }
+  }
 
   function errorMessage(value: unknown) {
     return value instanceof ClientApiError ? value.message : 'Telegram 设置暂时无法更新，请稍后重试。';
@@ -164,6 +183,11 @@
   {:else if telegramState.binding?.state === 'active'}
     <div class="stack">
       <div class="notice"><Badge class={telegramState.binding.enabled ? 'success' : ''}>{telegramState.binding.enabled ? '已启用' : '已绑定'}</Badge><span>{telegramState.binding.enabled ? '新邮件会进入 Telegram 私聊。' : '绑定已确认，通知当前关闭。'}</span></div>
+      <div class="identity-summary" role="group" aria-label="Telegram 绑定身份">
+        <span class="muted">绑定身份</span>
+        <strong>{telegramState.binding.telegramDisplayName || 'Telegram 用户'}</strong>
+        {#if telegramState.binding.telegramUsername}<span class="muted">@{telegramState.binding.telegramUsername}</span>{/if}
+      </div>
       <Switch
         id="telegram-enabled"
         checked={telegramState.binding.enabled}
@@ -214,8 +238,8 @@
       <h3>最近通知</h3>
       {#each telegramState.recentDeliveries as delivery (delivery.id)}
         <div class="delivery-row">
-          <div><strong>{delivery.subject || '无主题'}</strong><span>{formatDate(delivery.receivedAt)} · {delivery.status}</span></div>
-          {#if ['failed', 'retryable', 'unknown_delivery'].includes(delivery.status)}<Button variant="secondary" disabled={action !== ''} onclick={() => void retry(delivery.id)}>重试</Button>{/if}
+          <div><strong>{delivery.subject || '无主题'}</strong><span>{formatDate(delivery.receivedAt)} · {deliveryStatusLabels[delivery.status]}</span></div>
+          {#if ['failed', 'retryable', 'unknown_delivery'].includes(delivery.status)}<Button variant="secondary" disabled={action !== ''} onclick={() => void retry(delivery.id)}>{delivery.status === 'unknown_delivery' ? '手动重试（可能重复）' : '重试'}</Button>{/if}
         </div>
       {/each}
     </div>
@@ -226,6 +250,8 @@
   .stack { display: grid; gap: var(--space-3); }
   .notice { display: flex; align-items: center; gap: var(--space-3); color: var(--fm-text-secondary); font-size: 13px; }
   .notice.warning { color: var(--fm-warning); }
+  .identity-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+  .identity-summary strong { color: var(--fm-text); font-size: 13px; }
   .muted { margin: 0; color: var(--fm-text-muted); font-size: 12px; line-height: 1.6; }
   .bind-link { color: var(--fm-accent); font-size: 13px; overflow-wrap: anywhere; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }

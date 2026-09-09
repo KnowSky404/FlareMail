@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { dispatchTelegramOutbox } from './dispatcher';
+import { formatTelegramReceivedAt } from './message';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 
 class Statement {
@@ -28,8 +29,8 @@ function fixture(status: 'pending' | 'retryable' = 'pending') {
   db.query(`INSERT INTO workspace_telegram_bindings
     (user_id, binding_id, state, telegram_user_id, telegram_chat_id, telegram_username, enabled, privacy_mode, summary_enabled, authorization_version, created_at, updated_at)
     VALUES ('user-1', 'binding-1', 'active', '42', '42', 'alice', 1, 0, 1, 1, '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z')`).run();
-  db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id)
-    VALUES ('email-1', 'Sender <sender@example.test>', 'owner@example.test', 'Subject', '2026-09-09T12:00:00.000Z', 'A bounded summary.', 'raw/email-1', 'dedupe-1', 'user-1')`).run();
+  db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id, created_at)
+    VALUES ('email-1', 'Sender <sender@example.test>', 'owner@example.test', 'Subject', '2000-01-01T00:00:00.000Z', 'A bounded summary.', 'raw/email-1', 'dedupe-1', 'user-1', '2026-09-09T12:34:00.000Z')`).run();
   db.query(`INSERT INTO workspace_telegram_deliveries
     (id, owner_user_id, email_message_id, channel, binding_id, authorization_version, status, next_attempt_at, created_at, updated_at)
     VALUES ('delivery-1', 'user-1', 'email-1', 'telegram', 'binding-1', 1, ?, '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z')`).run(status);
@@ -67,6 +68,7 @@ describe('Telegram outbox dispatcher', () => {
     expect(result).toMatchObject({ processed: 1, sent: 1, failed: 0, unknown: 0 });
     expect(requests[0]?.url).toBe('https://api.telegram.org/bot123456:abcdefghijklmnopqrstuvwxyz/sendMessage');
     expect(String(requests[0]?.body.text)).toContain('摘要：A bounded summary.');
+    expect(String(requests[0]?.body.text)).toContain(`收到时间：${formatTelegramReceivedAt('2026-09-09T12:34:00.000Z', 'UTC')}`);
     expect(JSON.stringify(requests[0]?.body)).not.toContain('raw/email-1');
     expect(value.db.query(`SELECT status, telegram_message_id FROM workspace_telegram_deliveries`).get())
       .toEqual({ status: 'sent', telegram_message_id: '9001' });

@@ -78,6 +78,100 @@ async function openDraftEditor(page: Page, subject: string) {
   await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeVisible();
 }
 
+type MockTelegramState = {
+  binding: 'none' | 'candidate' | 'active';
+  enabled: boolean;
+  privacyMode: boolean;
+  summaryEnabled: boolean;
+};
+
+function mockTelegramStatus(state: MockTelegramState) {
+  return {
+    globalEnabled: true,
+    configReady: true,
+    schemaReady: true,
+    botUsername: 'flaremail_test_bot',
+    timezone: 'UTC',
+    userBound: state.binding !== 'none',
+    userEnabled: state.binding === 'active' && state.enabled,
+    binding: state.binding === 'none' ? null : {
+      state: state.binding,
+      enabled: state.binding === 'active' && state.enabled,
+      privacyMode: state.privacyMode,
+      summaryEnabled: state.summaryEnabled,
+      telegramUsername: 'e2e_alice',
+      telegramDisplayName: 'Alice E2E',
+      candidateExpiresAt: state.binding === 'candidate' ? '2099-01-01T00:10:00.000Z' : null,
+      boundAt: state.binding === 'active' ? '2026-09-09T12:00:00.000Z' : null,
+      confirmedAt: state.binding === 'active' ? '2026-09-09T12:00:00.000Z' : null,
+      lastSentAt: null,
+      lastErrorCode: null,
+      lastErrorAt: null
+    },
+    recentDeliveries: []
+  };
+}
+
+async function installTelegramApiMock(page: Page) {
+  const state: MockTelegramState = { binding: 'none', enabled: false, privacyMode: false, summaryEnabled: false };
+  let testFailure = false;
+  const response = (route: import('@playwright/test').Route, data: unknown, status = 200) => route.fulfill({
+    status,
+    contentType: 'application/json',
+    body: JSON.stringify(status >= 400
+      ? { ok: false, error: { code: 'TELEGRAM_RATE_LIMITED', message: '模拟 Telegram 限流。', retryable: false }, requestId: 'telegram-e2e-error' }
+      : { ok: true, data, requestId: 'telegram-e2e' })
+  });
+
+  await page.route('**/api/workspace/notifications/telegram/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    const method = request.method();
+    if (pathname.endsWith('/settings') && method === 'GET') return response(route, mockTelegramStatus(state));
+    if (pathname.endsWith('/settings') && (method === 'PATCH' || method === 'PUT')) {
+      const input = JSON.parse(request.postData() ?? '{}') as Partial<Pick<MockTelegramState, 'enabled' | 'privacyMode' | 'summaryEnabled'>>;
+      if (typeof input.enabled === 'boolean') state.enabled = input.enabled;
+      if (typeof input.privacyMode === 'boolean') state.privacyMode = input.privacyMode;
+      if (typeof input.summaryEnabled === 'boolean') state.summaryEnabled = input.summaryEnabled;
+      return response(route, { settings: { enabled: state.enabled, privacyMode: state.privacyMode, summaryEnabled: state.summaryEnabled } });
+    }
+    if (pathname.endsWith('/bind') && method === 'POST') {
+      state.binding = 'candidate';
+      return response(route, { state: 'pending', expiresAt: '2099-01-01T00:10:00.000Z', deepLink: 'https://t.me/flaremail_test_bot?start=abcdefghijklmnopqrstuvwxyz012345' });
+    }
+    if (pathname.endsWith('/confirm') && method === 'POST') {
+      state.binding = 'active';
+      return response(route, mockTelegramStatus(state));
+    }
+    if (pathname.endsWith('/test') && method === 'POST') {
+      return response(route, { sent: true }, testFailure ? 429 : 200);
+    }
+    if (pathname.endsWith('/unbind') && method === 'POST') {
+      state.binding = 'none';
+      state.enabled = false;
+      return response(route, mockTelegramStatus(state));
+    }
+    return route.continue();
+  });
+
+  return {
+    setTestFailure(value: boolean) {
+      testFailure = value;
+    }
+  };
+}
+
+async function openSettings(page: Page) {
+  const profileButton = page.getByRole('button', { name: '打开设置' });
+  if (await profileButton.isVisible().catch(() => false)) {
+    await profileButton.click();
+  } else {
+    await page.getByRole('button', { name: '打开导航' }).click();
+    await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }).click();
+  }
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+}
+
 test('hydrates global metrics and pagination on fresh login, then purges state on logout', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
   await login(page);
@@ -660,5 +754,62 @@ test('has an accessible WCAG 2.1 AA workspace and touch targets', async ({ page,
     );
     expect(undersized, `touch targets below 44px: ${undersized.join(', ')}`).toEqual([]);
   }
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('binds, confirms, enables, tests, and unbinds Telegram from a non-default mailbox view', async ({ page, consoleErrors }, testInfo) => {
+  const telegram = await installTelegramApiMock(page);
+  await login(page);
+  await page.goto('/?folder=inbox&q=E2E%20Bulk%2030');
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await openSettings(page);
+
+  await expect(page.getByRole('heading', { name: 'Telegram 通知', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
+  const bindingLink = page.getByRole('link', { name: '打开 Telegram 继续绑定' });
+  await expect(bindingLink).toHaveAttribute('href', /^https:\/\/t\.me\/flaremail_test_bot\?start=/u);
+  expect(page.url()).not.toContain('start=');
+  expect(await page.evaluate(() => Object.keys(localStorage).some((key) => /telegram/i.test(key)))).toBe(false);
+
+  await page.getByRole('button', { name: '确认绑定' }).click();
+  await expect(page.getByRole('button', { name: '发送测试通知' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Telegram 绑定身份' })).toContainText('Alice E2E');
+
+  const enabled = page.getByRole('switch', { name: '启用入站 Telegram 通知' });
+  await expect(enabled).toHaveAttribute('aria-checked', 'false');
+  await enabled.click();
+  await expect(enabled).toHaveAttribute('aria-checked', 'true');
+
+  telegram.setTestFailure(true);
+  await page.getByRole('button', { name: '发送测试通知' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '模拟 Telegram 限流' })).toBeVisible();
+  telegram.setTestFailure(false);
+  await page.getByRole('button', { name: '发送测试通知' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '测试通知已发送' })).toBeVisible();
+
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: '解除绑定' }).click();
+  await expect(page.getByRole('button', { name: '生成 Telegram 绑定链接' })).toBeVisible();
+  if (testInfo.project.name !== 'desktop') await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('keeps Telegram controls unavailable to an unauthenticated browser', async ({ page, consoleErrors }) => {
+  const response = await page.request.get('/api/workspace/notifications/telegram/settings');
+  expect(response.status()).toBe(401);
+  await page.goto('/?folder=profile');
+  await expect(page.getByRole('heading', { name: '登录邮件工作台' })).toBeVisible();
+  await expect(page.getByText('生成 Telegram 绑定链接', { exact: true })).toHaveCount(0);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('has an accessible Telegram settings panel on mobile', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'The mobile project covers the Telegram settings accessibility baseline.');
+  await installTelegramApiMock(page);
+  await login(page);
+  await openSettings(page);
+  await expect(page.getByRole('heading', { name: 'Telegram 通知', exact: true })).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors);
 });

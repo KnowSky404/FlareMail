@@ -1,4 +1,7 @@
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu;
+const HTML_TAG = /<\/?[a-z][a-z0-9-]*(?:\s[^>]*)?>/giu;
+const HTML_COMMENT = /<!--[\s\S]*?-->/gu;
+const RAW_URL = /\b(?:https?:\/\/|ftp:\/\/|www\.)[^\s<>"']+/giu;
 
 export function base64Url(bytes: Uint8Array) {
   let binary = '';
@@ -23,7 +26,13 @@ export function normalizeTelegramId(value: unknown) {
 }
 
 export function cleanTelegramText(value: string, fallback = '') {
-  return value.replace(CONTROL_CHARACTERS, '').replace(/[ \t]+/gu, ' ').trim() || fallback;
+  return value
+    .replace(HTML_COMMENT, ' ')
+    .replace(HTML_TAG, ' ')
+    .replace(RAW_URL, '[链接已省略]')
+    .replace(CONTROL_CHARACTERS, '')
+    .replace(/\s+/gu, ' ')
+    .trim() || fallback;
 }
 
 export function cleanTelegramLine(value: string, fallback = '') {

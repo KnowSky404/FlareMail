@@ -81,6 +81,7 @@ export interface ClaimedTelegramDelivery {
   summary_enabled: number;
   telegram_username: string | null;
   login_email: string;
+  timezone: string;
   from_address: string;
   to_address: string;
   subject: string;
@@ -123,6 +124,59 @@ export async function hasTelegramTables(db: D1Database) {
   } catch {
     return false;
   }
+}
+
+export async function cleanupTelegramState(db: D1Database, now: string, maxRows = 500) {
+  const safeLimit = Math.max(1, Math.min(500, Math.trunc(maxRows)));
+  const nowMs = Date.parse(now);
+  const referenceMs = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const challengeCutoff = new Date(referenceMs - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const deliveryCutoff = new Date(referenceMs - 180 * 24 * 60 * 60 * 1000).toISOString();
+  const results = await db.batch([
+    db.prepare(`
+      UPDATE workspace_telegram_bind_challenges
+      SET status = 'expired', updated_at = ?
+      WHERE status = 'pending' AND expires_at <= ?
+        AND id IN (
+          SELECT id FROM workspace_telegram_bind_challenges
+          WHERE status = 'pending' AND expires_at <= ?
+          ORDER BY expires_at ASC, id ASC LIMIT ?
+        )
+    `).bind(now, now, now, safeLimit),
+    db.prepare(`
+      DELETE FROM workspace_telegram_bind_challenges
+      WHERE status IN ('consumed', 'replaced', 'expired') AND updated_at < ?
+        AND id IN (
+          SELECT id FROM workspace_telegram_bind_challenges
+          WHERE status IN ('consumed', 'replaced', 'expired') AND updated_at < ?
+          ORDER BY updated_at ASC, id ASC LIMIT ?
+        )
+    `).bind(challengeCutoff, challengeCutoff, safeLimit),
+    db.prepare(`
+      DELETE FROM workspace_telegram_updates
+      WHERE status IN ('processed', 'ignored') AND created_at < ?
+        AND update_id IN (
+          SELECT update_id FROM workspace_telegram_updates
+          WHERE status IN ('processed', 'ignored') AND created_at < ?
+          ORDER BY created_at ASC, update_id ASC LIMIT ?
+        )
+    `).bind(challengeCutoff, challengeCutoff, safeLimit),
+    db.prepare(`
+      DELETE FROM workspace_telegram_deliveries
+      WHERE status IN ('sent', 'failed', 'cancelled') AND completed_at IS NOT NULL AND completed_at < ?
+        AND id IN (
+          SELECT id FROM workspace_telegram_deliveries
+          WHERE status IN ('sent', 'failed', 'cancelled') AND completed_at IS NOT NULL AND completed_at < ?
+          ORDER BY completed_at ASC, id ASC LIMIT ?
+        )
+    `).bind(deliveryCutoff, deliveryCutoff, safeLimit)
+  ]);
+  return {
+    expiredChallenges: resultChanges(results[0]),
+    deletedChallenges: resultChanges(results[1]),
+    deletedUpdates: resultChanges(results[2]),
+    deletedDeliveries: resultChanges(results[3])
+  };
 }
 
 export function findTelegramBinding(db: D1Database, userId: string) {
@@ -363,7 +417,7 @@ export function insertTelegramDeliveryIfEligible(
 export async function listTelegramDeliveries(db: D1Database, userId: string, limit = 20) {
   const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
   const result = await db.prepare(`
-    SELECT d.*, e.subject, e."timestamp" AS received_at
+    SELECT d.*, e.subject, COALESCE(e.created_at, e."timestamp") AS received_at
     FROM workspace_telegram_deliveries AS d
     JOIN email_messages AS e ON e.id = d.email_message_id AND e.owner_user_id = d.owner_user_id
     WHERE d.owner_user_id = ?
@@ -377,7 +431,7 @@ export async function retryTelegramDelivery(db: D1Database, userId: string, deli
   const now = nowIso();
   const result = await db.prepare(`
     UPDATE workspace_telegram_deliveries
-    SET status = 'pending', next_attempt_at = ?, claim_token = NULL, lease_expires_at = NULL,
+    SET status = 'pending', attempts = 0, next_attempt_at = ?, claim_token = NULL, lease_expires_at = NULL,
       external_started = 0, external_started_at = NULL, last_error_code = NULL,
       last_error_at = NULL, updated_at = ?
     WHERE id = ? AND owner_user_id = ? AND status IN ('failed', 'retryable', 'unknown_delivery')
@@ -393,8 +447,8 @@ export async function claimTelegramDelivery(db: D1Database, now: string, leaseUn
       external_started = 0, external_started_at = NULL, updated_at = ?
     WHERE id = (
       SELECT id FROM workspace_telegram_deliveries
-      WHERE (status IN ('pending', 'retryable') AND next_attempt_at <= ?)
-         OR (status = 'processing' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ? AND external_started = 0)
+      WHERE (status IN ('pending', 'retryable') AND next_attempt_at <= ? AND attempts < max_attempts)
+         OR (status = 'processing' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ? AND external_started = 0 AND attempts < max_attempts)
       ORDER BY next_attempt_at ASC, created_at ASC, id ASC
       LIMIT 1
     )
@@ -405,8 +459,9 @@ export async function claimTelegramDelivery(db: D1Database, now: string, leaseUn
   const detail = await db.prepare(`
     SELECT d.id, d.owner_user_id, d.email_message_id, d.binding_id, d.authorization_version,
       d.attempts, d.max_attempts, d.claim_token, b.telegram_chat_id, b.privacy_mode,
-      b.summary_enabled, b.telegram_username, u.login_email, e."from" AS from_address,
-      e."to" AS to_address, e.subject, e."timestamp" AS received_at, e.snippet,
+      b.summary_enabled, b.telegram_username, u.login_email, u.timezone,
+      e."from" AS from_address, e."to" AS to_address, e.subject,
+      COALESCE(e.created_at, e."timestamp") AS received_at, e.snippet,
       (SELECT COUNT(*) FROM workspace_attachments AS a WHERE a.message_id = e.id AND a.relation_type = 'inbound') AS attachment_count
     FROM workspace_telegram_deliveries AS d
     JOIN workspace_telegram_bindings AS b
