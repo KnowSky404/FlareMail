@@ -162,12 +162,14 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       } else if (error instanceof TelegramApiError && error.kind === 'temporary') {
         try {
           const terminal = claimed.attempts >= claimed.max_attempts;
+          const nextAttemptAt = isoAfter(retryDelayMs(claimed.attempts), Date.parse(current));
+          await setTelegramDeliveryCooldown(env.DB, 'bot', nextAttemptAt).catch(() => undefined);
           await markTelegramFailure(env.DB, {
             deliveryId: claimed.id,
             claimToken: claimed.claim_token,
             status: terminal ? 'failed' : 'retryable',
             errorCode: error.code,
-            nextAttemptAt: isoAfter(retryDelayMs(claimed.attempts), Date.parse(current))
+            nextAttemptAt
           });
           if (terminal) result.failed += 1;
           else result.retryable += 1;

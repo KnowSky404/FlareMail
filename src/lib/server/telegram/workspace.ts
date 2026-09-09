@@ -32,7 +32,6 @@ export async function telegramWorkspaceStatus(env: CloudflareEnv, userId: string
     } : null,
     recentDeliveries: deliveries.map((delivery) => ({
       id: delivery.id,
-      emailMessageId: delivery.email_message_id,
       status: delivery.status,
       attempts: delivery.attempts,
       maxAttempts: delivery.max_attempts,

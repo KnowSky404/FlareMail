@@ -42,6 +42,7 @@
     type MailFilter,
     type WorkspaceSection
   } from '$lib/client/mailbox-controller';
+  import { LatestRequest } from '$lib/client/latest-request';
   import {
     createSession,
     deleteMessage,
@@ -51,6 +52,7 @@
     fetchDraftDetail,
     fetchInboundDetail,
     fetchMailboxPage,
+    fetchWorkspaceMessage,
     fetchMessageBody,
     fetchTrash,
     permanentlyDeleteTrashItem,
@@ -193,6 +195,7 @@
   }
   const toastController = new ToastController((messages) => (toastMessages = messages));
   const workspaceSnapshotController = new WorkspaceSnapshotController();
+  const targetMessageRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
     onResult: (result) => {
       trashItems = result.items;
@@ -260,6 +263,47 @@
     }
   });
 
+  $effect(() => {
+    const targetId = urlMessageId;
+    const section = activeSection;
+    if (
+      !authenticated ||
+      !targetId ||
+      !isInboundMessageId(targetId) ||
+      section === 'profile' ||
+      section === 'trash' ||
+      (section !== 'inbox' && section !== 'archive')
+    ) return;
+    const currentMessages = section === 'archive'
+      ? mailboxPages?.archive?.messages ?? []
+      : section === 'inbox'
+        ? mailbox.inbox
+        : [];
+    if (currentMessages.some((message) => message.id === targetId)) return;
+
+    const request = targetMessageRequest.begin();
+    void (async () => {
+      try {
+        const result = await fetchWorkspaceMessage(targetId, request.signal);
+        if (!request.isCurrent() || urlMessageId !== targetId || activeSection !== section) return;
+        const targetSection = result.message.archivedAt ? 'archive' : 'inbox';
+        applyMessageDelta(result, { section: targetSection, preferredMessageId: targetId });
+      } catch (error) {
+        if (request.signal.aborted || !request.isCurrent()) return;
+        if (error instanceof ClientApiError && (error.status === 401 || error.status === 403 || error.status === 404)) {
+          selectedMessageId = null;
+          mobileDetailOpen = false;
+          updateWorkspaceUrl({ messageId: null }, true);
+          notify('这封邮件不存在、已删除或不属于当前账号。', 'error');
+          return;
+        }
+        notifyError(error, '载入目标邮件失败。');
+      }
+    })();
+
+    return () => targetMessageRequest.cancel();
+  });
+
   const unreadCount = $derived(metrics.unreadCount);
   const serviceDegraded = $derived(
     runtimeOperationError || metrics.delayedCount + metrics.failedCount + metrics.bouncedCount + metrics.complainedCount + metrics.staleDeliveryCount > 0
@@ -311,7 +355,8 @@
       return null;
     }
 
-    return threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId)) ?? threads[0];
+    return threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
+      ?? (selectedMessageId ? null : threads[0]);
   });
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
@@ -322,7 +367,7 @@
         return null;
       }
 
-      return list.find((message) => message.id === selectedMessageId) ?? list[0];
+      return list.find((message) => message.id === selectedMessageId) ?? (selectedMessageId ? null : list[0]);
     }
 
     const thread = selectedThread;

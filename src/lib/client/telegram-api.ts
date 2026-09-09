@@ -4,7 +4,6 @@ export type TelegramDeliveryStatus = 'pending' | 'processing' | 'retryable' | 's
 
 export interface TelegramDeliverySummary {
   id: string;
-  emailMessageId: string;
   status: TelegramDeliveryStatus;
   attempts: number;
   maxAttempts: number;

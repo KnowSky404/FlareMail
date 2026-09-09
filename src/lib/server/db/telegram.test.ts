@@ -9,12 +9,14 @@ import {
   consumeTelegramChallenge,
   createTelegramChallenge,
   findTelegramBinding,
+  hasTelegramTables,
   insertTelegramDeliveryIfEligible,
   markTelegramExternalStarted,
   markTelegramSent,
   retryTelegramDelivery,
   updateTelegramSettings
 } from './telegram';
+import { FLAREMAIL_SCHEMA_VERSION } from './schema-version';
 
 class SqliteStatement {
   private values: unknown[] = [];
@@ -40,12 +42,22 @@ class SqliteD1 {
 function database() {
   const db = new Database(':memory:');
   db.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
+  db.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', ?, '2026-09-09T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
   db.query(`INSERT INTO workspace_users (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'profile@example.test', '', '', 'UTC', 0, '', 0)`).run();
   return { db, d1: new SqliteD1(db) };
 }
 
 describe('Telegram D1 state', () => {
+  test('fails closed until the exact Telegram schema and current migration metadata are present', async () => {
+    const { db, d1 } = database();
+    expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(true);
+
+    db.query(`UPDATE workspace_schema_metadata SET schema_version = 21 WHERE schema_name = 'flaremail'`).run();
+    expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(false);
+  });
+
   test('consumes a challenge once and keeps the candidate disabled', async () => {
     const { db, d1 } = database();
     await createTelegramChallenge(d1 as unknown as D1Database, 'user-1', 'challenge-1', 'token-hash', '2999-01-01T00:00:00.000Z');

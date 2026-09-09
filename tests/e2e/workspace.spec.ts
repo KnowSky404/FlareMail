@@ -176,7 +176,7 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
   await login(page);
   const navigation = page.getByRole('navigation', { name: '主导航' });
-  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).getByText('47', { exact: true })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).getByText('48', { exact: true })).toBeVisible();
   await expect(navigation.getByRole('button', { name: '已发送', exact: true }).getByText('1', { exact: true })).toBeVisible();
   await expect(navigation.getByRole('button', { name: '草稿箱', exact: true }).getByText('5', { exact: true })).toBeVisible();
 
@@ -210,6 +210,15 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   await expect(page.getByRole('button', { name: '全部', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
   await expect(page.getByRole('button', { name: '加载更多' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('opens an older inbound message from a cold deep link without selecting the first page item', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.goto('/?folder=inbox&message=email%3Ae2e-deep-inbound-message');
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.getByRole('heading', { name: 'E2E Deep Link Target', exact: true })).toBeVisible();
+  await expect(page.getByRole('article', { name: '邮件正文详情' })).toContainText('This older inbound message must open directly from its URL.');
   await assertNoConsoleErrors(consoleErrors);
 });
 

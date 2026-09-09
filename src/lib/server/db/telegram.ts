@@ -1,4 +1,5 @@
 import { nowIso } from '$lib/server/workspace/shared';
+import { FLAREMAIL_SCHEMA_VERSION } from './schema-version';
 
 export type TelegramBindingState = 'candidate' | 'active' | 'revoked';
 export type TelegramDeliveryStatus = 'pending' | 'processing' | 'retryable' | 'sent' | 'failed' | 'unknown_delivery' | 'cancelled';
@@ -120,10 +121,46 @@ export function telegramTableProbe(db: D1Database) {
   `).all<{ name: string }>();
 }
 
+const telegramRequiredColumns = {
+  workspace_telegram_bindings: [
+    'user_id', 'binding_id', 'state', 'telegram_user_id', 'telegram_chat_id', 'telegram_username',
+    'telegram_display_name', 'candidate_challenge_id', 'candidate_expires_at', 'enabled',
+    'privacy_mode', 'summary_enabled', 'authorization_version', 'bound_at', 'confirmed_at',
+    'revoked_at', 'last_sent_at', 'last_error_code', 'last_error_at', 'created_at', 'updated_at'
+  ],
+  workspace_telegram_bind_challenges: [
+    'id', 'owner_user_id', 'token_hash', 'status', 'expires_at', 'consumed_at', 'consumed_update_id',
+    'replaced_at', 'created_at', 'updated_at'
+  ],
+  workspace_telegram_updates: ['update_id', 'processing_token', 'status', 'result_code', 'created_at', 'processed_at'],
+  workspace_telegram_deliveries: [
+    'id', 'owner_user_id', 'email_message_id', 'channel', 'binding_id', 'authorization_version', 'privacy_mode',
+    'summary_enabled', 'status', 'attempts', 'max_attempts', 'next_attempt_at', 'claim_token',
+    'lease_expires_at', 'external_started', 'external_started_at', 'telegram_message_id',
+    'last_error_code', 'last_error_at', 'completed_at', 'created_at', 'updated_at'
+  ],
+  workspace_telegram_rate_limits: ['user_id', 'action', 'attempt_count', 'window_started_at', 'reset_at', 'updated_at'],
+  workspace_telegram_delivery_limits: ['scope', 'next_allowed_at', 'cooldown_until', 'updated_at']
+} as const;
+
+async function hasRequiredTelegramColumns(db: D1Database) {
+  const checks = await Promise.all(Object.entries(telegramRequiredColumns).map(async ([table, columns]) => {
+    const result = await db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all<{ name: string }>();
+    const present = new Set(result.results?.map(({ name }) => name));
+    return columns.every((column) => present.has(column));
+  }));
+  return checks.every(Boolean);
+}
+
 export async function hasTelegramTables(db: D1Database) {
   try {
     const result = await telegramTableProbe(db);
-    return new Set(result.results?.map(({ name }) => name)).size === 6;
+    if (new Set(result.results?.map(({ name }) => name)).size !== 6) return false;
+    const metadata = await db.prepare(
+      'SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?'
+    ).bind('flaremail').first<{ schema_version: number }>();
+    if (metadata?.schema_version !== FLAREMAIL_SCHEMA_VERSION) return false;
+    return await hasRequiredTelegramColumns(db);
   } catch {
     return false;
   }

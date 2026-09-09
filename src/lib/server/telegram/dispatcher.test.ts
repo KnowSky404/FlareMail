@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { dispatchTelegramOutbox } from './dispatcher';
 import { formatTelegramReceivedAt } from './message';
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 
 class Statement {
@@ -24,6 +25,8 @@ class TestD1 {
 function fixture(status: 'pending' | 'retryable' = 'pending') {
   const db = new Database(':memory:');
   db.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
+  db.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', ?, '2026-09-09T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
   db.query(`INSERT INTO workspace_users (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '', 0)`).run();
   db.query(`INSERT INTO workspace_telegram_bindings
@@ -88,6 +91,21 @@ describe('Telegram outbox dispatcher', () => {
     const unknownResult = await dispatchTelegramOutbox(unknown.env as unknown as CloudflareEnv, { limit: 1, now: () => Date.parse('2026-09-09T12:00:00.000Z'), fetchImpl: async () => { throw new Error('socket closed'); } });
     expect(unknownResult.unknown).toBe(1);
     expect(unknown.db.query('SELECT status, last_error_code FROM workspace_telegram_deliveries').get()).toEqual({ status: 'unknown_delivery', last_error_code: 'unknown_transport' });
+  });
+
+  test('pauses the durable bot scope after a Telegram server failure', async () => {
+    const value = fixture();
+    const now = Date.parse('2026-09-09T12:00:00.000Z');
+    const result = await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+      limit: 1,
+      now: () => now,
+      fetchImpl: async () => new Response(JSON.stringify({ ok: false, error_code: 500, description: 'server error' }), { status: 500 })
+    });
+
+    expect(result.retryable).toBe(1);
+    const cooldown = value.db.query(`SELECT cooldown_until FROM workspace_telegram_delivery_limits WHERE scope = 'bot'`).get() as { cooldown_until: string };
+    expect(Date.parse(cooldown.cooldown_until)).toBeGreaterThan(now);
+    expect(value.db.query('SELECT status FROM workspace_telegram_deliveries').get()).toEqual({ status: 'retryable' });
   });
 
   test('does not expand a queued summary and applies a newly enabled privacy mode', async () => {

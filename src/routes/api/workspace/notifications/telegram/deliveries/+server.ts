@@ -11,7 +11,6 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ApiError(400, 'INVALID_LIMIT', '分页参数无效。', undefined, undefined, false);
   return apiSuccess(event, { deliveries: (await listTelegramDeliveries(env.DB, session.userId, limit)).map((delivery) => ({
     id: delivery.id,
-    emailMessageId: delivery.email_message_id,
     status: delivery.status,
     attempts: delivery.attempts,
     maxAttempts: delivery.max_attempts,

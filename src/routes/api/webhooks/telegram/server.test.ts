@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { createTelegramChallenge } from '$lib/server/db/telegram';
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { sha256Base64Url } from '$lib/server/telegram/utils';
 import { POST } from './+server';
 
@@ -24,6 +25,8 @@ class TestD1 {
 function fixture() {
   const db = new Database(':memory:');
   db.exec(readFileSync(new URL('../../../../../schema.sql', import.meta.url), 'utf8'));
+  db.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', ?, '2026-09-09T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
   db.query(`INSERT INTO workspace_users (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '', 0)`).run();
   const DB = new TestD1(db);

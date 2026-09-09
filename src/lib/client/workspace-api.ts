@@ -151,6 +151,13 @@ export function fetchInboundDetail(messageId: string, signal?: AbortSignal) {
   );
 }
 
+export function fetchWorkspaceMessage(messageId: string, signal?: AbortSignal) {
+  return requestJson<MessageResponse>(
+    `/api/workspace/messages/${encodeURIComponent(messageId)}`,
+    { signal }
+  );
+}
+
 export function fetchDeliveryDetail(messageId: string, signal?: AbortSignal) {
   return requestJson<{ ok: boolean; detail: DeliveryDetail; error?: string }>(
     `/api/workspace/messages/${encodeURIComponent(messageId)}/delivery`,

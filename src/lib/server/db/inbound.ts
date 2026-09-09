@@ -189,10 +189,16 @@ export async function findOwnedInboundMessage(
   }>();
 }
 
-export async function findOwnedInboundState(db: D1Database, userId: string, messageId: string) {
+export async function findOwnedInboundState(
+  db: D1Database,
+  userId: string,
+  messageId: string,
+  options: { includeBody?: boolean } = {}
+) {
+  const bodyColumn = options.includeBody === false ? "''" : 'e.text_body';
   return db.prepare(`
     SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
-      e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at,
+      e.message_id, e.in_reply_to, e."references", e.thread_key, ${bodyColumn} AS text_body, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id

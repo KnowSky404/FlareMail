@@ -76,9 +76,9 @@ export function workspaceViewStateFromSnapshot(
   const preferredMessageId = options.preferredMessageId ?? null;
   const selectedMessageId = activeSection === 'profile'
     ? null
-    : activePage?.messages.some((message) => message.id === preferredMessageId)
-      ? preferredMessageId
-      : activePage?.messages[0]?.id ?? selectNextMessage(snapshot.mailbox, activeSection, preferredMessageId);
+    : preferredMessageId
+      ? activePage?.messages.some((message) => message.id === preferredMessageId) ? preferredMessageId : null
+      : activePage?.messages[0]?.id ?? selectNextMessage(snapshot.mailbox, activeSection, null);
 
   return {
     ...mailboxSnapshotFromWorkspace(snapshot),
@@ -215,11 +215,26 @@ export function mergeMessageDelta(
   const section = options.section ?? options.currentSection;
   if (section === 'archive') {
     const page = snapshot.mailboxPages?.archive;
-    const nextMessages = page?.messages.map((item) => item.id === result.message.id ? result.message : item) ?? [];
+    const nextMessages = sortMailboxMessages([
+      ...(page?.messages ?? []).filter((item) => item.id !== result.message.id),
+      result.message
+    ]);
+    const nextPage: MailboxPage = page
+      ? { ...page, messages: nextMessages }
+      : {
+        folder: 'archive',
+        messages: nextMessages,
+        nextCursor: null,
+        hasMore: false,
+        limit: 40,
+        query: '',
+        filter: 'all',
+        deliveryStatus: null
+      };
     return {
       snapshot: {
         mailbox: nextMailbox,
-        mailboxPages: page ? { ...(snapshot.mailboxPages ?? {}), archive: { ...page, messages: nextMessages } } : snapshot.mailboxPages,
+        mailboxPages: { ...(snapshot.mailboxPages ?? {}), archive: nextPage },
         metrics: result.metrics
       },
       selectedMessageId: options.preferredMessageId ?? options.currentSelectedMessageId,

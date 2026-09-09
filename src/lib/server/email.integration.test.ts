@@ -2,10 +2,11 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createInboundDedupeKey, handleInboundEmail } from './email';
+import { FLAREMAIL_SCHEMA_VERSION } from './db/schema-version';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
-  constructor(private readonly database: Database, private readonly sql: string) {}
+  constructor(private readonly database: Database, readonly sql: string) {}
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this as unknown as D1PreparedStatement; }
   async first<T>() { return (this.database.query(this.sql).get(...this.values) as T | null) ?? null; }
   async all<T>() { return { success: true, results: this.database.query(this.sql).all(...this.values) as T[] }; }
@@ -18,7 +19,10 @@ class TestStatement {
 
 class TestD1 {
   failBatch = false;
+  failTelegramBatch = false;
+  failBatchAfterStatements: number | null = null;
   failClaimCompletion = false;
+  readonly batches: string[][] = [];
   constructor(readonly database: Database) {}
   prepare(sql: string) {
     if (this.failClaimCompletion && sql.includes("UPDATE workspace_inbound_ingest_claims SET status = 'completed'")) {
@@ -27,10 +31,20 @@ class TestD1 {
     return new TestStatement(this.database, sql) as unknown as D1PreparedStatement;
   }
   async batch(statements: D1PreparedStatement[]) {
+    const sql = statements.map((statement) => (statement as unknown as TestStatement).sql);
+    this.batches.push(sql);
     if (this.failBatch) throw new Error('simulated d1 write failure');
+    if (this.failTelegramBatch && sql.some((statement) => statement.includes('workspace_telegram_deliveries'))) {
+      throw new Error('simulated optional Telegram write failure');
+    }
     return this.database.transaction(() => {
       const results = [];
-      for (const statement of statements) results.push((statement as unknown as TestStatement).runSync());
+      for (const [index, statement] of statements.entries()) {
+        results.push((statement as unknown as TestStatement).runSync());
+        if (this.failBatchAfterStatements !== null && index + 1 >= this.failBatchAfterStatements) {
+          throw new Error('simulated mid-batch write failure');
+        }
+      }
       return results;
     })();
   }
@@ -157,6 +171,40 @@ const notificationEnvironment = () => {
   return test;
 };
 
+const telegramEnvironment = () => {
+  const test = environment();
+  test.database.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', ?, '2026-09-09T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
+  test.env = {
+    ...test.env,
+    APP_ENV: 'test',
+    TELEGRAM_ENABLED: 'true',
+    TELEGRAM_BOT_TOKEN: '123456:abcdefghijklmnopqrstuvwxyz',
+    TELEGRAM_WEBHOOK_SECRET: 'test-telegram-webhook-secret',
+    TELEGRAM_BOT_USERNAME: 'flaremail_bot',
+    APP_BASE_URL: 'http://127.0.0.1:8787'
+  } as unknown as import('./cloudflare').CloudflareEnv;
+  test.database.query(`INSERT INTO workspace_telegram_bindings
+    (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, privacy_mode, summary_enabled,
+     authorization_version, created_at, updated_at)
+    VALUES ('user-1', 'binding-1', 'active', '42', '42', 1, 0, 1, 1,
+      '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z')`).run();
+  return test;
+};
+
+const captureTelegram = async <T>(action: () => Promise<T>) => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, result: { message_id: 9001 } }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' }
+  })) as unknown as typeof fetch;
+  try {
+    return await action();
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+};
+
 describe('inbound email persistence', () => {
   test('stores large UTF-8 text/html in a canonical R2 body and bounded D1 projections', async () => {
     const test = environment();
@@ -261,6 +309,38 @@ describe('inbound email persistence', () => {
     await expect(handleInboundEmail(message().value, test.env)).rejects.toThrow('simulated d1 write failure');
     expect(test.BUCKET.objects.size).toBe(0);
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+  });
+
+  test('persists an inbound Telegram outbox row in the same D1 batch as the mail', async () => {
+    const test = telegramEnvironment();
+    await captureTelegram(() => handleInboundEmail(message().value, test.env));
+
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+    expect(test.database.query('SELECT COUNT(*) AS count FROM workspace_telegram_deliveries').get()).toEqual({ count: 1 });
+    expect(test.DB.batches[0]?.some((statement) => statement.includes('INSERT INTO email_messages'))).toBe(true);
+    expect(test.DB.batches[0]?.some((statement) => statement.includes('workspace_telegram_deliveries'))).toBe(true);
+  });
+
+  test('falls back to core mail persistence when the optional Telegram statement fails', async () => {
+    const test = telegramEnvironment();
+    test.DB.failTelegramBatch = true;
+    await captureTelegram(() => handleInboundEmail(message().value, test.env));
+
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+    expect(test.database.query('SELECT COUNT(*) AS count FROM workspace_telegram_deliveries').get()).toEqual({ count: 0 });
+    expect(test.DB.batches).toHaveLength(2);
+    expect(test.DB.batches[1]?.some((statement) => statement.includes('workspace_telegram_deliveries'))).toBe(false);
+  });
+
+  test('rolls back the mail and Telegram outbox together after a mid-batch failure', async () => {
+    const test = telegramEnvironment();
+    test.DB.failBatchAfterStatements = 2;
+    await expect(captureTelegram(() => handleInboundEmail(message().value, test.env))).rejects.toThrow('simulated mid-batch write failure');
+
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+    expect(test.database.query('SELECT COUNT(*) AS count FROM workspace_telegram_deliveries').get()).toEqual({ count: 0 });
+    expect(test.database.query('SELECT COUNT(*) AS count FROM workspace_inbound_ingest_claims').get()).toEqual({ count: 0 });
+    expect(test.BUCKET.objects.size).toBe(0);
   });
 
   test('records incomplete cleanup when R2 rollback deletion fails', async () => {

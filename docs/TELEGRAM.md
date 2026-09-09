@@ -124,6 +124,31 @@ two modes conflict. Local and production deployments using the same Bot also
 conflict, so use a separate development Bot or explicitly delete/re-register
 the webhook during an approved local test.
 
+### Executing Bot API checks safely
+
+The following commands are concrete examples, but the referenced files must be
+rendered by the approved secret manager outside this repository with mode
+`0600`. The Bot token appears in the Bot API URL and the webhook secret appears
+in the `setWebhook` JSON; keeping both in a temporary `curl` config file avoids
+shell history and ordinary process-argument exposure. Remove the files after
+the approved check.
+
+```bash
+curl --fail-with-body --silent --show-error --config /secure/telegram-getme.curl
+curl --fail-with-body --silent --show-error --config /secure/telegram-set-webhook.curl
+curl --fail-with-body --silent --show-error --config /secure/telegram-get-webhook-info.curl
+curl --fail-with-body --silent --show-error --config /secure/telegram-delete-webhook.curl
+```
+
+The rendered config files should POST to the corresponding endpoints:
+`.../getMe`, `.../setWebhook`, `.../getWebhookInfo`, and
+`.../deleteWebhook`. The `setWebhook` request body must contain the exact
+`https://<PUBLIC_HOST>/api/webhooks/telegram` URL, the configured
+`secret_token`, `allowed_updates:["message"]`, and
+`drop_pending_updates:false`. Inspect only the returned `ok`, bot username,
+webhook URL, pending-update count, and last error metadata; never paste the
+token, secret, chat ID, or full response into a ticket or log.
+
 To disable the channel additively, set `TELEGRAM_ENABLED=false` and deploy.
 Existing mail, D1 outbox rows, Resend behavior, and Email Routing remain
 intact; the dispatcher stops scanning and sending. To rotate a token, create
@@ -183,10 +208,25 @@ rows older than 180 days. Each category is capped at 500 rows per Cron run;
 `unknown_delivery` rows are retained for operator review. This is a bounded
 retention pass, not a destructive live-mail cleanup.
 
-For local Worker preview, use the Wrangler local scheduled endpoint for the
-configured Cron expression after starting the preview Worker. This proves only
-local code, local D1, and injected/fake fetch behavior. It is not evidence of
-Cloudflare Cron execution or Telegram delivery.
+For local Worker preview, Wrangler's scheduled-test middleware can expose a
+direct test endpoint for the configured Cron expression:
+
+```bash
+bun x wrangler dev --config wrangler.toml --local --test-scheduled --ip 0.0.0.0 --port 8787
+curl -fsS -X POST 'http://127.0.0.1:8787/__scheduled?cron=*+*+*+*+*'
+```
+
+If the installed Wrangler instead prints that scheduled Workers are not
+automatically triggered during local development, use its standard local
+scheduled endpoint:
+
+```bash
+bun x wrangler dev --config wrangler.toml --local --ip 0.0.0.0 --port 8787
+curl -fsS 'http://127.0.0.1:8787/cdn-cgi/local/scheduled'
+```
+
+This proves only local code, local D1, and injected/fake fetch behavior. It is
+not evidence of Cloudflare Cron execution or Telegram delivery.
 
 ## Troubleshooting
 

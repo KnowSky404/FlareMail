@@ -120,6 +120,24 @@ describe('mailbox controller', () => {
     expect(state.outboundSenderEmail).toBe('mailer@example.com');
   });
 
+  test('does not select the first page item when a deep-linked target is absent', () => {
+    const page = makePage('inbox', [message('first', 'inbox', '2026-08-14T02:00:00.000Z')]);
+    const state = workspaceViewStateFromSnapshot({
+      profile: {
+        name: 'Owner', role: 'Owner', email: 'owner@example.com', company: '', location: '', timezone: 'UTC',
+        forwardingEnabled: false, signature: ''
+      },
+      metrics,
+      activeFolder: 'inbox',
+      activePage: page,
+      mailbox: { inbox: page.messages, sent: [], drafts: [] },
+      mailboxPages: { inbox: page },
+      outboundSenderEmail: null
+    }, { section: 'inbox', preferredMessageId: 'email:older' });
+
+    expect(state.selectedMessageId).toBeNull();
+  });
+
   test('resets every user-scoped view field and reconciles selections on replacement', () => {
     const empty = createEmptyWorkspaceViewState();
     expect(empty).toMatchObject({
@@ -145,6 +163,19 @@ describe('mailbox controller', () => {
     expect(result.snapshot.mailbox.inbox[0]?.starred).toBe(true);
     expect(result.snapshot.mailbox.drafts[0]?.id).toBe('draft');
     expect(result.selectedMessageId).toBe('inbox');
+  });
+
+  test('adds a deep-linked archived message to an initially partial archive page', () => {
+    const archived = { ...message('email:archived', 'inbox', '2026-08-14T01:00:00.000Z'), archivedAt: '2026-08-14T03:00:00.000Z' };
+    const result = mergeMessageDelta(snapshot(cloneMailbox()), { message: archived, metrics }, {
+      currentSection: 'archive',
+      currentSelectedMessageId: null,
+      section: 'archive',
+      preferredMessageId: archived.id
+    });
+
+    expect(result.snapshot.mailboxPages?.archive?.messages.map((item) => item.id)).toEqual([archived.id]);
+    expect(result.selectedMessageId).toBe(archived.id);
   });
 
   test('removes only the targeted folder entry and moves selection safely', () => {

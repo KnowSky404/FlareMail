@@ -28,6 +28,7 @@ const adminPassword = 'FlareMail-E2E-password-2026!';
 const userId = 'e2e-admin-user';
 const inboxId = 'e2e-inbox-message';
 const htmlInboxId = 'e2e-html-inbox-message';
+const deepInboundId = 'e2e-deep-inbound-message';
 const htmlCidKey = 'e2e/html-cid.png';
 const htmlCidBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 const timestamp = '2026-08-13T08:00:00.000Z';
@@ -130,6 +131,17 @@ INSERT OR IGNORE INTO email_messages (
   ${sql(JSON.stringify([{ name: 'authentication-results', value: 'mx.flaremail.test; spf=pass; dkim=pass; dmarc=pass' }]))},
   ${sql(JSON.stringify([{ method: 'spf', result: 'pass' }, { method: 'dkim', result: 'pass' }, { method: 'dmarc', result: 'pass' }]))},
   ${sql(`legacy:${htmlInboxId}`)}, ${sql(userId)}, ${sql(timestamp)}
+);
+INSERT OR IGNORE INTO email_messages (
+  id, message_id, "from", "to", subject, "timestamp", snippet, raw_key, raw_size,
+  direction, text_body, html_body, dedupe_key, owner_user_id, created_at
+) VALUES (
+  ${sql(deepInboundId)}, '<e2e-deep-inbound-message@flaremail.test>',
+  'Older Sender <older-sender@flaremail.test>', ${sql(adminEmail)}, 'E2E Deep Link Target',
+  '2026-08-01T08:00:00.000Z', 'An older inbound message used by deep-link browser QA.',
+  'e2e/deep-inbound.eml', 256, 'inbound',
+  'This older inbound message must open directly from its URL.', '', ${sql(`legacy:${deepInboundId}`)}, ${sql(userId)},
+  '2026-08-01T08:00:00.000Z'
 );
 INSERT OR IGNORE INTO workspace_attachments (
   id, user_id, message_id, filename, content_type, size, inline, content_id, r2_key

@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { GET } from './+server';
 import type { WorkspaceContext } from '$lib/server/workspace/shared';
 
@@ -27,6 +28,8 @@ const session: WorkspaceContext = {
 function fixture() {
   const db = new Database(':memory:');
   db.exec(readFileSync(new URL('../../../../../../../schema.sql', import.meta.url), 'utf8'));
+  db.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', ?, '2026-09-09T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
   const DB = new D1(db);
   const event = {
     request: new Request('https://mail.example.test/api/workspace/notifications/telegram/settings'),
