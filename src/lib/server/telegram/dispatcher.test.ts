@@ -136,13 +136,13 @@ describe('Telegram outbox dispatcher', () => {
     expect(privateRequests[0]?.text).toBe('FlareMail：收到一封新邮件。');
   });
 
-  test('does not claim a row whose binding authorization was revoked', async () => {
+  test('cancels a row whose binding authorization was revoked before delivery', async () => {
     const value = fixture('retryable');
     value.db.query(`UPDATE workspace_telegram_bindings SET state = 'revoked', enabled = 0, telegram_chat_id = NULL WHERE user_id = 'user-1'`).run();
     let calls = 0;
     const result = await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, { limit: 1, fetchImpl: async () => { calls += 1; return new Response('{}'); } });
     expect(result.processed).toBe(0);
     expect(calls).toBe(0);
-    expect(value.db.query('SELECT status FROM workspace_telegram_deliveries').get()).toEqual({ status: 'retryable' });
+    expect(value.db.query('SELECT status FROM workspace_telegram_deliveries').get()).toEqual({ status: 'cancelled' });
   });
 });
