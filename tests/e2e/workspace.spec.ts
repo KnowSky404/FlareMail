@@ -780,6 +780,22 @@ test('binds, confirms, enables, tests, and unbinds Telegram from a non-default m
   await expect(bindingLink).toBeInViewport();
   await expect(page.getByLabel('也可以复制以下完整链接')).toHaveValue('https://t.me/flaremail_test_bot?start=abcdefghijklmnopqrstuvwxyz012345');
   await expect(page.getByLabel('也可以复制以下完整链接')).toBeInViewport();
+  const command = page.getByLabel('完整绑定命令（含一次性绑定码）');
+  await expect(command).toHaveValue('/start abcdefghijklmnopqrstuvwxyz012345');
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => {
+      if (text !== '/start abcdefghijklmnopqrstuvwxyz012345') throw new Error('Incorrect binding command');
+    } } });
+  });
+  await page.getByRole('button', { name: '复制绑定命令', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: '完整绑定命令已复制' })).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('Clipboard unavailable'); } } });
+  });
+  await page.getByRole('button', { name: '复制绑定命令', exact: true }).click();
+  await expect(command).toBeFocused();
+  expect(await command.evaluate((element: HTMLTextAreaElement) => element.selectionEnd - element.selectionStart)).toBe('/start abcdefghijklmnopqrstuvwxyz012345'.length);
+  await expect(page.getByRole('status').filter({ hasText: '无法自动复制' })).toBeVisible();
   await page.screenshot({ path: `/tmp/telegram-binding-${testInfo.project.name}.png` });
   telegram.receiveStart();
   await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toBeVisible();

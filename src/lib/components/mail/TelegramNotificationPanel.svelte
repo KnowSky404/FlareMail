@@ -20,6 +20,8 @@
   let telegramState = $state<TelegramSettingsStatus | null>(null);
   let bindingLink = $state<string | null>(null);
   let bindingExpiresAt = $state<string | null>(null);
+  let bindingCommandElement = $state<HTMLTextAreaElement>();
+  const bindingCommand = $derived(bindingLink ? `/start ${new URL(bindingLink).searchParams.get('start') ?? ''}` : '');
   let generatedLinkElement = $state<HTMLDivElement>();
   let loading = $state(true);
   let action = $state('');
@@ -85,7 +87,7 @@
       bindingLink = result.deepLink;
       bindingExpiresAt = result.expiresAt;
       pollCount = 0;
-      message = '请在 Telegram 私聊中打开链接并发送 /start；识别后回到这里确认。';
+      message = '打开 Telegram 后点击 Start / 开始；若没有反应，请复制下方完整绑定命令发送，识别后回到这里确认。';
       await refresh();
       await tick();
       generatedLinkElement?.focus();
@@ -103,11 +105,22 @@
     message = '';
     try {
       const result = await setupTelegram();
-      message = `Telegram 已连接（@${result.botUsername}），Webhook 已更新。`;
+      message = `Telegram 已连接（@${result.botUsername}），Webhook 已更新。这不代表账号已绑定，请继续生成链接并完成绑定确认。`;
     } catch (value) {
       error = errorMessage(value);
     } finally {
       action = '';
+    }
+  }
+
+  async function copyBindingCommand() {
+    try {
+      await navigator.clipboard.writeText(bindingCommand);
+      message = '完整绑定命令已复制，请粘贴到机器人私聊中发送，再回到这里确认绑定。';
+    } catch {
+      bindingCommandElement?.focus();
+      bindingCommandElement?.select();
+      message = '无法自动复制，已选中完整绑定命令，请手动复制后发送到机器人私聊。';
     }
   }
 
@@ -246,7 +259,7 @@
         </div>
       {:else}
         <div class="stack">
-          <div class="notice"><Badge>未绑定</Badge><span>生成一次性链接后，在 Telegram 私聊中发送 /start。</span></div>
+          <div class="notice"><Badge class="shrink-0 whitespace-nowrap">未绑定</Badge><span>首次使用请先连接 Webhook，再生成链接并在 Telegram 私聊中发送带绑定码的完整命令。</span></div>
           <Button loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>生成 Telegram 绑定链接</Button>
         </div>
       {/if}
@@ -259,6 +272,10 @@
       <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">打开 Telegram 继续绑定</a>
       <label class="muted" for="telegram-binding-link">也可以复制以下完整链接</label>
       <textarea id="telegram-binding-link" class="link-value" readonly value={bindingLink} rows="3" onclick={(event) => event.currentTarget.select()}></textarea>
+      <p class="muted">仅打开聊天不会完成绑定。若链接跳转后没有反应，请发送以下完整命令；只发送 /start 不会绑定。</p>
+      <label class="muted" for="telegram-binding-command">完整绑定命令（含一次性绑定码）</label>
+      <textarea id="telegram-binding-command" class="link-value" bind:this={bindingCommandElement} readonly value={bindingCommand} rows="2" onclick={(event) => event.currentTarget.select()}></textarea>
+      <div class="actions"><Button variant="secondary" onclick={() => void copyBindingCommand()}>复制绑定命令</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新绑定状态</Button></div>
       <p class="muted">链接有效至 {formatDate(bindingExpiresAt)}，不会保存在浏览器或 URL 状态中。</p>
     </div>
   {/if}
