@@ -312,8 +312,9 @@ APP_BASE_URL = "https://mail.example.com"
 TELEGRAM_TIMEOUT_MS = "5000"
 ```
 
-`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` must be added as Dashboard
-**Secrets**, never TOML values. `wrangler.deploy.toml.example` includes
+`TELEGRAM_BOT_TOKEN` must be added as a Dashboard **Secret**, never a TOML
+value. `TELEGRAM_WEBHOOK_SECRET` is optional and only needed as an independent
+override. `wrangler.deploy.toml.example` includes
 `keep_vars = true` so future code deployments preserve Dashboard-managed
 variables. Apply migrations 0019-0022 and verify schema metadata 22 before the
 first enabled deployment. After deployment, log in to FlareMail and click

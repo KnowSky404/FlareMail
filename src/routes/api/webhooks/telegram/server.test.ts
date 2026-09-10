@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { createTelegramChallenge } from '$lib/server/db/telegram';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
+import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { resolveTelegramWebhookSecretFromEnvironment } from '$lib/server/telegram/config';
 import { sha256Base64Url } from '$lib/server/telegram/utils';
 import { POST } from './+server';
 
@@ -69,6 +71,16 @@ describe('Telegram webhook', () => {
     expect(response.status).toBe(401);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(touched).toBe(false);
+  });
+
+  test('accepts the derived secret when no explicit override is configured', async () => {
+    const fixtureData = fixture();
+    const env: Record<string, unknown> = { ...fixtureData.env };
+    delete env.TELEGRAM_WEBHOOK_SECRET;
+    const secret = await resolveTelegramWebhookSecretFromEnvironment(env as unknown as CloudflareEnv);
+
+    expect(secret).not.toBeNull();
+    expect((await POST(event(env, { invalid: true }, secret!))).status).toBe(400);
   });
 
   test('binds only a private non-bot chat and deduplicates Telegram retries', async () => {

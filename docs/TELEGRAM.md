@@ -61,13 +61,15 @@ operators who prefer file-based deployment:
 | `APP_BASE_URL` | non-secret var | yes | Credential-free HTTPS origin used by the detail button |
 | `TELEGRAM_TIMEOUT_MS` | non-secret var | no | Telegram request timeout, bounded to 1–15 seconds, default 5 seconds |
 | `TELEGRAM_BOT_TOKEN` | secret | yes | Bot API credential |
-| `TELEGRAM_WEBHOOK_SECRET` | secret | yes | `X-Telegram-Bot-Api-Secret-Token` value |
+| `TELEGRAM_WEBHOOK_SECRET` | secret | no | Optional independent override; otherwise derived from the Bot Token |
 
 `APP_BASE_URL` must be an origin with no path, credentials, query, or
 fragment. Production and preview require HTTPS. Development/test may use
-`http://127.0.0.1`, `http://localhost`, or `http://[::1]`. Tokens and webhook
-secrets must never enter Git, a client response, a user-visible or persisted
-application URL, or application logs.
+`http://127.0.0.1`, `http://localhost`, or `http://[::1]`. The Bot Token and
+any explicit webhook-secret override must never enter Git, a client response,
+a user-visible or persisted application URL, or application logs. Telegram
+does not provide a webhook secret: FlareMail derives a stable HMAC-based value
+from the Bot Token when no override is set.
 
 The Bot API requires the bot token in the provider endpoint URL, for example
 `https://api.telegram.org/bot<token>/sendMessage`. The Worker does not log
@@ -105,7 +107,8 @@ stored in the browser.
 2. In **Variables and Secrets**, add these non-secret variables: `TELEGRAM_ENABLED=true`,
    `TELEGRAM_BOT_USERNAME`, the exact public `APP_BASE_URL`, and optionally
    `TELEGRAM_TIMEOUT_MS=5000`.
-3. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` as **Secret** values.
+3. Add `TELEGRAM_BOT_TOKEN` as a **Secret** value. You may optionally add
+   `TELEGRAM_WEBHOOK_SECRET` as an independent override, but it is not needed.
    Do not put either value in Git, D1, browser storage, or a URL.
 4. Apply migrations 0019 through 0022 once and verify
    `workspace_schema_metadata.schema_version = 22`. Then deploy the Worker and
@@ -133,16 +136,17 @@ webhook, or send a real Telegram message.
    feature.
 2. Create a Bot with BotFather. Record the username without `@`. Keep the
    returned token in the secret manager only.
-3. Deploy with `TELEGRAM_ENABLED=false` first, upload the two Telegram secrets
-   through the approved secret path, and verify `/api/health` and the public
-   HTTPS origin. Do not place secret values in `wrangler.deploy.toml`.
+3. Deploy with `TELEGRAM_ENABLED=false` first, upload the Telegram Bot Token
+   through the approved secret path, and optionally upload an independent
+   webhook-secret override. Verify `/api/health` and the public HTTPS origin.
+   Do not place secret values in `wrangler.deploy.toml`.
 4. Set `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_USERNAME`, and the exact
    `APP_BASE_URL` in the reviewed private deployment config. Deploy the same
    code/config/schema combination and verify the health/config gate again.
 5. The authenticated settings page can verify the bot identity and register
    exactly one webhook at:
-   `https://<PUBLIC_HOST>/api/webhooks/telegram`, with the configured secret
-   header and `allowed_updates=["message"]`. An operator may use the manual
+   `https://<PUBLIC_HOST>/api/webhooks/telegram`, with the derived or explicitly
+   configured secret header and `allowed_updates=["message"]`. An operator may use the manual
    Bot API checks below instead. The endpoint must not be redirected by
    Cloudflare Access, an origin proxy, or a trailing-slash rule.
 6. Verify `getWebhookInfo` reports the intended URL, no pending-error backlog,
@@ -160,10 +164,10 @@ the webhook during an approved local test.
 
 The following commands are concrete examples, but the referenced files must be
 rendered by the approved secret manager outside this repository with mode
-`0600`. The Bot token appears in the Bot API URL and the webhook secret appears
-in the `setWebhook` JSON; keeping both in a temporary `curl` config file avoids
-shell history and ordinary process-argument exposure. Remove the files after
-the approved check.
+`0600`. The Bot token appears in the Bot API URL and an explicit webhook secret
+appears in the `setWebhook` JSON; keeping both in a temporary `curl` config
+file avoids shell history and ordinary process-argument exposure. Remove the
+files after the approved check.
 
 ```bash
 curl --fail-with-body --silent --show-error --config /secure/telegram-getme.curl
@@ -175,7 +179,7 @@ curl --fail-with-body --silent --show-error --config /secure/telegram-delete-web
 The rendered config files should POST to the corresponding endpoints:
 `.../getMe`, `.../setWebhook`, `.../getWebhookInfo`, and
 `.../deleteWebhook`. The `setWebhook` request body must contain the exact
-`https://<PUBLIC_HOST>/api/webhooks/telegram` URL, the configured
+`https://<PUBLIC_HOST>/api/webhooks/telegram` URL, the derived or configured
 `secret_token`, `allowed_updates:["message"]`, and
 `drop_pending_updates:false`. Inspect only the returned `ok`, bot username,
 webhook URL, pending-update count, and last error metadata; never paste the
@@ -266,7 +270,7 @@ not evidence of Cloudflare Cron execution or Telegram delivery.
 | Symptom | Checks |
 | --- | --- |
 | `401` webhook | Secret header, exact route, no proxy rewrite, no Access challenge, and no redirect |
-| `TELEGRAM_NOT_READY` | Enabled var, Bot token/username, webhook secret, HTTPS `APP_BASE_URL`, and schema 22 |
+| `TELEGRAM_NOT_READY` | Enabled var, Bot token/username, HTTPS `APP_BASE_URL`, and schema 22 |
 | Bot never sees `/start` | `getWebhookInfo`, webhook URL, pending errors, Bot blocked by the user, and production/local Bot conflict |
 | Candidate expires | Generate a new link and send `/start` from the same private chat within 10 minutes |
 | Confirm fails | The candidate update was not accepted, the chat is not private, or the candidate was replaced |

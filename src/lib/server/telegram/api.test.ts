@@ -76,6 +76,22 @@ describe('Telegram Bot API client', () => {
     ]);
   });
 
+  test('uses the derived webhook secret when no override is configured', async () => {
+    const withoutOverride = { ...env };
+    delete withoutOverride.TELEGRAM_WEBHOOK_SECRET;
+    let webhookBody: Record<string, unknown> | undefined;
+    await configureTelegramWebhook(withoutOverride, {
+      fetchImpl: async (input, init) => {
+        if (String(input).endsWith('/setWebhook')) webhookBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return String(input).endsWith('/getMe')
+          ? new Response(JSON.stringify({ ok: true, result: { id: 123, is_bot: true, username: 'flaremail_bot' } }), { status: 200 })
+          : new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+      }
+    });
+
+    expect(webhookBody?.secret_token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+  });
+
   test('rejects a Bot identity that does not match the configured username', async () => {
     await expect(configureTelegramWebhook(env, {
       fetchImpl: async () => new Response(JSON.stringify({ ok: true, result: { id: 123, username: 'another_bot' } }), { status: 200 })

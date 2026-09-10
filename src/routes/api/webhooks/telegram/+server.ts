@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { hasTelegramTables, consumeTelegramChallenge, processTelegramStopUpdate, recordTelegramIgnoredUpdate } from '$lib/server/db/telegram';
-import { resolveTelegramConfig } from '$lib/server/telegram/config';
+import { resolveTelegramConfig, resolveTelegramWebhookSecretFromEnvironment } from '$lib/server/telegram/config';
 import { buildTelegramHelpPayload } from '$lib/server/telegram/message';
 import { sendTelegramMessage } from '$lib/server/telegram/api';
 import { normalizeTelegramId, sha256Base64Url, cleanTelegramLine } from '$lib/server/telegram/utils';
@@ -96,7 +96,7 @@ function webhookJson(body: Record<string, unknown>, init: ResponseInit = {}) {
 
 export const POST: RequestHandler = async (event) => {
   const env = event.platform?.env as CloudflareEnv | undefined;
-  const configuredSecret = env?.TELEGRAM_WEBHOOK_SECRET?.trim() ?? '';
+  const configuredSecret = await resolveTelegramWebhookSecretFromEnvironment(env);
   const suppliedSecret = event.request.headers.get('X-Telegram-Bot-Api-Secret-Token') ?? '';
 
   // This check deliberately happens before body parsing and before any D1

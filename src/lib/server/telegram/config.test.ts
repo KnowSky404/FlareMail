@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveTelegramConfig } from './config';
+import { resolveTelegramConfig, resolveTelegramWebhookSecret } from './config';
 import { validateEnvironment } from '$lib/server/config/env';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 
@@ -17,11 +17,30 @@ const valid = {
 };
 
 describe('Telegram runtime configuration', () => {
-  test('is ready only with enabled, credential-free origin and both secrets', () => {
+  test('is ready with the Bot Token and enabled, credential-free origin', () => {
     expect(resolveTelegramConfig(valid as unknown as CloudflareEnv).ready).toBe(true);
     expect(resolveTelegramConfig(valid as unknown as CloudflareEnv).botToken).not.toBeNull();
     expect(JSON.stringify(resolveTelegramConfig(valid as unknown as CloudflareEnv))).toContain('flaremail_bot');
     expect(JSON.stringify(validateEnvironment({ ...valid, TELEGRAM_BOT_TOKEN: 'not-a-token' })).toString()).not.toContain('abcdefghijklmnopqrstuvwxyz');
+  });
+
+  test('derives a stable webhook secret when no override is configured', async () => {
+    const withoutOverride: Record<string, unknown> = { ...valid };
+    delete withoutOverride.TELEGRAM_WEBHOOK_SECRET;
+    const config = resolveTelegramConfig(withoutOverride as unknown as CloudflareEnv);
+    const first = await resolveTelegramWebhookSecret(withoutOverride as unknown as CloudflareEnv, config);
+    const second = await resolveTelegramWebhookSecret(withoutOverride as unknown as CloudflareEnv, config);
+
+    expect(config.ready).toBe(true);
+    expect(config.webhookSecret).toBeNull();
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(first).toBe(second);
+    expect(first).not.toBe(valid.TELEGRAM_WEBHOOK_SECRET);
+  });
+
+  test('rejects an explicit webhook override outside Telegram token characters', () => {
+    expect(validateEnvironment({ ...valid, TELEGRAM_WEBHOOK_SECRET: 'invalid webhook secret' }).errors.map(({ code }) => code))
+      .toContain('invalid_telegram_webhook_secret');
   });
 
   test('rejects credentials, query strings, and insecure production origins', () => {

@@ -37,7 +37,6 @@ export interface EnvironmentDiagnostic {
     | 'invalid_webhook_secret'
     | 'invalid_resend_api_base_url'
     | 'missing_telegram_bot_token'
-    | 'missing_telegram_webhook_secret'
     | 'missing_telegram_bot_username'
     | 'missing_app_base_url'
     | 'invalid_telegram_bot_token'
@@ -83,7 +82,7 @@ export function isValidTelegramBotToken(value: unknown): value is string {
 }
 
 export function isValidTelegramWebhookSecret(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length >= 16 && value.trim().length <= 256 && !/[\r\n]/u.test(value);
+  return typeof value === 'string' && value.trim() === value && /^[A-Za-z0-9_-]{16,256}$/u.test(value);
 }
 
 export function resolveOutboundFromEmail(
@@ -158,7 +157,6 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   if (appEnv === 'production' && effectiveOutboundFrom && !isEmail(effectiveOutboundFrom)) error('invalid_email', 'The configured outbound sender must be a valid email address.');
   if (telegramEnabled) {
     if (!hasTelegramBotToken) error('missing_telegram_bot_token', 'TELEGRAM_BOT_TOKEN is required when Telegram notifications are enabled.');
-    if (!hasTelegramWebhookSecret) error('missing_telegram_webhook_secret', 'TELEGRAM_WEBHOOK_SECRET is required when Telegram notifications are enabled.');
     if (!hasTelegramBotUsername) error('missing_telegram_bot_username', 'TELEGRAM_BOT_USERNAME is required when Telegram notifications are enabled.');
     if (!asString(environment.APP_BASE_URL)) error('missing_app_base_url', 'APP_BASE_URL is required when Telegram notifications are enabled.');
     if (hasTelegramBotToken && !isValidTelegramBotToken(environment.TELEGRAM_BOT_TOKEN)) error('invalid_telegram_bot_token', 'TELEGRAM_BOT_TOKEN has an invalid format.');
@@ -216,8 +214,9 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
     hasTelegramBotToken,
     hasTelegramWebhookSecret,
     telegramEnabled,
-    telegramConfigured: telegramEnabled && hasTelegramBotToken && hasTelegramWebhookSecret && Boolean(telegramBotUsername && appBaseUrl) &&
-      isValidTelegramBotToken(environment.TELEGRAM_BOT_TOKEN) && isValidTelegramWebhookSecret(environment.TELEGRAM_WEBHOOK_SECRET) &&
+    telegramConfigured: telegramEnabled && hasTelegramBotToken && Boolean(telegramBotUsername && appBaseUrl) &&
+      isValidTelegramBotToken(environment.TELEGRAM_BOT_TOKEN) &&
+      (!hasTelegramWebhookSecret || isValidTelegramWebhookSecret(environment.TELEGRAM_WEBHOOK_SECRET)) &&
       Boolean(telegramBotUsername && TELEGRAM_USERNAME_PATTERN.test(telegramBotUsername)),
     telegramBotUsername,
     appBaseUrl,

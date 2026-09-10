@@ -189,9 +189,7 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] Production D1/R2 binding names, Resend webhook endpoint/event set,
   Email Routing rule and secret-present status are recorded without values.
 - [ ] If Telegram is enabled, migrations 0019-0022/schema version 22 are applied,
-  including the account-delete cleanup trigger, challenge provenance, and privacy snapshot. `APP_BASE_URL` is a credential-free HTTPS origin, Bot token/webhook secret
-  are present only as secrets, and the one-Bot webhook is reviewed with
-  `getMe`/`getWebhookInfo`.
+  including the account-delete cleanup trigger, challenge provenance, and privacy snapshot. `APP_BASE_URL` is a credential-free HTTPS origin, the Bot Token is present only as a secret, any webhook-secret override is also secret-only, and the one-Bot webhook is reviewed with `getMe`/`getWebhookInfo`.
 - [ ] Normal code rollback will deploy the previous Worker while preserving
   append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.
 - [ ] No older Worker rollback plan requires dropping new D1 columns or deleting

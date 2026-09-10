@@ -1,5 +1,5 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { resolveTelegramConfig } from './config';
+import { resolveTelegramConfig, resolveTelegramWebhookSecret } from './config';
 
 export type TelegramFailureKind = 'temporary' | 'permanent' | 'rate_limited' | 'unknown' | 'configuration';
 
@@ -147,9 +147,11 @@ export async function configureTelegramWebhook(
   options: { fetchImpl?: TelegramFetch; signal?: AbortSignal } = {}
 ): Promise<TelegramWebhookSetupResult> {
   const config = resolveTelegramConfig(env);
-  if (!config.ready || !config.botUsername || !config.webhookSecret || !config.appBaseUrl) {
+  if (!config.ready || !config.botUsername || !config.appBaseUrl) {
     throw new TelegramApiError('configuration', 'telegram_not_ready');
   }
+  const webhookSecret = await resolveTelegramWebhookSecret(env, config);
+  if (!webhookSecret) throw new TelegramApiError('configuration', 'telegram_not_ready');
 
   const identity = botIdentity(await callTelegramApi(env, 'getMe', {}, options));
   if (!identity) throw new TelegramApiError('configuration', 'invalid_bot_identity');
@@ -160,7 +162,7 @@ export async function configureTelegramWebhook(
   const webhookUrl = new URL('/api/webhooks/telegram', config.appBaseUrl).toString();
   const result = await callTelegramApi(env, 'setWebhook', {
     url: webhookUrl,
-    secret_token: config.webhookSecret,
+    secret_token: webhookSecret,
     allowed_updates: ['message'],
     drop_pending_updates: false
   }, options);
