@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
@@ -20,6 +20,7 @@
   let telegramState = $state<TelegramSettingsStatus | null>(null);
   let bindingLink = $state<string | null>(null);
   let bindingExpiresAt = $state<string | null>(null);
+  let generatedLinkElement = $state<HTMLDivElement>();
   let loading = $state(true);
   let action = $state('');
   let error = $state('');
@@ -53,10 +54,11 @@
   }
 
   async function refresh() {
+    if (pollTimer) clearTimeout(pollTimer);
     try {
       telegramState = await fetchTelegramSettings();
       error = '';
-      if (telegramState?.binding?.state === 'candidate' && pollCount < 12) {
+      if (bindingLink && telegramState?.binding?.state !== 'active' && pollCount < 12) {
         pollCount += 1;
         pollTimer = setTimeout(() => void refresh(), 5_000);
       }
@@ -85,6 +87,9 @@
       pollCount = 0;
       message = '请在 Telegram 私聊中打开链接并发送 /start；识别后回到这里确认。';
       await refresh();
+      await tick();
+      generatedLinkElement?.focus();
+      generatedLinkElement?.scrollIntoView({ block: 'center' });
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -201,9 +206,6 @@
       {#if telegramState.binding?.state === 'candidate'}
         <div class="stack">
           <div class="notice"><Badge>待确认</Badge><span>Telegram 已识别此私聊；请在 FlareMail 点击确认。</span></div>
-          {#if bindingLink}
-            <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">打开 Telegram 继续绑定</a>
-          {/if}
           <p class="muted">链接有效至 {formatDate(telegramState.binding.candidateExpiresAt ?? bindingExpiresAt)}。确认后通知仍默认关闭。</p>
           <div class="actions"><Button loading={action === 'confirm'} disabled={action !== ''} onclick={() => void confirmBinding()}>确认绑定</Button><Button variant="secondary" loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>重新生成链接</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新状态</Button></div>
         </div>
@@ -251,10 +253,12 @@
     </div>
   {/if}
 
-  {#if bindingLink && telegramState?.binding?.state !== 'candidate'}
-    <div class="generated-link">
+  {#if bindingLink}
+    <div class="generated-link" bind:this={generatedLinkElement} tabindex="-1" role="group" aria-label="生成的 Telegram 绑定链接">
       <strong>绑定链接（仅显示本次）</strong>
       <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">打开 Telegram 继续绑定</a>
+      <label class="muted" for="telegram-binding-link">也可以复制以下完整链接</label>
+      <textarea id="telegram-binding-link" class="link-value" readonly value={bindingLink} rows="3" onclick={(event) => event.currentTarget.select()}></textarea>
       <p class="muted">链接有效至 {formatDate(bindingExpiresAt)}，不会保存在浏览器或 URL 状态中。</p>
     </div>
   {/if}
@@ -286,6 +290,7 @@
   .setup-copy strong { color: var(--fm-text); font-size: 13px; }
   .muted { margin: 0; color: var(--fm-text-muted); font-size: 12px; line-height: 1.6; }
   .bind-link { color: var(--fm-accent); font-size: 13px; overflow-wrap: anywhere; }
+  .link-value { width: 100%; min-width: 0; box-sizing: border-box; padding: var(--space-2); border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface); color: var(--fm-text); font: inherit; font-size: 13px; overflow-wrap: anywhere; resize: vertical; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
   .generated-link { display: grid; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--fm-border); }
   .feedback { margin: var(--space-3) 0 0; color: var(--fm-success); font-size: 13px; }

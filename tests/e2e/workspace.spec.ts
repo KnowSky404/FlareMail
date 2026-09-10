@@ -136,7 +136,6 @@ async function installTelegramApiMock(page: Page) {
       return response(route, { settings: { enabled: state.enabled, privacyMode: state.privacyMode, summaryEnabled: state.summaryEnabled } });
     }
     if (pathname.endsWith('/bind') && method === 'POST') {
-      state.binding = 'candidate';
       return response(route, { state: 'pending', expiresAt: '2099-01-01T00:10:00.000Z', deepLink: 'https://t.me/flaremail_test_bot?start=abcdefghijklmnopqrstuvwxyz012345' });
     }
     if (pathname.endsWith('/confirm') && method === 'POST') {
@@ -155,6 +154,7 @@ async function installTelegramApiMock(page: Page) {
   });
 
   return {
+    receiveStart() { state.binding = 'candidate'; },
     setTestFailure(value: boolean) {
       testFailure = value;
     }
@@ -777,6 +777,12 @@ test('binds, confirms, enables, tests, and unbinds Telegram from a non-default m
   await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
   const bindingLink = page.getByRole('link', { name: '打开 Telegram 继续绑定' });
   await expect(bindingLink).toHaveAttribute('href', /^https:\/\/t\.me\/flaremail_test_bot\?start=/u);
+  await expect(bindingLink).toBeInViewport();
+  await expect(page.getByLabel('也可以复制以下完整链接')).toHaveValue('https://t.me/flaremail_test_bot?start=abcdefghijklmnopqrstuvwxyz012345');
+  await expect(page.getByLabel('也可以复制以下完整链接')).toBeInViewport();
+  await page.screenshot({ path: `/tmp/telegram-binding-${testInfo.project.name}.png` });
+  telegram.receiveStart();
+  await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toBeVisible();
   expect(page.url()).not.toContain('start=');
   expect(await page.evaluate(() => Object.keys(localStorage).some((key) => /telegram/i.test(key)))).toBe(false);
 
