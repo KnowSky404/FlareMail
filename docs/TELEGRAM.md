@@ -46,8 +46,13 @@ an automatic retry target.
 
 ## Configuration
 
-The checked-in Wrangler files keep Telegram disabled. The production values
-below belong in the ignored private deployment config or Wrangler secrets:
+The checked-in Wrangler files keep Telegram disabled. For a personal online
+deployment, put the values below in the Cloudflare Dashboard under **Workers
+& Pages → your Worker → Settings → Variables and Secrets**. The production
+example also sets `keep_vars = true`, so later code deployments keep the
+Dashboard-managed values instead of replacing them with the checked-in
+placeholders. The private `wrangler.deploy.toml` remains available for
+operators who prefer file-based deployment:
 
 | Variable | Kind | Required when enabled | Purpose |
 | --- | --- | --- | --- |
@@ -89,7 +94,34 @@ conflicting, and successful update states are finalized atomically. Migration
 outbox row; current stricter settings still apply before send, but an old row
 cannot gain a summary merely because the user enabled it while the row waited.
 
-## Production setup order
+## Recommended online setup
+
+The normal setup no longer requires a local `.env`, `curl`, or a separate
+administrator role. It still requires one initial database migration and one
+Bot token entry in Cloudflare, because the token must never be sent through or
+stored in the browser.
+
+1. Create a Bot with BotFather and copy its username without `@`.
+2. In **Variables and Secrets**, add these non-secret variables: `TELEGRAM_ENABLED=true`,
+   `TELEGRAM_BOT_USERNAME`, the exact public `APP_BASE_URL`, and optionally
+   `TELEGRAM_TIMEOUT_MS=5000`.
+3. Add `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` as **Secret** values.
+   Do not put either value in Git, D1, browser storage, or a URL.
+4. Apply migrations 0019 through 0022 once and verify
+   `workspace_schema_metadata.schema_version = 22`. Then deploy the Worker and
+   click **Deploy** after saving the Dashboard variables/secrets.
+5. Log in to FlareMail. In the Telegram panel, click **连接 / 更新 Webhook**.
+   The Worker calls `getMe`, checks that the Bot username matches, and calls
+   `setWebhook` for `/api/webhooks/telegram` automatically.
+6. Click **生成 Telegram 绑定链接**, open it in your private Telegram chat,
+   send `/start`, click **确认绑定**, and enable notifications when ready.
+
+Any authenticated workspace session can perform these actions. This project is
+intended for personal use, so it deliberately does not distinguish an
+administrator from an ordinary user. Cloudflare Dashboard access remains the
+boundary for the deployment-level Bot secret and global switch.
+
+## Production setup order (advanced/operator reference)
 
 Every remote operation below is an operator action requiring its own approval.
 This repository change does not run migrations, deploy a Worker, register a
@@ -107,12 +139,12 @@ webhook, or send a real Telegram message.
 4. Set `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_USERNAME`, and the exact
    `APP_BASE_URL` in the reviewed private deployment config. Deploy the same
    code/config/schema combination and verify the health/config gate again.
-5. Verify the bot identity with `getMe`. Register exactly one webhook at:
+5. The authenticated settings page can verify the bot identity and register
+   exactly one webhook at:
    `https://<PUBLIC_HOST>/api/webhooks/telegram`, with the configured secret
-   header and `allowed_updates=["message"]`. Use a secret-manager-backed
-   request body or API client; do not put the token in shell history or a
-   shared process list. The endpoint must not be redirected by Cloudflare
-   Access, an origin proxy, or a trailing-slash rule.
+   header and `allowed_updates=["message"]`. An operator may use the manual
+   Bot API checks below instead. The endpoint must not be redirected by
+   Cloudflare Access, an origin proxy, or a trailing-slash rule.
 6. Verify `getWebhookInfo` reports the intended URL, no pending-error backlog,
    and a recent successful delivery. Only then log in to FlareMail, generate a
    binding link, open it in the intended Telegram private chat, send `/start`,
@@ -189,17 +221,18 @@ reclaimed. The dispatcher applies a request-level `AbortController` timeout,
 reloads binding/message ownership, and limits each invocation by task count
 and time budget.
 
-Persistent D1 limits cover bind, confirm, test, unbind, and manual retry
-actions, plus Bot/user/chat delivery scopes. Telegram 429 responses honor
+Persistent D1 limits cover setup, bind, confirm, test, unbind, and manual
+retry actions, plus Bot/user/chat delivery scopes. Telegram 429 responses honor
 `retry_after` with jitter. Temporary failures use bounded exponential backoff
 and max attempts; 401/403 and other permanent failures become terminal
 `failed` rows.
 
-The UI shows candidate/active/enabled state, the bound Telegram display-name
-and username summary (never the chat ID), privacy and summary switches, test
-action, unbind action, recent deliveries with localized status labels, and
-manual retry warnings. API responses are the normal `{ ok, data, requestId }`
-no-store envelope.
+The UI can verify the deployment Bot and update its Webhook, then shows
+candidate/active/enabled state, the bound Telegram display-name and username
+summary (never the chat ID), privacy and summary switches, test action, unbind
+action, recent deliveries with localized status labels, and manual retry
+warnings. API responses are the normal `{ ok, data, requestId }` no-store
+envelope.
 
 The scheduled dispatcher also expires pending challenges and candidate
 bindings, cancels their not-yet-started delivery work, and removes terminal

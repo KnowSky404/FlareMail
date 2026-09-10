@@ -2,6 +2,8 @@ name = "flaremail"
 main = "worker/index.ts"
 compatibility_date = "2026-08-19"
 compatibility_flags = ["nodejs_compat"]
+# Keep Dashboard-managed variables when the Worker code is deployed.
+keep_vars = true
 
 [observability]
 enabled = true

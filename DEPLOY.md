@@ -301,8 +301,9 @@ development only and is not a production input.
 
 Telegram is disabled in the checked-in templates. Read
 [docs/TELEGRAM.md](./docs/TELEGRAM.md) completely before enabling it. The
-feature requires migrations 0019-0022, a single deployment-level Bot, and these
-values in the private production config/secrets:
+feature requires migrations 0019-0022 and a single deployment-level Bot. For
+the simpler online flow, enter the following non-secret values in the
+Cloudflare Dashboard under **Settings → Variables and Secrets**:
 
 ```toml
 TELEGRAM_ENABLED = "true"
@@ -311,17 +312,20 @@ APP_BASE_URL = "https://mail.example.com"
 TELEGRAM_TIMEOUT_MS = "5000"
 ```
 
-`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` are Wrangler secrets, never
-TOML values. Apply migrations 0019-0022 and verify schema metadata 22 before the
-first enabled deployment. Keep Email Routing disabled while checking
-`/api/health`, `getMe`, the exact HTTPS webhook route, and
-`getWebhookInfo`. Register only `/api/webhooks/telegram` with
-`allowed_updates=["message"]`; do not run `getUpdates` for the same Bot.
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` must be added as Dashboard
+**Secrets**, never TOML values. `wrangler.deploy.toml.example` includes
+`keep_vars = true` so future code deployments preserve Dashboard-managed
+variables. Apply migrations 0019-0022 and verify schema metadata 22 before the
+first enabled deployment. After deployment, log in to FlareMail and click
+**连接 / 更新 Webhook**; the page verifies `getMe` and registers only
+`/api/webhooks/telegram` with `allowed_updates=["message"]`. No local `.env`,
+manual `curl`, or administrator/ordinary-user role split is needed for this
+personal-use flow.
 
-After the Worker and webhook are verified, users bind through the authenticated
-settings page. `/start <token>` creates a disabled candidate, the user clicks
-**确认绑定**, and the user separately enables notifications. The channel
-trusts `login_email`, not the editable profile email. `/stop`, UI unbind, token
+After the Worker and webhook are verified, bind through the authenticated
+settings page. `/start <token>` creates a disabled candidate, click
+**确认绑定**, and separately enable notifications. The channel trusts
+`login_email`, not the editable profile email. `/stop`, UI unbind, token
 rotation, and disabling the global var are additive and do not alter inbound
 mail, Resend, or the legacy email notification channel.
 

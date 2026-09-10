@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { sendTelegramMessage } from './api';
+import { configureTelegramWebhook, sendTelegramMessage } from './api';
 
 const env = {
   DB: {}, BUCKET: {}, APP_ENV: 'test', ALLOW_FAKE_SERVICES: 'true', OUTBOUND_PROVIDER: 'demo',
@@ -45,5 +45,40 @@ describe('Telegram Bot API client', () => {
     }, {
       fetchImpl: async () => new Response('{}', { status: 200 })
     })).rejects.toMatchObject({ kind: 'unknown', code: 'missing_error_code' });
+  });
+
+  test('checks the configured Bot and registers the exact webhook contract', async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const result = await configureTelegramWebhook(env, {
+      fetchImpl: async (input, init) => {
+        requests.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+        return requests.length === 1
+          ? new Response(JSON.stringify({ ok: true, result: { id: 123, is_bot: true, first_name: 'FlareMail', username: 'flaremail_bot' } }), { status: 200 })
+          : new Response(JSON.stringify({ ok: true, result: true }), { status: 200 });
+      }
+    });
+
+    expect(result).toEqual({ botId: '123', botUsername: 'flaremail_bot', webhookPath: '/api/webhooks/telegram' });
+    expect(requests).toEqual([
+      {
+        url: 'https://api.telegram.org/bot123456:abcdefghijklmnopqrstuvwxyz/getMe',
+        body: {}
+      },
+      {
+        url: 'https://api.telegram.org/bot123456:abcdefghijklmnopqrstuvwxyz/setWebhook',
+        body: {
+          url: 'http://127.0.0.1:8787/api/webhooks/telegram',
+          secret_token: 'test-telegram-webhook-secret',
+          allowed_updates: ['message'],
+          drop_pending_updates: false
+        }
+      }
+    ]);
+  });
+
+  test('rejects a Bot identity that does not match the configured username', async () => {
+    await expect(configureTelegramWebhook(env, {
+      fetchImpl: async () => new Response(JSON.stringify({ ok: true, result: { id: 123, username: 'another_bot' } }), { status: 200 })
+    })).rejects.toMatchObject({ kind: 'configuration', code: 'bot_username_mismatch' });
   });
 });

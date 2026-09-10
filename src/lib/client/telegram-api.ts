@@ -40,6 +40,12 @@ export interface TelegramSettingsStatus {
   recentDeliveries: TelegramDeliverySummary[];
 }
 
+export interface TelegramSetupResult {
+  connected: true;
+  botUsername: string;
+  webhookPath: '/api/webhooks/telegram';
+}
+
 const settingsPath = '/api/workspace/notifications/telegram';
 
 export function fetchTelegramSettings(signal?: AbortSignal) {
@@ -52,6 +58,10 @@ export function createTelegramBinding() {
 
 export function confirmTelegramBinding() {
   return requestJson<TelegramSettingsStatus>(`${settingsPath}/confirm`, { method: 'POST' });
+}
+
+export function setupTelegram() {
+  return requestJson<TelegramSetupResult>(`${settingsPath}/setup`, { method: 'POST' });
 }
 
 export function updateTelegramSettings(input: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean }) {

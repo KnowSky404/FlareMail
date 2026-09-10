@@ -25,6 +25,12 @@ interface TelegramApiResponse {
 const MAX_RESPONSE_BYTES = 32 * 1024;
 export type TelegramFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export interface TelegramWebhookSetupResult {
+  botId: string;
+  botUsername: string;
+  webhookPath: '/api/webhooks/telegram';
+}
+
 async function boundedText(response: Response) {
   if (!response.body) return '';
   const reader = response.body.getReader();
@@ -65,6 +71,16 @@ function messageId(value: unknown) {
   if (!value || typeof value !== 'object') return null;
   const id = (value as { message_id?: unknown }).message_id;
   return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? String(id) : null;
+}
+
+function botIdentity(value: unknown) {
+  if (!value || typeof value !== 'object') return null;
+  const identity = value as { id?: unknown; username?: unknown };
+  if (!Number.isSafeInteger(identity.id) || (identity.id as number) <= 0 || typeof identity.username !== 'string') return null;
+  const username = identity.username.trim();
+  return /^[A-Za-z0-9_]{5,32}$/u.test(username)
+    ? { id: String(identity.id), username }
+    : null;
 }
 
 export async function callTelegramApi(
@@ -124,4 +140,35 @@ export async function sendTelegramMessage(
   const id = messageId(result);
   if (!id) throw new TelegramApiError('unknown', 'missing_message_id');
   return { messageId: id };
+}
+
+export async function configureTelegramWebhook(
+  env: CloudflareEnv,
+  options: { fetchImpl?: TelegramFetch; signal?: AbortSignal } = {}
+): Promise<TelegramWebhookSetupResult> {
+  const config = resolveTelegramConfig(env);
+  if (!config.ready || !config.botUsername || !config.webhookSecret || !config.appBaseUrl) {
+    throw new TelegramApiError('configuration', 'telegram_not_ready');
+  }
+
+  const identity = botIdentity(await callTelegramApi(env, 'getMe', {}, options));
+  if (!identity) throw new TelegramApiError('configuration', 'invalid_bot_identity');
+  if (identity.username.toLowerCase() !== config.botUsername.toLowerCase()) {
+    throw new TelegramApiError('configuration', 'bot_username_mismatch');
+  }
+
+  const webhookUrl = new URL('/api/webhooks/telegram', config.appBaseUrl).toString();
+  const result = await callTelegramApi(env, 'setWebhook', {
+    url: webhookUrl,
+    secret_token: config.webhookSecret,
+    allowed_updates: ['message'],
+    drop_pending_updates: false
+  }, options);
+  if (result !== true) throw new TelegramApiError('unknown', 'invalid_webhook_response');
+
+  return {
+    botId: identity.id,
+    botUsername: identity.username,
+    webhookPath: '/api/webhooks/telegram'
+  };
 }
