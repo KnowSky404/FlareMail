@@ -32,7 +32,8 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
     } catch (error) {
       if (error instanceof TelegramApiError) {
         const status = error.kind === 'rate_limited' ? 429 : error.kind === 'permanent' ? 502 : 503;
-        throw new ApiError(status, `TELEGRAM_SETUP_${error.code.toUpperCase()}`, 'Telegram 连接或 Webhook 注册失败。', undefined, undefined, status >= 500);
+        const stage = error.code.startsWith('identity_') ? '验证机器人身份' : error.code.startsWith('webhook_') ? '注册 Webhook' : '检查配置';
+        throw new ApiError(status, `TELEGRAM_SETUP_${error.code.toUpperCase()}`, `Telegram ${stage}失败（${error.code}）。`, undefined, undefined, status >= 500);
       }
       throw error;
     }

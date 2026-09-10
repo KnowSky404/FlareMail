@@ -102,8 +102,17 @@ export async function callTelegramApi(
       redirect: 'error',
       signal: options.signal
     });
-  } catch {
-    throw new TelegramApiError('unknown', 'network_unknown');
+  } catch (error) {
+    // Classify locally; never expose the exception text, which may contain
+    // the Bot Token in a provider URL.
+    const detail = error instanceof Error ? error.message : '';
+    const code = options.signal?.aborted ? 'request_aborted'
+      : /redirect/i.test(detail) ? 'redirect_rejected'
+      : /dns|resolve|enotfound/i.test(detail) ? 'dns_failed'
+      : /tls|ssl|certificate/i.test(detail) ? 'tls_failed'
+      : /illegal invocation|illegal receiver/i.test(detail) ? 'invalid_fetch_receiver'
+      : 'network_unknown';
+    throw new TelegramApiError('unknown', code);
   }
 
   let parsed: TelegramApiResponse;
@@ -153,19 +162,29 @@ export async function configureTelegramWebhook(
   const webhookSecret = await resolveTelegramWebhookSecret(env, config);
   if (!webhookSecret) throw new TelegramApiError('configuration', 'telegram_not_ready');
 
-  const identity = botIdentity(await callTelegramApi(env, 'getMe', {}, options));
+  const setupCall = async (method: string, payload: Record<string, unknown>) => {
+    try {
+      return await callTelegramApi(env, method, payload, options);
+    } catch (error) {
+      if (error instanceof TelegramApiError) {
+        throw new TelegramApiError(error.kind, `${method === 'getMe' ? 'identity' : 'webhook'}_${error.code}`, error.retryAfterSeconds, error.httpStatus);
+      }
+      throw error;
+    }
+  };
+  const identity = botIdentity(await setupCall('getMe', {}));
   if (!identity) throw new TelegramApiError('configuration', 'invalid_bot_identity');
   if (identity.username.toLowerCase() !== config.botUsername.toLowerCase()) {
     throw new TelegramApiError('configuration', 'bot_username_mismatch');
   }
 
   const webhookUrl = new URL('/api/webhooks/telegram', config.appBaseUrl).toString();
-  const result = await callTelegramApi(env, 'setWebhook', {
+  const result = await setupCall('setWebhook', {
     url: webhookUrl,
     secret_token: webhookSecret,
     allowed_updates: ['message'],
     drop_pending_updates: false
-  }, options);
+  });
   if (result !== true) throw new TelegramApiError('unknown', 'invalid_webhook_response');
 
   return {

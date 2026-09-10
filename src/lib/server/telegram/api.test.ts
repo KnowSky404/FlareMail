@@ -10,6 +10,22 @@ const env = {
 } as unknown as CloudflareEnv;
 
 describe('Telegram Bot API client', () => {
+  test('identifies setup failure stage without exposing provider URLs', async () => {
+    for (const stage of ['identity', 'webhook']) {
+      let requests = 0;
+      try {
+        await configureTelegramWebhook(env, { fetchImpl: async () => {
+          requests += 1;
+          if (stage === 'webhook' && requests === 1) return Response.json({ ok: true, result: { id: 123, username: 'flaremail_bot' } });
+          throw new TypeError(`Redirect rejected: https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`);
+        } });
+        throw new Error('Expected setup failure');
+      } catch (error) {
+        expect(error).toMatchObject({ code: `${stage}_redirect_rejected` });
+        expect(JSON.stringify(error)).not.toContain(env.TELEGRAM_BOT_TOKEN!);
+      }
+    }
+  });
   test('uses only the official HTTPS endpoint and redirect error policy', async () => {
     let request: { url: string; init?: RequestInit } | undefined;
     const result = await sendTelegramMessage(env, {
