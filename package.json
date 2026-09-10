@@ -53,10 +53,16 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.3.6",
-    "wrangler": "4.124.0"
+    "wrangler": "4.113.0"
   },
   "overrides": {
+    "@cloudflare/workerd-darwin-64": "1.20260820.1",
+    "@cloudflare/workerd-darwin-arm64": "1.20260820.1",
+    "@cloudflare/workerd-linux-64": "1.20260820.1",
+    "@cloudflare/workerd-linux-arm64": "1.20260820.1",
+    "@cloudflare/workerd-windows-64": "1.20260820.1",
     "sharp": "0.35.4",
-    "undici": "7.29.0"
+    "undici": "7.29.0",
+    "workerd": "1.20260820.1"
   }
 }
