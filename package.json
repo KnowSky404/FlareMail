@@ -53,7 +53,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.3.6",
-    "wrangler": "4.113.0"
+    "wrangler": "4.124.0"
   },
   "overrides": {
     "sharp": "0.35.4",
