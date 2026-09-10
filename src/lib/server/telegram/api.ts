@@ -99,7 +99,8 @@ export async function callTelegramApi(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
-      redirect: 'error',
+      // workerd supports manual/follow, but rejects the standard error mode.
+      redirect: 'manual',
       signal: options.signal
     });
   } catch (error) {
@@ -113,6 +114,13 @@ export async function callTelegramApi(
       : /illegal invocation|illegal receiver/i.test(detail) ? 'invalid_fetch_receiver'
       : 'network_unknown';
     throw new TelegramApiError('unknown', code);
+  }
+
+  // Never follow redirects: the URL contains the Bot Token, and setup bodies
+  // can contain the webhook secret. Reject before reading the response body.
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel();
+    throw new TelegramApiError('unknown', 'redirect_rejected', undefined, response.status);
   }
 
   let parsed: TelegramApiResponse;

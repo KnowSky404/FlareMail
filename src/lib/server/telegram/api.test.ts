@@ -26,7 +26,7 @@ describe('Telegram Bot API client', () => {
       }
     }
   });
-  test('uses only the official HTTPS endpoint and redirect error policy', async () => {
+  test('uses only the official HTTPS endpoint and Workers-compatible manual redirect policy', async () => {
     let request: { url: string; init?: RequestInit } | undefined;
     const result = await sendTelegramMessage(env, {
       chatId: '42', text: 'safe test', disableWebPagePreview: true
@@ -38,7 +38,22 @@ describe('Telegram Bot API client', () => {
     });
     expect(result).toEqual({ messageId: '1' });
     expect(request?.url).toBe('https://api.telegram.org/bot123456:abcdefghijklmnopqrstuvwxyz/sendMessage');
-    expect(request?.init?.redirect).toBe('error');
+    expect(request?.init?.redirect).toBe('manual');
+  });
+
+  test('rejects redirect responses at either setup stage without following or exposing secrets', async () => {
+    for (const status of [301, 302, 303, 307, 308]) {
+      for (const stage of ['identity', 'webhook']) {
+        let requests = 0;
+        await expect(configureTelegramWebhook(env, { fetchImpl: async (_input, init) => {
+          expect(init?.redirect).toBe('manual');
+          requests += 1;
+          if (stage === 'webhook' && requests === 1) return Response.json({ ok: true, result: { id: 123, username: 'flaremail_bot' } });
+          return new Response(null, { status, headers: { location: `https://untrusted.example/${env.TELEGRAM_BOT_TOKEN}` } });
+        } })).rejects.toMatchObject({ code: `${stage}_redirect_rejected`, httpStatus: status });
+        expect(requests).toBe(stage === 'identity' ? 1 : 2);
+      }
+    }
   });
 
   test('preserves retry_after as a typed rate-limit outcome', async () => {
