@@ -23,11 +23,15 @@
   let bindingCommandElement = $state<HTMLTextAreaElement>();
   const bindingCommand = $derived(bindingLink ? `/start ${new URL(bindingLink).searchParams.get('start') ?? ''}` : '');
   let generatedLinkElement = $state<HTMLDivElement>();
+  let candidateElement = $state<HTMLDivElement>();
   let loading = $state(true);
   let action = $state('');
   let error = $state('');
   let message = $state('');
-  let pollCount = 0;
+  let bindingExpired = $state(false);
+  let disposed = false;
+  let refreshRevision = 0;
+  let refreshController: AbortController | undefined;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
   const deliveryStatusLabels: Record<TelegramSettingsStatus['recentDeliveries'][number]['status'], string> = {
@@ -55,30 +59,81 @@
     return value instanceof ClientApiError ? value.message : 'Telegram 设置暂时无法更新，请稍后重试。';
   }
 
-  async function refresh() {
+  function cancelRefresh() {
     if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = undefined;
+    // Aborting alone cannot prevent a response already being parsed from
+    // overwriting a newer confirmation/settings mutation.
+    refreshRevision += 1;
+    refreshController?.abort();
+    refreshController = undefined;
+  }
+
+  function scheduleRefresh() {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = undefined;
+    if (disposed) return;
+    // Use the challenge lifetime, not a fixed attempt count: Telegram may
+    // stay in the foreground for several minutes before the user returns.
+    const expiresAt = bindingExpiresAt ? Date.parse(bindingExpiresAt) : NaN;
+    bindingExpired = Boolean(bindingLink) && (!Number.isFinite(expiresAt) || expiresAt <= Date.now());
+    if (action || !bindingLink || bindingExpired || document.visibilityState === 'hidden' ||
+      telegramState?.binding?.state === 'active' || telegramState?.binding?.state === 'candidate') return;
+    pollTimer = setTimeout(() => void refresh(), Math.min(5_000, expiresAt - Date.now()));
+  }
+
+  async function refresh() {
+    cancelRefresh();
+    if (disposed) return;
+    const revision = refreshRevision;
+    const controller = new AbortController();
+    refreshController = controller;
     try {
-      telegramState = await fetchTelegramSettings();
+      const result = await fetchTelegramSettings(controller.signal);
+      if (disposed || revision !== refreshRevision) return;
+      const revealCandidate = result.binding?.state === 'candidate' && telegramState?.binding?.state !== 'candidate';
+      telegramState = result;
       error = '';
-      if (bindingLink && telegramState?.binding?.state !== 'active' && pollCount < 12) {
-        pollCount += 1;
-        pollTimer = setTimeout(() => void refresh(), 5_000);
+      if (result.binding?.state === 'active') {
+        bindingLink = null;
+        bindingExpiresAt = null;
+      }
+      if (revealCandidate) {
+        await tick();
+        if (disposed || revision !== refreshRevision) return;
+        candidateElement?.focus({ preventScroll: true });
+        candidateElement?.scrollIntoView({ block: 'center' });
       }
     } catch (value) {
+      if (disposed || revision !== refreshRevision) return;
       error = errorMessage(value);
     } finally {
-      loading = false;
+      if (!disposed && revision === refreshRevision) {
+        refreshController = undefined;
+        loading = false;
+        scheduleRefresh();
+      }
     }
   }
 
   onMount(() => {
+    const resume = () => {
+      if (document.visibilityState === 'hidden') cancelRefresh();
+      else if (!action) void refresh();
+    };
+    window.addEventListener('focus', resume);
+    document.addEventListener('visibilitychange', resume);
     void refresh();
     return () => {
-      if (pollTimer) clearTimeout(pollTimer);
+      disposed = true;
+      cancelRefresh();
+      window.removeEventListener('focus', resume);
+      document.removeEventListener('visibilitychange', resume);
     };
   });
 
   async function beginBinding() {
+    cancelRefresh();
     action = 'bind';
     error = '';
     message = '';
@@ -86,7 +141,7 @@
       const result = await createTelegramBinding();
       bindingLink = result.deepLink;
       bindingExpiresAt = result.expiresAt;
-      pollCount = 0;
+      bindingExpired = false;
       message = '打开 Telegram 后点击 Start / 开始；若没有反应，请复制下方完整绑定命令发送，识别后回到这里确认。';
       await refresh();
       await tick();
@@ -96,10 +151,12 @@
       error = errorMessage(value);
     } finally {
       action = '';
+      scheduleRefresh();
     }
   }
 
   async function connectTelegram() {
+    cancelRefresh();
     action = 'setup';
     error = '';
     message = '';
@@ -110,6 +167,7 @@
       error = errorMessage(value);
     } finally {
       action = '';
+      scheduleRefresh();
     }
   }
 
@@ -125,6 +183,7 @@
   }
 
   async function confirmBinding() {
+    cancelRefresh();
     action = 'confirm';
     error = '';
     try {
@@ -135,11 +194,13 @@
       error = errorMessage(value);
     } finally {
       action = '';
+      scheduleRefresh();
     }
   }
 
   async function changeSettings(input: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean }) {
     if (!telegramState?.binding || telegramState.binding.state !== 'active') return;
+    cancelRefresh();
     action = 'settings';
     error = '';
     try {
@@ -150,10 +211,12 @@
       error = errorMessage(value);
     } finally {
       action = '';
+      scheduleRefresh();
     }
   }
 
   async function testNotification() {
+    cancelRefresh();
     action = 'test';
     error = '';
     try {
@@ -163,11 +226,13 @@
       error = errorMessage(value);
     } finally {
       action = '';
+      scheduleRefresh();
     }
   }
 
   async function removeBinding() {
     if (!window.confirm('解除绑定并取消尚未发出的 Telegram 通知？')) return;
+    cancelRefresh();
     action = 'unbind';
     error = '';
     try {
@@ -178,11 +243,13 @@
       error = errorMessage(value);
     } finally {
       action = '';
+      scheduleRefresh();
     }
   }
 
   async function retry(id: string) {
     if (!window.confirm('unknown_delivery 可能已经在 Telegram 显示；手动重试可能产生重复通知。继续？')) return;
+    cancelRefresh();
     action = `retry:${id}`;
     error = '';
     try {
@@ -193,6 +260,7 @@
       error = errorMessage(value);
     } finally {
       action = '';
+      scheduleRefresh();
     }
   }
 </script>
@@ -217,8 +285,8 @@
       </div>
 
       {#if telegramState.binding?.state === 'candidate'}
-        <div class="stack">
-          <div class="notice"><Badge>待确认</Badge><span>Telegram 已识别此私聊；请在 FlareMail 点击确认。</span></div>
+        <div class="stack" bind:this={candidateElement} tabindex="-1" role="group" aria-label="确认 Telegram 绑定">
+          <div class="notice"><Badge class="shrink-0 whitespace-nowrap">待确认</Badge><span>Telegram 已识别此私聊；请在 FlareMail 点击确认。</span></div>
           <p class="muted">链接有效至 {formatDate(telegramState.binding.candidateExpiresAt ?? bindingExpiresAt)}。确认后通知仍默认关闭。</p>
           <div class="actions"><Button loading={action === 'confirm'} disabled={action !== ''} onclick={() => void confirmBinding()}>确认绑定</Button><Button variant="secondary" loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>重新生成链接</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新状态</Button></div>
         </div>
@@ -261,12 +329,16 @@
         <div class="stack">
           <div class="notice"><Badge class="shrink-0 whitespace-nowrap">未绑定</Badge><span>首次使用请先连接 Webhook，再生成链接并在 Telegram 私聊中发送带绑定码的完整命令。</span></div>
           <Button loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>生成 Telegram 绑定链接</Button>
+          {#if !bindingLink}<Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新绑定状态</Button>{/if}
         </div>
       {/if}
     </div>
   {/if}
 
-  {#if bindingLink}
+  {#if bindingLink && bindingExpired}
+    <p class="feedback error" role="status">本次绑定链接已过期，请重新生成链接和命令。若已在 Telegram 完成操作，请先刷新绑定状态。</p>
+    <Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新绑定状态</Button>
+  {:else if bindingLink}
     <div class="generated-link" bind:this={generatedLinkElement} tabindex="-1" role="group" aria-label="生成的 Telegram 绑定链接">
       <strong>绑定链接（仅显示本次）</strong>
       <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">打开 Telegram 继续绑定</a>

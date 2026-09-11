@@ -115,6 +115,9 @@ function mockTelegramStatus(state: MockTelegramState) {
 async function installTelegramApiMock(page: Page) {
   const state: MockTelegramState = { binding: 'none', enabled: false, privacyMode: false, summaryEnabled: false };
   let testFailure = false;
+  let settingsRequests = 0;
+  let settingsFailures = 0;
+  let bindingExpiresAt = '2099-01-01T00:10:00.000Z';
   const response = (route: import('@playwright/test').Route, data: unknown, status = 200) => route.fulfill({
     status,
     contentType: 'application/json',
@@ -127,7 +130,14 @@ async function installTelegramApiMock(page: Page) {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const method = request.method();
-    if (pathname.endsWith('/settings') && method === 'GET') return response(route, mockTelegramStatus(state));
+    if (pathname.endsWith('/settings') && method === 'GET') {
+      settingsRequests += 1;
+      if (settingsFailures > 0) {
+        settingsFailures -= 1;
+        return response(route, {}, 503);
+      }
+      return response(route, mockTelegramStatus(state));
+    }
     if (pathname.endsWith('/settings') && (method === 'PATCH' || method === 'PUT')) {
       const input = JSON.parse(request.postData() ?? '{}') as Partial<Pick<MockTelegramState, 'enabled' | 'privacyMode' | 'summaryEnabled'>>;
       if (typeof input.enabled === 'boolean') state.enabled = input.enabled;
@@ -136,7 +146,7 @@ async function installTelegramApiMock(page: Page) {
       return response(route, { settings: { enabled: state.enabled, privacyMode: state.privacyMode, summaryEnabled: state.summaryEnabled } });
     }
     if (pathname.endsWith('/bind') && method === 'POST') {
-      return response(route, { state: 'pending', expiresAt: '2099-01-01T00:10:00.000Z', deepLink: 'https://t.me/flaremail_test_bot?start=abcdefghijklmnopqrstuvwxyz012345' });
+      return response(route, { state: 'pending', expiresAt: bindingExpiresAt, deepLink: 'https://t.me/flaremail_test_bot?start=abcdefghijklmnopqrstuvwxyz012345' });
     }
     if (pathname.endsWith('/confirm') && method === 'POST') {
       state.binding = 'active';
@@ -154,6 +164,9 @@ async function installTelegramApiMock(page: Page) {
   });
 
   return {
+    settingsRequests() { return settingsRequests; },
+    failNextSettings() { settingsFailures += 1; },
+    expireBindingAt(value: string) { bindingExpiresAt = value; },
     receiveStart() { state.binding = 'candidate'; },
     setTestFailure(value: boolean) {
       testFailure = value;
@@ -823,6 +836,97 @@ test('binds, confirms, enables, tests, and unbinds Telegram from a non-default m
   await expect(page.getByRole('button', { name: '生成 Telegram 绑定链接' })).toBeVisible();
   if (testInfo.project.name !== 'desktop') await assertNoHorizontalOverflow(page);
   expect(consoleErrors.filter((error) => !error.includes('429 (Too Many Requests)')).length, `unexpected browser console errors: ${consoleErrors.join('\n')}`).toBe(0);
+});
+
+test('keeps Telegram binding polling alive beyond one minute and recovers from a failed read', async ({ page }) => {
+  const telegram = await installTelegramApiMock(page);
+  await login(page);
+  await openSettings(page);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
+  for (let index = 0; index < 14; index += 1) {
+    const nextRead = page.waitForResponse((response) => response.url().endsWith('/telegram/settings'));
+    await page.clock.runFor(5_000);
+    await (await nextRead).finished();
+    await page.evaluate(() => Promise.resolve());
+  }
+  telegram.failNextSettings();
+  await page.clock.runFor(5_000);
+  await expect(page.getByRole('alert').filter({ hasText: '模拟 Telegram 限流' })).toBeVisible();
+  telegram.receiveStart();
+  await page.clock.runFor(5_000);
+  await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: '模拟 Telegram 限流' })).toHaveCount(0);
+});
+
+test('refreshes Telegram binding when returning to the page even after a reload lost the link', async ({ page }, testInfo) => {
+  const telegram = await installTelegramApiMock(page);
+  await login(page);
+  await openSettings(page);
+  await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
+  await page.reload();
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  if (!await page.getByRole('heading', { name: '设置', exact: true }).isVisible()) await openSettings(page);
+  await expect(page.getByLabel('完整绑定命令（含一次性绑定码）')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '刷新绑定状态', exact: true })).toBeVisible();
+  telegram.receiveStart();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: '确认 Telegram 绑定', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: `/tmp/telegram-return-${testInfo.project.name}.png` });
+});
+
+test('expires Telegram binding commands and stops polling at the link deadline', async ({ page }) => {
+  const telegram = await installTelegramApiMock(page);
+  await login(page);
+  await openSettings(page);
+  const now = new Date();
+  await page.clock.install({ time: now });
+  await page.clock.pauseAt(now);
+  telegram.expireBindingAt(new Date(now.getTime() + 10_000).toISOString());
+  await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
+  await expect(page.getByLabel('完整绑定命令（含一次性绑定码）')).toBeVisible();
+  await page.clock.fastForward(10_001);
+  await expect(page.getByRole('status').filter({ hasText: '本次绑定链接已过期' })).toBeVisible();
+  await expect(page.getByLabel('完整绑定命令（含一次性绑定码）')).toHaveCount(0);
+  const reads = telegram.settingsRequests();
+  await page.clock.runFor(30_000);
+  expect(telegram.settingsRequests()).toBe(reads);
+});
+
+test('ignores a stale Telegram status read after confirmation and stops reads on unmount', async ({ page }) => {
+  const telegram = await installTelegramApiMock(page);
+  telegram.receiveStart();
+  await login(page);
+  await openSettings(page);
+  await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toBeVisible();
+  let releaseRead: () => void = () => {};
+  const heldRead = new Promise<void>((resolve) => { releaseRead = resolve; });
+  let readStarted = false;
+  await page.route('**/api/workspace/notifications/telegram/settings', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    readStarted = true;
+    await heldRead;
+    await route.fulfill({ json: { ok: true, data: mockTelegramStatus({ binding: 'candidate', enabled: false, privacyMode: false, summaryEnabled: false }) } }).catch(() => {});
+  }, { times: 1 });
+  try {
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect.poll(() => readStarted).toBe(true);
+    await page.getByRole('button', { name: '确认绑定', exact: true }).click();
+    await expect(page.getByRole('button', { name: '发送测试通知', exact: true })).toBeVisible();
+  } finally {
+    releaseRead();
+  }
+  await page.waitForTimeout(100);
+  await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toHaveCount(0);
+  await page.clock.install();
+  await openFolder(page, '收件箱');
+  const reads = telegram.settingsRequests();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.clock.fastForward(30_000);
+  expect(telegram.settingsRequests()).toBe(reads);
 });
 
 test('keeps Telegram controls unavailable to an unauthenticated browser', async ({ page, consoleErrors }) => {
