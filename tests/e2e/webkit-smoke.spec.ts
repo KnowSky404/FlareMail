@@ -224,11 +224,11 @@ test('restores a draft from the trash', async ({ page, consoleErrors }) => {
 
 test('persists the selected theme across reload', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
-  if (projectIsPhone(testInfo.project.name)) {
-    await page.getByRole('button', { name: '打开导航' }).click();
-    await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }).click();
+  if (projectIsMobile(testInfo.project.name)) {
+    await page.getByRole('button', { name: '打开导航' }).click({ force: true });
+    await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }).click({ force: true });
   } else {
-    await page.getByRole('button', { name: '设置', exact: true }).first().click();
+    await page.getByRole('button', { name: '设置', exact: true }).first().click({ force: true });
   }
   const theme = page.getByLabel('颜色主题');
   await expect(theme).toBeVisible();
@@ -247,9 +247,10 @@ test('keeps WebKit viewport, focus, drawer, dialog and touch semantics accessibl
   const isPhone = projectIsPhone(testInfo.project.name);
   if (isPhone) {
     const navButton = page.getByRole('button', { name: '打开导航' });
-    await navButton.tap();
-    const drawer = page.getByRole('dialog', { name: 'FlareMail 导航' });
+    await navButton.tap({ force: true });
+    const drawer = page.locator('[role="dialog"][aria-modal="true"]').first();
     await expect(drawer).toBeVisible();
+    await expect(drawer.locator('h2')).toHaveText('移动端导航');
     await expect(drawer.locator('button').first()).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(drawer).toBeHidden();

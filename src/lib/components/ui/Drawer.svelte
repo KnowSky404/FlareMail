@@ -51,12 +51,15 @@
   }
 
   $effect(() => {
-    if (!open || typeof document === 'undefined') return;
+    if (!open || typeof document === 'undefined' || !drawerElement) return;
     restoreElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const frame = requestAnimationFrame(() => focusables()[0]?.focus());
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(() => {
+      focusTimer = setTimeout(() => focusables()[0]?.focus({ preventScroll: true }), 0);
+    });
     const releaseOverlay = registerOverlay(overlayToken);
     document.addEventListener('keydown', handleKeydown);
-    return () => { cancelAnimationFrame(frame); releaseOverlay(); document.removeEventListener('keydown', handleKeydown); restoreElement?.focus(); restoreElement = null; };
+    return () => { cancelAnimationFrame(frame); if (focusTimer !== undefined) clearTimeout(focusTimer); releaseOverlay(); document.removeEventListener('keydown', handleKeydown); restoreElement?.focus(); restoreElement = null; };
   });
 </script>
 
