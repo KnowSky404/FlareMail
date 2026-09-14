@@ -161,11 +161,11 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 
 ### 4.4 阅读空间状态
 
-- 侧栏折叠、列表宽度和标准/紧凑显示密度保存在当前浏览器的 `localStorage`；损坏或不可用时回退到安全默认值。
-- 列表与详情之间的 splitter 具有 `separator` 语义、`aria-valuemin/max/now`，支持鼠标拖拽和左右方向键；窄视口下 splitter 隐藏并进入单面板 drill-in。
-- “专注阅读”使用接近全屏的 dialog，锁定背景焦点、支持 `Escape` 关闭并恢复触发控件焦点；正文继续由详情区域独立滚动。
-- 独立阅读地址为 `/messages/[id]`。服务端只按当前 session 查询邮件元数据，正文和附件仍通过现有 owner-scoped API 读取；返回工作台时只保留 folder、message、q 和受支持的 filter 参数。
-- 语言优先级为显式 locale cookie、`localStorage`、`Accept-Language`，最后回退到简体中文；用户内容（主题、地址、正文和附件文件名）不翻译。
+- 侧栏折叠、列表宽度和标准/紧凑显示密度保存在当前浏览器的版本化 `localStorage`；损坏或不可用时回退到安全默认值。偏好写入完成后，其他同源窗口只接收状态变化信号，不接收正文、地址或凭据。
+- 列表与详情之间的 splitter 具有 `separator` 语义、`aria-valuemin/max/now`，支持鼠标拖拽、左右方向键、Home/End 和 Enter 恢复 360 px 默认值。列表偏好保持 280–480 px；详情区保留至少 360 px 和 splitter 空间，窄视口下 splitter 隐藏并进入单面板 drill-in。
+- “专注阅读”使用接近全屏的 dialog，锁定背景焦点、支持 `Escape` 关闭并恢复触发控件焦点；详情头提供唯一可见的主题和关闭按钮，正文继续由详情区域独立滚动。
+- 独立阅读地址为 `/messages/[id]`。服务端只按当前 session 查询邮件元数据，正文和附件仍通过现有 owner-scoped API 读取；页面响应使用 `private, no-store`，返回工作台时只保留 folder、message、q 和受支持的 filter 参数。
+- 语言优先级为显式 locale cookie、跟随浏览器的 locale cookie、`localStorage` 和 `Accept-Language`，最后回退到简体中文；切换器也可选择跟随浏览器，用户内容（主题、地址、正文和附件文件名）不翻译。
 
 ## 5. 布局与间距 Token
 
@@ -762,7 +762,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 - [ ] 文件夹标题有搜索/筛选/刷新/必要 Banner；技术 provider health 不常驻标题。
 - [ ] 列表包含未读、对端、主题、预览、时间、星标、线程数和已发送投递状态。
 - [ ] 列表具备 Skeleton、完成空、首次空、错误和分页结束状态；次级操作不误触主选择。
-- [x] 列表宽度支持鼠标拖拽与键盘调整，标准/紧凑密度和 locale preference 可在刷新后恢复。
+- [x] 列表宽度支持鼠标拖拽、方向键、Home/End/Enter 调整，标准/紧凑密度和 locale preference 可在刷新后恢复；有效宽度会随详情区空间动态收敛。
 - [x] 专注阅读 dialog 与 `/messages/[id]` 提供独立阅读入口，保持焦点管理、深链返回和 owner-scoped body loading。
 - [x] 详情正文默认 plain text；HTML sandbox、CID/附件/原文 ownership、外链安全和远程图片显式加载规则均可验证。
 - [ ] 已发送时间线准确区分 accepted/queued 与 delivered，并支持展开和失败重试。
@@ -779,7 +779,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 
 - [ ] `light`、`dark`、`system` 首屏绘制前生效；显式选择持久化，system 跟随系统变化。
 - [x] `768–900px` 使用折叠栏/Drawer 和明显返回；`<768px` 一次仅一个主面板并无横向滚动。
-- [x] zh-CN/en 覆盖登录、导航、列表、详情、写信、设置、Telegram、toast、错误状态和辅助标签；日期、数字与计数按 locale 格式化。
+- [x] zh-CN/en 覆盖登录、导航、列表、详情、写信、设置、Telegram、toast、错误状态和辅助标签；日期、数字与计数按 locale 格式化，切换器支持显式语言与跟随浏览器。
 - [ ] 手机所有触控目标至少 44 × 44 CSS px，必要操作不依赖 hover。
 - [ ] landmark、标题层级、持久 Label、键盘顺序、ARIA pattern、错误摘要和 `aria-live` 均通过检查。
 - [ ] 200% zoom、窄视口、屏幕阅读器能区分 unread/starred/selected/delivery state。
