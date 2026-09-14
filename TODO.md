@@ -14,6 +14,7 @@
 - RC-1 clean-checkout CI、只读 preflight、完整且互不重叠的 Bun 分组、typegen/build/dry-run/search/migration 门禁、Chromium、axe 与 Desktop/iPhone/iPad WebKit smoke。
 - cleanup bounded drain、原子 claim、lease recovery、指数 backoff、最大 attempts、manual review、幂等完成记录、health/backlog 摘要与无 PII 事件。
 - 确定性 near-limit runtime fixtures、本地 parser 测量、Preview correlation workflow、生产 checklist、release record 与建议性 SLO。
+- reading-space UI：可持久化侧栏折叠、280–480 px 键盘可调列表栏、标准/紧凑密度、近全屏专注阅读、`/messages/[id]` owner-scoped reader，以及 zh-CN/en SSR-safe locale。
 
 仓库不会自动执行远程 migration、生产部署或真实邮件 smoke。操作者仍需在隔离 preview 测量近上限 MIME/附件的 CPU、内存和 subrequest，再按 `docs/DEPLOYMENT.md` 完成生产检查。
 
@@ -23,7 +24,7 @@
 
 - 自定义标签 CRUD、邮件映射、全局计数、保存搜索与智能文件夹。
 - 联系人、最近/常用收件人、地址自动补全和安全 CSV 导入导出。
-- 真正的 Command Palette、可调整列表栏宽、显示密度和跨会话设置同步。
+- 真正的 Command Palette、跨设备设置同步。
 - 可访问的移动端 swipe actions，以及真实 iPhone/iPad Safari 设备矩阵。
 
 ### 写信与投递

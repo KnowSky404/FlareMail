@@ -107,12 +107,12 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 
 ### 4.1 桌面应用壳层
 
-视口宽度 `>= 1280px`：
+视口宽度 `>= 901px`：
 
 - 全局顶部栏：48–52 px。
-- 主侧边栏：224–248 px。
-- 邮件列表栏：360–420 px；如实现拖拽调整，应限制在合理范围。
-- 邮件详情栏：占据剩余空间，实用最小宽度约 520 px。
+- 主侧边栏：展开 232 px，用户可折叠为 64 px 图标栏。
+- 邮件列表栏：默认 360 px，可通过拖拽或键盘方向键调整到 280–480 px。
+- 邮件详情栏：占据剩余空间，实用最小宽度约 360 px；分栏由详情正文承担唯一纵向滚动。
 - 应用占满视口，但各栏独立滚动。不得通过全局 `overflow: hidden` 破坏手机、缩放或小窗口滚动。
 
 推荐层级：
@@ -140,7 +140,7 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 
 ### 4.2 平板
 
-视口宽度 `768–1279px`：
+视口宽度 `768–900px`：
 
 - 侧边栏折叠为窄图标栏，或使用 Drawer。
 - 邮件列表和详情采用两级流程。
@@ -158,6 +158,14 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 - 触控目标至少 44 × 44 CSS px。
 - 禁止页面横向滚动。
 - 必要操作不能只依赖 hover 才显示。
+
+### 4.4 阅读空间状态
+
+- 侧栏折叠、列表宽度和标准/紧凑显示密度保存在当前浏览器的 `localStorage`；损坏或不可用时回退到安全默认值。
+- 列表与详情之间的 splitter 具有 `separator` 语义、`aria-valuemin/max/now`，支持鼠标拖拽和左右方向键；窄视口下 splitter 隐藏并进入单面板 drill-in。
+- “专注阅读”使用接近全屏的 dialog，锁定背景焦点、支持 `Escape` 关闭并恢复触发控件焦点；正文继续由详情区域独立滚动。
+- 独立阅读地址为 `/messages/[id]`。服务端只按当前 session 查询邮件元数据，正文和附件仍通过现有 owner-scoped API 读取；返回工作台时只保留 folder、message、q 和受支持的 filter 参数。
+- 语言优先级为显式 locale cookie、`localStorage`、`Accept-Language`，最后回退到简体中文；用户内容（主题、地址、正文和附件文件名）不翻译。
 
 ## 5. 布局与间距 Token
 
@@ -454,6 +462,8 @@ Header：
 - 不可信 HTML 禁止直接插入应用 DOM。
 - 如提供 HTML 视图，使用禁用脚本、默认阻止远程内容的 sandbox iframe。
 - 保持空白和合适阅读行宽。
+- 正文使用 `clamp(22rem, 68dvh, 56rem)` 的 HTML 最小阅读高度和约 78–86ch 的文本行宽，避免固定 `62vh/28rem` 把内容空间锁死。
+- 详情可以通过专注阅读 dialog 或 `/messages/[id]` 独立地址打开；两者都必须保留同一套安全 HTML、附件、投递和 owner isolation 契约。
 - 外链安全打开，使用 `noopener noreferrer`。
 - 若支持远程图片，必须由用户显式加载。
 
@@ -747,11 +757,13 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 
 ### 阶段 2：桌面壳层与邮件工作区
 
-- [ ] `>=1280px` 形成 48–52 px 顶栏、224–248 px 侧栏、360–420 px 列表和约 520 px 详情最小宽度。
-- [ ] 侧栏不再是黑色竖向图标栏；导航按收件箱、已发送、草稿箱、设置组织。
+- [x] `>=901px` 形成 48–52 px 顶栏、232 px 可折叠侧栏、280–480 px 可调列表和弹性详情区域。
+- [x] 侧栏不再是黑色竖向图标栏；导航按收件箱、已发送、草稿箱、设置组织，并支持持久化折叠。
 - [ ] 文件夹标题有搜索/筛选/刷新/必要 Banner；技术 provider health 不常驻标题。
 - [ ] 列表包含未读、对端、主题、预览、时间、星标、线程数和已发送投递状态。
 - [ ] 列表具备 Skeleton、完成空、首次空、错误和分页结束状态；次级操作不误触主选择。
+- [x] 列表宽度支持鼠标拖拽与键盘调整，标准/紧凑密度和 locale preference 可在刷新后恢复。
+- [x] 专注阅读 dialog 与 `/messages/[id]` 提供独立阅读入口，保持焦点管理、深链返回和 owner-scoped body loading。
 - [x] 详情正文默认 plain text；HTML sandbox、CID/附件/原文 ownership、外链安全和远程图片显式加载规则均可验证。
 - [ ] 已发送时间线准确区分 accepted/queued 与 delivered，并支持展开和失败重试。
 
@@ -766,7 +778,8 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 ### 阶段 4：主题、响应式和可访问性
 
 - [ ] `light`、`dark`、`system` 首屏绘制前生效；显式选择持久化，system 跟随系统变化。
-- [ ] `768–1279px` 使用折叠栏/Drawer 和明显返回；`<768px` 一次仅一个主面板并无横向滚动。
+- [x] `768–900px` 使用折叠栏/Drawer 和明显返回；`<768px` 一次仅一个主面板并无横向滚动。
+- [x] zh-CN/en 覆盖登录、导航、列表、详情、写信、设置、Telegram、toast、错误状态和辅助标签；日期、数字与计数按 locale 格式化。
 - [ ] 手机所有触控目标至少 44 × 44 CSS px，必要操作不依赖 hover。
 - [ ] landmark、标题层级、持久 Label、键盘顺序、ARIA pattern、错误摘要和 `aria-live` 均通过检查。
 - [ ] 200% zoom、窄视口、屏幕阅读器能区分 unread/starred/selected/delivery state。

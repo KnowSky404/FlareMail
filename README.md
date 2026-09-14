@@ -1,5 +1,7 @@
 # FlareMail
 
+[English README](./README.en.md)
+
 <p align="center">
   <img src="./static/brand/flaremail-logo.svg" alt="FlareMail logo" width="286" />
 </p>
@@ -15,7 +17,8 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 - Resend 出站：稳定幂等键、`reply_to`/RFC headers、R2 流式附件上传与完整性校验、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
-- 响应式工作台：桌面三栏、平板/手机 drill-in、搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本回退与可选 HTML 写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
+- 响应式阅读工作台：桌面三栏、可折叠侧栏、280–480 px 可拖拽/键盘调整的邮件列表、标准/紧凑显示密度、平板/手机 drill-in、近全屏专注阅读和 `/messages/[id]` 独立阅读地址；同时保留搜索与筛选、线程、详情、入站/出站附件下载、拖放/粘贴附件、纯文本回退与可选 HTML 写信、自动保存、草稿冲突提示、归档/恢复与批量读写操作、主题和键盘快捷键。
+- 双语界面：服务端按安全 cookie/`Accept-Language` 首屏选择 zh-CN 或 en，浏览器端支持显式切换和持久化；日期、数字、计数和辅助标签随语言更新，邮件主题、地址、正文与附件文件名保持原文。
 - 版本化 D1 migration：`migrations/0001` 至 `0022`，包括登录与出站发送限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5、出站附件与 lease/retry/manual-review 清理队列，以及 Telegram 绑定、webhook 去重、持久 outbox、账户删除清理触发器、challenge 消费溯源和通知隐私快照，并由 `schema.sql` 保存最新结构快照。
 - Telegram 入站通知：一个部署级 Bot、每个工作区用户一个私聊绑定、一次性深链确认、隐私/摘要开关、D1 durable outbox、每分钟 Cron、429/backoff/unknown-delivery 状态和现有邮件详情链接；实现边界与真实投递验证见 [docs/TELEGRAM.md](./docs/TELEGRAM.md)。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
@@ -53,6 +56,8 @@ src/lib/server/outbound/       Resend/fake gateway
 src/lib/server/workspace/      mailbox、draft、outbound、delivery use cases
 src/lib/components/{ui,shell,mail}/
 src/routes/api/                thin SvelteKit API routes
+src/routes/messages/[id]/      owner-scoped standalone message reader
+src/lib/i18n/                   typed zh-CN/en catalog and locale context
 migrations/                    顺序、不可变的 D1 migrations
 schema.sql                     最新 schema 快照
 ```
@@ -115,7 +120,8 @@ bun run test:a11y
 
 `deploy:dry-run` 只从公开 development config 生成临时配置，不读取私有生产
 配置，也不会发布 Worker。Linux Playwright WebKit 不是真实 iOS/iPadOS Safari
-证据。
+证据。若本机未安装 Playwright 浏览器，`test:e2e`、`test:e2e:webkit` 和
+`test:a11y` 会在浏览器启动阶段失败；这不等同于应用构建或单元测试失败。
 
 ## 生产部署
 
