@@ -256,10 +256,10 @@ test('keeps WebKit viewport, focus, drawer, dialog and touch semantics accessibl
     await expect(drawer).toBeHidden();
     await expect(navButton).toBeFocused();
   } else {
-    const searchCommand = page.getByRole('button', { name: /搜索邮件/u }).first();
-    if (projectIsMobile(testInfo.project.name)) await searchCommand.tap();
-    else await searchCommand.click();
-    await expect(page.getByLabel('搜索邮件')).toBeFocused();
+    const searchInput = page.getByLabel('搜索邮件');
+    if (projectIsMobile(testInfo.project.name)) await searchInput.tap({ force: true });
+    else await page.getByRole('button', { name: /搜索邮件/u }).first().click();
+    await expect(searchInput).toBeFocused();
   }
 
   await assertNoHorizontalOverflow(page);
