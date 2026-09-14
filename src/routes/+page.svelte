@@ -14,6 +14,7 @@
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
+  import ReaderDialog from '$lib/components/ui/ReaderDialog.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
   import { ClientApiError } from '$lib/client/api';
@@ -69,6 +70,15 @@
   import { TrashController } from '$lib/client/trash-controller';
   import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl } from '$lib/client/workspace-url-controller';
   import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
+  import { formatDate, formatNumber } from '$lib/i18n';
+  import {
+    clampListWidth,
+    layoutPreferenceRange,
+    readLayoutPreferences,
+    writeLayoutPreferences,
+    type DisplayDensity
+  } from '$lib/client/layout-preferences';
   import {
     buildMailThreads,
     cloneMailbox,
@@ -102,16 +112,24 @@
   type WorkspaceBodyDetail = { body: string; attachments: NonNullable<ComposeInput['attachments']> };
 
   let { data }: { data: PageData } = $props();
+  const i18n = useLocale();
+  const { t } = i18n;
+  const displayError = (error: unknown, fallback: string) =>
+    error instanceof ClientApiError && i18n.locale === 'en'
+      ? fallback
+      : error instanceof Error
+        ? error.message
+        : fallback;
   const serverWorkspace = $derived(data.workspace);
 
   const runtimeLabel = $derived(
     data.runtimeState.state === 'ready'
       ? data.dbBound && data.bucketBound
-        ? '运行依赖已就绪'
-        : '开发绑定'
+        ? t('runtime.ready')
+        : t('runtime.development')
       : data.runtimeState.state === 'unauthenticated'
-        ? '等待登录'
-        : '服务不可用'
+        ? t('runtime.loginRequired')
+        : t('runtime.unavailable')
   );
 
   let authenticated = $state(false);
@@ -133,8 +151,15 @@
   let searchQuery = $state('');
   let mailFilter = $state<MailFilter>('all');
   let mobileDetailOpen = $state(false);
+  let readerOpen = $state(false);
+  let sidebarCollapsed = $state(false);
+  let listWidth = $state(360);
+  let density = $state<DisplayDensity>('comfortable');
+  let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
+  let remoteImagesMessageId = $state<string | null>(null);
   let shortcutHelpOpen = $state(false);
   let composeOpen = $state(false);
+  let handledComposeAction = $state<string | null>(null);
   let composeMode = $state<ComposeMode>('new');
   let composeInitialInput = $state<ComposeInput | null>(null);
   let composeDraftId = $state<string | undefined>(undefined);
@@ -144,7 +169,7 @@
   let composeAutosavePending = $state(false);
   let composeClosePending = $state(false);
   let composeAutosaveStatus = $state<ComposeAutosaveStatus>('idle');
-  let composeAutosaveMessage = $state('自动保存会在停顿后触发。');
+  let composeAutosaveMessage = $state(t('compose.autosaveIdle'));
   let composeLastSavedSignature = $state('');
   let draftConflict = $state<DraftConflictInfo | null>(null);
   let draftConflictLocalEditedAt = $state<string | null>(null);
@@ -161,26 +186,28 @@
   let runtimeOperationError = $state(false);
   let loginError = $state('');
   let profileStatus = $state('');
+  let profileStatusError = $state(false);
   let pending = $state(false);
   let mailboxLoading = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let composeSavePromise: Promise<void> | null = null;
   const composeAutosave = new ComposeAutosaveController();
-  const inboundDetailCache = new DetailCacheController<InboundMessageDetail>('加载原始邮件失败。', (snapshot) => {
+  const listWidthRange = layoutPreferenceRange();
+  const inboundDetailCache = new DetailCacheController<InboundMessageDetail>(t('mail.inboundDetailFailed'), (snapshot) => {
     inboundDetails = snapshot.values;
     inboundDetailErrors = snapshot.errors;
     inboundDetailPendingId = snapshot.pendingId;
-  });
-  const deliveryDetailCache = new DetailCacheController<DeliveryDetail>('加载投递回执失败。', (snapshot) => {
+  }, { formatError: displayError });
+  const deliveryDetailCache = new DetailCacheController<DeliveryDetail>(t('mail.deliveryDetailFailed'), (snapshot) => {
     deliveryDetails = snapshot.values;
     deliveryDetailErrors = snapshot.errors;
     deliveryDetailPendingId = snapshot.pendingId;
-  });
-  const workspaceBodyCache = new DetailCacheController<WorkspaceBodyDetail>('加载邮件正文失败。', (snapshot) => {
+  }, { formatError: displayError });
+  const workspaceBodyCache = new DetailCacheController<WorkspaceBodyDetail>(t('mail.bodyLoadFailed'), (snapshot) => {
     workspaceBodies = snapshot.values;
     workspaceBodyErrors = snapshot.errors;
     workspaceBodyPendingId = snapshot.pendingId;
-  });
+  }, { formatError: displayError });
   const shortcuts = new WorkspaceShortcutController();
 
   function replySource(message: MailMessage): MailMessage {
@@ -208,9 +235,9 @@
       }
     },
     onLoading: (loading) => (trashLoading = loading),
-    onError: (message) => {
+    onError: () => {
       trashLoaded = true;
-      trashError = message;
+      trashError = t('mail.listError');
     }
   });
 
@@ -224,7 +251,7 @@
   const notifyError = (error: unknown, fallback: string) => {
     if (!(error instanceof ClientApiError) || error.status >= 500) runtimeOperationError = true;
     notify(
-      error instanceof Error ? error.message : fallback,
+      displayError(error, fallback),
       'error',
       { requestId: error instanceof ClientApiError ? error.requestId : undefined }
     );
@@ -257,7 +284,7 @@
           resetUserScoped: decision.resetUserScoped
         });
         if (decision.announceRestore) {
-          notify('工作台已从服务端恢复。你可以直接继续读信、保存草稿或发送邮件。', 'success');
+          notify(t('notify.workspaceRestored'), 'success');
         }
       });
     }
@@ -294,10 +321,10 @@
           selectedMessageId = null;
           mobileDetailOpen = false;
           updateWorkspaceUrl({ messageId: null }, true);
-          notify('这封邮件不存在、已删除或不属于当前账号。', 'error');
+          notify(t('notify.messageUnavailable'), 'error');
           return;
         }
-        notifyError(error, '载入目标邮件失败。');
+        notifyError(error, t('notify.targetMessageFailed'));
       }
     })();
 
@@ -427,6 +454,30 @@
       ? workspaceBodyErrors[selectedMessage.id] ?? ''
       : ''
   );
+  const selectedBodyView = $derived(selectedMessage ? bodyViewByMessage[selectedMessage.id] ?? 'text' : 'text');
+  const selectedRemoteImagesAllowed = $derived(Boolean(selectedMessage && remoteImagesMessageId === selectedMessage.id));
+
+  $effect(() => {
+    const action = page.url.searchParams.get('compose');
+    const requestedMessageId = page.url.searchParams.get('message');
+    if (action !== 'reply' && action !== 'forward') {
+      handledComposeAction = null;
+      return;
+    }
+    if (!authenticated || !selectedMessage || requestedMessageId !== selectedMessage.id) return;
+    const actionKey = `${action}:${requestedMessageId}`;
+    if (handledComposeAction === actionKey) return;
+    handledComposeAction = actionKey;
+    const nextUrl = new URL(page.url);
+    nextUrl.searchParams.delete('compose');
+    replaceState(nextUrl, page.state);
+    if (action === 'reply') void handleReplyMessage(selectedMessage);
+    else void handleForwardMessage(selectedMessage);
+  });
+
+  $effect(() => {
+    if (!selectedMessage) readerOpen = false;
+  });
   const composeBusy = $derived(pending || composeAutosavePending || composeClosePending);
 
   $effect(() => {
@@ -459,7 +510,7 @@
     composeClosePending = false;
     composeSavePromise = null;
     composeAutosaveStatus = 'idle';
-    composeAutosaveMessage = '自动保存会在停顿后触发。';
+    composeAutosaveMessage = t('compose.autosaveIdle');
     composeLastSavedSignature = '';
     draftConflict = null;
     draftConflictLocalEditedAt = null;
@@ -514,14 +565,14 @@
 
   const describeDeliveryState = (message: MailMessage) =>
     message.deliveryResultKind === 'accepted'
-      ? `邮件已提交到 ${message.deliveryProvider ?? '投递服务'}。`
+      ? t('notify.sentAccepted', { provider: message.deliveryProvider ?? t('notify.deliveryService') })
       : message.deliveryResultKind === 'queued'
-        ? `邮件已进入发送队列，等待投递到 ${message.toEmail}。`
+        ? t('notify.sentQueued', { email: message.toEmail })
         : message.deliveryResultKind === 'temporary_failure'
-          ? `投递服务暂时不可用，已保留重试入口：${message.deliveryError ?? '请稍后重试。'}`
+          ? t('notify.sentRetryable', { error: message.deliveryError ?? t('notify.tryLater') })
           : message.deliveryResultKind === 'rate_limited'
-            ? `投递服务触发限流，这封邮件暂时未发出：${message.deliveryError ?? '请稍后重试。'}`
-            : `邮件已写入已发送，但投递失败：${message.deliveryError ?? '请稍后重试。'}`;
+            ? t('notify.sentRateLimited', { error: message.deliveryError ?? t('notify.tryLater') })
+            : t('notify.sentFailed', { error: message.deliveryError ?? t('notify.tryLater') });
 
   $effect(() => {
     if (
@@ -667,6 +718,7 @@
     deliveryDetailCache.reset();
     workspaceBodyCache.reset();
     profileStatus = '';
+    profileStatusError = false;
     loginError = '';
     runtimeOperationError = false;
     workspaceSnapshotController.reset();
@@ -832,7 +884,7 @@
       const refreshed = await trashController.load();
       if (refreshed) {
         runtimeOperationError = false;
-        notify('垃圾箱已刷新。', 'success');
+        notify(t('notify.trashRefreshed'), 'success');
       }
       return;
     }
@@ -843,7 +895,7 @@
     );
     if (refreshed) {
       runtimeOperationError = false;
-      notify('邮件列表已刷新。', 'success');
+      notify(t('notify.mailboxRefreshed'), 'success');
     }
   }
 
@@ -899,16 +951,16 @@
       await refreshWorkspace();
       notify(
         action === 'archive'
-          ? '已归档所选邮件。'
+          ? t('notify.bulkArchived')
           : action === 'unarchive'
-            ? '已将所选邮件移回收件箱。'
+            ? t('notify.bulkUnarchived')
             : action === 'trash'
-              ? '已将所选会话移入垃圾箱。'
-            : '已更新所选邮件状态。',
+              ? t('notify.bulkTrashed')
+            : t('notify.bulkUpdated'),
         'success'
       );
     } catch (error) {
-      notifyError(error, '批量更新邮件失败。');
+      notifyError(error, t('notify.bulkFailed'));
     } finally {
       pending = false;
     }
@@ -917,7 +969,7 @@
   const mailboxController = new MailboxController(fetchMailboxPage, {
     onPage: (page, append) => applyMailboxPage(page, append),
     onLoading: (loading) => (mailboxLoading = loading),
-    onError: (message) => notify(message, 'error')
+    onError: () => notify(t('mail.listError'), 'error')
   });
 
   async function loadMoreMailbox() {
@@ -939,8 +991,8 @@
     draftConflictLocalEditedAt = null;
     composeAutosaveStatus = initialInput?.draftId ? 'saved' : 'idle';
     composeAutosaveMessage = initialInput?.draftId
-      ? '草稿内容已载入，继续编辑后会自动保存。'
-      : '自动保存会在停顿后触发。';
+      ? t('compose.draftLoaded')
+      : t('compose.autosaveIdle');
     composeLastSavedSignature = initialInput?.draftId ? serializeComposeInput(initialInput) : '';
     composeOpen = true;
   }
@@ -971,7 +1023,7 @@
 
       composeAutosavePending = true;
       composeAutosaveStatus = 'saving';
-      composeAutosaveMessage = '正在关闭前保存草稿...';
+      composeAutosaveMessage = t('compose.savingBeforeClose');
       const save = composeAutosave.sequence.begin();
       try {
         const result = await persistDraft(input);
@@ -981,7 +1033,7 @@
         if (save.isCurrent()) {
           syncComposeDraftState(
             result.message,
-            `离开前已保存草稿于 ${formatComposeSavedAt(result.message.sentAt)}。`,
+            t('compose.savedBeforeClose', { date: formatComposeSavedAt(result.message.sentAt, i18n.locale) }),
             result.bodyRevision,
             result.attachments,
             result.attachmentRevision
@@ -1004,7 +1056,7 @@
           draftConflictLocalEditedAt = new Date().toISOString();
         }
         composeAutosaveStatus = 'error';
-        composeAutosaveMessage = error instanceof Error ? error.message : '关闭前自动保存失败。';
+        composeAutosaveMessage = displayError(error, t('compose.saveBeforeCloseFailed'));
         notify(composeAutosaveMessage, 'error');
         composeClosePending = false;
         return;
@@ -1014,12 +1066,12 @@
     }
 
     resetComposeState();
-    notify(savedBeforeClose ? '未完成内容已保存为草稿。' : '已关闭写信面板。', savedBeforeClose ? 'success' : 'info');
+    notify(savedBeforeClose ? t('notify.composeSavedBeforeClose') : t('notify.composeClosed'), savedBeforeClose ? 'success' : 'info');
   }
 
   function discardCompose() {
     resetComposeState();
-    notify('已放弃本次未保存的改动。', 'warning');
+    notify(t('notify.composeDiscarded'), 'warning');
   }
 
   async function handleLogin(payload: LoginInput) {
@@ -1030,7 +1082,7 @@
       const result = await createSession(payload);
 
       if (!result.workspace) {
-        throw new Error('登录后未返回工作区数据。');
+        throw new Error(t('notify.loginMissingWorkspace'));
       }
 
       applyWorkspaceSnapshot(result.workspace, {
@@ -1040,10 +1092,10 @@
         resetUserScoped: true,
         syncUrl: true
       });
-      notify('已进入工作台。当前会话由 Cookie、SvelteKit API 和 D1 状态驱动。', 'success');
+      notify(t('notify.loggedIn'), 'success');
     } catch (error) {
-      loginError = error instanceof Error ? error.message : '登录失败。';
-      notifyError(error, '登录失败。');
+      loginError = displayError(error, t('auth.loginFailed'));
+      notifyError(error, t('auth.loginFailed'));
     } finally {
       pending = false;
     }
@@ -1058,9 +1110,9 @@
       await goto(buildWorkspaceUrl(page.url, {
         section: 'inbox', query: '', filter: 'all', messageId: null
       }), { replaceState: true, noScroll: true, keepFocus: false });
-      notify('你已退出工作台。', 'success');
+      notify(t('notify.loggedOut'), 'success');
     } catch (error) {
-      notifyError(error, '退出失败。');
+      notifyError(error, t('notify.logoutFailed'));
     } finally {
       pending = false;
     }
@@ -1069,6 +1121,7 @@
   async function saveProfile(nextProfile: UserProfile) {
     pending = true;
     profileStatus = '';
+    profileStatusError = false;
 
     try {
       const result = await updateProfile(nextProfile);
@@ -1076,11 +1129,12 @@
       profile = result.profile ?? profile;
       metrics = result.metrics ?? metrics;
       runtimeOperationError = false;
-      profileStatus = '个人资料已保存到工作区。';
-      notify('个人信息已更新，写信时会自动使用新的身份与签名。', 'success');
+      profileStatus = t('notify.profileSaved');
+      notify(t('notify.profileUpdated'), 'success');
     } catch (error) {
-      profileStatus = error instanceof Error ? error.message : '保存失败。';
-      notifyError(error, '保存个人信息失败。');
+      profileStatusError = true;
+      profileStatus = displayError(error, t('notify.saveFailed'));
+      notifyError(error, t('notify.profileSaveFailed'));
     } finally {
       pending = false;
     }
@@ -1099,16 +1153,16 @@
         clearMailView: true
       });
       resetComposeState();
-      notify((input.draftId ?? composeDraftId) ? '草稿已更新。' : '草稿已保存到工作区。', 'success');
+      notify((input.draftId ?? composeDraftId) ? t('notify.draftUpdated') : t('notify.draftSaved'), 'success');
     } catch (error) {
       const conflict = draftConflictFromError(error);
       if (conflict) {
         draftConflict = conflict;
         draftConflictLocalEditedAt = new Date().toISOString();
         composeAutosaveStatus = 'error';
-        composeAutosaveMessage = '服务器版本已更新，请选择如何处理冲突。';
+        composeAutosaveMessage = t('compose.conflictAutosave');
       }
-      notifyError(error, '保存草稿失败。');
+      notifyError(error, t('notify.draftSaveFailed'));
     } finally {
       pending = false;
     }
@@ -1130,7 +1184,7 @@
 
     composeAutosavePending = true;
     composeAutosaveStatus = 'saving';
-    composeAutosaveMessage = '正在自动保存草稿...';
+    composeAutosaveMessage = t('compose.autosaving');
     const save = composeAutosave.sequence.begin();
 
     try {
@@ -1141,7 +1195,7 @@
       if (save.isCurrent()) {
         syncComposeDraftState(
           result.message,
-          `已自动保存于 ${formatComposeSavedAt(result.message.sentAt)}。`,
+          t('compose.autosavedAt', { date: formatComposeSavedAt(result.message.sentAt, i18n.locale) }),
           result.bodyRevision,
           result.attachments,
           result.attachmentRevision
@@ -1160,7 +1214,7 @@
         composeLastSavedSignature = serializeComposeInput({ ...input, draftId: result.message.id, bodyRevision: result.bodyRevision ?? undefined });
         composeTouched = true;
         composeAutosaveStatus = 'dirty';
-        composeAutosaveMessage = '较早改动已保存，正在等待保存最新内容。';
+        composeAutosaveMessage = t('compose.autosaveQueued');
       }
     } catch (error) {
       if (save.isActive()) {
@@ -1170,7 +1224,7 @@
           draftConflictLocalEditedAt = new Date().toISOString();
         }
         composeAutosaveStatus = 'error';
-        composeAutosaveMessage = error instanceof Error ? error.message : '自动保存失败。';
+        composeAutosaveMessage = displayError(error, t('compose.autosaveFailed'));
       }
     } finally {
       if (save.isActive()) composeAutosavePending = false;
@@ -1193,13 +1247,13 @@
     if (composeSavePromise) await composeSavePromise;
     composeAutosavePending = true;
     composeAutosaveStatus = 'saving';
-    composeAutosaveMessage = '正在保存草稿并准备附件上传...';
+    composeAutosaveMessage = t('compose.preparingAttachments');
     try {
       const result = await persistDraft(withCurrentComposePersistence(input));
       applyMessageDelta(result);
       syncComposeDraftState(
         result.message,
-        `草稿已准备好接收附件。`,
+        t('compose.attachmentsReady'),
         result.bodyRevision,
         result.attachments,
         result.attachmentRevision
@@ -1212,7 +1266,7 @@
         draftConflictLocalEditedAt = new Date().toISOString();
       }
       composeAutosaveStatus = 'error';
-      composeAutosaveMessage = error instanceof Error ? error.message : '准备附件上传失败。';
+      composeAutosaveMessage = displayError(error, t('compose.prepareAttachmentsFailed'));
       throw error;
     } finally {
       composeAutosavePending = false;
@@ -1244,18 +1298,18 @@
       });
       const deliveryMessage =
         result.message.deliveryResultKind === 'accepted' && (input.draftId ?? composeDraftId)
-          ? `草稿已提交到 ${result.message.deliveryProvider ?? '投递服务'}，目标 ${result.message.toEmail}。`
+          ? t('notify.draftSubmitted', { provider: result.message.deliveryProvider ?? t('notify.deliveryService'), email: result.message.toEmail })
           : result.message.deliveryResultKind === 'accepted'
-            ? `已向 ${result.message.toEmail} 发起投递，并提交到 ${result.message.deliveryProvider ?? '投递服务'}。`
+            ? t('notify.deliverySubmitted', { email: result.message.toEmail, provider: result.message.deliveryProvider ?? t('notify.deliveryService') })
             : describeDeliveryState(result.message);
       const deliveryReceipt = result.message.deliveryResultKind === 'accepted' && result.message.deliveryProviderMessageId
-        ? ` Resend message id ${result.message.deliveryProviderMessageId}，发送时间 ${new Date(result.message.sentAt).toLocaleString('zh-CN')}。`
+        ? t('notify.providerMessageId', { id: result.message.deliveryProviderMessageId, date: formatDate(result.message.sentAt, i18n.locale, { dateStyle: 'medium', timeStyle: 'short' }) })
         : '';
       const deliveryTone: ToastTone = result.message.deliveryResultKind === 'accepted' ? 'success' : 'warning';
       resetComposeState();
       notify(`${deliveryMessage}${deliveryReceipt}`, deliveryTone, { persistent: deliveryTone === 'warning' });
     } catch (error) {
-      notifyError(error, '发送失败。');
+      notifyError(error, t('notify.sendFailed'));
     } finally {
       pending = false;
     }
@@ -1280,18 +1334,18 @@
       });
       const deliveryMessage =
         result.message.deliveryResultKind === 'accepted'
-          ? `《${result.message.subject}》已重新提交到 ${result.message.deliveryProvider ?? '投递服务'}。`
+          ? t('notify.retryAccepted', { subject: result.message.subject, provider: result.message.deliveryProvider ?? t('notify.deliveryService') })
           : result.message.deliveryResultKind === 'queued'
-            ? `《${result.message.subject}》仍在发送队列中。`
+            ? t('notify.retryQueued', { subject: result.message.subject })
             : result.message.deliveryResultKind === 'temporary_failure'
-              ? `《${result.message.subject}》重试后仍需等待：${result.message.deliveryError ?? '请稍后重试。'}`
+              ? t('notify.retryDelayed', { subject: result.message.subject, error: result.message.deliveryError ?? t('notify.tryLater') })
               : result.message.deliveryResultKind === 'rate_limited'
-                ? `《${result.message.subject}》被投递服务限流，请稍后再试。`
-                : `《${result.message.subject}》再次投递失败：${result.message.deliveryError ?? '请稍后重试。'}`;
+                ? t('notify.retryRateLimited', { subject: result.message.subject })
+                : t('notify.retryFailed', { subject: result.message.subject, error: result.message.deliveryError ?? t('notify.tryLater') });
       const deliveryTone: ToastTone = result.message.deliveryResultKind === 'accepted' ? 'success' : 'warning';
       notify(deliveryMessage, deliveryTone, { persistent: deliveryTone === 'warning' });
     } catch (error) {
-      notifyError(error, '重试投递失败。');
+      notifyError(error, t('notify.retryDeliveryFailed'));
     } finally {
       pending = false;
     }
@@ -1313,7 +1367,7 @@
         notify(nextBanner, 'success');
       }
     } catch (error) {
-      notifyError(error, '更新邮件状态失败。');
+      notifyError(error, t('notify.updateMessageFailed'));
     } finally {
       pending = false;
     }
@@ -1325,11 +1379,11 @@
     try {
       const { message, bodyRevision, attachments, attachmentRevision } = await fetchDraftDetail(conflict.id);
       composeInitialInput = composeInputFromSavedDraft(message, bodyRevision, attachments, attachmentRevision);
-      syncComposeDraftState(message, '已载入服务器版本。', bodyRevision, attachments, attachmentRevision);
+      syncComposeDraftState(message, t('compose.serverDraftLoaded'), bodyRevision, attachments, attachmentRevision);
       draftConflict = null;
       draftConflictLocalEditedAt = null;
     } catch (error) {
-      notifyError(error, '载入服务器草稿失败。');
+      notifyError(error, t('notify.loadServerDraftFailed'));
     }
   }
 
@@ -1374,11 +1428,93 @@
     updateWorkspaceUrl({ messageId: null }, true);
   }
 
+  function standaloneMessageHref(message: MailMessage) {
+    if (message.folder === 'drafts') return null;
+    const params = new URLSearchParams();
+    for (const key of ['folder', 'q', 'filter']) {
+      const value = page.url.searchParams.get(key);
+      if (value) params.set(key, value);
+    }
+    params.set('message', message.id);
+    const query = params.toString();
+    return `/messages/${encodeURIComponent(message.id)}${query ? `?${query}` : ''}`;
+  }
+
+  function persistLayoutPreferences() {
+    if (typeof localStorage === 'undefined') return;
+    writeLayoutPreferences({ version: 1, sidebarCollapsed, listWidth, density }, localStorage);
+  }
+
+  function setDensity(next: DisplayDensity) {
+    density = next;
+    if (typeof document !== 'undefined') document.documentElement.dataset.density = next;
+    persistLayoutPreferences();
+  }
+
+  function toggleDensity() {
+    setDensity(density === 'comfortable' ? 'compact' : 'comfortable');
+  }
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    persistLayoutPreferences();
+  }
+
+  function updateListWidth(next: number, availableWidth = Number.POSITIVE_INFINITY) {
+    listWidth = clampListWidth(next, availableWidth);
+  }
+
+  function startListResize(event: PointerEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget as HTMLElement;
+    const workspace = handle.closest<HTMLElement>('.mail-workspace');
+    const startRect = workspace?.getBoundingClientRect();
+    if (!startRect) return;
+    const availableWidth = startRect.width;
+    document.body.classList.add('fm-is-resizing');
+    const move = (moveEvent: PointerEvent) => {
+      updateListWidth(moveEvent.clientX - startRect.left, availableWidth);
+    };
+    const finish = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      document.body.classList.remove('fm-is-resizing');
+      persistLayoutPreferences();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish, { once: true });
+    window.addEventListener('pointercancel', finish, { once: true });
+  }
+
+  function adjustListWidth(event: KeyboardEvent) {
+    const workspace = (event.currentTarget as HTMLElement).closest<HTMLElement>('.mail-workspace');
+    const availableWidth = workspace?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      updateListWidth(listWidth + (event.key === 'ArrowRight' ? 16 : -16), availableWidth);
+      persistLayoutPreferences();
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      updateListWidth(listWidthRange.min, availableWidth);
+      persistLayoutPreferences();
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      updateListWidth(listWidthRange.max, availableWidth);
+      persistLayoutPreferences();
+    }
+  }
+
+  function openReader() {
+    if (selectedMessage) readerOpen = true;
+  }
+
   async function handleToggleStar(message: MailMessage) {
     await patchMessage(
       message,
       { starred: !message.starred },
-      message.starred ? '已取消星标。' : '已加入星标邮件。'
+      message.starred ? t('notify.unstarred') : t('notify.starred')
     );
   }
 
@@ -1390,7 +1526,7 @@
     await patchMessage(
       message,
       { read: !message.read },
-      message.read ? '邮件已标记为未读。' : '邮件已标记为已读。'
+      message.read ? t('notify.markedUnread') : t('notify.markedRead')
     );
   }
 
@@ -1420,24 +1556,24 @@
       }
 
       notify(
-        '已移入垃圾箱。',
+        t('notify.movedTrash'),
         'warning',
         {
           timeoutMs: 8_000,
           action: {
-            label: '撤销',
+            label: t('common.undo'),
             run: async () => {
               const restored = await restoreTrashItem(result.removedId);
               metrics = restored.metrics;
               trashLoaded = false;
               if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace();
-              notify('已撤销移入垃圾箱。', 'success');
+              notify(t('notify.trashUndone'), 'success');
             }
           }
         }
       );
     } catch (error) {
-      notifyError(error, '删除邮件失败。');
+      notifyError(error, t('notify.deleteMessageFailed'));
     } finally {
       pending = false;
     }
@@ -1459,9 +1595,9 @@
       metrics = result.metrics;
       runtimeOperationError = false;
       removeTrashItemFromView(message.id);
-      notify(`已恢复到${result.originalFolder === 'archive' ? '归档' : result.originalFolder === 'sent' ? '已发送' : result.originalFolder === 'drafts' ? '草稿箱' : '收件箱'}。`, 'success');
+      notify(t('notify.restoredTo', { folder: result.originalFolder === 'archive' ? t('shell.archive') : result.originalFolder === 'sent' ? t('shell.sent') : result.originalFolder === 'drafts' ? t('shell.drafts') : t('shell.inbox') }), 'success');
     } catch (error) {
-      notifyError(error, '恢复垃圾箱项目失败。');
+      notifyError(error, t('notify.restoreFailed'));
     } finally {
       pending = false;
     }
@@ -1478,12 +1614,12 @@
       deliveryDetailCache.invalidate(message.id);
       workspaceBodyCache.invalidate(message.id);
       notify(
-        result.cleanupPending ? '项目已永久删除；对象存储清理将在维护任务中重试。' : '项目已永久删除。',
+        result.cleanupPending ? t('notify.permanentDeleteCleanupPending') : t('notify.permanentDeleted'),
         'warning',
         { persistent: Boolean(result.cleanupPending) }
       );
     } catch (error) {
-      notifyError(error, '永久删除失败。');
+      notifyError(error, t('notify.permanentDeleteFailed'));
     } finally {
       pending = false;
     }
@@ -1505,9 +1641,9 @@
       selectedMessageId = null;
       mobileDetailOpen = false;
       emptyTrashConfirmOpen = false;
-      notify(`已永久删除 ${result.deleted} 个垃圾箱项目。`, 'warning');
+      notify(t('notify.trashEmptied', { count: formatNumber(result.deleted, i18n.locale) }), 'warning');
     } catch (error) {
-      notifyError(error, '清空垃圾箱失败。');
+      notifyError(error, t('notify.emptyTrashFailed'));
     } finally {
       pending = false;
     }
@@ -1522,22 +1658,22 @@
         current.attachments,
         current.attachmentRevision
       ));
-      notify('你正在继续编辑一封草稿。');
+      notify(t('notify.editingDraft'));
     } catch (error) {
-      notifyError(error, '载入草稿失败。');
+      notifyError(error, t('notify.loadDraftFailed'));
     }
   }
 
   async function handleReplyMessage(message: MailMessage) {
     if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
       if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
-        notify('正文尚未载入，暂时无法引用回复。', 'error');
+        notify(t('notify.bodyRequiredReply'), 'error');
         return;
       }
     }
     if (!isInboundMessageId(message.id) && !workspaceBodies[message.id]) {
       if (!(await loadWorkspaceBody(message)) || !workspaceBodies[message.id]) {
-        notify('正文尚未载入，暂时无法引用回复。', 'error');
+        notify(t('notify.bodyRequiredReply'), 'error');
         return;
       }
     }
@@ -1548,19 +1684,19 @@
     openCompose('reply', createReplyComposeInput(replySource(message), quotedBody, {
       replyTo: isInboundMessageId(message.id) ? inboundDetails[message.id]?.replyTo : undefined
     }));
-    notify(`正在回复《${message.subject}》。`);
+    notify(t('notify.replying', { subject: message.subject }));
   }
 
   async function handleReplyAllMessage(message: MailMessage) {
     if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
       if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
-        notify('正文尚未载入，暂时无法引用回复。', 'error');
+        notify(t('notify.bodyRequiredReply'), 'error');
         return;
       }
     }
     if (!isInboundMessageId(message.id) && !workspaceBodies[message.id]) {
       if (!(await loadWorkspaceBody(message)) || !workspaceBodies[message.id]) {
-        notify('正文尚未载入，暂时无法引用回复。', 'error');
+        notify(t('notify.bodyRequiredReply'), 'error');
         return;
       }
     }
@@ -1572,19 +1708,19 @@
       selfEmail: profile.email,
       replyTo: isInboundMessageId(message.id) ? inboundDetails[message.id]?.replyTo : undefined
     }, quotedBody));
-    notify(`正在回复《${message.subject}》中的所有收件人。`);
+    notify(t('notify.replyAll', { subject: message.subject }));
   }
 
   async function handleForwardMessage(message: MailMessage) {
     if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
       if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
-        notify('正文尚未载入，暂时无法引用转发。', 'error');
+        notify(t('notify.bodyRequiredForward'), 'error');
         return;
       }
     }
     if (!isInboundMessageId(message.id) && !workspaceBodies[message.id]) {
       if (!(await loadWorkspaceBody(message)) || !workspaceBodies[message.id]) {
-        notify('正文尚未载入，暂时无法引用转发。', 'error');
+        notify(t('notify.bodyRequiredForward'), 'error');
         return;
       }
     }
@@ -1596,17 +1732,17 @@
       ? inboundDetails[message.id]?.attachments ?? []
       : workspaceBodies[message.id]?.attachments ?? [];
     openCompose('forward', createForwardComposeInput(message, forwardedBody, forwardAttachmentCandidates));
-    notify(`正在转发《${message.subject}》。`);
+    notify(t('notify.forwarding', { subject: message.subject }));
   }
 
   function handleReportHtmlIssue() {
-    notify('显示问题报告已下载；文件只包含本地显示环境，不含邮件正文或地址。', 'success');
+    notify(t('mail.reportDownloaded'), 'success');
   }
 
   async function handleReloadInboundDetail(message: MailMessage) {
     const ok = await loadInboundDetail(message, true);
     notify(
-      ok ? `已重新载入《${message.subject}》的原始邮件详情。` : '重新载入原始邮件失败。',
+      ok ? t('notify.inboundReloaded', { subject: message.subject }) : t('notify.inboundReloadFailed'),
       ok ? 'success' : 'error'
     );
   }
@@ -1614,7 +1750,7 @@
   async function handleReloadDeliveryDetail(message: MailMessage) {
     const ok = await loadDeliveryDetail(message, true);
     notify(
-      ok ? `已重新载入《${message.subject}》的投递回执。` : '重新载入投递回执失败。',
+      ok ? t('notify.deliveryReloaded', { subject: message.subject }) : t('notify.deliveryReloadFailed'),
       ok ? 'success' : 'error'
     );
   }
@@ -1629,6 +1765,12 @@
   }
 
   onMount(() => {
+    const layout = readLayoutPreferences(localStorage);
+    sidebarCollapsed = layout.sidebarCollapsed;
+    listWidth = layout.listWidth;
+    density = layout.density;
+    document.documentElement.dataset.density = density;
+
     const handleShortcut = (event: KeyboardEvent) => {
       if (!authenticated || composeOpen) return;
       const action = shortcuts.handle(event, {
@@ -1661,6 +1803,7 @@
     document.addEventListener('keydown', handleShortcut);
     return () => {
       document.removeEventListener('keydown', handleShortcut);
+      document.body.classList.remove('fm-is-resizing');
       clearMailboxRefreshTimer();
       mailboxController.cancel();
       shortcuts.dispose();
@@ -1673,11 +1816,11 @@
   <title>FlareMail</title>
   <meta
     name="description"
-    content="FlareMail 邮件工作台，覆盖收件箱、已发送、草稿、投递状态与安全写信流程。"
+    content={t('shell.metaDescription')}
   />
 </svelte:head>
 
-<div class="fm-app-shell">
+<div class="fm-app-shell" data-density={density} style={`--fm-sidebar-width: ${sidebarCollapsed ? '64px' : '232px'}`}>
   {#if data.runtimeState.state === 'unavailable'}
     <RuntimeUnavailableView state={data.runtimeState} />
   {:else if !authenticated}
@@ -1704,14 +1847,16 @@
         {serviceDegraded}
         staleDeliveryCount={metrics.staleDeliveryCount}
         unreadCount={unreadCount}
+        {density}
         onEditProfile={() => {
           setSection('profile');
-          notify('已打开设置。');
+          notify(t('notify.settingsOpened'));
         }}
         onLogout={handleLogout}
         onSearch={() => {
           window.dispatchEvent(new CustomEvent('flaremail:focus-search'));
         }}
+        onToggleDensity={toggleDensity}
       />
 
       <div class:mobile-detail-nav-hidden={mobileDetailOpen}>
@@ -1723,7 +1868,7 @@
           {pending}
           onCompose={() => {
             openCompose('new');
-            notify('正在写新邮件。');
+            notify(t('notify.composeOpened'));
           }}
           onSelectSection={setSection}
         />
@@ -1733,6 +1878,7 @@
         <div class="fm-workspace-shell">
           <AppSidebar
             activeSection={activeSection}
+            collapsed={sidebarCollapsed}
             draftCount={metrics.draftsCount}
             inboxCount={metrics.inboxCount}
             trashCount={metrics.trashCount}
@@ -1740,12 +1886,13 @@
             sentCount={metrics.sentCount}
             onCompose={() => {
               openCompose('new');
-              notify('正在写新邮件。');
+              notify(t('notify.composeOpened'));
             }}
             onSelectSection={setSection}
+            onToggleCollapsed={toggleSidebar}
           />
 
-          <main class="fm-workspace-main" aria-label="邮件工作区">
+          <main class="fm-workspace-main" aria-label={t('shell.mailWorkspace')}>
             {#if activeSection === 'profile'}
               <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
                 <ProfilePane
@@ -1755,12 +1902,13 @@
                   {serviceDegraded}
                   diagnostics={data.runtimeDiagnostics}
                   status={profileStatus}
+                  statusError={profileStatusError}
                   onSave={saveProfile}
                 />
               </div>
             {:else}
-              <div class:detail-open={mobileDetailOpen} class="mail-workspace">
-                <section class="mail-list-panel" aria-label="邮件列表">
+              <div class:detail-open={mobileDetailOpen} class="mail-workspace" style={`--fm-list-width: ${listWidth}px`}>
+                <section class="mail-list-panel" aria-label={t('mail.listLabel', { section: t('shell.mailNavigation') })}>
                   <FolderHeader
                     activeSection={activeSection}
                     count={searchQuery.trim() && activeSection !== 'trash'
@@ -1776,26 +1924,26 @@
                   />
                   {#if activeSection === 'trash'}
                     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
-                      <span class="text-xs text-[var(--fm-text-muted)]">项目保留至手动删除；维护任务默认只报告超过 30 天的项目。</span>
-                      <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending || trashItems.length === 0} onclick={() => (emptyTrashConfirmOpen = true)}>清空垃圾箱</button>
+                      <span class="text-xs text-[var(--fm-text-muted)]">{t('mail.trashRetention')}</span>
+                      <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending || trashItems.length === 0} onclick={() => (emptyTrashConfirmOpen = true)}>{t('mail.emptyTrash')}</button>
                     </div>
                   {:else if activeSection !== 'drafts'}
-                    <div class="flex flex-wrap items-center gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2" aria-label="批量邮件操作">
+                    <div class="flex flex-wrap items-center gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2" aria-label={t('mail.bulkActions')}>
                       <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={selectAllVisible}>
-                        {selectedMessageIds.length ? '取消选择' : '选择当前页'}
+                        {selectedMessageIds.length ? t('mail.clearSelection') : t('mail.selectPage')}
                       </button>
                       {#if selectedMessageIds.length > 0}
                         {#if activeSection === 'archive'}
-                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unarchive')}>移回收件箱</button>
+                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unarchive')}>{t('mail.moveToInbox')}</button>
                         {:else if activeSection === 'inbox'}
-                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('archive')}>归档</button>
+                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('archive')}>{t('shell.archive')}</button>
                         {/if}
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('read')}>标记已读</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unread')}>标记未读</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('star')}>加星标</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unstar')}>取消星标</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('trash')}>移入垃圾箱</button>
-                        <span class="text-xs text-[var(--fm-text-muted)]">已选 {selectedMessageIds.length} 封</span>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('read')}>{t('mail.markRead')}</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unread')}>{t('mail.markUnread')}</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('star')}>{t('mail.star')}</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unstar')}>{t('mail.unstar')}</button>
+                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('trash')}>{t('mail.moveTrash')}</button>
+                        <span class="text-xs text-[var(--fm-text-muted)]">{t('mail.selectedCount', { count: formatNumber(selectedMessageIds.length, i18n.locale) })}</span>
                       {/if}
                     </div>
                   {/if}
@@ -1824,8 +1972,24 @@
                     onToggleSelect={toggleBulkSelection}
                   />
                 </section>
-                <section class="mail-detail-panel" aria-label="邮件详情">
-                  <MessageDetail
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                <div
+                  class="mail-splitter"
+                  role="separator"
+                  tabindex="0"
+                  aria-orientation="vertical"
+                  aria-valuemin={listWidthRange.min}
+                  aria-valuemax={listWidthRange.max}
+                  aria-valuenow={listWidth}
+                  aria-label={t('mail.adjustList')}
+                  title={t('mail.listWidthHint')}
+                  onpointerdown={startListResize}
+                  onkeydown={adjustListWidth}
+                ></div>
+                <section class="mail-detail-panel" aria-label={t('mail.detail')}>
+                  {#if !readerOpen}
+                    <MessageDetail
                     message={selectedMessage}
                     deliveryDetail={selectedDeliveryDetail}
                     deliveryDetailError={selectedDeliveryDetailError}
@@ -1857,7 +2021,16 @@
                     onSelectThreadMessage={handleSelectMessage}
                     onToggleRead={handleToggleRead}
                     onToggleStar={handleToggleStar}
-                  />
+                    onOpenReader={openReader}
+                    standaloneHref={selectedMessage ? standaloneMessageHref(selectedMessage) : null}
+                    bodyView={selectedBodyView}
+                    allowRemoteImages={selectedRemoteImagesAllowed}
+                    onBodyViewChange={(view) => { if (selectedMessage) bodyViewByMessage[selectedMessage.id] = view; }}
+                    onRemoteImagesChange={(allowed) => { remoteImagesMessageId = allowed && selectedMessage ? selectedMessage.id : null; }}
+                    />
+                  {:else}
+                    <div class="grid h-full place-items-center p-6 text-center text-sm text-[var(--fm-text-muted)]">{t('mail.readerOpen')}</div>
+                  {/if}
                 </section>
               </div>
             {/if}
@@ -1866,6 +2039,47 @@
 
       </div>
     </div>
+
+    {#if readerOpen && selectedMessage}
+      <ReaderDialog open title={selectedMessage.subject || t('mail.noSubject')} onClose={() => (readerOpen = false)}>
+        <MessageDetail
+          message={selectedMessage}
+          deliveryDetail={selectedDeliveryDetail}
+          deliveryDetailError={selectedDeliveryDetailError}
+          deliveryDetailPending={deliveryDetailPendingId === selectedMessage.id}
+          inboundDetail={selectedInboundDetail}
+          inboundDetailError={selectedInboundDetailError}
+          inboundDetailPending={inboundDetailPendingId === selectedMessage.id}
+          workspaceBody={selectedWorkspaceBody}
+          workspaceAttachments={workspaceBodies[selectedMessage.id]?.attachments ?? []}
+          workspaceBodyError={selectedWorkspaceBodyError}
+          workspaceBodyPending={workspaceBodyPendingId === selectedMessage.id}
+          {pending}
+          rawDownloadHref={selectedInboundDownloadHref}
+          threadMessages={selectedThreadMessages}
+          onEditDraft={handleEditDraft}
+          onForward={handleForwardMessage}
+          onReply={handleReplyMessage}
+          onReplyAll={selectedReplyAllAvailable ? handleReplyAllMessage : undefined}
+          trashMode={activeSection === 'trash'}
+          onRestore={handleRestoreTrash}
+          onPermanentDelete={handlePermanentDelete}
+          onReportHtmlIssue={handleReportHtmlIssue}
+          onReloadDeliveryDetail={handleReloadDeliveryDetail}
+          onRetryDelivery={retryMessageDelivery}
+          onReloadInboundDetail={handleReloadInboundDetail}
+          onRemove={handleDeleteMessage}
+          onSelectThreadMessage={handleSelectMessage}
+          onToggleRead={handleToggleRead}
+          onToggleStar={handleToggleStar}
+          bodyView={selectedBodyView}
+          allowRemoteImages={selectedRemoteImagesAllowed}
+          readerMode
+          onBodyViewChange={(view) => { if (selectedMessage) bodyViewByMessage[selectedMessage.id] = view; }}
+          onRemoteImagesChange={(allowed) => { remoteImagesMessageId = allowed ? selectedMessage.id : null; }}
+        />
+      </ReaderDialog>
+    {/if}
 
     {#if composeOpen}
       <ComposeModal
@@ -1897,7 +2111,7 @@
 
           if (!hasComposeContent(nextInput)) {
             composeAutosaveStatus = 'idle';
-            composeAutosaveMessage = '自动保存会在停顿后触发。';
+            composeAutosaveMessage = t('compose.autosaveIdle');
             return;
           }
 
@@ -1907,7 +2121,7 @@
           }
 
           composeAutosaveStatus = 'dirty';
-          composeAutosaveMessage = '检测到未保存改动，正在等待自动保存。';
+          composeAutosaveMessage = t('compose.autosavePending');
         }}
         onSaveDraft={saveDraft}
         onSend={sendMessage}
@@ -1916,30 +2130,30 @@
 
     <Dialog
       open={shortcutHelpOpen}
-      title="键盘快捷键"
-      description="在输入框和正文编辑器中，单键快捷键会自动停用。"
+      title={t('shortcut.title')}
+      description={t('shortcut.description')}
       onClose={() => (shortcutHelpOpen = false)}
     >
       <dl class="shortcut-grid">
-        <div><dt><kbd>/</kbd></dt><dd>聚焦邮件搜索</dd></div>
-        <div><dt><kbd>C</kbd></dt><dd>写邮件</dd></div>
-        <div><dt><kbd>G</kbd> <kbd>I</kbd></dt><dd>前往收件箱</dd></div>
-        <div><dt><kbd>G</kbd> <kbd>S</kbd></dt><dd>前往已发送</dd></div>
-        <div><dt><kbd>G</kbd> <kbd>D</kbd></dt><dd>前往草稿箱</dd></div>
-        <div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>下一封 / 上一封</dd></div>
-        <div><dt><kbd>R</kbd></dt><dd>回复当前邮件</dd></div>
-        <div><dt><kbd>A</kbd></dt><dd>回复全部（有其他收件人时）</dd></div>
-        <div><dt><kbd>F</kbd></dt><dd>转发当前邮件</dd></div>
-        <div><dt><kbd>Esc</kbd></dt><dd>关闭面板或返回列表</dd></div>
-        <div><dt><kbd>?</kbd></dt><dd>打开快捷键帮助</dd></div>
+        <div><dt><kbd>/</kbd></dt><dd>{t('shortcut.search')}</dd></div>
+        <div><dt><kbd>C</kbd></dt><dd>{t('shortcut.compose')}</dd></div>
+        <div><dt><kbd>G</kbd> <kbd>I</kbd></dt><dd>{t('shortcut.inbox')}</dd></div>
+        <div><dt><kbd>G</kbd> <kbd>S</kbd></dt><dd>{t('shortcut.sent')}</dd></div>
+        <div><dt><kbd>G</kbd> <kbd>D</kbd></dt><dd>{t('shortcut.drafts')}</dd></div>
+        <div><dt><kbd>J</kbd> / <kbd>K</kbd></dt><dd>{t('shortcut.nextPrevious')}</dd></div>
+        <div><dt><kbd>R</kbd></dt><dd>{t('shortcut.reply')}</dd></div>
+        <div><dt><kbd>A</kbd></dt><dd>{t('shortcut.replyAll')}</dd></div>
+        <div><dt><kbd>F</kbd></dt><dd>{t('shortcut.forward')}</dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd>{t('shortcut.close')}</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>{t('shortcut.help')}</dd></div>
       </dl>
     </Dialog>
 
     <ConfirmDialog
       open={emptyTrashConfirmOpen}
-      title="永久清空垃圾箱？"
-      description="垃圾箱中的邮件、草稿、正文和附件会被永久删除，且无法恢复。"
-      confirmLabel="永久清空"
+      title={t('mail.emptyTrashConfirm')}
+      description={t('mail.emptyTrashDescription')}
+      confirmLabel={t('mail.emptyTrash')}
       {pending}
       onCancel={() => (emptyTrashConfirmOpen = false)}
       onConfirm={handleEmptyTrash}
@@ -1998,33 +2212,68 @@
   }
 
   .mail-workspace {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(280px, var(--fm-list-width)) 8px minmax(0, 1fr);
     height: 100%;
     min-width: 0;
   }
 
   .mail-list-panel {
     display: flex;
-    width: 392px;
     min-width: 0;
-    flex: none;
     flex-direction: column;
-    border-right: 1px solid var(--fm-border);
     background: var(--fm-surface);
   }
 
   .mail-detail-panel {
-    min-width: 520px;
-    flex: 1;
+    min-width: 0;
+    min-height: 0;
     background: var(--fm-surface);
   }
 
-  @media (max-width: 1279px) {
-    .mail-list-panel,
-    .mail-detail-panel {
-      width: 100%;
-      min-width: 0;
-      border-right: 0;
+  .mail-splitter {
+    position: relative;
+    z-index: 5;
+    cursor: col-resize;
+    background: var(--fm-border);
+    outline: none;
+  }
+
+  .mail-splitter::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 3px;
+    height: 42px;
+    border-radius: var(--radius-pill);
+    background: var(--fm-border-strong);
+    content: '';
+    opacity: 0;
+    transform: translate(-50%, -50%);
+    transition: opacity var(--motion-fast);
+  }
+
+  .mail-splitter:hover::after,
+  .mail-splitter:focus-visible::after {
+    opacity: 1;
+  }
+
+  :global(.fm-app-shell[data-density='compact']) :global(.mail-list-panel article) {
+    min-height: 60px;
+  }
+
+  :global(.fm-app-shell[data-density='compact']) :global(.mail-list-panel article > button) {
+    min-height: 60px;
+    padding-block: 0.375rem;
+  }
+
+  @media (max-width: 900px) {
+    .mail-workspace {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mail-splitter {
+      display: none;
     }
 
     .mail-detail-panel,

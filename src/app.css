@@ -195,7 +195,7 @@ summary {
 
 .fm-workspace-shell {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: var(--fm-sidebar-width, 232px) minmax(0, 1fr);
   min-height: 0;
 }
 
@@ -238,13 +238,7 @@ summary {
   opacity: 0.6;
 }
 
-@media (max-width: 1279px) {
-  .fm-workspace-shell {
-    grid-template-columns: 72px minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 767px) {
+@media (max-width: 900px) {
   button,
   [role='button'],
   a,
@@ -268,6 +262,12 @@ summary {
     overflow-x: hidden;
     overflow-y: auto;
   }
+}
+
+body.fm-is-resizing,
+body.fm-is-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -9,7 +9,10 @@
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import { Drawer } from '$lib/components/ui';
   import type { MailboxSection } from '$lib/domain/mail';
+  import { formatNumber } from '$lib/i18n';
   import BrandMark from './BrandMark.svelte';
+  import LanguageSwitcher from './LanguageSwitcher.svelte';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
 
@@ -32,15 +35,21 @@
   } = $props();
 
   let open = $state(false);
+  const i18n = useLocale();
+  const { t } = i18n;
 
-  const labels: Record<AppSection, string> = {
-    inbox: '收件箱',
-    sent: '已发送',
-    drafts: '草稿箱',
-    archive: '归档',
-    trash: '垃圾箱',
-    profile: '设置'
-  };
+  const labels = $derived<Record<AppSection, string>>({
+    inbox: t('shell.inbox'),
+    sent: t('shell.sent'),
+    drafts: t('shell.drafts'),
+    archive: t('shell.archive'),
+    trash: t('shell.trash'),
+    profile: t('common.settings')
+  });
+
+  const formattedInboxCount = $derived(inboxCount ? formatNumber(inboxCount, i18n.locale) : '');
+  const formattedDraftCount = $derived(draftCount ? formatNumber(draftCount, i18n.locale) : '');
+  const formattedTrashCount = $derived(trashCount ? formatNumber(trashCount, i18n.locale) : '');
 
   function select(section: AppSection) {
     onSelectSection(section);
@@ -49,36 +58,37 @@
 </script>
 
 <header class="mobile-bar">
-  <button class="icon" type="button" aria-label="打开导航" aria-expanded={open} onclick={() => (open = true)}>
+  <button class="icon" type="button" aria-label={t('shell.openNavigation')} aria-expanded={open} onclick={() => (open = true)}>
     <Menu size={21} aria-hidden="true" />
   </button>
   <BrandMark compact />
   <strong>{labels[activeSection]}</strong>
-  <button class="compose" type="button" aria-label="写邮件" title="写邮件" disabled={pending} onclick={onCompose}>
-    <PenLine size={18} aria-hidden="true" /><span>写邮件</span>
+  <button class="compose" type="button" aria-label={t('shell.compose')} title={t('shell.compose')} disabled={pending} onclick={onCompose}>
+    <PenLine size={18} aria-hidden="true" /><span>{t('shell.compose')}</span>
   </button>
 </header>
 
-<Drawer {open} title="FlareMail 导航" description="切换邮箱文件夹与设置" side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
-    <nav class="mobile-nav-list" aria-label="移动端导航">
+<Drawer {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
+    <nav class="mobile-nav-list" aria-label={t('shell.mobileNavigation')}>
       <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
-        <Inbox size={19} aria-hidden="true" /><span>收件箱</span><small>{inboxCount || ''}</small>
+        <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span><small>{formattedInboxCount}</small>
       </button>
       <button class:active={activeSection === 'sent'} type="button" onclick={() => select('sent')}>
-        <Send size={19} aria-hidden="true" /><span>已发送</span>
+        <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>
       </button>
       <button class:active={activeSection === 'drafts'} type="button" onclick={() => select('drafts')}>
-        <FileText size={19} aria-hidden="true" /><span>草稿箱</span><small>{draftCount || ''}</small>
+        <FileText size={19} aria-hidden="true" /><span>{t('shell.drafts')}</span><small>{formattedDraftCount}</small>
       </button>
       <button class:active={activeSection === 'archive'} type="button" onclick={() => select('archive')}>
-        <Archive size={19} aria-hidden="true" /><span>归档</span>
+        <Archive size={19} aria-hidden="true" /><span>{t('shell.archive')}</span>
       </button>
       <button class:active={activeSection === 'trash'} type="button" onclick={() => select('trash')}>
-        <Trash2 size={19} aria-hidden="true" /><span>垃圾箱</span><small>{trashCount || ''}</small>
+        <Trash2 size={19} aria-hidden="true" /><span>{t('shell.trash')}</span><small>{formattedTrashCount}</small>
       </button>
       <button class:active={activeSection === 'profile'} type="button" onclick={() => select('profile')}>
-        <Settings size={19} aria-hidden="true" /><span>设置</span>
+        <Settings size={19} aria-hidden="true" /><span>{t('common.settings')}</span>
       </button>
+      <div class="mobile-language"><LanguageSwitcher /></div>
     </nav>
 </Drawer>
 
@@ -156,7 +166,13 @@
     font-size: 11px;
   }
 
-  @media (max-width: 767px) {
+  .mobile-language {
+    margin-top: var(--space-3);
+    padding: var(--space-3) var(--space-3) 0;
+    border-top: 1px solid var(--fm-border);
+  }
+
+  @media (max-width: 900px) {
     .mobile-bar {
       display: flex;
     }

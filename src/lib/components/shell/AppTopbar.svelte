@@ -6,6 +6,7 @@
   import Search from '@lucide/svelte/icons/search';
   import Settings from '@lucide/svelte/icons/settings';
   import Sun from '@lucide/svelte/icons/sun';
+  import Rows3 from '@lucide/svelte/icons/rows-3';
   import type { UserProfile } from '$lib/domain/mail';
   import {
     applyTheme,
@@ -15,6 +16,8 @@
   } from '$lib/theme';
   import BrandMark from './BrandMark.svelte';
   import ServiceStatusMenu from './ServiceStatusMenu.svelte';
+  import LanguageSwitcher from './LanguageSwitcher.svelte';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     profile,
@@ -28,10 +31,12 @@
     complainedCount,
     staleDeliveryCount,
     serviceDegraded,
+    density = 'comfortable',
     pending = false,
     onEditProfile,
     onLogout,
-    onSearch
+    onSearch,
+    onToggleDensity
   }: {
     profile: UserProfile;
     runtimeLabel: string;
@@ -44,20 +49,23 @@
     complainedCount: number;
     staleDeliveryCount: number;
     serviceDegraded: boolean;
+    density?: 'comfortable' | 'compact';
     pending?: boolean;
     onEditProfile: () => void;
     onLogout: () => void | Promise<void>;
     onSearch: () => void;
+    onToggleDensity?: () => void;
   } = $props();
 
   let themePreference = $state<ThemePreference>('system');
+  const { t } = useLocale();
 
   const themeLabel = $derived(
     themePreference === 'system'
-      ? '主题：跟随系统'
+      ? t('shell.themeSystem')
       : themePreference === 'light'
-        ? '主题：浅色'
-        : '主题：深色'
+        ? t('shell.themeLight')
+        : t('shell.themeDark')
   );
   const initials = $derived(profile.name.trim().slice(0, 2).toUpperCase() || 'FM');
 
@@ -94,14 +102,14 @@
     <BrandMark />
     <span class="divider" aria-hidden="true"></span>
     <button class="workspace" type="button" onclick={onEditProfile}>
-      <span>{profile.company || 'FlareMail 工作区'}</span>
+      <span>{profile.company || t('shell.workspaceFallback')}</span>
       <span class="workspace-account">{profile.email}</span>
     </button>
   </div>
 
   <button class="command" type="button" onclick={onSearch}>
     <Search size={16} aria-hidden="true" />
-    <span>搜索邮件</span>
+    <span>{t('mail.search')}</span>
     <kbd>/</kbd>
   </button>
 
@@ -118,6 +126,7 @@
       {staleDeliveryCount}
       {unreadCount}
     />
+    <LanguageSwitcher />
     <button class="icon-button" type="button" aria-label={themeLabel} title={themeLabel} onclick={cycleTheme}>
       {#if themePreference === 'system'}
         <Monitor size={18} aria-hidden="true" />
@@ -127,10 +136,13 @@
         <Moon size={18} aria-hidden="true" />
       {/if}
     </button>
-    <button class="profile-button" type="button" aria-label="打开设置" onclick={onEditProfile}>
+    <button class="icon-button" type="button" aria-label={density === 'compact' ? t('shell.compactDensity') : t('shell.standardDensity')} title={density === 'compact' ? t('shell.standardDensity') : t('shell.compactDensity')} aria-pressed={density === 'compact'} onclick={() => onToggleDensity?.()}>
+      <Rows3 size={18} aria-hidden="true" />
+    </button>
+    <button class="profile-button" type="button" aria-label={t('shell.openSettings')} onclick={onEditProfile}>
       <span>{initials}</span><Settings size={14} aria-hidden="true" />
     </button>
-    <button class="icon-button" type="button" aria-label="退出登录" disabled={pending} onclick={onLogout}>
+    <button class="icon-button" type="button" aria-label={t('shell.logout')} disabled={pending} onclick={onLogout}>
       <LogOut size={18} aria-hidden="true" />
     </button>
   </div>
@@ -282,7 +294,7 @@
     }
   }
 
-  @media (max-width: 767px) {
+  @media (max-width: 900px) {
     .topbar {
       display: none;
     }

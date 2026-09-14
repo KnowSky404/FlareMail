@@ -4,6 +4,8 @@
   import MailFilterBar, { type MailFilter } from './MailFilterBar.svelte';
   import MailSearchBar from './MailSearchBar.svelte';
   import type { MailboxSection } from '$lib/domain/mail';
+  import { formatNumber } from '$lib/i18n';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
 
@@ -31,17 +33,22 @@
     title?: string;
   } = $props();
 
-  const sectionLabels: Record<AppSection, string> = {
-    inbox: '收件箱',
-    sent: '已发送',
-    drafts: '草稿箱',
-    archive: '归档',
-    trash: '垃圾箱',
-    profile: '个人资料'
-  };
+  const i18n = useLocale();
+  const { t } = i18n;
+
+  const sectionLabels = $derived<Record<AppSection, string>>({
+    inbox: t('shell.inbox'),
+    sent: t('shell.sent'),
+    drafts: t('shell.drafts'),
+    archive: t('shell.archive'),
+    trash: t('shell.trash'),
+    profile: t('common.settings')
+  });
 
   const heading = $derived(title || sectionLabels[activeSection]);
-  const countLabel = $derived(query.trim() ? `${count} 个结果` : `${count} 封`);
+  const formattedCount = $derived(formatNumber(count, i18n.locale));
+  const formattedUnreadCount = $derived(formatNumber(unreadCount, i18n.locale));
+  const countLabel = $derived(query.trim() ? t('mail.resultCount', { count: formattedCount }) : t('mail.folderCount', { count: formattedCount }));
 </script>
 
 <header class="border-b border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-3 sm:px-5">
@@ -50,12 +57,12 @@
       <h1 class="truncate text-lg font-semibold tracking-tight text-[var(--fm-text)]">{heading}</h1>
       <span class="shrink-0 text-xs tabular-nums text-[var(--fm-text-muted)]">{countLabel}</span>
       {#if unreadCount > 0 && activeSection !== 'drafts'}
-        <span class="shrink-0 text-xs text-[var(--fm-primary)]">{unreadCount} 未读</span>
+        <span class="shrink-0 text-xs text-[var(--fm-primary)]">{t('mail.unreadCount', { count: formattedUnreadCount })}</span>
       {/if}
     </div>
     <IconButton
-      ariaLabel="刷新邮件列表"
-      title="刷新邮件列表"
+      ariaLabel={t('mail.refresh')}
+      title={t('mail.refresh')}
       variant="ghost"
       size="sm"
       loading={loading}

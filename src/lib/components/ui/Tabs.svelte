@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { cn, focusRing } from './styles';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   export type Tab = { id: string; label: string; disabled?: boolean };
 
@@ -17,6 +18,7 @@
     onChange?: (value: string) => void;
     class?: string;
   } = $props();
+  const { t } = useLocale();
 
   const activeValue = $derived(value ?? tabs.find((tab) => !tab.disabled)?.id ?? '');
 
@@ -27,7 +29,7 @@
 </script>
 
 <div class={cn('grid gap-4', className)}>
-  <div class="flex items-center gap-1 border-b border-[var(--fm-border)]" role="tablist" aria-label="选项卡">
+  <div class="flex items-center gap-1 border-b border-[var(--fm-border)]" role="tablist" aria-label={t('common.tabs')}>
     {#each tabs as tab, index (tab.id)}
       <button
         id={`tab-${tab.id}`}

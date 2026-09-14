@@ -3,6 +3,7 @@
   import { X } from '@lucide/svelte';
   import { cn, focusRing } from './styles';
   import { isTopOverlay, registerOverlay } from './overlay';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     open = false,
@@ -29,6 +30,7 @@
     width?: 'sm' | 'md' | 'lg';
     class?: string;
   } = $props();
+  const { t } = useLocale();
 
   let drawerElement = $state<HTMLDivElement>();
   let restoreElement: HTMLElement | null = null;
@@ -61,7 +63,7 @@
 {#if open}
   <div class="fixed inset-0 z-50 bg-[var(--fm-overlay)]" role="presentation" onclick={(event) => { if (closeOnBackdrop && event.target === event.currentTarget) onClose?.(); }}>
     <div bind:this={drawerElement} class={cn('absolute inset-y-0 flex max-h-full flex-col border-[var(--fm-border)] bg-[var(--fm-surface)] shadow-[var(--fm-shadow-overlay)]', positions[side], widths[width], side === 'left' ? 'border-r' : 'border-l', className)} role="dialog" aria-modal="true" aria-labelledby={`${drawerId}-title`} aria-describedby={description ? `${drawerId}-description` : undefined}>
-      <header class="flex items-start justify-between gap-4 border-b border-[var(--fm-border)] px-5 py-4"><div><h2 id={`${drawerId}-title`} class="text-base font-semibold">{title}</h2>{#if description}<p id={`${drawerId}-description`} class="mt-1 text-sm text-[var(--fm-text-muted)]">{description}</p>{/if}</div>{#if dismissible}<button class={cn('rounded p-1 text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)]', focusRing)} type="button" aria-label="关闭" onclick={() => onClose?.()}><X class="size-4" aria-hidden="true" /></button>{/if}</header>
+      <header class="flex items-start justify-between gap-4 border-b border-[var(--fm-border)] px-5 py-4"><div><h2 id={`${drawerId}-title`} class="text-base font-semibold">{title}</h2>{#if description}<p id={`${drawerId}-description`} class="mt-1 text-sm text-[var(--fm-text-muted)]">{description}</p>{/if}</div>{#if dismissible}<button class={cn('rounded p-1 text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)]', focusRing)} type="button" aria-label={t('common.close')} onclick={() => onClose?.()}><X class="size-4" aria-hidden="true" /></button>{/if}</header>
       {#if children}<div class="min-h-0 flex-1 overflow-y-auto p-5">{@render children()}</div>{/if}
       {#if footer}<footer class="flex items-center justify-end gap-2 border-t border-[var(--fm-border)] px-5 py-3">{@render footer()}</footer>{/if}
     </div>

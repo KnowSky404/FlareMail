@@ -16,7 +16,10 @@
     uploadDraftAttachment,
     type DraftAttachmentResponse
   } from '$lib/client/workspace-api';
+  import { ClientApiError } from '$lib/client/api';
   import { onMount } from 'svelte';
+  import { formatNumber } from '$lib/i18n';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   const createComposeState = (value: ComposeInput | null, fallbackDraftId?: string): ComposeInput => ({
     ...(value ?? {}),
@@ -60,7 +63,7 @@
     senderEmail = null,
     pending = false,
     autosaveStatus = 'idle',
-    autosaveMessage = '自动保存会在停顿后触发。',
+    autosaveMessage = '',
     onClose,
     onDiscard,
     onInputChange,
@@ -96,6 +99,18 @@
     onSaveDraftCopy?: () => void | Promise<void>;
     onOverwriteServerDraft?: () => void | Promise<void>;
   } = $props();
+
+  const i18n = useLocale();
+  const { t } = i18n;
+  const displayError = (error: unknown, fallback: string) =>
+    error instanceof ClientApiError && i18n.locale === 'en'
+      ? fallback
+      : error instanceof Error
+        ? error.message
+        : fallback;
+
+  const formatAttachmentSize = (size: number) => `${formatNumber(size / 1024, i18n.locale, { maximumFractionDigits: 1 })} KB`;
+  const formatConflictDate = (value: string | null | undefined, fallback: string) => value ? new Intl.DateTimeFormat(i18n.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : fallback;
 
   let input = $state<ComposeInput>(createComposeState(null));
   let baseline = $state('');
@@ -157,7 +172,7 @@
   });
 
   const title = $derived(
-    mode === 'new' ? '新邮件' : mode === 'reply' ? '回复邮件' : mode === 'forward' ? '转发邮件' : '编辑草稿'
+    mode === 'new' ? t('compose.new') : mode === 'reply' ? t('compose.reply') : mode === 'forward' ? t('compose.forward') : t('compose.editDraft')
   );
   const inputWithRecipientDrafts = $derived.by(() => {
     const next = { ...input };
@@ -225,7 +240,7 @@
   }
 
   async function preparedAttachmentInput() {
-    if (!onPrepareAttachments) throw new Error('草稿附件服务暂不可用。');
+    if (!onPrepareAttachments) throw new Error(t('compose.attachmentServiceUnavailable'));
     const prepared = await onPrepareAttachments(inputWithRecipientDrafts);
     input = createComposeState(prepared, prepared.draftId);
     onInputChange?.(input);
@@ -239,7 +254,7 @@
     updateAttachmentTask(id, { state: 'uploading', progress: 0, error: '' });
     try {
       const prepared = await preparedAttachmentInput();
-      if (!prepared.draftId) throw new Error('无法创建附件所属草稿。');
+      if (!prepared.draftId) throw new Error(t('compose.draftUnavailable'));
       const operation = uploadDraftAttachment(
         prepared.draftId,
         id,
@@ -256,7 +271,7 @@
       updateAttachmentTask(id, {
         state: 'failed',
         cancel: undefined,
-        error: error instanceof Error ? error.message : '附件上传失败。'
+        error: displayError(error, t('compose.uploadFailed'))
       });
       return false;
     }
@@ -276,20 +291,20 @@
         const activeAttachments = (input.attachments ?? []).filter((attachment) => !attachment.state || attachment.state === 'ready');
         const activeBytes = activeAttachments.reduce((sum, attachment) => sum + attachment.size, 0);
         if (activeAttachments.length >= 10 || candidate.size > 8 * 1024 * 1024 || activeBytes + candidate.size > 12 * 1024 * 1024) {
-          throw new Error(`原附件 ${candidate.filename} 超过数量、单文件 8 MB 或总计 12 MB 限制。`);
+          throw new Error(t('compose.forwardAttachmentLimit', { filename: candidate.filename }));
         }
         if (!candidate.downloadUrl?.startsWith('/api/workspace/messages/')) {
-          throw new Error(`原附件 ${candidate.filename} 没有可用的安全下载地址。`);
+          throw new Error(t('compose.forwardAttachmentUnavailable', { filename: candidate.filename }));
         }
         const response = await fetch(candidate.downloadUrl, { credentials: 'same-origin', cache: 'no-store' });
-        if (!response.ok) throw new Error(`无法读取原附件 ${candidate.filename}。`);
+        if (!response.ok) throw new Error(t('compose.forwardAttachmentReadFailed', { filename: candidate.filename }));
         const blob = await response.blob();
-        if (blob.size !== candidate.size) throw new Error(`原附件 ${candidate.filename} 的大小校验失败。`);
+        if (blob.size !== candidate.size) throw new Error(t('compose.forwardAttachmentSizeMismatch', { filename: candidate.filename }));
         const file = new File([blob], candidate.filename, { type: candidate.contentType || blob.type || 'application/octet-stream' });
         const id = crypto.randomUUID();
         attachmentTasks = [...attachmentTasks, { id, file, progress: 0, state: 'queued', error: '' }];
         if (!(await startAttachmentUpload(id, file))) {
-          throw new Error(`原附件 ${candidate.filename} 上传失败，可在附件列表中重试。`);
+          throw new Error(t('compose.forwardAttachmentUploadFailed', { filename: candidate.filename }));
         }
         const remaining = (input.forwardAttachmentCandidates ?? []).filter(
           (item) => item.id !== candidate.id || item.downloadUrl !== candidate.downloadUrl
@@ -297,7 +312,7 @@
         updateInput('forwardAttachmentCandidates', remaining.length ? remaining : undefined);
       }
     } catch (error) {
-      attachmentMutationError = error instanceof Error ? error.message : '包含原附件失败。';
+      attachmentMutationError = displayError(error, t('compose.includeAttachmentsFailed'));
     } finally {
       forwardAttachmentImporting = false;
     }
@@ -312,7 +327,7 @@
     for (const file of files) {
       if (existing + queued + acceptedCount >= 10 || file.size > 8 * 1024 * 1024 || currentBytes + acceptedBytes + file.size > 12 * 1024 * 1024) {
         const id = crypto.randomUUID();
-        attachmentTasks = [...attachmentTasks, { id, file, progress: 0, state: 'failed', error: '附件超过数量、单文件 8 MB 或总计 12 MB 限制。' }];
+        attachmentTasks = [...attachmentTasks, { id, file, progress: 0, state: 'failed', error: t('compose.attachmentLimit') }];
         continue;
       }
       acceptedBytes += file.size;
@@ -333,8 +348,8 @@
         attachmentTasks = attachmentTasks.filter((candidate) => candidate.id !== task.id);
       } catch (error) {
         const message = error instanceof Error
-          ? `取消状态未确认：${error.message}`
-          : '取消状态未确认，请重新打开草稿后重试。';
+          ? t('compose.cancelAttachmentUnconfirmed', { error: error.message })
+          : t('compose.cancelAttachmentRetry');
         updateAttachmentTask(task.id, { state: 'failed', cancel: undefined, error: message });
         attachmentMutationError = message;
       }
@@ -360,7 +375,7 @@
     try {
       applyAttachmentResult(await deleteDraftAttachment(input.draftId, attachmentId, input.attachmentRevision ?? 0));
     } catch (error) {
-      attachmentMutationError = error instanceof Error ? error.message : '删除附件失败，请重新载入草稿后重试。';
+      attachmentMutationError = displayError(error, t('compose.deleteAttachmentFailed'));
     }
   }
 
@@ -370,7 +385,7 @@
     try {
       applyAttachmentResult(await renameDraftAttachment(input.draftId, attachmentId, filename, input.attachmentRevision ?? 0));
     } catch (error) {
-      attachmentMutationError = error instanceof Error ? error.message : '重命名附件失败，请重新载入草稿后重试。';
+      attachmentMutationError = displayError(error, t('compose.renameAttachmentFailed'));
     }
   }
 
@@ -487,30 +502,30 @@
 >
   <form class="flex min-h-[34rem] flex-col gap-5 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
     <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)]">
-      <span>工作区身份：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
-      <span class="hidden shrink-0 sm:inline">实际投递：{senderEmail ?? '尚未配置'} · 纯文本回退，可选 HTML</span>
+      <span>{t('compose.workspaceIdentity')}：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
+      <span class="hidden shrink-0 sm:inline">{t('compose.actualDelivery')}：{senderEmail ?? t('compose.unconfigured')} · {t('compose.plainTextFallback')}</span>
     </div>
 
     <div class="grid gap-4">
       <div class="grid gap-2">
-        <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-to">收件人</label>
+        <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-to">{t('mail.to')}</label>
         <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
           {#each parseAddressList(input.to ?? input.toEmail ?? '') as address (address.email)}
-            <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={`移除收件人 ${address.email}`} onclick={() => removeRecipient('to', address.email)}>×</button></span>
+            <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}>×</button></span>
           {/each}
-          <input id="compose-to" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder="name@example.com，回车添加" value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('to'); } }} onblur={() => commitRecipient('to')} />
+          <input id="compose-to" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('to'); } }} onblur={() => commitRecipient('to')} />
         </div>
         {#if fieldError('to') || fieldError('toEmail')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('to') ?? fieldError('toEmail')}</p>{/if}
       </div>
 
       <div class="grid gap-2">
         {#if showCc}
-          <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-cc">抄送</label>
+          <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-cc">{t('mail.cc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.cc ?? '') as address (address.email)}
-              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={`移除抄送 ${address.email}`} onclick={() => removeRecipient('cc', address.email)}>×</button></span>
+              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={t('compose.removeRecipient', { field: t('mail.cc'), email: address.email })} onclick={() => removeRecipient('cc', address.email)}>×</button></span>
             {/each}
-            <input id="compose-cc" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder="回车添加；支持逗号、分号、换行" value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
+            <input id="compose-cc" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
           </div>
           {#if fieldError('cc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('cc')}</p>{/if}
         {:else}
@@ -520,31 +535,31 @@
             aria-expanded="false"
             onclick={() => (showCc = true)}
           >
-            添加抄送
+            {t('compose.addCc')}
           </button>
         {/if}
       </div>
 
       {#if showBcc}
         <div class="grid gap-2">
-          <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-bcc">密送</label>
+          <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-bcc">{t('mail.bcc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.bcc ?? '') as address (address.email)}
-              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={`移除密送 ${address.email}`} onclick={() => removeRecipient('bcc', address.email)}>×</button></span>
+              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={t('compose.removeRecipient', { field: t('mail.bcc'), email: address.email })} onclick={() => removeRecipient('bcc', address.email)}>×</button></span>
             {/each}
-            <input id="compose-bcc" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder="回车添加；支持逗号、分号、换行" value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
+            <input id="compose-bcc" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
           </div>
           {#if fieldError('bcc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('bcc')}</p>{/if}
         </div>
       {:else}
-        <button class="w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]" type="button" onclick={() => (showBcc = true)}>添加密送</button>
+        <button class="w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]" type="button" onclick={() => (showBcc = true)}>{t('compose.addBcc')}</button>
       {/if}
 
       <TextField
         id="compose-subject"
-        label="主题"
+        label={t('mail.subject')}
         required
-        placeholder="输入邮件主题"
+        placeholder={t('compose.subjectPlaceholder')}
         value={input.subject}
         error={fieldError('subject')}
         oninput={(event) => updateInput('subject', event.currentTarget.value)}
@@ -553,10 +568,10 @@
 
     <TextArea
       id="compose-body"
-      label="正文"
+      label={t('compose.body')}
       required
       rows={12}
-      placeholder="在这里撰写正文…"
+      placeholder={t('compose.bodyPlaceholder')}
       value={input.body}
       error={fieldError('body')}
       class="min-h-[18rem] flex-1 max-sm:min-h-[12rem]"
@@ -565,10 +580,10 @@
 
     <TextArea
       id="compose-html"
-      label="HTML 源码（可选）"
-      hint="可选 HTML 源码；允许的标签会在服务端清洗。不填写时使用纯文本正文。"
+      label={t('compose.htmlLabel')}
+      hint={t('compose.htmlHint')}
       rows={8}
-      placeholder="例如：<p>你好，<strong>世界</strong>。</p>"
+      placeholder={t('compose.htmlPlaceholder')}
       value={input.html ?? ''}
       error={fieldError('html')}
       class="min-h-[10rem] max-w-full font-mono text-xs"
@@ -577,10 +592,10 @@
 
     <section class="grid gap-3" aria-labelledby="compose-attachments-title">
       <div class="flex items-center justify-between gap-3">
-        <h2 id="compose-attachments-title" class="text-sm font-medium text-[var(--fm-text)]">附件 <span class="font-normal text-[var(--fm-text-muted)]">({input.attachments?.length ?? 0}/10)</span></h2>
-        <button class="inline-flex min-h-9 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" />选择文件</button>
-        <input bind:this={fileInput} class="sr-only" type="file" multiple aria-label="选择附件" onchange={(event) => void addFiles([...event.currentTarget.files ?? []])} />
-        <input bind:this={retryFileInput} class="sr-only" type="file" aria-label="重新选择失败附件" onchange={(event) => retryPersistedAttachment(event.currentTarget.files?.[0])} />
+        <h2 id="compose-attachments-title" class="text-sm font-medium text-[var(--fm-text)]">{t('mail.attachments')} <span class="font-normal text-[var(--fm-text-muted)]">({input.attachments?.length ?? 0}/10)</span></h2>
+        <button class="inline-flex min-h-9 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" />{t('compose.chooseFile')}</button>
+        <input bind:this={fileInput} class="sr-only" type="file" multiple aria-label={t('compose.chooseAttachment')} onchange={(event) => void addFiles([...event.currentTarget.files ?? []])} />
+        <input bind:this={retryFileInput} class="sr-only" type="file" aria-label={t('compose.retryChooseAttachment')} onchange={(event) => retryPersistedAttachment(event.currentTarget.files?.[0])} />
       </div>
       <div
         class="grid min-h-20 place-items-center rounded-[var(--radius-md)] border border-dashed px-4 py-3 text-center text-xs text-[var(--fm-text-muted)]"
@@ -588,47 +603,47 @@
         class:bg-[var(--fm-primary-soft)]={dragActive}
         role="button"
         tabindex="0"
-        aria-label="拖放附件"
+        aria-label={t('compose.dropAttachment')}
         ondragenter={(event) => { event.preventDefault(); dragActive = true; }}
         ondragover={(event) => event.preventDefault()}
         ondragleave={() => (dragActive = false)}
         ondrop={(event) => { event.preventDefault(); dragActive = false; void addFiles([...event.dataTransfer?.files ?? []]); }}
         onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') fileInput?.click(); }}
       >
-        <span><Upload class="mx-auto mb-1 size-4" aria-hidden="true" />拖入文件、粘贴图片或选择文件；单个 8 MB，总计 12 MB。</span>
+        <span><Upload class="mx-auto mb-1 size-4" aria-hidden="true" />{t('compose.attachmentLimits')}</span>
       </div>
       {#if attachmentMutationError}
         <p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">{attachmentMutationError}</p>
       {/if}
       {#if mode === 'forward' && input.forwardAttachmentCandidates?.length}
         <div class="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2 text-xs">
-          <span class="text-[var(--fm-text-secondary)]">原邮件有 {input.forwardAttachmentCandidates.length} 个附件，默认不包含。</span>
+          <span class="text-[var(--fm-text-secondary)]">{t('compose.forwardAttachmentMessage', { count: input.forwardAttachmentCandidates.length })}</span>
           <div class="flex gap-2">
-            <button class="min-h-8 rounded px-2 text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={forwardAttachmentImporting} onclick={excludeForwardAttachments}>不包含</button>
-            <button class="min-h-8 rounded px-2 font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={forwardAttachmentImporting || attachmentBusy} onclick={() => void includeForwardAttachments()}>{forwardAttachmentImporting ? '正在包含…' : '包含原附件'}</button>
+            <button class="min-h-8 rounded px-2 text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={forwardAttachmentImporting} onclick={excludeForwardAttachments}>{t('compose.excludeAttachments')}</button>
+            <button class="min-h-8 rounded px-2 font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={forwardAttachmentImporting || attachmentBusy} onclick={() => void includeForwardAttachments()}>{forwardAttachmentImporting ? t('compose.includingAttachments') : t('compose.includeAttachments')}</button>
           </div>
         </div>
       {/if}
       {#if input.attachments?.length}
-        <ul class="grid gap-2" aria-label="待发送附件">
+        <ul class="grid gap-2" aria-label={t('compose.pendingAttachments')}>
           {#each input.attachments as attachment (attachment.id)}
             <li class="flex min-w-0 flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
               <Paperclip class="size-4 shrink-0 text-[var(--fm-primary)]" aria-hidden="true" />
-              <input class="fm-field min-w-32 flex-1 px-2 py-1 text-xs" aria-label={`附件名称 ${attachment.filename}`} disabled={attachment.state !== undefined && attachment.state !== 'ready'} value={attachment.id ? renameValues[attachment.id] ?? attachment.filename : attachment.filename} oninput={(event) => { if (attachment.id) renameValues = { ...renameValues, [attachment.id]: event.currentTarget.value }; }} />
-              <span class="text-[11px] text-[var(--fm-text-muted)]">{(attachment.size / 1024).toFixed(1)} KB</span>
-              {#if attachment.state && attachment.state !== 'ready'}<span class="text-[11px] text-[var(--fm-danger)]">{attachment.state === 'failed' ? '上传失败' : '上传未完成'}</span>{/if}
-              {#if attachment.id && attachment.state === 'failed'}<button class="grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={`重新选择并上传 ${attachment.filename}`} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}
-              {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" onclick={() => void renameAttachment(attachment.id!)}>重命名</button>{/if}
-              {#if attachment.id}<button class="grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={`删除附件 ${attachment.filename}`} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></button>{/if}
+              <input class="fm-field min-w-32 flex-1 px-2 py-1 text-xs" aria-label={t('compose.attachmentName', { filename: attachment.filename })} disabled={attachment.state !== undefined && attachment.state !== 'ready'} value={attachment.id ? renameValues[attachment.id] ?? attachment.filename : attachment.filename} oninput={(event) => { if (attachment.id) renameValues = { ...renameValues, [attachment.id]: event.currentTarget.value }; }} />
+              <span class="text-[11px] text-[var(--fm-text-muted)]">{formatAttachmentSize(attachment.size)}</span>
+              {#if attachment.state && attachment.state !== 'ready'}<span class="text-[11px] text-[var(--fm-danger)]">{attachment.state === 'failed' ? t('compose.uploadFailed') : t('compose.uploadIncomplete')}</span>{/if}
+              {#if attachment.id && attachment.state === 'failed'}<button class="grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={t('compose.retryUpload', { filename: attachment.filename })} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}
+              {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" onclick={() => void renameAttachment(attachment.id!)}>{t('compose.rename')}</button>{/if}
+              {#if attachment.id}<button class="grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={t('compose.deleteAttachment', { filename: attachment.filename })} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></button>{/if}
             </li>
           {/each}
         </ul>
       {/if}
       {#if attachmentTasks.length}
-        <ul class="grid gap-2" aria-label="附件上传状态">
+        <ul class="grid gap-2" aria-label={t('compose.uploadStatus')}>
           {#each attachmentTasks as task (task.id)}
             <li class="grid gap-1 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 py-2 text-xs">
-              <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate">{task.file.name}</span><span>{task.state === 'failed' ? '失败' : `${task.progress}%`}</span>{#if task.state === 'failed'}<button class="grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={`重试上传 ${task.file.name}`} onclick={() => void startAttachmentUpload(task.id, task.file)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}<button class="grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={`取消上传 ${task.file.name}`} onclick={() => void cancelAttachmentTask(task)}><X class="size-4" aria-hidden="true" /></button></div>
+              <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate">{task.file.name}</span><span>{task.state === 'failed' ? t('compose.failed') : `${task.progress}%`}</span>{#if task.state === 'failed'}<button class="grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={t('compose.retryUpload', { filename: task.file.name })} onclick={() => void startAttachmentUpload(task.id, task.file)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}<button class="grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={t('compose.cancelUpload', { filename: task.file.name })} onclick={() => void cancelAttachmentTask(task)}><X class="size-4" aria-hidden="true" /></button></div>
               {#if task.state === 'failed'}<p class="text-[var(--fm-danger)]" role="alert">{task.error}</p>{:else}<progress class="h-1.5 w-full" max="100" value={task.progress}>{task.progress}%</progress>{/if}
             </li>
           {/each}
@@ -638,17 +653,17 @@
 
     {#if attempted && !validation.ok}
       <p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/30 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">
-        请修正标记的字段后再发送。
+        {t('compose.fixFields')}
       </p>
     {/if}
     {#if draftConflict}
       <div class="grid gap-2 rounded-[var(--radius-md)] border border-[var(--fm-warning)]/40 bg-[var(--fm-warning-soft)] px-3 py-3 text-sm text-[var(--fm-text)]" role="alert">
-        <strong>服务器版本已更新</strong>
-        <span class="text-xs text-[var(--fm-text-secondary)]">本地编辑时间：{localEditedAt ? new Date(localEditedAt).toLocaleString('zh-CN') : '刚刚'}；服务器版本：{draftConflict.sentAt ? new Date(draftConflict.sentAt).toLocaleString('zh-CN') : '未知'}。你的本地编辑仍然保留。</span>
+        <strong>{t('compose.conflictTitle')}</strong>
+        <span class="text-xs text-[var(--fm-text-secondary)]">{t('compose.conflictDescription', { local: formatConflictDate(localEditedAt, t('time.justNow')), server: formatConflictDate(draftConflict.sentAt, t('compose.unknown')) })}</span>
         <div class="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onclick={() => onLoadServerDraft?.()}>载入服务器版本</Button>
-          <Button variant="outline" size="sm" onclick={() => onSaveDraftCopy?.()}>另存为新草稿</Button>
-          <Button variant="primary" size="sm" onclick={() => onOverwriteServerDraft?.()}>明确覆盖</Button>
+          <Button variant="outline" size="sm" onclick={() => onLoadServerDraft?.()}>{t('compose.loadServerDraft')}</Button>
+          <Button variant="outline" size="sm" onclick={() => onSaveDraftCopy?.()}>{t('compose.saveDraftCopy')}</Button>
+          <Button variant="primary" size="sm" onclick={() => onOverwriteServerDraft?.()}>{t('compose.overwriteDraft')}</Button>
         </div>
       </div>
     {/if}
@@ -657,13 +672,13 @@
   {#snippet footer()}
     <div class="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <Button variant="ghost" size="sm" disabled={pending} onclick={() => onSaveDraft(inputWithRecipientDrafts)}>保存草稿</Button>
+        <Button variant="ghost" size="sm" disabled={pending} onclick={() => onSaveDraft(inputWithRecipientDrafts)}>{t('compose.saveDraft')}</Button>
         <span class={`truncate text-xs ${autosaveTone}`} role="status" aria-live="polite">{autosaveMessage}</span>
-        <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> 发送</span>
+        <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> {t('compose.send')}</span>
       </div>
       <div class="flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
-        <Button variant="outline" disabled={pending} onclick={requestClose}>取消</Button>
-        <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(validation.value); }}>发送邮件</Button>
+        <Button variant="outline" disabled={pending} onclick={requestClose}>{t('common.cancel')}</Button>
+        <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(validation.value); }}>{t('compose.sendMail')}</Button>
       </div>
     </div>
   {/snippet}
@@ -672,17 +687,17 @@
 {#if showCloseConfirm}
   <Dialog
     open
-    title="未保存的改动"
-    description="这封邮件还有未保存内容。请选择离开方式。"
+    title={t('compose.unsavedTitle')}
+    description={t('compose.unsavedDescription')}
     size="sm"
     onClose={() => (showCloseConfirm = false)}
   >
-    <p class="text-sm leading-6 text-[var(--fm-text-secondary)]">保存后可以在草稿箱继续编辑；放弃改动将永久丢失当前内容。</p>
+    <p class="text-sm leading-6 text-[var(--fm-text-secondary)]">{t('compose.unsavedBody')}</p>
     {#snippet footer()}
       <div class="flex w-full flex-wrap justify-end gap-2">
-        <Button variant="ghost" onclick={() => (showCloseConfirm = false)}>继续编辑</Button>
-        <Button variant="outline" onclick={saveAndClose}>保存并关闭</Button>
-        <Button variant="danger" onclick={discardAndClose}>放弃改动</Button>
+        <Button variant="ghost" onclick={() => (showCloseConfirm = false)}>{t('compose.continueEditing')}</Button>
+        <Button variant="outline" onclick={saveAndClose}>{t('compose.saveAndClose')}</Button>
+        <Button variant="danger" onclick={discardAndClose}>{t('compose.discardChanges')}</Button>
       </div>
     {/snippet}
   </Dialog>

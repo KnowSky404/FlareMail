@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ListFilter } from '@lucide/svelte';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   export type MailFilter = 'all' | 'unread' | 'starred';
 
@@ -13,14 +14,16 @@
     onFilterChange?: (filter: MailFilter) => void;
   } = $props();
 
+  const { t } = useLocale();
+
   const options: Array<{ value: MailFilter; label: string }> = [
-    { value: 'all', label: '全部' },
-    { value: 'unread', label: '未读' },
-    { value: 'starred', label: '已加星标' }
+    { value: 'all', label: t('mail.all') },
+    { value: 'unread', label: t('mail.unread') },
+    { value: 'starred', label: t('mail.starred') }
   ];
 </script>
 
-<div class="flex min-w-0 items-center gap-1" role="group" aria-label="邮件筛选">
+<div class="flex min-w-0 items-center gap-1" role="group" aria-label={t('mail.filter')}>
   <span class="mr-1 hidden text-[var(--fm-text-muted)] sm:inline-flex" aria-hidden="true">
     <ListFilter class="size-4" />
   </span>

@@ -4,6 +4,7 @@ import {
   ComposeAutosaveController,
   composeInputFromSavedDraft,
   createEmptyComposeInput,
+  formatComposeSavedAt,
   hasComposeContent,
   mergeSavedDraftMetadata,
   serializeComposeInput,
@@ -83,5 +84,12 @@ describe('compose controller', () => {
     expect(mergeSavedDraftMetadata({ ...input, body: 'local' }, savedDraft(), null, [attachment], 4)).toMatchObject({
       body: 'local', attachments: [attachment], attachmentRevision: 4
     });
+  });
+
+  test('formats autosave timestamps with the active locale', () => {
+    const value = '2026-09-14T10:20:30.000Z';
+    const options = { hour: '2-digit' as const, minute: '2-digit' as const, second: '2-digit' as const, hour12: false };
+    expect(formatComposeSavedAt(value, 'en')).toBe(new Intl.DateTimeFormat('en', options).format(new Date(value)));
+    expect(formatComposeSavedAt(value, 'zh-CN')).toBe(new Intl.DateTimeFormat('zh-CN', options).format(new Date(value)));
   });
 });

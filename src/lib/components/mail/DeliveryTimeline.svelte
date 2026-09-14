@@ -3,6 +3,7 @@
   import { getDeliveryRetryEligibility } from '$lib/domain/mail';
   import type { DeliveryDetail, DeliveryEvent, DeliveryEventType, DeliveryStatus, MailMessage } from '$lib/domain/mail';
   import { StatusBadge } from '$lib/components/ui';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     message = null,
@@ -22,35 +23,38 @@
     onRetry?: (message: MailMessage) => void | Promise<void>;
   } = $props();
 
-  const statusLabels: Record<string, string> = {
-    queued: '排队中',
-    submitting: '提交中',
-    submitted: '已提交至 Resend',
-    sent: '已发送',
-    delivered: '已送达',
-    delayed: '投递延迟',
-    bounced: '已退信',
-    failed: '发送失败',
-    complained: '收到投诉',
-    suppressed: '已抑制',
-    draft: '草稿'
-  };
+  const i18n = useLocale();
+  const { t } = i18n;
 
-  const eventLabels: Record<string, string> = {
-    submission: '已提交',
-    'email.sent': '已发送',
-    'email.delivered': '已送达',
-    'email.delivery_delayed': '投递延迟',
-    'email.bounced': '已退信',
-    'email.failed': '发送失败',
-    'email.complained': '收到投诉',
-    'email.suppressed': '已抑制',
-    'email.opened': '已打开',
-    'email.clicked': '已点击'
-  };
+  const statusLabels = $derived<Record<string, string>>({
+    queued: t('mail.statusQueued'),
+    submitting: t('mail.statusSubmitting'),
+    submitted: t('mail.statusSubmitted'),
+    sent: t('mail.statusSent'),
+    delivered: t('mail.statusDelivered'),
+    delayed: t('mail.statusDelayed'),
+    bounced: t('mail.statusBounced'),
+    failed: t('mail.statusFailed'),
+    complained: t('mail.statusComplained'),
+    suppressed: t('mail.statusSuppressed'),
+    draft: t('mail.statusDraft')
+  });
+
+  const eventLabels = $derived<Record<string, string>>({
+    submission: t('mail.eventSubmitted'),
+    'email.sent': t('mail.eventSent'),
+    'email.delivered': t('mail.eventDelivered'),
+    'email.delivery_delayed': t('mail.eventDelayed'),
+    'email.bounced': t('mail.eventBounced'),
+    'email.failed': t('mail.eventFailed'),
+    'email.complained': t('mail.eventComplained'),
+    'email.suppressed': t('mail.eventSuppressed'),
+    'email.opened': t('mail.eventOpened'),
+    'email.clicked': t('mail.eventClicked')
+  });
 
   const formatDate = (value: string) =>
-    new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+    new Intl.DateTimeFormat(i18n.locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 
   const statusFromEvent = (event: DeliveryEvent): DeliveryStatus | null => {
     const map: Record<string, DeliveryStatus> = {
@@ -108,35 +112,35 @@
     return 'neutral';
   };
 
-  const statusLabel = (status: string | null) => (status ? statusLabels[status] ?? status : '暂无状态');
+  const statusLabel = (status: string | null) => (status ? statusLabels[status] ?? status : t('mail.noStatus'));
 </script>
 
 {#if message?.folder === 'sent'}
   <section class="border-t border-[var(--fm-border)] pt-5" aria-labelledby="delivery-title">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 id="delivery-title" class="text-sm font-semibold text-[var(--fm-text)]">投递时间线</h2>
-        <p class="mt-1 text-xs text-[var(--fm-text-muted)]">API 受理仅表示已提交，不代表收件箱已送达。</p>
+        <h2 id="delivery-title" class="text-sm font-semibold text-[var(--fm-text)]">{t('mail.deliveryTimeline')}</h2>
+        <p class="mt-1 text-xs text-[var(--fm-text-muted)]">{t('mail.deliveryDisclaimer')}</p>
       </div>
       <div class="flex items-center gap-2">
         {#if currentStatus}<StatusBadge status={currentStatus} tone={statusTone(currentStatus)}>{statusLabel(currentStatus)}</StatusBadge>{/if}
-        <button class="grid size-11 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" aria-label="刷新投递回执" title="刷新投递回执" onclick={() => onReload?.(message)} disabled={pending || loading}><RefreshCw class={loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" /></button>
-        {#if retryable}<button class="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 text-xs font-semibold text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={() => onRetry?.(message)} disabled={pending}>重试发送</button>{/if}
+        {#if onReload}<button class="grid size-11 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" aria-label={t('mail.reloadReceipt')} title={t('mail.reloadReceipt')} onclick={() => onReload?.(message)} disabled={pending || loading}><RefreshCw class={loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" /></button>{/if}
+        {#if retryable && onRetry}<button class="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 text-xs font-semibold text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={() => onRetry?.(message)} disabled={pending}>{t('mail.retryDelivery')}</button>{/if}
       </div>
     </div>
     {#if error}
       <p class="mt-3 flex items-start gap-2 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert"><TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{error}</p>
     {:else if loading && sortedEvents.length === 0}
-      <p class="mt-4 flex items-center gap-2 text-xs text-[var(--fm-text-muted)]" role="status"><RefreshCw class="size-3.5 animate-spin" aria-hidden="true" />正在载入投递回执…</p>
+      <p class="mt-4 flex items-center gap-2 text-xs text-[var(--fm-text-muted)]" role="status"><RefreshCw class="size-3.5 animate-spin" aria-hidden="true" />{t('mail.loadingReceipt')}</p>
     {:else if sortedEvents.length === 0}
-      <p class="mt-4 text-xs text-[var(--fm-text-muted)]">当前还没有更多投递事件。</p>
+      <p class="mt-4 text-xs text-[var(--fm-text-muted)]">{t('mail.noDeliveryEvents')}</p>
     {:else}
       <details class="mt-4 group" open>
         <summary class="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-[var(--fm-text-secondary)]">
           <span class="transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-          查看 {sortedEvents.length} 条事件
+          {t('mail.viewDeliveryEvents', { count: sortedEvents.length })}
         </summary>
-        <ol class="relative ml-2 mt-3 space-y-0 pl-7" aria-label="投递事件列表">
+        <ol class="relative ml-2 mt-3 space-y-0 pl-7" aria-label={t('mail.deliveryEventList')}>
           {#each sortedEvents as event (event.id)}
             {@const EventIcon = iconForEvent(event)}
             {@const eventStatus = statusFromEvent(event)}
@@ -151,7 +155,7 @@
                 <time class="text-xs text-[var(--fm-text-muted)]" datetime={event.createdAt} title={new Date(event.createdAt).toISOString()}>{formatDate(event.createdAt)}</time>
               </div>
               {#if event.summary}<p class="mt-1 text-xs leading-5 text-[var(--fm-text-secondary)]">{event.summary}</p>{/if}
-              {#if event.providerMessageId}<p class="mt-1 flex items-center gap-1 text-[11px] text-[var(--fm-text-muted)]"><ExternalLink class="size-3" aria-hidden="true" />Provider ID <span class="font-mono">{event.providerMessageId}</span></p>{/if}
+              {#if event.providerMessageId}<p class="mt-1 flex items-center gap-1 text-[11px] text-[var(--fm-text-muted)]"><ExternalLink class="size-3" aria-hidden="true" />{t('mail.providerId')} <span class="font-mono">{event.providerMessageId}</span></p>{/if}
             </li>
           {/each}
         </ol>

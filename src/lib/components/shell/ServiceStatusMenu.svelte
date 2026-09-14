@@ -2,6 +2,8 @@
   import CheckCircle2 from '@lucide/svelte/icons/circle-check-big';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
+  import { formatNumber } from '$lib/i18n';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     runtimeLabel,
@@ -26,38 +28,40 @@
     staleDeliveryCount: number;
     serviceDegraded: boolean;
   } = $props();
+  const i18n = useLocale();
+  const { t } = i18n;
 
   const healthy = $derived(!serviceDegraded);
 </script>
 
 <details class="status-menu">
-  <summary class:degraded={!healthy} aria-label="查看工作区服务状态">
+  <summary class:degraded={!healthy} aria-label={t('status.view')}>
     {#if healthy}
       <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
-      <span>全局状态正常</span>
+      <span>{t('status.healthy')}</span>
     {:else}
       <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
-      <span>全局状态需处理</span>
+      <span>{t('status.degraded')}</span>
     {/if}
     <ChevronDown class="chevron" size={14} aria-hidden="true" />
   </summary>
 
   <div class="status-popover">
     <div class="status-heading">
-      <strong>工作区状态</strong>
+      <strong>{t('status.workspace')}</strong>
       <span class:healthy>{runtimeLabel}</span>
     </div>
     <dl>
-      <div><dt>未读邮件</dt><dd>{unreadCount}</dd></div>
-      <div><dt>草稿</dt><dd>{draftCount}</dd></div>
-      <div><dt>等待投递</dt><dd>{queuedCount}</dd></div>
-      <div><dt>延迟投递</dt><dd class:danger={delayedCount > 0}>{delayedCount}</dd></div>
-      <div><dt>投递失败</dt><dd class:danger={failedCount > 0}>{failedCount}</dd></div>
-      <div><dt>退信</dt><dd class:danger={bouncedCount > 0}>{bouncedCount}</dd></div>
-      <div><dt>投诉</dt><dd class:danger={complainedCount > 0}>{complainedCount}</dd></div>
-      <div><dt>长时间提交中</dt><dd class:danger={staleDeliveryCount > 0}>{staleDeliveryCount}</dd></div>
+      <div><dt>{t('status.unread')}</dt><dd>{formatNumber(unreadCount, i18n.locale)}</dd></div>
+      <div><dt>{t('status.drafts')}</dt><dd>{formatNumber(draftCount, i18n.locale)}</dd></div>
+      <div><dt>{t('status.queued')}</dt><dd>{formatNumber(queuedCount, i18n.locale)}</dd></div>
+      <div><dt>{t('status.delayed')}</dt><dd class:danger={delayedCount > 0}>{formatNumber(delayedCount, i18n.locale)}</dd></div>
+      <div><dt>{t('status.failed')}</dt><dd class:danger={failedCount > 0}>{formatNumber(failedCount, i18n.locale)}</dd></div>
+      <div><dt>{t('status.bounced')}</dt><dd class:danger={bouncedCount > 0}>{formatNumber(bouncedCount, i18n.locale)}</dd></div>
+      <div><dt>{t('status.complained')}</dt><dd class:danger={complainedCount > 0}>{formatNumber(complainedCount, i18n.locale)}</dd></div>
+      <div><dt>{t('status.stale')}</dt><dd class:danger={staleDeliveryCount > 0}>{formatNumber(staleDeliveryCount, i18n.locale)}</dd></div>
     </dl>
-    <p>指标覆盖整个工作区，只显示安全的运行摘要，不展示凭据或 secret。</p>
+    <p>{t('status.description')}</p>
   </div>
 </details>
 

@@ -16,6 +16,7 @@
     type TelegramSettingsStatus
   } from '$lib/client/telegram-api';
   import { ClientApiError } from '$lib/client/api';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let telegramState = $state<TelegramSettingsStatus | null>(null);
   let bindingLink = $state<string | null>(null);
@@ -33,30 +34,36 @@
   let refreshRevision = 0;
   let refreshController: AbortController | undefined;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  const i18n = useLocale();
+  const { t } = i18n;
 
-  const deliveryStatusLabels: Record<TelegramSettingsStatus['recentDeliveries'][number]['status'], string> = {
-    pending: '已排队',
-    processing: '处理中',
-    retryable: '等待重试',
-    sent: '已发送',
-    failed: '发送失败',
-    unknown_delivery: '结果未知',
-    cancelled: '已取消'
-  };
+  const deliveryStatusLabels = $derived<Record<TelegramSettingsStatus['recentDeliveries'][number]['status'], string>>({
+    pending: t('telegram.statusPending'),
+    processing: t('telegram.statusProcessing'),
+    retryable: t('telegram.statusRetryable'),
+    sent: t('telegram.statusSent'),
+    failed: t('telegram.statusFailed'),
+    unknown_delivery: t('telegram.statusUnknown'),
+    cancelled: t('telegram.statusCancelled')
+  });
 
   function formatDate(value: string | null, timezone = telegramState?.timezone ?? 'UTC') {
     if (!value) return '—';
     const date = new Date(value);
     if (Number.isNaN(date.valueOf())) return '—';
     try {
-      return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone || 'UTC' }).format(date);
+      return new Intl.DateTimeFormat(i18n.locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone || 'UTC' }).format(date);
     } catch {
-      return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(date);
+      return new Intl.DateTimeFormat(i18n.locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(date);
     }
   }
 
   function errorMessage(value: unknown) {
-    return value instanceof ClientApiError ? value.message : 'Telegram 设置暂时无法更新，请稍后重试。';
+    return value instanceof ClientApiError && i18n.locale === 'en'
+      ? t('telegram.updateError')
+      : value instanceof Error
+        ? value.message
+        : t('telegram.updateError');
   }
 
   function cancelRefresh() {
@@ -142,7 +149,7 @@
       bindingLink = result.deepLink;
       bindingExpiresAt = result.expiresAt;
       bindingExpired = false;
-      message = '打开 Telegram 后点击 Start / 开始；若没有反应，请复制下方完整绑定命令发送，识别后回到这里确认。';
+      message = t('telegram.bindingInstructions');
       await refresh();
       await tick();
       generatedLinkElement?.focus();
@@ -162,7 +169,7 @@
     message = '';
     try {
       const result = await setupTelegram();
-      message = `Telegram 已连接（@${result.botUsername}），Webhook 已更新。这不代表账号已绑定，请继续生成链接并完成绑定确认。`;
+      message = t('telegram.connected', { username: result.botUsername });
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -174,11 +181,11 @@
   async function copyBindingCommand() {
     try {
       await navigator.clipboard.writeText(bindingCommand);
-      message = '完整绑定命令已复制，请粘贴到机器人私聊中发送，再回到这里确认绑定。';
+      message = t('telegram.commandCopied');
     } catch {
       bindingCommandElement?.focus();
       bindingCommandElement?.select();
-      message = '无法自动复制，已选中完整绑定命令，请手动复制后发送到机器人私聊。';
+      message = t('telegram.commandCopyFailed');
     }
   }
 
@@ -189,7 +196,7 @@
     try {
       telegramState = await confirmTelegramBinding();
       bindingLink = null;
-      message = '绑定已确认。通知仍保持关闭，请按需开启。';
+      message = t('telegram.bindingConfirmed');
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -206,7 +213,7 @@
     try {
       const result = await updateTelegramSettings(input);
       if (result.settings && telegramState?.binding) telegramState = { ...telegramState, userEnabled: result.settings.enabled, binding: { ...telegramState.binding, ...result.settings } };
-      message = 'Telegram 设置已保存。';
+      message = t('telegram.settingsSaved');
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -221,7 +228,7 @@
     error = '';
     try {
       await sendTelegramTest();
-      message = '测试通知已发送。';
+      message = t('telegram.testSent');
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -231,14 +238,14 @@
   }
 
   async function removeBinding() {
-    if (!window.confirm('解除绑定并取消尚未发出的 Telegram 通知？')) return;
+    if (!window.confirm(t('telegram.unbindConfirm'))) return;
     cancelRefresh();
     action = 'unbind';
     error = '';
     try {
       telegramState = await unbindTelegram();
       bindingLink = null;
-      message = 'Telegram 绑定已解除。';
+      message = t('telegram.unbound');
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -248,13 +255,13 @@
   }
 
   async function retry(id: string) {
-    if (!window.confirm('unknown_delivery 可能已经在 Telegram 显示；手动重试可能产生重复通知。继续？')) return;
+    if (!window.confirm(t('telegram.retryConfirm'))) return;
     cancelRefresh();
     action = `retry:${id}`;
     error = '';
     try {
       await retryTelegramDelivery(id);
-      message = '通知已加入手动重试队列。';
+      message = t('telegram.retryQueued');
       await refresh();
     } catch (value) {
       error = errorMessage(value);
@@ -265,90 +272,90 @@
   }
 </script>
 
-<Panel title="Telegram 通知" description="将入站邮件的最小摘要发送到你绑定的 Telegram 私聊。不会发送正文、附件或原始邮件。">
+<Panel title={t('telegram.title')} description={t('telegram.description')}>
   {#if loading}
-    <p class="muted">正在读取 Telegram 通知状态…</p>
+    <p class="muted">{t('telegram.loading')}</p>
   {:else if !telegramState?.globalEnabled}
-    <div class="notice"><Badge>未启用</Badge><span>请在 Cloudflare Dashboard 的 Variables and Secrets 中启用 Telegram 后刷新。</span></div>
+    <div class="notice"><Badge>{t('settings.disabled')}</Badge><span>{t('telegram.globalDisabled')}</span></div>
   {:else if !telegramState.configReady}
-    <div class="notice warning"><Badge>需配置</Badge><span>请在 Cloudflare Dashboard 的 Variables and Secrets 中补齐 Telegram 配置后刷新。</span></div>
+    <div class="notice warning"><Badge>{t('settings.needsConfiguration')}</Badge><span>{t('telegram.configMissing')}</span></div>
   {:else if !telegramState.schemaReady}
-    <div class="notice warning"><Badge>需迁移</Badge><span>Telegram 配置已就绪，但数据库迁移尚未完成。</span></div>
+    <div class="notice warning"><Badge>{t('telegram.migrationRequired')}</Badge><span>{t('telegram.migrationDescription')}</span></div>
   {:else}
     <div class="stack">
       <div class="setup-strip">
         <div class="setup-copy">
-          <strong>线上连接</strong>
-          <p class="muted">首次使用或更换 Bot 时点击。页面会自动验证 Bot 并注册 Webhook；当前登录用户即可操作，无需管理员/普通用户角色。</p>
+          <strong>{t('telegram.connection')}</strong>
+          <p class="muted">{t('telegram.connectionDescription')}</p>
         </div>
-        <Button variant="secondary" loading={action === 'setup'} disabled={action !== ''} onclick={() => void connectTelegram()}>连接 / 更新 Webhook</Button>
+        <Button variant="secondary" loading={action === 'setup'} disabled={action !== ''} onclick={() => void connectTelegram()}>{t('telegram.connect')}</Button>
       </div>
 
       {#if telegramState.binding?.state === 'candidate'}
-        <div class="stack" bind:this={candidateElement} tabindex="-1" role="group" aria-label="确认 Telegram 绑定">
-          <div class="notice"><Badge class="shrink-0 whitespace-nowrap">待确认</Badge><span>Telegram 已识别此私聊；请在 FlareMail 点击确认。</span></div>
-          <p class="muted">链接有效至 {formatDate(telegramState.binding.candidateExpiresAt ?? bindingExpiresAt)}。确认后通知仍默认关闭。</p>
-          <div class="actions"><Button loading={action === 'confirm'} disabled={action !== ''} onclick={() => void confirmBinding()}>确认绑定</Button><Button variant="secondary" loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>重新生成链接</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新状态</Button></div>
+        <div class="stack" bind:this={candidateElement} tabindex="-1" role="group" aria-label={t('telegram.confirmBinding')}>
+          <div class="notice"><Badge class="shrink-0 whitespace-nowrap">{t('telegram.pendingConfirmation')}</Badge><span>{t('telegram.candidateDetected')}</span></div>
+          <p class="muted">{t('telegram.linkExpires', { date: formatDate(telegramState.binding.candidateExpiresAt ?? bindingExpiresAt) })} {t('telegram.notificationsRemainOff')}</p>
+          <div class="actions"><Button loading={action === 'confirm'} disabled={action !== ''} onclick={() => void confirmBinding()}>{t('telegram.confirm')}</Button><Button variant="secondary" loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>{t('telegram.regenerate')}</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>{t('telegram.refreshStatus')}</Button></div>
         </div>
       {:else if telegramState.binding?.state === 'active'}
         <div class="stack">
-          <div class="notice"><Badge class={telegramState.binding.enabled ? 'success' : ''}>{telegramState.binding.enabled ? '已启用' : '已绑定'}</Badge><span>{telegramState.binding.enabled ? '新邮件会进入 Telegram 私聊。' : '绑定已确认，通知当前关闭。'}</span></div>
-          <div class="identity-summary" role="group" aria-label="Telegram 绑定身份">
-            <span class="muted">绑定身份</span>
-            <strong>{telegramState.binding.telegramDisplayName || 'Telegram 用户'}</strong>
+          <div class="notice"><Badge class={telegramState.binding.enabled ? 'success' : ''}>{telegramState.binding.enabled ? t('telegram.enabled') : t('telegram.bound')}</Badge><span>{telegramState.binding.enabled ? t('telegram.enabledDescription') : t('telegram.boundDescription')}</span></div>
+          <div class="identity-summary" role="group" aria-label={t('telegram.boundIdentity')}>
+            <span class="muted">{t('telegram.boundIdentity')}</span>
+            <strong>{telegramState.binding.telegramDisplayName || t('telegram.user')}</strong>
             {#if telegramState.binding.telegramUsername}<span class="muted">@{telegramState.binding.telegramUsername}</span>{/if}
           </div>
           <Switch
             id="telegram-enabled"
             checked={telegramState.binding.enabled}
-            label="启用入站 Telegram 通知"
-            description="仅通知可信登录地址收到的入站邮件。"
+            label={t('telegram.enableNotifications')}
+            description={t('telegram.enableNotificationsDescription')}
             disabled={action !== ''}
             onchange={(checked) => void changeSettings({ enabled: checked })}
           />
           <Switch
             id="telegram-privacy"
             checked={telegramState.binding.privacyMode}
-            label="隐私模式"
-            description="只发送“收到一封新邮件”和查看按钮，不包含发件人、主题或地址。"
+            label={t('telegram.privacyMode')}
+            description={t('telegram.privacyModeDescription')}
             disabled={action !== ''}
             onchange={(checked) => void changeSettings({ privacyMode: checked })}
           />
           <Switch
             id="telegram-summary"
             checked={telegramState.binding.summaryEnabled}
-            label="包含短摘要"
-            description="在非隐私模式下附带最多 300 个字符的纯文本摘要。"
+            label={t('telegram.includeSummary')}
+            description={t('telegram.includeSummaryDescription')}
             disabled={action !== '' || telegramState.binding.privacyMode}
             onchange={(checked) => void changeSettings({ summaryEnabled: checked })}
           />
-          <div class="actions"><Button variant="secondary" loading={action === 'test'} disabled={!telegramState.binding.enabled || action !== ''} onclick={() => void testNotification()}>发送测试通知</Button><Button variant="danger" loading={action === 'unbind'} disabled={action !== ''} onclick={() => void removeBinding()}>解除绑定</Button></div>
-          {#if telegramState.binding.lastErrorCode}<p class="muted">最近错误：{telegramState.binding.lastErrorCode} · {formatDate(telegramState.binding.lastErrorAt)}</p>{/if}
+          <div class="actions"><Button variant="secondary" loading={action === 'test'} disabled={!telegramState.binding.enabled || action !== ''} onclick={() => void testNotification()}>{t('telegram.sendTest')}</Button><Button variant="danger" loading={action === 'unbind'} disabled={action !== ''} onclick={() => void removeBinding()}>{t('telegram.unbind')}</Button></div>
+          {#if telegramState.binding.lastErrorCode}<p class="muted">{t('telegram.lastError')}：{telegramState.binding.lastErrorCode} · {formatDate(telegramState.binding.lastErrorAt)}</p>{/if}
         </div>
       {:else}
         <div class="stack">
-          <div class="notice"><Badge class="shrink-0 whitespace-nowrap">未绑定</Badge><span>首次使用请先连接 Webhook，再生成链接并在 Telegram 私聊中发送带绑定码的完整命令。</span></div>
-          <Button loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>生成 Telegram 绑定链接</Button>
-          {#if !bindingLink}<Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新绑定状态</Button>{/if}
+          <div class="notice"><Badge class="shrink-0 whitespace-nowrap">{t('telegram.unbound')}</Badge><span>{t('telegram.unboundDescription')}</span></div>
+          <Button loading={action === 'bind'} disabled={action !== ''} onclick={() => void beginBinding()}>{t('telegram.generateLink')}</Button>
+          {#if !bindingLink}<Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>{t('telegram.refreshBinding')}</Button>{/if}
         </div>
       {/if}
     </div>
   {/if}
 
   {#if bindingLink && bindingExpired}
-    <p class="feedback error" role="status">本次绑定链接已过期，请重新生成链接和命令。若已在 Telegram 完成操作，请先刷新绑定状态。</p>
-    <Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新绑定状态</Button>
+    <p class="feedback error" role="status">{t('telegram.linkExpired')}</p>
+    <Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>{t('telegram.refreshBinding')}</Button>
   {:else if bindingLink}
-    <div class="generated-link" bind:this={generatedLinkElement} tabindex="-1" role="group" aria-label="生成的 Telegram 绑定链接">
-      <strong>绑定链接（仅显示本次）</strong>
-      <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">打开 Telegram 继续绑定</a>
-      <label class="muted" for="telegram-binding-link">也可以复制以下完整链接</label>
+    <div class="generated-link" bind:this={generatedLinkElement} tabindex="-1" role="group" aria-label={t('telegram.generatedLink')}>
+      <strong>{t('telegram.generatedLink')}</strong>
+      <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">{t('telegram.openToBind')}</a>
+      <label class="muted" for="telegram-binding-link">{t('telegram.copyFullLink')}</label>
       <textarea id="telegram-binding-link" class="link-value" readonly value={bindingLink} rows="3" onclick={(event) => event.currentTarget.select()}></textarea>
-      <p class="muted">仅打开聊天不会完成绑定。若链接跳转后没有反应，请发送以下完整命令；只发送 /start 不会绑定。</p>
-      <label class="muted" for="telegram-binding-command">完整绑定命令（含一次性绑定码）</label>
+      <p class="muted">{t('telegram.commandInstruction')}</p>
+      <label class="muted" for="telegram-binding-command">{t('telegram.fullCommand')}</label>
       <textarea id="telegram-binding-command" class="link-value" bind:this={bindingCommandElement} readonly value={bindingCommand} rows="2" onclick={(event) => event.currentTarget.select()}></textarea>
-      <div class="actions"><Button variant="secondary" onclick={() => void copyBindingCommand()}>复制绑定命令</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>刷新绑定状态</Button></div>
-      <p class="muted">链接有效至 {formatDate(bindingExpiresAt)}，不会保存在浏览器或 URL 状态中。</p>
+      <div class="actions"><Button variant="secondary" onclick={() => void copyBindingCommand()}>{t('telegram.copyCommand')}</Button><Button variant="secondary" disabled={action !== ''} onclick={() => void refresh()}>{t('telegram.refreshBinding')}</Button></div>
+      <p class="muted">{t('telegram.linkExpires', { date: formatDate(bindingExpiresAt) })} {t('telegram.notStored')}</p>
     </div>
   {/if}
 
@@ -357,11 +364,11 @@
 
   {#if telegramState?.recentDeliveries?.length}
     <div class="history">
-      <h3>最近通知</h3>
+      <h3>{t('telegram.recentDeliveries')}</h3>
       {#each telegramState.recentDeliveries as delivery (delivery.id)}
         <div class="delivery-row">
-          <div><strong>{delivery.subject || '无主题'}</strong><span>{formatDate(delivery.receivedAt)} · {deliveryStatusLabels[delivery.status]}</span></div>
-          {#if ['failed', 'retryable', 'unknown_delivery'].includes(delivery.status)}<Button variant="secondary" disabled={action !== ''} onclick={() => void retry(delivery.id)}>{delivery.status === 'unknown_delivery' ? '手动重试（可能重复）' : '重试'}</Button>{/if}
+          <div><strong>{delivery.subject || t('mail.noSubject')}</strong><span>{formatDate(delivery.receivedAt)} · {deliveryStatusLabels[delivery.status]}</span></div>
+          {#if ['failed', 'retryable', 'unknown_delivery'].includes(delivery.status)}<Button variant="secondary" disabled={action !== ''} onclick={() => void retry(delivery.id)}>{delivery.status === 'unknown_delivery' ? t('telegram.manualRetry') : t('mail.retry')}</Button>{/if}
         </div>
       {/each}
     </div>

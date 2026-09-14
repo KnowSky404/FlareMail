@@ -12,7 +12,9 @@
     XCircle
   } from '@lucide/svelte';
   import { StatusBadge } from '$lib/components/ui';
+  import { formatNumber } from '$lib/i18n';
   import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
 
@@ -38,18 +40,22 @@
     onToggleSelect?: (message: MailMessage) => void;
   } = $props();
 
+  const i18n = useLocale();
+  const { t } = i18n;
+
   const itemMessage = $derived(thread?.sectionLatestMessage ?? thread?.latestMessage ?? message);
   const isDraft = $derived(itemMessage?.folder === 'drafts');
   const isUnread = $derived(Boolean(thread ? thread.unreadCount > 0 : itemMessage && !itemMessage.read));
   const isStarred = $derived(Boolean(itemMessage?.starred));
-  const itemSubject = $derived(thread?.subject || itemMessage?.subject || '（无主题）');
+  const itemSubject = $derived(thread?.subject || itemMessage?.subject || t('mail.noSubject'));
   const itemPreview = $derived(itemMessage?.searchSnippet || thread?.preview || itemMessage?.preview || '');
   const itemCount = $derived(thread?.messageCount ?? 1);
+  const formattedItemCount = $derived(formatNumber(itemCount, i18n.locale));
 
-  const hitFieldLabels = {
-    all: '全文', from: '发件人', to: '收件人', cc: '抄送', subject: '主题', label: '标签',
-    state: '状态', attachment: '附件', date: '日期', status: '投递'
-  } as const;
+  const hitFieldLabels = $derived({
+    all: t('mail.fullText'), from: t('mail.from'), to: t('mail.to'), cc: t('mail.cc'), subject: t('mail.subject'), label: t('mail.label'),
+    state: t('mail.state'), attachment: t('mail.attachments'), date: t('mail.date'), status: t('mail.delivery')
+  } as const);
 
   function highlightedParts(value: string) {
     const open = String.fromCharCode(57344);
@@ -67,8 +73,8 @@
   const counterpart = $derived(
     thread?.counterpartLabel ||
       (isDraft || itemMessage?.folder === 'sent'
-        ? itemMessage?.toName || itemMessage?.toEmail || '收件人未填写'
-        : itemMessage?.fromName || itemMessage?.fromEmail || '未知发件人')
+        ? itemMessage?.toName || itemMessage?.toEmail || t('mail.recipientMissing')
+        : itemMessage?.fromName || itemMessage?.fromEmail || t('mail.unknownSender'))
   );
 
   const formatDate = (value?: string) => {
@@ -77,22 +83,22 @@
     if (Number.isNaN(date.valueOf())) return '';
     const now = new Date();
     const sameDay = date.toDateString() === now.toDateString();
-    return new Intl.DateTimeFormat('zh-CN', sameDay ? { hour: '2-digit', minute: '2-digit', hour12: false } : { month: 'numeric', day: 'numeric' }).format(date);
+    return new Intl.DateTimeFormat(i18n.locale, sameDay ? { hour: '2-digit', minute: '2-digit', hour12: false } : { month: 'numeric', day: 'numeric' }).format(date);
   };
 
   const formatDelivery = (status?: MailMessage['deliveryStatus'] | null) => {
     const labels: Record<string, string> = {
-      queued: '排队中',
-      submitting: '提交中',
-      submitted: '已提交',
-      sent: '已发送',
-      delivered: '已送达',
-      delayed: '已延迟',
-      bounced: '已退信',
-      failed: '发送失败',
-      complained: '收到投诉',
-      suppressed: '已抑制',
-      draft: '草稿'
+      queued: t('mail.statusQueued'),
+      submitting: t('mail.statusSubmitting'),
+      submitted: t('mail.statusSubmittedShort'),
+      sent: t('mail.statusSent'),
+      delivered: t('mail.statusDelivered'),
+      delayed: t('mail.statusDelayed'),
+      bounced: t('mail.statusBounced'),
+      failed: t('mail.statusFailed'),
+      complained: t('mail.statusComplained'),
+      suppressed: t('mail.statusSuppressed'),
+      draft: t('mail.statusDraft')
     };
     return status ? labels[status] || status : '';
   };
@@ -123,12 +129,12 @@
     {#if selected}<span class="absolute inset-y-0 left-0 w-[3px] bg-[var(--fm-brand-orange)]" aria-hidden="true"></span>{/if}
     {#if selectable}
       <label class="grid min-h-11 min-w-11 shrink-0 place-items-center">
-        <span class="sr-only">选择{itemSubject}</span>
+        <span class="sr-only">{t('mail.select', { subject: itemSubject })}</span>
         <input
           class="size-4 accent-[var(--fm-primary)]"
           type="checkbox"
           checked={selectedForBulk}
-          aria-label={`选择${itemSubject}`}
+          aria-label={t('mail.select', { subject: itemSubject })}
           onclick={(event) => event.stopPropagation()}
           onchange={() => itemMessage && onToggleSelect?.(itemMessage)}
         />
@@ -138,7 +144,7 @@
       type="button"
       class="flex min-h-[72px] min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fm-focus)]"
       aria-current={selected ? 'true' : undefined}
-      aria-label={`${isUnread ? '未读，' : ''}${counterpart}，${itemSubject}${itemCount > 1 ? `，${itemCount} 封邮件` : ''}`}
+      aria-label={`${isUnread ? t('mail.unreadPrefix') : ''}${counterpart}, ${itemSubject}${itemCount > 1 ? `, ${t('mail.threadCount', { count: formattedItemCount })}` : ''}`}
       onclick={handleSelect}
     >
       <span class="grid size-2 shrink-0 place-items-center" aria-hidden="true">
@@ -154,11 +160,11 @@
         </span>
         <span class={`mt-0.5 flex min-w-0 items-center gap-1 text-sm leading-5 ${isUnread ? 'font-semibold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>
           <span class="truncate">{itemSubject}</span>
-          {#if itemCount > 1}<span class="shrink-0 text-[11px] font-medium text-[var(--fm-text-muted)]">({itemCount})</span>{/if}
+          {#if itemCount > 1}<span class="shrink-0 text-[11px] font-medium text-[var(--fm-text-muted)]">({formattedItemCount})</span>{/if}
         </span>
         <span class="mt-0.5 flex min-w-0 items-center gap-1 text-xs leading-4 text-[var(--fm-text-muted)]">
-          {#if isDraft}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">草稿</span>{/if}
-          {#if itemMessage.labels.includes('attachment')}<Paperclip class="size-3 shrink-0" aria-label="含附件" />{/if}
+          {#if isDraft}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">{t('mail.draft')}</span>{/if}
+          {#if itemMessage.labels.includes('attachment')}<Paperclip class="size-3 shrink-0" aria-label={t('mail.hasAttachment')} />{/if}
           {#if itemMessage.searchHitFields?.length}
             <span class="shrink-0 rounded bg-[var(--fm-primary-soft)] px-1 py-0.5 text-[10px] font-medium text-[var(--fm-primary)]">
               {itemMessage.searchHitFields.map((field) => hitFieldLabels[field]).join(' · ')}
@@ -166,13 +172,13 @@
           {/if}
           <span class="truncate">
             {#if isDraft && !itemMessage.toEmail}
-              尚未填写收件人
+              {t('mail.noRecipient')}
             {:else if itemPreview}
               {#each highlightedParts(itemPreview) as part}
                 {#if part.highlighted}<mark class="rounded bg-[var(--fm-warning-soft)] px-0.5 text-inherit">{part.text}</mark>{:else}{part.text}{/if}
               {/each}
             {:else}
-              暂无预览
+              {t('mail.noPreview')}
             {/if}
           </span>
         </span>
@@ -190,9 +196,9 @@
       <button
         type="button"
         class="mr-1 grid min-h-11 min-w-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] transition-colors hover:bg-[var(--fm-surface)] hover:text-[var(--fm-brand-orange)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
-        aria-label={isStarred ? '取消星标' : '加星标'}
+        aria-label={isStarred ? t('mail.unstar') : t('mail.star')}
         aria-pressed={isStarred}
-        title={isStarred ? '取消星标' : '加星标'}
+        title={isStarred ? t('mail.unstar') : t('mail.star')}
         onclick={handleStar}
       >
         <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)] text-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />

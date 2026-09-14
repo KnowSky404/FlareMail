@@ -1,5 +1,6 @@
 import { parseAddressList } from '$lib/domain/mail';
 import type { ComposeInput, MailMessage } from '$lib/domain/mail';
+import type { Locale } from '$lib/i18n';
 import { ComposeSaveSequence } from './compose-save-sequence';
 
 export function createEmptyComposeInput(): ComposeInput {
@@ -89,8 +90,8 @@ export function mergeSavedDraftMetadata(
   };
 }
 
-export function formatComposeSavedAt(value: string) {
-  return new Intl.DateTimeFormat('zh-CN', {
+export function formatComposeSavedAt(value: string, locale: Locale = 'zh-CN') {
+  return new Intl.DateTimeFormat(locale, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',

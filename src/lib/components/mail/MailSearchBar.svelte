@@ -2,10 +2,11 @@
   import { onMount } from 'svelte';
   import { Search, X } from '@lucide/svelte';
   import { IconButton } from '$lib/components/ui';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     query = '',
-    placeholder = '搜索邮件，支持 from:、subject:、is:',
+    placeholder,
     disabled = false,
     onQueryChange,
     id = 'mail-search'
@@ -18,6 +19,7 @@
   } = $props();
 
   let searchInput = $state<HTMLInputElement>();
+  const { t } = useLocale();
 
   onMount(() => {
     const focusSearch = () => searchInput?.focus();
@@ -27,26 +29,26 @@
 </script>
 
 <div class="relative min-w-0 flex-1">
-  <label class="sr-only" for={id}>搜索邮件</label>
+  <label class="sr-only" for={id}>{t('mail.search')}</label>
   <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--fm-text-muted)]" aria-hidden="true" />
   <input
     bind:this={searchInput}
     {id}
     type="search"
     value={query}
-    {placeholder}
+    placeholder={placeholder ?? t('mail.searchPlaceholder')}
     {disabled}
     autocomplete="off"
     enterkeyhint="search"
     class="fm-field h-9 w-full pl-9 pr-10 text-sm"
-    aria-label="搜索邮件"
+    aria-label={t('mail.search')}
     aria-describedby={`${id}-hint`}
     oninput={(event) => onQueryChange?.(event.currentTarget.value)}
   />
   {#if query}
     <IconButton
-      ariaLabel="清除搜索"
-      title="清除搜索"
+      ariaLabel={t('mail.clearSearch')}
+      title={t('mail.clearSearch')}
       size="sm"
       class="absolute right-1 top-1/2 size-11 -translate-y-1/2 sm:size-7"
       onclick={() => onQueryChange?.('')}
@@ -54,5 +56,5 @@
       <X class="size-4" aria-hidden="true" />
     </IconButton>
   {/if}
-  <span class="sr-only" id={`${id}-hint`}>支持发件人、收件人、抄送、主题、状态、附件、日期与标签高级搜索。</span>
+  <span class="sr-only" id={`${id}-hint`}>{t('mail.searchPlaceholder')}</span>
 </div>

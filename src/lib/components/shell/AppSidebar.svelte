@@ -6,8 +6,12 @@
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
   import Trash2 from '@lucide/svelte/icons/trash-2';
+  import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
+  import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
   import type { LucideIcon } from '@lucide/svelte';
   import type { MailboxSection } from '$lib/domain/mail';
+  import { formatNumber } from '$lib/i18n';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
   type NavigationItem = {
@@ -23,37 +27,50 @@
     sentCount,
     draftCount,
     trashCount,
+    collapsed = false,
     pending = false,
     onCompose,
-    onSelectSection
+    onSelectSection,
+    onToggleCollapsed
   }: {
     activeSection: AppSection;
     inboxCount: number;
     sentCount: number;
     draftCount: number;
     trashCount: number;
+    collapsed?: boolean;
     pending?: boolean;
     onCompose: () => void;
     onSelectSection: (section: AppSection) => void;
+    onToggleCollapsed?: () => void;
   } = $props();
 
+  const i18n = useLocale();
+  const { t } = i18n;
+
   const navigation = $derived<NavigationItem[]>([
-    { id: 'inbox', label: '收件箱', count: inboxCount, icon: Inbox },
-    { id: 'sent', label: '已发送', count: sentCount, icon: Send },
-    { id: 'drafts', label: '草稿箱', count: draftCount, icon: FileText },
-    { id: 'archive', label: '归档', count: 0, icon: Archive },
-    { id: 'trash', label: '垃圾箱', count: trashCount, icon: Trash2 },
-    { id: 'profile', label: '设置', count: 0, icon: Settings }
+    { id: 'inbox', label: t('shell.inbox'), count: inboxCount, icon: Inbox },
+    { id: 'sent', label: t('shell.sent'), count: sentCount, icon: Send },
+    { id: 'drafts', label: t('shell.drafts'), count: draftCount, icon: FileText },
+    { id: 'archive', label: t('shell.archive'), count: 0, icon: Archive },
+    { id: 'trash', label: t('shell.trash'), count: trashCount, icon: Trash2 },
+    { id: 'profile', label: t('common.settings'), count: 0, icon: Settings }
   ]);
 </script>
 
-<aside class="sidebar" aria-label="邮箱导航">
-  <button class="compose" type="button" aria-label="写邮件" title="写邮件" disabled={pending} onclick={onCompose}>
+<aside id="fm-main-sidebar" class:collapsed class="sidebar" aria-label={t('shell.mailNavigation')}>
+  <div class="sidebar-toolbar">
+    <button class="collapse-toggle" type="button" aria-expanded={!collapsed} aria-controls="fm-main-sidebar" aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} title={collapsed ? t('shell.expand') : t('shell.collapse')} onclick={() => onToggleCollapsed?.()}>
+      {#if collapsed}<PanelLeftOpen size={18} aria-hidden="true" />{:else}<PanelLeftClose size={18} aria-hidden="true" />{/if}
+      <span class="sr-only">{collapsed ? t('shell.expand') : t('shell.collapse')}</span>
+    </button>
+  </div>
+  <button class="compose" type="button" aria-label={t('shell.compose')} title={t('shell.compose')} disabled={pending} onclick={onCompose}>
     <PenLine size={18} strokeWidth={2} aria-hidden="true" />
-    <span>写邮件</span>
+    <span>{t('shell.compose')}</span>
   </button>
 
-  <nav aria-label="主导航">
+  <nav aria-label={t('shell.mainNavigation')}>
     {#each navigation as item}
       {@const Icon = item.icon}
       <button
@@ -67,13 +84,13 @@
         <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
         <span class="label">{item.label}</span>
         {#if item.count > 0}
-          <span class="count" aria-label={`${item.count} 封`}>{item.count > 99 ? '99+' : item.count}</span>
+          <span class="count" aria-label={t('mail.messageCount', { count: formatNumber(item.count, i18n.locale) })}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
         {/if}
       </button>
     {/each}
   </nav>
 
-  <p class="powered">运行于 Cloudflare Workers</p>
+  <p class="powered">{t('shell.powered')}</p>
 </aside>
 
 <style>
@@ -81,11 +98,31 @@
     display: flex;
     min-height: 0;
     flex-direction: column;
-    gap: var(--space-4);
-    padding: var(--space-4) var(--space-3);
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-2);
     border-right: 1px solid var(--fm-border);
     background: var(--fm-canvas);
   }
+
+  .sidebar-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    min-height: 32px;
+  }
+
+  .collapse-toggle {
+    display: inline-grid;
+    width: 36px;
+    height: 32px;
+    place-items: center;
+    border: 0;
+    border-radius: var(--radius-md);
+    color: var(--fm-text-muted);
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .collapse-toggle:hover { color: var(--fm-text); background: var(--fm-surface-hover); }
 
   .compose {
     display: flex;
@@ -102,6 +139,47 @@
     font-size: 14px;
     font-weight: 600;
     transition: background var(--motion-fast), border-color var(--motion-fast);
+  }
+
+  .collapsed {
+    align-items: center;
+  }
+
+  .collapsed .sidebar-toolbar {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .collapsed .compose {
+    width: 44px;
+    padding: 0;
+  }
+
+  .collapsed .compose span,
+  .collapsed .label,
+  .collapsed .powered {
+    display: none;
+  }
+
+  .collapsed nav {
+    width: 100%;
+  }
+
+  .collapsed nav button {
+    grid-template-columns: 20px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .collapsed nav .count {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    min-width: 17px;
+    padding: 0 4px;
+    border: 2px solid var(--fm-canvas);
+    font-size: 9px;
+    line-height: 14px;
   }
 
   .compose:hover:not(:disabled) {
@@ -191,48 +269,10 @@
   }
 
   @media (max-width: 1279px) {
-    .sidebar {
-      align-items: center;
-      padding-inline: var(--space-2);
-    }
-
-    .compose {
-      width: 44px;
-      height: 44px;
-      padding: 0;
-    }
-
-    .compose span,
-    .label,
-    .powered {
-      display: none;
-    }
-
-    nav {
-      width: 100%;
-    }
-
-    nav button {
-      display: flex;
-      width: 100%;
-      min-height: 44px;
-      justify-content: center;
-      padding: 0;
-    }
-
-    .count {
-      position: absolute;
-      top: 2px;
-      right: 0;
-      min-width: 17px;
-      padding: 0 4px;
-      border: 2px solid var(--fm-canvas);
-      font-size: 9px;
-      line-height: 14px;
-    }
+    .sidebar { padding-inline: var(--space-2); }
   }
 
-  @media (max-width: 767px) {
+  @media (max-width: 900px) {
     .sidebar {
       display: none;
     }

@@ -2,18 +2,20 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import type { RuntimeUnavailableState } from '$lib/domain/runtime-state';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let { state }: { state: RuntimeUnavailableState } = $props();
 
-  const labels: Record<RuntimeUnavailableState['code'], { title: string; description: string }> = {
-    CONFIG_INVALID: { title: '服务配置尚未完成', description: '运行环境缺少必要绑定或生产配置。请由操作者检查部署诊断。' },
-    AUTHENTICATION_UNAVAILABLE: { title: '认证服务暂不可用', description: '当前无法安全读取会话。你的登录状态没有被当作退出处理。' },
-    SCHEMA_NOT_READY: { title: '数据库迁移尚未完成', description: '代码与 D1 schema 版本不一致。请先执行对应的 append-only migration。' },
-    D1_UNAVAILABLE: { title: '工作区数据服务暂不可用', description: '当前无法安全读取 D1。页面没有把存储故障伪装成未登录。' },
-    R2_UNAVAILABLE: { title: '对象存储暂不可用', description: '邮件正文或附件存储当前不可访问。请稍后重试。' },
-    NETWORK_FAILURE: { title: '外部服务连接失败', description: '运行时网络请求没有完成。请稍后重试并保留详情 ID。' },
-    INTERNAL_ERROR: { title: '工作区暂时无法载入', description: '服务器遇到未分类错误。请使用详情 ID 查询脱敏日志。' }
-  };
+  const { t } = useLocale();
+  const labels = $derived<Record<RuntimeUnavailableState['code'], { title: string; description: string }>>({
+    CONFIG_INVALID: { title: t('runtime.configTitle'), description: t('runtime.configDescription') },
+    AUTHENTICATION_UNAVAILABLE: { title: t('runtime.authTitle'), description: t('runtime.authDescription') },
+    SCHEMA_NOT_READY: { title: t('runtime.schemaTitle'), description: t('runtime.schemaDescription') },
+    D1_UNAVAILABLE: { title: t('runtime.d1Title'), description: t('runtime.d1Description') },
+    R2_UNAVAILABLE: { title: t('runtime.r2Title'), description: t('runtime.r2Description') },
+    NETWORK_FAILURE: { title: t('runtime.networkTitle'), description: t('runtime.networkDescription') },
+    INTERNAL_ERROR: { title: t('runtime.internalTitle'), description: t('runtime.internalDescription') }
+  });
   const copy = $derived(labels[state.code]);
 </script>
 
@@ -21,13 +23,13 @@
   <section aria-labelledby="unavailable-title">
     <span class="icon" aria-hidden="true"><CircleAlert size={24} /></span>
     <div>
-      <p class="eyebrow">FlareMail runtime</p>
+      <p class="eyebrow">{t('runtime.eyebrow')}</p>
       <h1 id="unavailable-title">{copy.title}</h1>
       <p class="description">{copy.description}</p>
-      <p class="request-id">详情 ID：<code>{state.requestId}</code></p>
+      <p class="request-id">{t('runtime.requestId')}：<code>{state.requestId}</code></p>
       <div class="actions">
-        <button type="button" onclick={() => location.reload()} disabled={!state.retryable}><RefreshCw size={16} aria-hidden="true" />重试</button>
-        <a href="/api/health" target="_blank" rel="noreferrer">打开只读诊断</a>
+        <button type="button" onclick={() => location.reload()} disabled={!state.retryable}><RefreshCw size={16} aria-hidden="true" />{t('mail.retry')}</button>
+        <a href="/api/health" target="_blank" rel="noreferrer">{t('runtime.openHealth')}</a>
       </div>
     </div>
   </section>

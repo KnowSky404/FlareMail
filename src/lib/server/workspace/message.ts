@@ -2,8 +2,9 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
 import { findOwnedInboundState } from '$lib/server/db/inbound';
 import { getWorkspaceCapabilities } from '$lib/server/db/capabilities';
+import { findOwnedDraft } from '$lib/server/db/drafts';
 import { findOwnedWorkspaceMessage, updateMessageFlags, upsertInboundState } from '$lib/server/db/messages';
-import { fromInboundMessageId, isInboundMessageId, mapInboundRow, mapWorkspaceMessageRow, normalizePatch, type MailMessage, type MessagePatch, type WorkspaceContext } from '$lib/server/workspace/shared';
+import { fromInboundMessageId, isInboundMessageId, mapDraftRow, mapInboundRow, mapWorkspaceMessageRow, normalizePatch, type MailMessage, type MessagePatch, type WorkspaceContext } from '$lib/server/workspace/shared';
 import { moveWorkspaceMessageToTrash } from '$lib/server/workspace/trash';
 
 async function findOwnedMessage(env: CloudflareEnv, session: WorkspaceContext, messageId: string): Promise<MailMessage | null> {
@@ -12,7 +13,9 @@ async function findOwnedMessage(env: CloudflareEnv, session: WorkspaceContext, m
     return row ? mapInboundRow(row, session.profile) : null;
   }
   const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
-  return row ? mapWorkspaceMessageRow(row) : null;
+  if (row) return mapWorkspaceMessageRow(row);
+  const draft = await findOwnedDraft(env.DB, session.userId, messageId);
+  return draft ? mapDraftRow(draft, session.profile) : null;
 }
 
 export async function patchWorkspaceMessage(env: CloudflareEnv | undefined, session: WorkspaceContext, messageId: string, patch: MessagePatch) {

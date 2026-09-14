@@ -2,6 +2,7 @@
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { Button, Skeleton } from '$lib/components/ui';
   import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
   import EmptyMailbox from './EmptyMailbox.svelte';
   import MessageListItem from './MessageListItem.svelte';
   import type { MailFilter } from './MailFilterBar.svelte';
@@ -28,8 +29,8 @@
     onFilterChange,
     onRefresh,
     onClearFilters,
-    onLoadMore
-    , selectable = false,
+    onLoadMore,
+    selectable = false,
     selectedMessageIds = [],
     onToggleSelect
   }: {
@@ -57,14 +58,16 @@
     onToggleSelect?: (message: MailMessage) => void;
   } = $props();
 
-  const sectionLabels: Record<AppSection, string> = {
-    inbox: '收件箱',
-    sent: '已发送',
-    drafts: '草稿箱',
-    archive: '归档',
-    trash: '垃圾箱',
-    profile: '邮件'
-  };
+  const { t } = useLocale();
+
+  const sectionLabels = $derived<Record<AppSection, string>>({
+    inbox: t('shell.inbox'),
+    sent: t('shell.sent'),
+    drafts: t('shell.drafts'),
+    archive: t('shell.archive'),
+    trash: t('shell.trash'),
+    profile: t('mail.detail')
+  });
 
   const sourceItems = $derived.by<ListItem[]>(() => {
     if (activeSection === 'drafts' || activeSection === 'trash' || threads.length === 0) {
@@ -88,15 +91,15 @@
 
   const selectedCount = $derived(activeSection === 'drafts' || activeSection === 'trash' ? messages.length : threads.length || messages.length);
   const isFiltered = $derived(Boolean(query.trim()) || filter !== 'all');
-  const emptyTitle = $derived(isFiltered ? '没有匹配的邮件' : `${sectionLabels[activeSection]}为空`);
+  const emptyTitle = $derived(isFiltered ? t('mail.noMatch') : t('mail.empty', { section: sectionLabels[activeSection] }));
   const emptyDescription = $derived(
     isFiltered
-      ? '尝试更换关键词或清除当前筛选条件。'
+      ? t('mail.tryDifferentSearch')
       : activeSection === 'drafts'
-        ? '保存的草稿会显示在这里。'
+        ? t('mail.savedDraftHint')
         : activeSection === 'trash'
-          ? '移入垃圾箱的邮件和草稿会显示在这里。'
-          : '新的邮件会显示在这里。'
+          ? t('mail.trashHint')
+          : t('mail.newMailHint')
   );
 
   const itemKey = (item: ListItem) => (item.kind === 'thread' ? `thread:${item.value.id}` : `message:${item.value.id}`);
@@ -106,9 +109,9 @@
   };
 </script>
 
-<section class="min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" aria-label={`${sectionLabels[activeSection]}邮件列表`}>
+<section class="min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
   {#if loading}
-    <div class="divide-y divide-[var(--fm-border)]" aria-label="正在加载邮件" aria-busy="true">
+    <div class="divide-y divide-[var(--fm-border)]" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}
         <div class="flex min-h-[72px] items-center gap-3 px-3 py-2" aria-hidden="true">
           <Skeleton class="size-2 shrink-0 rounded-full" />
@@ -128,12 +131,12 @@
         <div class="mb-3 grid size-11 place-items-center rounded-full bg-[var(--fm-danger-soft)] text-[var(--fm-danger)]">
           <AlertCircle class="size-5" aria-hidden="true" />
         </div>
-        <h2 class="text-sm font-semibold text-[var(--fm-text)]">邮件列表加载失败</h2>
+        <h2 class="text-sm font-semibold text-[var(--fm-text)]">{t('mail.listError')}</h2>
         <p class="mt-1 text-xs leading-5 text-[var(--fm-text-muted)]">{error}</p>
         {#if onRefresh}
           <Button variant="secondary" size="sm" class="mt-4" onclick={() => onRefresh?.()}>
             <RefreshCw class="size-3.5" aria-hidden="true" />
-            重试
+            {t('mail.retry')}
           </Button>
         {/if}
       </div>
@@ -148,7 +151,7 @@
       onRefresh={isFiltered ? undefined : onRefresh}
     />
   {:else}
-    <div role="list" aria-label={`${sectionLabels[activeSection]}邮件`}>
+    <div role="list" aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
       {#each visibleItems as item (itemKey(item))}
         {#if item.kind === 'thread'}
           <MessageListItem
@@ -177,10 +180,10 @@
     </div>
     {#if hasMore && onLoadMore}
       <div class="border-t border-[var(--fm-border)] px-4 py-4 text-center">
-        <Button variant="secondary" size="sm" onclick={() => onLoadMore?.()}>加载更多</Button>
+        <Button variant="secondary" size="sm" onclick={() => onLoadMore?.()}>{t('mail.loadMore')}</Button>
       </div>
     {:else if paginationEnd || selectedCount > 0}
-      <p class="border-t border-[var(--fm-border)] px-4 py-3 text-center text-[11px] text-[var(--fm-text-muted)]" aria-label="已到列表末尾">已显示全部邮件</p>
+      <p class="border-t border-[var(--fm-border)] px-4 py-3 text-center text-[11px] text-[var(--fm-text-muted)]" aria-label={t('mail.allShown')}>{t('mail.allShown')}</p>
     {/if}
   {/if}
 </section>

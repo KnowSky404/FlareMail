@@ -12,6 +12,7 @@ import {
 import { WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError, apiFailure, classifyRuntimeError, getRequestId, runtimeUnavailableState } from '$lib/server/http/api';
+import { resolveLocale } from '$lib/client/locale-preferences';
 
 const setSecurityHeaders = (response: Response, secure: boolean, requestId?: string) => {
   response.headers.set('referrer-policy', 'no-referrer');
@@ -38,6 +39,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   const isTelegramWebhook = event.url.pathname === '/api/webhooks/telegram';
   const isApi = event.url.pathname.startsWith('/api/');
   const secure = event.url.protocol === 'https:';
+  const locale = resolveLocale({
+    cookie: event.cookies.get('flaremail-locale') ?? null,
+    acceptLanguage: event.request.headers.get('accept-language')
+  });
+  event.locals.locale = locale;
   const failApi = (error: ApiError) => setSecurityHeaders(apiFailure(event, error), secure);
   const markUnavailable = (error: unknown) => {
     event.locals.runtimeState = runtimeUnavailableState(error, requestId);
@@ -95,7 +101,9 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   try {
-    return setSecurityHeaders(await resolve(event), secure, requestId);
+    return setSecurityHeaders(await resolve(event, {
+      transformPageChunk: ({ html }) => html.replace(/<html lang="(?:zh-CN|en)">/u, `<html lang="${locale}">`)
+    }), secure, requestId);
   } catch (error) {
     if (error instanceof ApiError) {
       return failApi(error);

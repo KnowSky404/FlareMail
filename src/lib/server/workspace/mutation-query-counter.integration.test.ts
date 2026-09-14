@@ -1,6 +1,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { patchWorkspaceMessage } from './message';
 import type { WorkspaceContext } from './shared';
 
@@ -24,6 +25,8 @@ function fixture(messageCount: number) {
   database.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
   database.query(`INSERT INTO workspace_users (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '', 0)`).run();
+  database.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
+    VALUES ('flaremail', ?, '2026-09-14T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
   for (let index = 0; index < messageCount; index += 1) {
     database.query(`INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at)
       VALUES (?, 'user-1', 'inbox', 'Alice', 'alice@example.test', 'Owner', 'owner@example.test', 'Subject', 'Preview', 'Body', ?)`)
@@ -46,5 +49,16 @@ describe('mutation query budget', () => {
     expect(Object.keys(smallResult ?? {})).toEqual(['message', 'metrics']);
     expect(Object.keys(largeResult ?? {})).toEqual(['message', 'metrics']);
     expect(JSON.stringify(smallResult)).not.toContain('message-1');
+  });
+
+  test('updates an owned draft star through the existing message flags contract', async () => {
+    const value = fixture(0);
+    value.DB.database.query(`INSERT INTO workspace_drafts (id, user_id, to_email, subject, body, is_starred, updated_at)
+      VALUES ('draft-1', 'user-1', 'reader@example.test', 'Draft subject', 'Draft body', 0, '2026-09-14T00:00:00.000Z')`).run();
+
+    const result = await patchWorkspaceMessage(value.env, value.session, 'draft-1', { starred: true });
+
+    expect(result?.message).toMatchObject({ id: 'draft-1', folder: 'drafts', starred: true });
+    expect((value.DB.database.query(`SELECT is_starred FROM workspace_drafts WHERE id = 'draft-1'`).get() as { is_starred: number }).is_starred).toBe(1);
   });
 });

@@ -5,6 +5,7 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
   import X from '@lucide/svelte/icons/x';
   import type { ToastMessage } from '$lib/client/toast-controller';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     toast,
@@ -15,6 +16,7 @@
     onAction: () => void | Promise<void>;
     onDismiss: () => void;
   } = $props();
+  const { t } = useLocale();
 </script>
 
 <section
@@ -37,12 +39,12 @@
   </span>
   <div class="content">
     <p>{toast.message}</p>
-    {#if toast.requestId}<small>详情 ID：{toast.requestId}</small>{/if}
+    {#if toast.requestId}<small>{t('runtime.requestId')}：{toast.requestId}</small>{/if}
   </div>
   {#if toast.actionLabel}
     <button class="action" type="button" onclick={onAction}>{toast.actionLabel}</button>
   {/if}
-  <button class="dismiss" type="button" aria-label="关闭通知" onclick={onDismiss}>
+  <button class="dismiss" type="button" aria-label={t('common.closeNotification')} onclick={onDismiss}>
     <X size={16} aria-hidden="true" />
   </button>
 </section>

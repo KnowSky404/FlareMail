@@ -5,6 +5,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
   import type { LoginInput } from '$lib/domain/mail';
+  import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     loginError = '',
@@ -21,6 +23,7 @@
 
   let email = $state('');
   let password = $state('');
+  const { t } = useLocale();
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -30,10 +33,10 @@
 
 <main class="login-canvas">
   <section class="login-panel" aria-labelledby="login-title">
-    <div class="brand-row"><BrandMark /></div>
+    <div class="brand-row"><BrandMark /><LanguageSwitcher /></div>
     <div class="intro">
-      <h1 id="login-title">登录邮件工作台</h1>
-      <p>使用你的 FlareMail 管理员账号继续。</p>
+      <h1 id="login-title">{t('auth.loginTitle')}</h1>
+      <p>{t('auth.loginIntro')}</p>
     </div>
 
     <form onsubmit={submit}>
@@ -41,7 +44,7 @@
         id="login-email"
         name="email"
         type="email"
-        label="邮箱地址"
+        label={t('auth.email')}
         value={email}
         autocomplete="username"
         placeholder="name@example.com"
@@ -53,27 +56,27 @@
         id="login-password"
         name="password"
         type="password"
-        label="密码"
+        label={t('auth.password')}
         value={password}
         autocomplete="current-password"
-        placeholder="输入密码"
+        placeholder={t('auth.passwordPlaceholder')}
         required
         disabled={pending}
         oninput={(event) => (password = event.currentTarget.value)}
       />
 
       {#if loginError}
-        <Banner variant="danger" title="无法登录">{loginError}</Banner>
+        <Banner variant="danger" title={t('auth.loginFailed')}>{loginError}</Banner>
       {/if}
 
       <Button type="submit" loading={pending} class="w-full">
-        {pending ? '正在验证' : '登录'}
+        {pending ? t('auth.verifying') : t('auth.login')}
       </Button>
     </form>
 
     <footer>
       <LockKeyhole size={15} strokeWidth={1.8} aria-hidden="true" />
-      <span>会话受安全 Cookie 与同源请求保护</span>
+      <span>{t('auth.cookieSecurity')}</span>
     </footer>
   </section>
 </main>
@@ -96,6 +99,9 @@
   }
 
   .brand-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: var(--space-5) var(--space-6);
     border-bottom: 1px solid var(--fm-border);
   }

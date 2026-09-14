@@ -10,6 +10,9 @@
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
+  import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
+  import { formatNumber } from '$lib/i18n';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   const createProfileDraft = (profile: UserProfile): UserProfile => ({ ...profile });
 
@@ -33,6 +36,7 @@
     metrics,
     serviceDegraded,
     status = '',
+    statusError = false,
     pending = false,
     onSave
   }: {
@@ -41,6 +45,7 @@
     metrics: WorkspaceMetrics;
     serviceDegraded: boolean;
     status?: string;
+    statusError?: boolean;
     pending?: boolean;
     onSave: (next: UserProfile) => void | Promise<void>;
   } = $props();
@@ -58,6 +63,8 @@
     })
   );
   let themePreference = $state<ThemePreference>('system');
+  const i18n = useLocale();
+  const { t } = i18n;
 
   onMount(() => {
     themePreference = readThemePreference();
@@ -74,17 +81,18 @@
 </script>
 
 <div class="settings-layout">
-  <header>
-    <h1>设置</h1>
-    <p>管理个人资料、发件身份与邮件偏好。</p>
+  <header class="settings-header">
+    <div><h1>{t('settings.title')}</h1>
+    <p>{t('settings.description')}</p></div>
+    <LanguageSwitcher />
   </header>
 
   <form onsubmit={submit}>
-    <Panel title="个人资料" description="这些信息用于工作区账号上下文。">
+    <Panel title={t('settings.profile')} description={t('settings.profileDescription')}>
       <div class="field-grid">
         <TextField
           id="profile-name"
-          label="显示姓名"
+          label={t('settings.displayName')}
           value={nextProfile.name}
           required
           disabled={pending}
@@ -92,28 +100,28 @@
         />
         <TextField
           id="profile-role"
-          label="职位角色"
+          label={t('settings.role')}
           value={nextProfile.role}
           disabled={pending}
           oninput={(event) => (nextProfile.role = event.currentTarget.value)}
         />
         <TextField
           id="profile-company"
-          label="公司名称"
+          label={t('settings.company')}
           value={nextProfile.company}
           disabled={pending}
           oninput={(event) => (nextProfile.company = event.currentTarget.value)}
         />
         <TextField
           id="profile-timezone"
-          label="所在时区"
+          label={t('settings.timezone')}
           value={nextProfile.timezone}
           disabled={pending}
           oninput={(event) => (nextProfile.timezone = event.currentTarget.value)}
         />
         <TextField
           id="profile-location"
-          label="所在地区"
+          label={t('settings.location')}
           value={nextProfile.location}
           disabled={pending}
           oninput={(event) => (nextProfile.location = event.currentTarget.value)}
@@ -121,11 +129,11 @@
       </div>
     </Panel>
 
-    <Panel title="工作区身份" description="用于界面显示与签名；实际外发地址由服务端投递配置决定。">
+    <Panel title={t('settings.workspaceIdentity')} description={t('settings.workspaceIdentityDescription')}>
       <div class="identity-grid">
         <TextField
           id="profile-email"
-          label="显示邮箱"
+          label={t('settings.displayEmail')}
           type="email"
           value={nextProfile.email}
           required
@@ -134,46 +142,46 @@
         />
         <TextArea
           id="profile-signature"
-          label="纯文本签名"
+          label={t('settings.signature')}
           value={nextProfile.signature}
           rows={4}
           disabled={pending}
-          placeholder="此致，"
+          placeholder={t('settings.signaturePlaceholder')}
           oninput={(event) => (nextProfile.signature = event.currentTarget.value)}
         />
       </div>
-      {#if diagnostics}<p class="section-note">当前通道：<Badge>{diagnostics.outboundMode}</Badge> · 发件地址{diagnostics.senderConfigured ? '已配置' : '缺失'}</p>{/if}
+      {#if diagnostics}<p class="section-note">{t('settings.currentChannel')}：<Badge>{diagnostics.outboundMode}</Badge> · {t('settings.senderAddress')}{diagnostics.senderConfigured ? t('settings.configured') : t('settings.missing')}</p>{/if}
     </Panel>
 
-    <Panel title="自动回复" description="自动回复由 Worker 运行时配置控制，避免在浏览器保存供应商凭据。">
+    <Panel title={t('settings.autoReply')} description={t('settings.autoReplyDescription')}>
       <div class="configuration-row">
-        <div><strong>入站自动回复</strong><p>主题前缀与正文由受保护的运行时变量管理。</p></div>
-        <Badge>{diagnostics?.autoReplyEnabled ? '已启用' : '未启用'}</Badge>
+        <div><strong>{t('settings.inboundAutoReply')}</strong><p>{t('settings.autoReplyDetails')}</p></div>
+        <Badge>{diagnostics?.autoReplyEnabled ? t('settings.enabled') : t('settings.disabled')}</Badge>
       </div>
     </Panel>
 
-    <Panel title="通知" description="控制入站邮件在工作区之外的通知行为。">
+    <Panel title={t('settings.notifications')} description={t('settings.notificationsDescription')}>
       <Switch
         id="profile-forwarding"
         checked={nextProfile.forwardingEnabled}
-        label="入站邮件通知"
-        description="收到新邮件后，向运行时配置的通知地址发送一条摘要通知；不会转发原始邮件。"
+        label={t('settings.inboundNotifications')}
+        description={t('settings.inboundNotificationsDescription')}
         disabled={pending}
         onchange={(checked) => (nextProfile.forwardingEnabled = checked)}
       />
-      <p class="section-note">系统通知：{diagnostics?.notificationEnabled ? '运行时已启用' : '运行时未启用'}。通知地址不会在此页面显示。</p>
+      <p class="section-note">{t('settings.systemNotifications')}：{diagnostics?.notificationEnabled ? t('settings.runtimeEnabled') : t('settings.runtimeDisabled')}。{t('settings.notificationAddressHidden')}</p>
     </Panel>
 
-    <Panel title="外观" description="主题选择保存在当前浏览器，并在首屏绘制前应用。">
+    <Panel title={t('settings.appearance')} description={t('settings.appearanceDescription')}>
       <div class="theme-field">
         <Select
           id="profile-theme"
-          label="颜色主题"
+          label={t('settings.theme')}
           value={themePreference}
           options={[
-            { value: 'system', label: '跟随系统' },
-            { value: 'light', label: '浅色' },
-            { value: 'dark', label: '深色' }
+            { value: 'system', label: t('settings.themeSystem') },
+            { value: 'light', label: t('settings.themeLight') },
+            { value: 'dark', label: t('settings.themeDark') }
           ]}
           onchange={(value) => {
             themePreference = value as ThemePreference;
@@ -183,29 +191,29 @@
       </div>
     </Panel>
 
-    <Panel title="诊断" description="仅显示配置状态，不返回 secret、凭据或邮件正文。">
+    <Panel title={t('settings.diagnostics')} description={t('settings.diagnosticsDescription')}>
       {#if diagnostics}
         <dl class="diagnostic-grid">
-          <div><dt>运行环境</dt><dd><Badge>{diagnostics.environment}</Badge></dd></div>
-          <div><dt>D1</dt><dd>{diagnostics.d1Configured ? '已配置' : '缺失'}</dd></div>
-          <div><dt>R2</dt><dd>{diagnostics.r2Configured ? '已配置' : '缺失'}</dd></div>
-          <div><dt>外发网关</dt><dd>{diagnostics.outboundConfigured ? '已配置' : '缺失'}</dd></div>
-          <div><dt>Webhook 验签</dt><dd>{diagnostics.webhookConfigured ? '已配置' : '缺失'}</dd></div>
-          <div><dt>全局投递状态</dt><dd><Badge class={serviceDegraded ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-success)]'}>{serviceDegraded ? '需处理' : '正常'}</Badge></dd></div>
-          <div><dt>Telegram 通知</dt><dd>{diagnostics.telegramEnabled ? (diagnostics.telegramConfigured ? '已配置' : '需配置') : '未启用'}</dd></div>
-          <div><dt>等待 / 延迟</dt><dd>{metrics.queuedCount} / {metrics.delayedCount}</dd></div>
-          <div><dt>失败 / 退信 / 投诉</dt><dd>{metrics.failedCount} / {metrics.bouncedCount} / {metrics.complainedCount}</dd></div>
-          <div><dt>长时间提交中</dt><dd>{metrics.staleDeliveryCount}</dd></div>
+          <div><dt>{t('settings.runtime')}</dt><dd><Badge>{diagnostics.environment}</Badge></dd></div>
+          <div><dt>D1</dt><dd>{diagnostics.d1Configured ? t('settings.configured') : t('settings.missing')}</dd></div>
+          <div><dt>R2</dt><dd>{diagnostics.r2Configured ? t('settings.configured') : t('settings.missing')}</dd></div>
+          <div><dt>{t('settings.outboundGateway')}</dt><dd>{diagnostics.outboundConfigured ? t('settings.configured') : t('settings.missing')}</dd></div>
+          <div><dt>Webhook {t('settings.signatureVerification')}</dt><dd>{diagnostics.webhookConfigured ? t('settings.configured') : t('settings.missing')}</dd></div>
+          <div><dt>{t('settings.globalDelivery')}</dt><dd><Badge class={serviceDegraded ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-success)]'}>{serviceDegraded ? t('settings.needsAttention') : t('settings.normal')}</Badge></dd></div>
+          <div><dt>Telegram {t('settings.notifications')}</dt><dd>{diagnostics.telegramEnabled ? (diagnostics.telegramConfigured ? t('settings.configured') : t('settings.needsConfiguration')) : t('settings.disabled')}</dd></div>
+          <div><dt>{t('settings.queuedDelayed')}</dt><dd>{formatNumber(metrics.queuedCount, i18n.locale)} / {formatNumber(metrics.delayedCount, i18n.locale)}</dd></div>
+          <div><dt>{t('settings.failedBouncedComplained')}</dt><dd>{formatNumber(metrics.failedCount, i18n.locale)} / {formatNumber(metrics.bouncedCount, i18n.locale)} / {formatNumber(metrics.complainedCount, i18n.locale)}</dd></div>
+          <div><dt>{t('settings.staleSubmitting')}</dt><dd>{formatNumber(metrics.staleDeliveryCount, i18n.locale)}</dd></div>
         </dl>
       {:else}
-        <p class="section-note">诊断状态暂不可用，请稍后刷新。</p>
+        <p class="section-note">{t('settings.diagnosticsUnavailable')}</p>
       {/if}
     </Panel>
 
     <div class="save-row">
-      <Button type="submit" loading={pending}>{pending ? '正在保存' : '保存设置'}</Button>
+      <Button type="submit" loading={pending}>{pending ? t('settings.saving') : t('settings.save')}</Button>
       {#if status}
-        <p role="status" aria-live="polite" class:error={!status.includes('已保存')}>{status}</p>
+        <p role="status" aria-live="polite" class:error={statusError}>{status}</p>
       {/if}
     </div>
   </form>
@@ -219,6 +227,10 @@
   }
 
   header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
     margin-bottom: var(--space-6);
   }
 

@@ -10,6 +10,7 @@ export type DetailCacheOptions = {
   capacity?: number;
   ttlMs?: number;
   now?: () => number;
+  formatError?: (error: unknown, fallback: string) => string;
 };
 
 type CacheEntry = { expiresAt: number; lastAccess: number };
@@ -21,6 +22,7 @@ export class DetailCacheController<T> {
   private readonly capacity: number;
   private readonly ttlMs: number;
   private readonly now: () => number;
+  private readonly formatError: (error: unknown, fallback: string) => string;
   private values: Record<string, T> = {};
   private errors: Record<string, string> = {};
   private pendingId: string | null = null;
@@ -39,6 +41,7 @@ export class DetailCacheController<T> {
       ? options.ttlMs!
       : 5 * 60 * 1000;
     this.now = options.now ?? Date.now;
+    this.formatError = options.formatError ?? ((error, fallback) => error instanceof Error ? error.message : fallback);
   }
 
   async load(id: string, loader: (signal: AbortSignal) => Promise<T>, force = false) {
@@ -73,7 +76,7 @@ export class DetailCacheController<T> {
       if (request.isCurrent()) {
         this.errors = {
           ...this.errors,
-          [id]: error instanceof Error ? error.message : this.fallbackError
+          [id]: this.formatError(error, this.fallbackError)
         };
         this.emit();
       }
