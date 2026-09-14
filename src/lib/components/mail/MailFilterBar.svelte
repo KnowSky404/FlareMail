@@ -16,11 +16,11 @@
 
   const { t } = useLocale();
 
-  const options: Array<{ value: MailFilter; label: string }> = [
+  const options = $derived<Array<{ value: MailFilter; label: string }>>([
     { value: 'all', label: t('mail.all') },
     { value: 'unread', label: t('mail.unread') },
     { value: 'starred', label: t('mail.starred') }
-  ];
+  ]);
 </script>
 
 <div class="flex min-w-0 items-center gap-1" role="group" aria-label={t('mail.filter')}>

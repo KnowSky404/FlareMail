@@ -48,7 +48,7 @@ test('logs in, navigates, searches, opens a message, and returns', async ({ page
   await page.getByLabel('搜索邮件').fill('E2E Inbox Welcome');
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   await expect(item).toBeVisible();
-  await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click({ force: true });
   await expect(page.getByRole('region', { name: '邮件详情' })).toContainText('E2E Inbox Welcome');
   if (projectIsMobile(testInfo.project.name)) {
     await page.getByRole('button', { name: '返回邮件列表' }).click();

@@ -5,7 +5,8 @@
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
   import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
   import { ClientApiError } from '$lib/client/api';
-  import { fetchDeliveryDetail, fetchInboundDetail, fetchMessageBody, updateMessageFlags } from '$lib/client/workspace-api';
+  import { fetchDeliveryDetail, fetchInboundDetail, fetchMessageBody, fetchWorkspaceMessage, updateMessageFlags } from '$lib/client/workspace-api';
+  import { createWorkspaceSync } from '$lib/client/workspace-sync';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let { data }: { data: PageData } = $props();
@@ -41,10 +42,24 @@
     try {
       const result = await updateMessageFlags(message.id, patch);
       messageOverride = result.message;
+      sync?.publish({ type: 'message-updated', id: result.message.id });
     } catch (error) {
       mutationError = errorMessage(error, t('mail.flagUpdateError'));
     } finally {
       mutationPending = false;
+    }
+  }
+
+  let sync: ReturnType<typeof createWorkspaceSync> | null = null;
+
+  async function refreshMessageFromWorkspace() {
+    try {
+      const result = await fetchWorkspaceMessage(message.id);
+      messageOverride = result.message;
+    } catch (error) {
+      if (error instanceof ClientApiError && [401, 403, 404].includes(error.status)) {
+        window.location.assign(data.backHref);
+      }
     }
   }
 
@@ -56,6 +71,13 @@
 
   onMount(() => {
     const controller = new AbortController();
+    sync = createWorkspaceSync((event) => {
+      if (event.type === 'session-ended') {
+        window.location.assign(data.backHref);
+        return;
+      }
+      if (event.id === message.id) void refreshMessageFromWorkspace();
+    });
 
     if (message.source === 'inbound') {
       inboundDetailPending = true;
@@ -99,7 +121,11 @@
       }
     }
 
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      sync?.close();
+      sync = null;
+    };
   });
 </script>
 

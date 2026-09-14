@@ -10,12 +10,14 @@
     title,
     children,
     onClose,
+    showHeader = true,
     class: className = ''
   }: {
     open?: boolean;
     title: string;
     children?: Snippet;
     onClose?: () => void;
+    showHeader?: boolean;
     class?: string;
   } = $props();
   const { t } = useLocale();
@@ -96,12 +98,16 @@
       aria-modal="true"
       aria-labelledby={`${readerId}-title`}
     >
-      <header class="flex min-h-12 shrink-0 items-center gap-3 border-b border-[var(--fm-border)] px-3 sm:px-5">
-        <h2 id={`${readerId}-title`} class="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--fm-text)]">{title}</h2>
-        <button class={cn('grid size-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)]', focusRing)} type="button" aria-label={t('reader.close')} title={t('reader.close')} onclick={() => onClose?.()}>
-          <X class="size-5" aria-hidden="true" />
-        </button>
-      </header>
+      {#if showHeader}
+        <header class="flex min-h-12 shrink-0 items-center gap-3 border-b border-[var(--fm-border)] px-3 sm:px-5">
+          <h2 id={`${readerId}-title`} class="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--fm-text)]">{title}</h2>
+          <button class={cn('grid size-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)]', focusRing)} type="button" aria-label={t('reader.close')} title={t('reader.close')} onclick={() => onClose?.()}>
+            <X class="size-5" aria-hidden="true" />
+          </button>
+        </header>
+      {:else}
+        <h2 id={`${readerId}-title`} class="sr-only">{title}</h2>
+      {/if}
       {#if children}<div class="min-h-0 flex-1">{@render children()}</div>{/if}
     </div>
   </div>

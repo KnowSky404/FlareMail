@@ -300,7 +300,7 @@
       {:else if telegramState.binding?.state === 'active'}
         <div class="stack">
           <div class="notice"><Badge class={telegramState.binding.enabled ? 'success' : ''}>{telegramState.binding.enabled ? t('telegram.enabled') : t('telegram.bound')}</Badge><span>{telegramState.binding.enabled ? t('telegram.enabledDescription') : t('telegram.boundDescription')}</span></div>
-          <div class="identity-summary" role="group" aria-label={t('telegram.boundIdentity')}>
+          <div class="identity-summary" role="group" aria-label={t('telegram.boundIdentityGroup')}>
             <span class="muted">{t('telegram.boundIdentity')}</span>
             <strong>{telegramState.binding.telegramDisplayName || t('telegram.user')}</strong>
             {#if telegramState.binding.telegramUsername}<span class="muted">@{telegramState.binding.telegramUsername}</span>{/if}

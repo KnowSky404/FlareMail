@@ -10,7 +10,7 @@
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
   import type { LucideIcon } from '@lucide/svelte';
   import type { MailboxSection } from '$lib/domain/mail';
-  import { formatNumber } from '$lib/i18n';
+  import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
@@ -84,7 +84,7 @@
         <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
         <span class="label">{item.label}</span>
         {#if item.count > 0}
-          <span class="count" aria-label={t('mail.messageCount', { count: formatNumber(item.count, i18n.locale) })}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
+          <span class="count" aria-label={translateCount(i18n.locale, 'mail.messageCount', item.count)}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
         {/if}
       </button>
     {/each}

@@ -4,7 +4,7 @@
   import MailFilterBar, { type MailFilter } from './MailFilterBar.svelte';
   import MailSearchBar from './MailSearchBar.svelte';
   import type { MailboxSection } from '$lib/domain/mail';
-  import { formatNumber } from '$lib/i18n';
+  import { translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
@@ -46,9 +46,9 @@
   });
 
   const heading = $derived(title || sectionLabels[activeSection]);
-  const formattedCount = $derived(formatNumber(count, i18n.locale));
-  const formattedUnreadCount = $derived(formatNumber(unreadCount, i18n.locale));
-  const countLabel = $derived(query.trim() ? t('mail.resultCount', { count: formattedCount }) : t('mail.folderCount', { count: formattedCount }));
+  const countLabel = $derived(query.trim()
+    ? translateCount(i18n.locale, 'mail.resultCount', count)
+    : translateCount(i18n.locale, 'mail.folderCount', count));
 </script>
 
 <header class="border-b border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-3 sm:px-5">
@@ -57,7 +57,7 @@
       <h1 class="truncate text-lg font-semibold tracking-tight text-[var(--fm-text)]">{heading}</h1>
       <span class="shrink-0 text-xs tabular-nums text-[var(--fm-text-muted)]">{countLabel}</span>
       {#if unreadCount > 0 && activeSection !== 'drafts'}
-        <span class="shrink-0 text-xs text-[var(--fm-primary)]">{t('mail.unreadCount', { count: formattedUnreadCount })}</span>
+        <span class="shrink-0 text-xs text-[var(--fm-primary)]">{translateCount(i18n.locale, 'mail.unreadCount', unreadCount)}</span>
       {/if}
     </div>
     <IconButton

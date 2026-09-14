@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { sessionCookieNamesForRequest } from './hooks.server';
+import { isPrivateReaderPath, sessionCookieNamesForRequest } from './hooks.server';
 import { legacyWorkspaceSessionCookie, secureWorkspaceSessionCookie, workspaceSessionCookie } from '$lib/server/workspace';
 
 describe('request session cookie policy', () => {
@@ -11,5 +11,11 @@ describe('request session cookie policy', () => {
   test('accepts legacy cookies only on local HTTP requests', () => {
     expect(sessionCookieNamesForRequest(new URL('http://127.0.0.1:8787')))
       .toEqual([workspaceSessionCookie, legacyWorkspaceSessionCookie]);
+  });
+
+  test('marks standalone message documents as private reader routes', () => {
+    expect(isPrivateReaderPath('/messages/inbound-1')).toBe(true);
+    expect(isPrivateReaderPath('/api/workspace/messages/inbound-1')).toBe(false);
+    expect(isPrivateReaderPath('/')).toBe(false);
   });
 });

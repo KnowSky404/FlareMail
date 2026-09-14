@@ -3,6 +3,7 @@
   import { getDeliveryRetryEligibility } from '$lib/domain/mail';
   import type { DeliveryDetail, DeliveryEvent, DeliveryEventType, DeliveryStatus, MailMessage } from '$lib/domain/mail';
   import { StatusBadge } from '$lib/components/ui';
+  import { translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
@@ -138,7 +139,7 @@
       <details class="mt-4 group" open>
         <summary class="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-[var(--fm-text-secondary)]">
           <span class="transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-          {t('mail.viewDeliveryEvents', { count: sortedEvents.length })}
+          {translateCount(i18n.locale, 'mail.viewDeliveryEvents', sortedEvents.length)}
         </summary>
         <ol class="relative ml-2 mt-3 space-y-0 pl-7" aria-label={t('mail.deliveryEventList')}>
           {#each sortedEvents as event (event.id)}

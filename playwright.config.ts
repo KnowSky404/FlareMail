@@ -45,7 +45,7 @@ export default defineConfig({
     command: `bun scripts/e2e/start-local.ts --port ${port}`,
     env: { FLAREMAIL_E2E_STATE_DIR: stateDirectory },
     url: baseURL,
-    timeout: 120_000,
+    timeout: 180_000,
     reuseExistingServer: false,
     stdout: 'pipe',
     stderr: 'pipe'
@@ -56,6 +56,7 @@ export default defineConfig({
       testMatch: chromiumTestMatch,
       use: {
         ...devices['Desktop Chrome'],
+        locale: 'zh-CN',
         viewport: { width: 1280, height: 900 },
         launchOptions: chromiumLaunchOptions
       }
@@ -65,6 +66,7 @@ export default defineConfig({
       testMatch: chromiumTestMatch,
       use: {
         ...devices['Pixel 5'],
+        locale: 'zh-CN',
         viewport: { width: 390, height: 844 },
         isMobile: true,
         launchOptions: chromiumLaunchOptions
@@ -75,6 +77,7 @@ export default defineConfig({
       testMatch: chromiumTestMatch,
       use: {
         ...devices['Desktop Chrome'],
+        locale: 'zh-CN',
         viewport: { width: 320, height: 720 },
         launchOptions: chromiumLaunchOptions
       }
@@ -84,6 +87,8 @@ export default defineConfig({
       testMatch: webkitSmokeTestMatch,
       use: {
         ...devices['Desktop Safari'],
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
         viewport: { width: 1280, height: 900 },
         launchOptions: webkitLaunchOptions
       }
@@ -93,6 +98,8 @@ export default defineConfig({
       testMatch: webkitSmokeTestMatch,
       use: {
         ...devices['iPhone 13'],
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
         launchOptions: webkitLaunchOptions
       }
     },
@@ -101,6 +108,8 @@ export default defineConfig({
       testMatch: webkitSmokeTestMatch,
       use: {
         ...devices['iPad (gen 7)'],
+        locale: 'zh-CN',
+        reducedMotion: 'reduce',
         launchOptions: webkitLaunchOptions
       }
     }

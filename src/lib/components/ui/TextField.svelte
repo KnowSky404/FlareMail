@@ -2,7 +2,7 @@
   import { controlBase, cn } from './styles';
 
   let {
-    value = '',
+    value = $bindable(''),
     label,
     hint,
     error,
@@ -34,6 +34,11 @@
   } = $props();
 
   const describedBy = $derived([hint ? `${id}-hint` : '', error ? `${id}-error` : ''].filter(Boolean).join(' ') || undefined);
+
+  function handleInput(event: Event & { currentTarget: HTMLInputElement }) {
+    value = event.currentTarget.value;
+    oninput?.(event);
+  }
 </script>
 
 <label class="grid gap-1.5" for={id}>
@@ -51,7 +56,7 @@
     aria-invalid={error ? 'true' : undefined}
     aria-describedby={describedBy}
     class={cn(controlBase, 'w-full px-3 py-2', error && 'border-red-400 focus-visible:border-red-500 focus-visible:ring-red-500/25', className)}
-    {oninput}
+    oninput={handleInput}
   />
   {#if error}<span id={`${id}-error`} class="text-xs text-[var(--fm-danger)]" role="alert">{error}</span>{:else if hint}<span id={`${id}-hint`} class="text-xs text-[var(--fm-text-muted)]">{hint}</span>{/if}
 </label>

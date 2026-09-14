@@ -38,6 +38,7 @@
     onReloadDeliveryDetail,
     onRetryDelivery,
     onOpenReader,
+    onCloseReader,
     standaloneHref = null,
     onSelectThreadMessage,
     onBack,
@@ -77,6 +78,7 @@
     onReloadDeliveryDetail?: (message: MailMessage) => void | Promise<void>;
     onRetryDelivery?: (message: MailMessage) => void | Promise<void>;
     onOpenReader?: (message: MailMessage) => void;
+    onCloseReader?: () => void;
     standaloneHref?: string | null;
     onSelectThreadMessage?: (message: MailMessage) => void | Promise<void>;
     onBack?: () => void;
@@ -137,6 +139,7 @@
     {onReloadDeliveryDetail}
     {onRetryDelivery}
     {onOpenReader}
+    {onCloseReader}
     {standaloneHref}
   />
 

@@ -18,7 +18,7 @@
   } from '$lib/client/workspace-api';
   import { ClientApiError } from '$lib/client/api';
   import { onMount } from 'svelte';
-  import { formatNumber } from '$lib/i18n';
+  import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   const createComposeState = (value: ComposeInput | null, fallbackDraftId?: string): ComposeInput => ({
@@ -617,7 +617,7 @@
       {/if}
       {#if mode === 'forward' && input.forwardAttachmentCandidates?.length}
         <div class="flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2 text-xs">
-          <span class="text-[var(--fm-text-secondary)]">{t('compose.forwardAttachmentMessage', { count: input.forwardAttachmentCandidates.length })}</span>
+          <span class="text-[var(--fm-text-secondary)]">{translateCount(i18n.locale, 'compose.forwardAttachmentMessage', input.forwardAttachmentCandidates.length)}</span>
           <div class="flex gap-2">
             <button class="min-h-8 rounded px-2 text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={forwardAttachmentImporting} onclick={excludeForwardAttachments}>{t('compose.excludeAttachments')}</button>
             <button class="min-h-8 rounded px-2 font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={forwardAttachmentImporting || attachmentBusy} onclick={() => void includeForwardAttachments()}>{forwardAttachmentImporting ? t('compose.includingAttachments') : t('compose.includeAttachments')}</button>

@@ -11,11 +11,15 @@ import {
   parseLocale,
   createLocaleContext,
   translate,
+  translateCount,
   type MessageKey
 } from './index';
 import {
+  BROWSER_LOCALE_PREFERENCE,
   LOCALE_COOKIE_NAME,
   LOCALE_STORAGE_KEY,
+  parseLocalePreference,
+  readLocaleSelection,
   readLocalePreference,
   resolveLocale,
   writeLocalePreference
@@ -45,6 +49,9 @@ describe('message catalogs and formatters', () => {
     }
     expect(translate('en', 'mail.messageCount', { count: 3 })).toBe('3 messages');
     expect(translate('zh-CN', 'mail.messageCount', { count: 3 })).toBe('3 封邮件');
+    expect(translateCount('en', 'mail.messageCount', 1)).toBe('1 message');
+    expect(translateCount('en', 'mail.messageCount', 2)).toBe('2 messages');
+    expect(translateCount('zh-CN', 'mail.messageCount', 1)).toBe('1 封邮件');
     expect(interpolate('Hello, {name}!', { name: 'Ada' })).toBe('Hello, Ada!');
     expect(translate('en', 'missing.key' as MessageKey)).toBe('missing.key');
     expect(translate('invalid' as 'en', 'common.language')).toBe('语言');
@@ -92,6 +99,29 @@ describe('locale preferences', () => {
     expect(readLocalePreference({ cookie: '', storage: storageLike, acceptLanguage: 'zh-CN' })).toBe('en');
     storage.set(LOCALE_STORAGE_KEY, 'invalid');
     expect(readLocalePreference({ cookie: '', storage: storageLike, acceptLanguage: 'zh-CN' })).toBe('zh-CN');
+  });
+
+  test('keeps browser-following as a persisted preference while resolving its effective locale', () => {
+    const storage = new Map<string, string>();
+    const storageLike = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value)
+    };
+
+    expect(readLocaleSelection({ cookie: 'flaremail-locale=browser', acceptLanguage: 'en-US' })).toBe(BROWSER_LOCALE_PREFERENCE);
+    expect(resolveLocale({ cookie: 'flaremail-locale=browser', acceptLanguage: 'en-US' })).toBe('en');
+    expect(resolveLocale({ cookie: 'flaremail-locale=browser', acceptLanguage: 'fr-FR' })).toBe('zh-CN');
+
+    const documentLike = { cookie: '' };
+    expect(writeLocalePreference(BROWSER_LOCALE_PREFERENCE, {
+      document: documentLike,
+      storage: storageLike,
+      acceptLanguage: 'en-US'
+    })).toBe('en');
+    expect(storage.get(LOCALE_STORAGE_KEY)).toBe(BROWSER_LOCALE_PREFERENCE);
+    expect(documentLike.cookie.startsWith(`${LOCALE_COOKIE_NAME}=browser;`)).toBe(true);
+    expect(parseLocalePreference('browser')).toBe(BROWSER_LOCALE_PREFERENCE);
+    expect(parseLocalePreference('javascript:alert(1)')).toBeNull();
   });
 
   test('writes only supported cookie and storage values and emits the safe locale', () => {

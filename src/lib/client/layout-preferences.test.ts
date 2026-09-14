@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_LAYOUT_PREFERENCES,
   clampListWidth,
+  listWidthFromKeyboard,
   normalizeLayoutPreferences,
   readLayoutPreferences,
   writeLayoutPreferences
@@ -28,6 +29,15 @@ describe('layout preferences', () => {
     expect(clampListWidth(200)).toBe(280);
     expect(clampListWidth(480, 600)).toBe(280);
     expect(clampListWidth(420, 900)).toBe(420);
+    expect(clampListWidth(480, 648)).toBe(280);
+  });
+
+  test('supports keyboard resize, including resetting to the default width', () => {
+    expect(listWidthFromKeyboard(360, 'ArrowRight')).toBe(376);
+    expect(listWidthFromKeyboard(360, 'Home')).toBe(280);
+    expect(listWidthFromKeyboard(360, 'End')).toBe(480);
+    expect(listWidthFromKeyboard(420, 'Enter')).toBe(DEFAULT_LAYOUT_PREFERENCES.listWidth);
+    expect(listWidthFromKeyboard(420, 'Escape')).toBeNull();
   });
 
   test('round trips versioned values through storage', () => {

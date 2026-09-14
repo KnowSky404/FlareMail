@@ -45,24 +45,22 @@
         name="email"
         type="email"
         label={t('auth.email')}
-        value={email}
+        bind:value={email}
         autocomplete="username"
         placeholder="name@example.com"
         required
         disabled={pending}
-        oninput={(event) => (email = event.currentTarget.value)}
       />
       <TextField
         id="login-password"
         name="password"
         type="password"
         label={t('auth.password')}
-        value={password}
+        bind:value={password}
         autocomplete="current-password"
         placeholder={t('auth.passwordPlaceholder')}
         required
         disabled={pending}
-        oninput={(event) => (password = event.currentTarget.value)}
       />
 
       {#if loginError}

@@ -70,11 +70,14 @@
   import { TrashController } from '$lib/client/trash-controller';
   import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl } from '$lib/client/workspace-url-controller';
   import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
+  import { createWorkspaceSync, type WorkspaceSyncController } from '$lib/client/workspace-sync';
+  import { LOCALE_CHANGE_EVENT } from '$lib/client/locale-preferences';
   import { useLocale } from '$lib/i18n/runtime.svelte';
-  import { formatDate, formatNumber } from '$lib/i18n';
+  import { formatDate, formatNumber, translateCount } from '$lib/i18n';
   import {
     clampListWidth,
     layoutPreferenceRange,
+    listWidthFromKeyboard,
     readLayoutPreferences,
     writeLayoutPreferences,
     type DisplayDensity
@@ -154,6 +157,8 @@
   let readerOpen = $state(false);
   let sidebarCollapsed = $state(false);
   let listWidth = $state(360);
+  let workspaceElement = $state<HTMLElement>();
+  let workspaceWidth = $state(Number.POSITIVE_INFINITY);
   let density = $state<DisplayDensity>('comfortable');
   let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
   let remoteImagesMessageId = $state<string | null>(null);
@@ -190,9 +195,16 @@
   let pending = $state(false);
   let mailboxLoading = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let workspaceSync: WorkspaceSyncController | null = null;
   let composeSavePromise: Promise<void> | null = null;
   const composeAutosave = new ComposeAutosaveController();
   const listWidthRange = layoutPreferenceRange();
+  const effectiveListWidth = $derived(clampListWidth(listWidth, workspaceWidth));
+  const effectiveListWidthRange = $derived({
+    min: clampListWidth(listWidthRange.min, workspaceWidth),
+    max: clampListWidth(listWidthRange.max, workspaceWidth)
+  });
+  let stopListResize: (() => void) | null = null;
   const inboundDetailCache = new DetailCacheController<InboundMessageDetail>(t('mail.inboundDetailFailed'), (snapshot) => {
     inboundDetails = snapshot.values;
     inboundDetailErrors = snapshot.errors;
@@ -879,12 +891,12 @@
     scheduleMailboxRefresh(activeSection, '', 'all', 0);
   }
 
-  async function refreshWorkspace() {
+  async function refreshWorkspace(announce = true) {
     if (activeSection === 'trash') {
       const refreshed = await trashController.load();
       if (refreshed) {
         runtimeOperationError = false;
-        notify(t('notify.trashRefreshed'), 'success');
+        if (announce) notify(t('notify.trashRefreshed'), 'success');
       }
       return;
     }
@@ -895,8 +907,34 @@
     );
     if (refreshed) {
       runtimeOperationError = false;
-      notify(t('notify.mailboxRefreshed'), 'success');
+      if (announce) notify(t('notify.mailboxRefreshed'), 'success');
     }
+  }
+
+  function invalidateMessageCaches(messageId: string) {
+    inboundDetailCache.invalidate(messageId);
+    deliveryDetailCache.invalidate(messageId);
+    workspaceBodyCache.invalidate(messageId);
+  }
+
+  function handleWorkspaceSync(event: import('$lib/client/workspace-sync').WorkspaceSyncEvent) {
+    if (event.type === 'session-ended') {
+      if (!authenticated) return;
+      resetWorkspace();
+      void goto(buildWorkspaceUrl(page.url, {
+        section: 'inbox', query: '', filter: 'all', messageId: null
+      }), { replaceState: true, noScroll: true, keepFocus: false });
+      return;
+    }
+
+    if (event.id) invalidateMessageCaches(event.id);
+    const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
+    if (current) {
+      if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
+      else void loadWorkspaceBody(current, true);
+      if (current.folder === 'sent' && current.source === 'workspace') void loadDeliveryDetail(current, true);
+    }
+    if (authenticated) void refreshWorkspace(false);
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {
@@ -949,6 +987,7 @@
       if (action === 'trash') trashLoaded = false;
       selectedMessageIds = [];
       await refreshWorkspace();
+      workspaceSync?.publish({ type: 'mailbox-refresh' });
       notify(
         action === 'archive'
           ? t('notify.bulkArchived')
@@ -1106,6 +1145,7 @@
 
     try {
       await deleteSession();
+      workspaceSync?.publish({ type: 'session-ended' });
       resetWorkspace();
       await goto(buildWorkspaceUrl(page.url, {
         section: 'inbox', query: '', filter: 'all', messageId: null
@@ -1308,6 +1348,7 @@
       const deliveryTone: ToastTone = result.message.deliveryResultKind === 'accepted' ? 'success' : 'warning';
       resetComposeState();
       notify(`${deliveryMessage}${deliveryReceipt}`, deliveryTone, { persistent: deliveryTone === 'warning' });
+      workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
     } catch (error) {
       notifyError(error, t('notify.sendFailed'));
     } finally {
@@ -1344,6 +1385,7 @@
                 : t('notify.retryFailed', { subject: result.message.subject, error: result.message.deliveryError ?? t('notify.tryLater') });
       const deliveryTone: ToastTone = result.message.deliveryResultKind === 'accepted' ? 'success' : 'warning';
       notify(deliveryMessage, deliveryTone, { persistent: deliveryTone === 'warning' });
+      workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
     } catch (error) {
       notifyError(error, t('notify.retryDeliveryFailed'));
     } finally {
@@ -1366,6 +1408,7 @@
       if (nextBanner) {
         notify(nextBanner, 'success');
       }
+      workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
     } catch (error) {
       notifyError(error, t('notify.updateMessageFailed'));
     } finally {
@@ -1465,6 +1508,7 @@
   }
 
   function startListResize(event: PointerEvent) {
+    stopListResize?.();
     if (event.button !== 0) return;
     event.preventDefault();
     const handle = event.currentTarget as HTMLElement;
@@ -1473,37 +1517,38 @@
     if (!startRect) return;
     const availableWidth = startRect.width;
     document.body.classList.add('fm-is-resizing');
+    handle.setPointerCapture?.(event.pointerId);
     const move = (moveEvent: PointerEvent) => {
       updateListWidth(moveEvent.clientX - startRect.left, availableWidth);
     };
+    let finished = false;
     const finish = () => {
+      if (finished) return;
+      finished = true;
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture?.(event.pointerId);
       document.body.classList.remove('fm-is-resizing');
       persistLayoutPreferences();
+      if (stopListResize === finish) stopListResize = null;
     };
+    stopListResize = finish;
     window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', finish, { once: true });
-    window.addEventListener('pointercancel', finish, { once: true });
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
   }
 
   function adjustListWidth(event: KeyboardEvent) {
     const workspace = (event.currentTarget as HTMLElement).closest<HTMLElement>('.mail-workspace');
     const availableWidth = workspace?.getBoundingClientRect().width ?? Number.POSITIVE_INFINITY;
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault();
-      updateListWidth(listWidth + (event.key === 'ArrowRight' ? 16 : -16), availableWidth);
-      persistLayoutPreferences();
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      updateListWidth(listWidthRange.min, availableWidth);
-      persistLayoutPreferences();
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      updateListWidth(listWidthRange.max, availableWidth);
-      persistLayoutPreferences();
-    }
+    const nextWidth = listWidthFromKeyboard(listWidth, event.key, availableWidth);
+    if (nextWidth === null) return;
+    event.preventDefault();
+    updateListWidth(nextWidth, availableWidth);
+    persistLayoutPreferences();
   }
 
   function openReader() {
@@ -1554,6 +1599,7 @@
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
       }
+      workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId });
 
       notify(
         t('notify.movedTrash'),
@@ -1566,6 +1612,7 @@
               const restored = await restoreTrashItem(result.removedId);
               metrics = restored.metrics;
               trashLoaded = false;
+              workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId });
               if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace();
               notify(t('notify.trashUndone'), 'success');
             }
@@ -1595,6 +1642,7 @@
       metrics = result.metrics;
       runtimeOperationError = false;
       removeTrashItemFromView(message.id);
+      workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       notify(t('notify.restoredTo', { folder: result.originalFolder === 'archive' ? t('shell.archive') : result.originalFolder === 'sent' ? t('shell.sent') : result.originalFolder === 'drafts' ? t('shell.drafts') : t('shell.inbox') }), 'success');
     } catch (error) {
       notifyError(error, t('notify.restoreFailed'));
@@ -1613,6 +1661,7 @@
       inboundDetailCache.invalidate(message.id);
       deliveryDetailCache.invalidate(message.id);
       workspaceBodyCache.invalidate(message.id);
+      workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       notify(
         result.cleanupPending ? t('notify.permanentDeleteCleanupPending') : t('notify.permanentDeleted'),
         'warning',
@@ -1641,7 +1690,8 @@
       selectedMessageId = null;
       mobileDetailOpen = false;
       emptyTrashConfirmOpen = false;
-      notify(t('notify.trashEmptied', { count: formatNumber(result.deleted, i18n.locale) }), 'warning');
+      workspaceSync?.publish({ type: 'mailbox-refresh' });
+      notify(translateCount(i18n.locale, 'notify.trashEmptied', result.deleted), 'warning');
     } catch (error) {
       notifyError(error, t('notify.emptyTrashFailed'));
     } finally {
@@ -1764,12 +1814,33 @@
     if (next) void handleSelectMessage(next);
   }
 
+  $effect(() => {
+    const element = workspaceElement;
+    if (!element || typeof window === 'undefined') return;
+
+    const measure = () => {
+      const width = element.getBoundingClientRect().width;
+      if (Number.isFinite(width) && width > 0) workspaceWidth = width;
+    };
+    measure();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measure);
+      observer.observe(element);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  });
+
   onMount(() => {
     const layout = readLayoutPreferences(localStorage);
     sidebarCollapsed = layout.sidebarCollapsed;
     listWidth = layout.listWidth;
     density = layout.density;
     document.documentElement.dataset.density = density;
+    workspaceSync = createWorkspaceSync(handleWorkspaceSync);
 
     const handleShortcut = (event: KeyboardEvent) => {
       if (!authenticated || composeOpen) return;
@@ -1801,8 +1872,14 @@
     };
 
     document.addEventListener('keydown', handleShortcut);
+    const handleLocaleChange = () => toastController.reset();
+    window.addEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
     return () => {
       document.removeEventListener('keydown', handleShortcut);
+      window.removeEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
+      workspaceSync?.close();
+      workspaceSync = null;
+      stopListResize?.();
       document.body.classList.remove('fm-is-resizing');
       clearMailboxRefreshTimer();
       mailboxController.cancel();
@@ -1907,7 +1984,14 @@
                 />
               </div>
             {:else}
-              <div class:detail-open={mobileDetailOpen} class="mail-workspace" style={`--fm-list-width: ${listWidth}px`}>
+              <div
+                bind:this={workspaceElement}
+                class:detail-open={mobileDetailOpen}
+                class="mail-workspace"
+                data-list-width-preference={listWidth}
+                data-list-width-effective={effectiveListWidth}
+                style={`--fm-list-width: ${effectiveListWidth}px`}
+              >
                 <section class="mail-list-panel" aria-label={t('mail.listLabel', { section: t('shell.mailNavigation') })}>
                   <FolderHeader
                     activeSection={activeSection}
@@ -1943,7 +2027,7 @@
                         <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('star')}>{t('mail.star')}</button>
                         <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unstar')}>{t('mail.unstar')}</button>
                         <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('trash')}>{t('mail.moveTrash')}</button>
-                        <span class="text-xs text-[var(--fm-text-muted)]">{t('mail.selectedCount', { count: formatNumber(selectedMessageIds.length, i18n.locale) })}</span>
+                        <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.selectedCount', selectedMessageIds.length)}</span>
                       {/if}
                     </div>
                   {/if}
@@ -1979,9 +2063,10 @@
                   role="separator"
                   tabindex="0"
                   aria-orientation="vertical"
-                  aria-valuemin={listWidthRange.min}
-                  aria-valuemax={listWidthRange.max}
-                  aria-valuenow={listWidth}
+                  aria-valuemin={effectiveListWidthRange.min}
+                  aria-valuemax={effectiveListWidthRange.max}
+                  aria-valuenow={effectiveListWidth}
+                  aria-keyshortcuts="ArrowLeft ArrowRight Home End Enter"
                   aria-label={t('mail.adjustList')}
                   title={t('mail.listWidthHint')}
                   onpointerdown={startListResize}
@@ -2041,7 +2126,7 @@
     </div>
 
     {#if readerOpen && selectedMessage}
-      <ReaderDialog open title={selectedMessage.subject || t('mail.noSubject')} onClose={() => (readerOpen = false)}>
+      <ReaderDialog open showHeader={false} title={selectedMessage.subject || t('mail.noSubject')} onClose={() => (readerOpen = false)}>
         <MessageDetail
           message={selectedMessage}
           deliveryDetail={selectedDeliveryDetail}
@@ -2072,6 +2157,7 @@
           onSelectThreadMessage={handleSelectMessage}
           onToggleRead={handleToggleRead}
           onToggleStar={handleToggleStar}
+          onCloseReader={() => (readerOpen = false)}
           bodyView={selectedBodyView}
           allowRemoteImages={selectedRemoteImagesAllowed}
           readerMode

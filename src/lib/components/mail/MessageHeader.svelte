@@ -12,7 +12,8 @@
     ReplyAll,
     RotateCcw,
     Star,
-    Trash2
+    Trash2,
+    X
   } from '@lucide/svelte';
   import {
     parseAddressList,
@@ -22,7 +23,7 @@
     type MailMessage
   } from '$lib/domain/mail';
   import { ConfirmDialog, DropdownMenu, StatusBadge } from '$lib/components/ui';
-  import { formatNumber } from '$lib/i18n';
+  import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
@@ -48,6 +49,7 @@
     onReloadDeliveryDetail,
     onRetryDelivery,
     onOpenReader,
+    onCloseReader,
     standaloneHref,
     trashMode = false
   }: {
@@ -73,6 +75,7 @@
     onReloadDeliveryDetail?: (message: MailMessage) => void | Promise<void>;
     onRetryDelivery?: (message: MailMessage) => void | Promise<void>;
     onOpenReader?: (message: MailMessage) => void;
+    onCloseReader?: () => void;
     standaloneHref?: string | null;
     trashMode?: boolean;
   } = $props();
@@ -181,7 +184,7 @@
       {/if}
       <div class="min-w-0 flex-1">
         <div class="flex min-w-0 items-center gap-2">
-          <h1 class="truncate text-base font-semibold text-[var(--fm-text)] sm:text-lg">{message.subject || t('mail.noSubject')}</h1>
+          <h1 class="truncate text-base font-semibold text-[var(--fm-text)] sm:text-lg" title={message.subject || t('mail.noSubject')}>{message.subject || t('mail.noSubject')}</h1>
           {#if message.folder === 'sent' && deliveryStatus}
             <StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)} class="hidden shrink-0 sm:inline-flex">
               {deliveryLabel(deliveryStatus)}
@@ -265,6 +268,17 @@
           {/snippet}
         </DropdownMenu>
         {/if}
+        {#if onCloseReader}
+          <button
+            class="grid size-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)]"
+            aria-label={t('reader.close')}
+            title={t('reader.close')}
+            type="button"
+            onclick={() => onCloseReader?.()}
+          >
+            <X class="size-[18px]" aria-hidden="true" />
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -320,7 +334,7 @@
                 {/if}
                 {#if inboundDetail.headers.length}
                   <details class="mt-3 border-t border-[var(--fm-border)] pt-2">
-                    <summary class="cursor-pointer font-medium text-[var(--fm-text-secondary)]">{t('mail.filteredHeaders', { count: formatNumber(inboundDetail.headers.length, i18n.locale) })}</summary>
+                    <summary class="cursor-pointer font-medium text-[var(--fm-text-secondary)]">{translateCount(i18n.locale, 'mail.filteredHeaders', inboundDetail.headers.length)}</summary>
                     <dl class="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                       {#each inboundDetail.headers as header}
                         <dt class="font-mono">{header.name}</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{header.value}</dd>
@@ -343,7 +357,7 @@
           {#each message.labels as label}<span class="rounded-full bg-[var(--fm-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--fm-text-secondary)]">{label}</span>{/each}
         {/if}
         {#if inboundDetail}
-          <span class="text-xs text-[var(--fm-text-muted)]">{t('mail.attachmentSummary', { count: formatNumber(inboundDetail.attachments.length, i18n.locale), size: formatBytes(inboundDetail.rawSize) })}</span>
+          <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.attachmentSummary', inboundDetail.attachments.length, { size: formatBytes(inboundDetail.rawSize) })}</span>
         {/if}
       </div>
 

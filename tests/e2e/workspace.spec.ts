@@ -1,6 +1,6 @@
 import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
@@ -235,6 +235,79 @@ test('opens an older inbound message from a cold deep link without selecting the
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('persists the reading layout, resets the splitter, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop project covers the wide reading workspace controls.');
+  await login(page);
+
+  const sidebar = page.locator('#fm-main-sidebar');
+  const collapse = sidebar.getByRole('button', { name: '折叠侧边栏' });
+  await collapse.click();
+  await expect(sidebar).toHaveAttribute('aria-label', '邮箱导航');
+  await expect(collapse).toHaveCount(0);
+  await expect(sidebar.getByRole('button', { name: '展开侧边栏' })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('#fm-main-sidebar').getByRole('button', { name: '展开侧边栏' })).toBeVisible();
+  await page.locator('#fm-main-sidebar').getByRole('button', { name: '展开侧边栏' }).click();
+
+  const splitter = page.locator('.mail-splitter');
+  await splitter.focus();
+  await page.keyboard.press('End');
+  await expect(splitter).toHaveAttribute('aria-valuenow', '480');
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-preference', '480');
+  await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '400');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '480');
+  await page.keyboard.press('Enter');
+  await expect(splitter).toHaveAttribute('aria-valuenow', '360');
+
+  const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  await page.getByRole('region', { name: '邮件详情' }).getByRole('button', { name: '展开专注阅读' }).click();
+  const reader = page.getByRole('dialog', { name: 'E2E Inbox Welcome' });
+  await expect(reader).toBeVisible();
+  await expect(reader.locator('h1', { hasText: 'E2E Inbox Welcome' })).toHaveCount(1);
+  await expect(reader.getByRole('button', { name: '关闭专注阅读' })).toHaveCount(1);
+  await reader.getByRole('button', { name: '关闭专注阅读' }).click();
+  await expect(reader).toBeHidden();
+
+  const language = page.locator('.language-switcher select').first();
+  await language.selectOption('en');
+  await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
+  await expect(page.locator('#fm-main-sidebar').getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'All', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Unread', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Starred', exact: true })).toBeVisible();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-reading-layout-${testInfo.project.name}-en.png`), fullPage: false });
+  await language.selectOption('zh-CN');
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await page.evaluate(() => localStorage.removeItem('flaremail-layout-v1'));
+  await assertNoConsoleErrors(consoleErrors);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-reading-layout-${testInfo.project.name}.png`), fullPage: false });
+});
+
+test('opens a private standalone reader document without duplicating the message header', async ({ page, context, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop project covers the standalone reader route.');
+  await login(page);
+  const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const href = await detail.getByRole('link', { name: '在新窗口打开邮件' }).getAttribute('href');
+  expect(href).toMatch(/^\/messages\//u);
+
+  const standalone = await context.newPage();
+  try {
+    const response = await standalone.goto(href!);
+    expect(response?.headers()['cache-control']).toContain('private, no-store');
+    await expect(standalone.getByText('独立邮件阅读', { exact: true })).toBeVisible();
+    await expect(standalone.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toHaveCount(1);
+    await expect(standalone.getByRole('button', { name: '在新窗口打开邮件' })).toHaveCount(0);
+  } finally {
+    await standalone.close();
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('logs in, reads the seeded message, and persists a star', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
@@ -330,6 +403,21 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   await expect.poll(() => cidImage.evaluate((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth === 1)).toBe(true);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
   expect(remoteRequests).toEqual([]);
+
+  const bodyMetrics = await detail.locator('article[aria-label="邮件正文详情"]').evaluate((article) => {
+    const iframe = article.querySelector<HTMLIFrameElement>('iframe[title="安全 HTML 邮件正文"]');
+    const scrollOwner = article.parentElement;
+    return {
+      viewportHeight: window.innerHeight,
+      iframeHeight: iframe?.getBoundingClientRect().height ?? null,
+      articleHeight: article.getBoundingClientRect().height,
+      scrollOwnerClientHeight: scrollOwner?.clientHeight ?? null,
+      scrollOwnerScrollHeight: scrollOwner?.scrollHeight ?? null
+    };
+  });
+  await writeFile(join(tmpdir(), `flaremail-body-metrics-${testInfo.project.name}.json`), JSON.stringify(bodyMetrics, null, 2));
+  expect(bodyMetrics.iframeHeight).toBeGreaterThanOrEqual(352);
+  expect(bodyMetrics.iframeHeight).toBeLessThanOrEqual(896);
 
   const consent = detail.getByRole('button', { name: '加载本邮件 HTTPS 图片' });
   await consent.click();
@@ -682,7 +770,7 @@ test('sends through the local fake provider and applies a signed delivered webho
     }
   });
   expect(webhook.ok(), await webhook.text()).toBe(true);
-  await detail.getByRole('button', { name: '刷新投递回执' }).click();
+  await detail.locator('section[aria-labelledby="delivery-title"]').getByRole('button', { name: '刷新投递回执' }).click();
   await expect(detail.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(detail.getByRole('list', { name: '投递事件列表' })).toContainText('已送达');
   await assertNoConsoleErrors(consoleErrors);

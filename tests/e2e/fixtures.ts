@@ -20,13 +20,20 @@ export { expect };
 
 export async function login(page: Page) {
   await page.goto('/');
+  await page.waitForLoadState('networkidle');
+  const workspace = page.getByRole('main', { name: '邮件工作区' });
   const loginHeading = page.getByRole('heading', { name: '登录邮件工作台' });
-  if (await loginHeading.isVisible().catch(() => false)) {
-    await page.getByLabel('邮箱地址').fill(E2E_EMAIL);
-    await page.getByLabel('密码').fill(E2E_PASSWORD);
+  if (!await workspace.isVisible().catch(() => false)) {
+    await loginHeading.waitFor({ state: 'visible' });
+    const email = page.getByLabel('邮箱地址');
+    const password = page.getByLabel('密码');
+    await email.fill(E2E_EMAIL);
+    await password.fill(E2E_PASSWORD);
+    await expect(email).toHaveValue(E2E_EMAIL);
+    await expect(password).toHaveValue(E2E_PASSWORD);
     await page.getByRole('button', { name: '登录' }).click();
   }
-  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await expect(workspace).toBeVisible();
   const backButton = page.getByRole('button', { name: '返回邮件列表' });
   if (await backButton.isVisible().catch(() => false)) await backButton.click();
 }
@@ -51,7 +58,9 @@ export async function openFolder(page: Page, folder: '收件箱' | '已发送' |
   const navigationToggle = page.getByRole('button', { name: '打开导航' });
   await expect(direct.or(navigationToggle)).toBeVisible();
   if (await direct.isVisible().catch(() => false)) {
-    await direct.click();
+    // WebKit's headless stability check can wait forever on this static button
+    // after the workspace transition, even though it is visible and unobscured.
+    await direct.click({ force: true });
     await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
     return;
   }

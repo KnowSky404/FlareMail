@@ -32,6 +32,8 @@ export function sessionCookieNamesForRequest(url: URL): readonly string[] {
     : [workspaceSessionCookie, legacyWorkspaceSessionCookie];
 }
 
+export const isPrivateReaderPath = (pathname: string): boolean => pathname.startsWith('/messages/');
+
 export const handle: Handle = async ({ event, resolve }) => {
   const requestId = getRequestId(event);
   const env = event.platform?.env as CloudflareEnv | undefined;
@@ -101,9 +103,13 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   try {
-    return setSecurityHeaders(await resolve(event, {
+    const response = await resolve(event, {
       transformPageChunk: ({ html }) => html.replace(/<html lang="(?:zh-CN|en)">/u, `<html lang="${locale}">`)
-    }), secure, requestId);
+    });
+    if (isPrivateReaderPath(event.url.pathname)) {
+      response.headers.set('cache-control', 'private, no-store');
+    }
+    return setSecurityHeaders(response, secure, requestId);
   } catch (error) {
     if (error instanceof ApiError) {
       return failApi(error);

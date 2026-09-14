@@ -12,7 +12,7 @@
     XCircle
   } from '@lucide/svelte';
   import { StatusBadge } from '$lib/components/ui';
-  import { formatNumber } from '$lib/i18n';
+  import { formatNumber, translateCount } from '$lib/i18n';
   import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -144,7 +144,7 @@
       type="button"
       class="flex min-h-[72px] min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fm-focus)]"
       aria-current={selected ? 'true' : undefined}
-      aria-label={`${isUnread ? t('mail.unreadPrefix') : ''}${counterpart}, ${itemSubject}${itemCount > 1 ? `, ${t('mail.threadCount', { count: formattedItemCount })}` : ''}`}
+      aria-label={`${isUnread ? t('mail.unreadPrefix') : ''}${counterpart}, ${itemSubject}${itemCount > 1 ? `, ${translateCount(i18n.locale, 'mail.threadCount', itemCount)}` : ''}`}
       onclick={handleSelect}
     >
       <span class="grid size-2 shrink-0 place-items-center" aria-hidden="true">

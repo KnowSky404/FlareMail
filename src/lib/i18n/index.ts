@@ -7,7 +7,8 @@ import {
 import {
   messages,
   type MessageKey,
-  type MessageValues
+  type MessageValues,
+  type PluralMessageKey
 } from './messages';
 
 export * from './locale';
@@ -32,6 +33,25 @@ export const translate = (
   const localized = messages[normalizeLocale(locale)][key];
   const fallback = messages[DEFAULT_LOCALE][key];
   return interpolate(localized || fallback || key, values);
+};
+
+/** Translate a count-bearing message using the locale's plural category and number format. */
+export const translateCount = (
+  locale: Locale,
+  key: PluralMessageKey,
+  count: number,
+  values: MessageValues = {}
+): string => {
+  const normalizedLocale = normalizeLocale(locale);
+  const category = new Intl.PluralRules(normalizedLocale).select(count);
+  const suffix = category === 'one' ? 'one' : 'other';
+  const formattedCount = Number.isFinite(count)
+    ? new Intl.NumberFormat(normalizedLocale).format(count)
+    : String(count);
+  return translate(normalizedLocale, `${key}.${suffix}` as MessageKey, {
+    ...values,
+    count: formattedCount
+  });
 };
 
 export const createTranslator = (locale: Locale): Translator =>
