@@ -108,6 +108,7 @@
   --fm-shadow-overlay: 0 18px 56px rgb(0 0 0 / 0.42);
 }
 
+@layer base {
 html {
   min-width: 320px;
   min-height: 100%;
@@ -121,7 +122,6 @@ body {
   min-width: 320px;
   min-height: 100%;
   margin: 0;
-  overflow-x: hidden;
   color: var(--fm-text);
   background: var(--fm-canvas);
   font-size: 14px;
@@ -153,6 +153,8 @@ summary {
 ::selection {
   color: var(--fm-text);
   background: var(--fm-primary-soft);
+}
+
 }
 
 * {
@@ -188,9 +190,27 @@ summary {
   border: 0;
 }
 
+@layer components {
+
 .fm-app-shell {
   min-height: 100dvh;
   background: var(--fm-canvas);
+}
+
+.fm-touch-target {
+  min-width: 0;
+  min-height: 0;
+}
+
+.fm-button {
+  display: inline-flex;
+}
+
+.fm-scroll-region {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .fm-workspace-shell {
@@ -238,14 +258,10 @@ summary {
   opacity: 0.6;
 }
 
+}
+
 @media (max-width: 900px) {
-  button,
-  [role='button'],
-  a,
-  summary,
-  input:not(.peer),
-  textarea,
-  select {
+  .fm-touch-target {
     min-width: 44px;
     min-height: 44px;
   }
@@ -259,8 +275,7 @@ summary {
   }
 
   .fm-workspace-main {
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden;
   }
 }
 

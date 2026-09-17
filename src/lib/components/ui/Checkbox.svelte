@@ -27,7 +27,7 @@
   } = $props();
 </script>
 
-<label class={`flex items-start gap-2.5 text-sm ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${className}`} for={id}>
+<label class={`fm-touch-target flex items-start gap-2.5 text-sm ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${className}`} for={id}>
   <span class="relative mt-0.5 grid size-4 shrink-0 place-items-center">
     <input
       class="peer absolute inset-0 z-10 cursor-pointer opacity-0 disabled:cursor-not-allowed"

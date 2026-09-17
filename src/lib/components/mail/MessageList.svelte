@@ -89,7 +89,7 @@
     });
   });
 
-  const selectedCount = $derived(activeSection === 'drafts' || activeSection === 'trash' ? messages.length : threads.length || messages.length);
+  const selectedCount = $derived(visibleItems.length);
   const isFiltered = $derived(Boolean(query.trim()) || filter !== 'all');
   const emptyTitle = $derived(isFiltered ? t('mail.noMatch') : t('mail.empty', { section: sectionLabels[activeSection] }));
   const emptyDescription = $derived(
@@ -109,7 +109,7 @@
   };
 </script>
 
-<section class="min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
+<section class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
   {#if loading}
     <div class="divide-y divide-[var(--fm-border)]" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}

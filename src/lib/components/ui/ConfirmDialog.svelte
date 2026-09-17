@@ -7,6 +7,7 @@
     open = false,
     title,
     description,
+    id,
     confirmLabel,
     cancelLabel,
     variant = 'danger',
@@ -17,6 +18,7 @@
     open?: boolean;
     title?: string;
     description: string;
+    id?: string;
     confirmLabel?: string;
     cancelLabel?: string;
     variant?: 'primary' | 'danger';
@@ -30,7 +32,7 @@
   const dialogCancel = $derived(cancelLabel ?? t('common.cancel'));
 </script>
 
-<Dialog {open} title={dialogTitle} {description} size="sm" onClose={onCancel}>
+<Dialog {open} id={id} title={dialogTitle} {description} size="sm" onClose={onCancel}>
   {#snippet footer()}
     <Button variant="ghost" disabled={pending} onclick={onCancel}>{dialogCancel}</Button>
     <Button {variant} loading={pending} onclick={() => onConfirm?.()}>{dialogConfirm}</Button>

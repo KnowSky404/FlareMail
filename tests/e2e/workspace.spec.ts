@@ -175,9 +175,10 @@ async function installTelegramApiMock(page: Page) {
 }
 
 async function openSettings(page: Page) {
-  const profileButton = page.getByRole('button', { name: '打开设置' });
+  const profileButton = page.getByRole('button', { name: '账号菜单' });
   if (await profileButton.isVisible().catch(() => false)) {
     await profileButton.click();
+    await page.getByRole('menuitem', { name: '打开设置', exact: true }).click();
   } else {
     await page.getByRole('button', { name: '打开导航' }).click();
     await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }).click();
@@ -215,7 +216,8 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/ }).first().click();
   await expect(page).toHaveURL(/message=/u);
 
-  await page.getByRole('button', { name: '退出登录' }).click();
+  await page.getByRole('button', { name: '账号菜单' }).click();
+  await page.getByRole('menuitem', { name: '退出登录', exact: true }).click();
   await expect(page.getByRole('heading', { name: '登录邮件工作台' })).toBeVisible();
   await expect(page).not.toHaveURL(/message=|folder=sent|q=/u);
   await login(page);
@@ -271,7 +273,8 @@ test('persists the reading layout, resets the splitter, and opens one focused re
   await reader.getByRole('button', { name: '关闭专注阅读' }).click();
   await expect(reader).toBeHidden();
 
-  const language = page.locator('.language-switcher select').first();
+  await page.getByRole('button', { name: '显示偏好' }).click();
+  const language = page.getByLabel('切换语言');
   await language.selectOption('en');
   await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
   await expect(page.locator('#fm-main-sidebar').getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
@@ -279,7 +282,7 @@ test('persists the reading layout, resets the splitter, and opens one focused re
   await expect(page.getByRole('button', { name: 'Unread', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Starred', exact: true })).toBeVisible();
   await page.screenshot({ path: join(tmpdir(), `flaremail-reading-layout-${testInfo.project.name}-en.png`), fullPage: false });
-  await language.selectOption('zh-CN');
+  await page.getByLabel('Change language').selectOption('zh-CN');
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   await page.evaluate(() => localStorage.removeItem('flaremail-layout-v1'));
   await assertNoConsoleErrors(consoleErrors);
@@ -430,7 +433,8 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent('download');
-  await detail.getByRole('button', { name: '下载显示问题报告' }).click();
+  await detail.getByRole('region', { name: '邮件正文' }).getByRole('button', { name: '更多邮件操作' }).click();
+  await detail.getByRole('menuitem', { name: '下载显示问题报告', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^flaremail-html-display-email_e2e-html-inbox-message\.json$/u);
   const path = await download.path();
@@ -453,8 +457,8 @@ test('uses global service metrics and exposes typed API errors with a request ID
   test.skip(testInfo.project.name !== 'desktop', 'The desktop topbar exposes the service summary.');
   await login(page);
 
-  const serviceStatus = page.locator('details').filter({ hasText: '全局状态正常' });
-  const serviceSummary = page.getByText('全局状态正常', { exact: true });
+  const serviceStatus = page.locator('details.status-menu');
+  const serviceSummary = page.locator('summary[aria-label="查看工作区服务状态"]');
   await expect(serviceSummary).toBeVisible();
   await serviceSummary.click();
   await expect(serviceStatus).toContainText('指标覆盖整个工作区');
@@ -787,14 +791,17 @@ test('supports mobile detail drill-in and back navigation', async ({ page, conso
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('supports theme cycling and keyboard shortcut help/navigation', async ({ page, consoleErrors }, testInfo) => {
+test('supports display preferences and keyboard shortcut help/navigation', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'AppTopbar theme and command controls are desktop-only.');
   await login(page);
-  const theme = page.getByRole('button', { name: /主题：/ });
-  await expect(theme).toBeVisible();
-  const initialTheme = await theme.getAttribute('aria-label');
-  await theme.click();
-  await expect(theme).not.toHaveAttribute('aria-label', initialTheme ?? '');
+  const preferences = page.getByRole('button', { name: '显示偏好' });
+  await expect(preferences).toBeVisible();
+  await preferences.click();
+  const darkTheme = page.getByRole('radio', { name: '深色' });
+  await darkTheme.click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.keyboard.press('Escape');
+  await expect(darkTheme).toBeHidden();
   await page.keyboard.press('?');
   await expect(page.getByRole('dialog', { name: '键盘快捷键' })).toBeVisible();
   await page.keyboard.press('Escape');
@@ -802,6 +809,52 @@ test('supports theme cycling and keyboard shortcut help/navigation', async ({ pa
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await expect(page).toHaveURL(/folder=sent/);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('keeps one responsive search entry, three desktop topbar actions, and a visible reading viewport', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop project drives the complete responsive width matrix.');
+  await login(page);
+
+  const topbar = page.locator('.topbar');
+  const widths = [1366, 1280, 1024, 1023, 901, 900, 768, 480, 390, 320];
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: width <= 900 ? 844 : 768 });
+    await expect(page.getByLabel('搜索邮件')).toHaveCount(1);
+    await assertNoHorizontalOverflow(page);
+    if (width >= 901) {
+      await expect(topbar).toBeVisible();
+      await expect(topbar.locator('.actions > *')).toHaveCount(3);
+    } else {
+      await expect(topbar).toBeHidden();
+      await expect(page.locator('.mobile-bar')).toBeVisible();
+    }
+  }
+
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.locator('.message-plain-body')).toBeVisible();
+  const metrics = await detail.evaluate((element) => {
+    const scroll = element.querySelector<HTMLElement>('.fm-detail-scroll');
+    const body = element.querySelector<HTMLElement>('.message-plain-body');
+    const detailRect = element.getBoundingClientRect();
+    const scrollRect = scroll?.getBoundingClientRect();
+    const viewportTop = Math.max(0, detailRect.top, scrollRect?.top ?? 0);
+    const viewportBottom = Math.min(window.innerHeight, detailRect.bottom, scrollRect?.bottom ?? 0);
+    return {
+      bodyTop: body?.getBoundingClientRect().top ?? null,
+      detailHeaderHeight: scrollRect ? scrollRect.top - detailRect.top : null,
+      visibleBodyHeight: Math.max(0, viewportBottom - viewportTop),
+      viewportHeight: window.innerHeight
+    };
+  });
+  expect(metrics.bodyTop).not.toBeNull();
+  expect(metrics.bodyTop!).toBeLessThanOrEqual(220);
+  expect(metrics.detailHeaderHeight).toBeLessThan(180);
+  expect(metrics.visibleBodyHeight).toBeGreaterThanOrEqual(metrics.viewportHeight * 0.6);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-responsive-reading-${testInfo.project.name}.png`), fullPage: false });
   await assertNoConsoleErrors(consoleErrors);
 });
 

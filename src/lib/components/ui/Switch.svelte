@@ -28,7 +28,7 @@
   aria-describedby={description && id ? `${id}-description` : undefined}
   {id}
   {disabled}
-  class={`flex items-center gap-3 text-left ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${className}`}
+  class={`fm-touch-target flex items-center gap-3 text-left ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${className}`}
   onclick={(event) => onchange?.(!checked, event)}
 >
   <span class={`relative inline-flex h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors ${checked ? 'bg-[var(--fm-primary)]' : 'bg-[var(--fm-border-strong)]'} ${focusRing}`} aria-hidden="true">

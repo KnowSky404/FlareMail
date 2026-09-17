@@ -60,7 +60,7 @@
 
 <aside id="fm-main-sidebar" class:collapsed class="sidebar" aria-label={t('shell.mailNavigation')}>
   <div class="sidebar-toolbar">
-    <button class="collapse-toggle" type="button" aria-expanded={!collapsed} aria-controls="fm-main-sidebar" aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} title={collapsed ? t('shell.expand') : t('shell.collapse')} onclick={() => onToggleCollapsed?.()}>
+    <button class="collapse-toggle fm-touch-target" type="button" aria-expanded={!collapsed} aria-controls="fm-main-sidebar" aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} title={collapsed ? t('shell.expand') : t('shell.collapse')} onclick={() => onToggleCollapsed?.()}>
       {#if collapsed}<PanelLeftOpen size={18} aria-hidden="true" />{:else}<PanelLeftClose size={18} aria-hidden="true" />{/if}
       <span class="sr-only">{collapsed ? t('shell.expand') : t('shell.collapse')}</span>
     </button>
@@ -79,6 +79,7 @@
         aria-current={activeSection === item.id ? 'page' : undefined}
         aria-label={item.label}
         title={item.label}
+        class="fm-touch-target"
         onclick={() => onSelectSection(item.id)}
       >
         <Icon size={19} strokeWidth={1.8} aria-hidden="true" />

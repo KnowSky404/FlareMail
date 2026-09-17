@@ -118,6 +118,7 @@
   let attempted = $state(false);
   let showCc = $state(false);
   let showBcc = $state(false);
+  let showHtml = $state(true);
   let recipientDraft = $state({ to: '', cc: '', bcc: '' });
   let recipientCommitTimers: Partial<Record<'to' | 'cc' | 'bcc', ReturnType<typeof setTimeout>>> = {};
   let showCloseConfirm = $state(false);
@@ -492,6 +493,7 @@
 </script>
 
 <Dialog
+  id="compose-dialog"
   open
   {title}
   description={profile.email}
@@ -500,20 +502,20 @@
   closeOnBackdrop={false}
   onClose={requestClose}
 >
-  <form class="flex min-h-[34rem] flex-col gap-5 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
+  <form class="flex min-h-[34rem] flex-col gap-3 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
     <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)]">
       <span>{t('compose.workspaceIdentity')}：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
       <span class="hidden shrink-0 sm:inline">{t('compose.actualDelivery')}：{senderEmail ?? t('compose.unconfigured')} · {t('compose.plainTextFallback')}</span>
     </div>
 
-    <div class="grid gap-4">
+    <div class="grid gap-3">
       <div class="grid gap-2">
         <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-to">{t('mail.to')}</label>
         <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
           {#each parseAddressList(input.to ?? input.toEmail ?? '') as address (address.email)}
-            <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}>×</button></span>
+            <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
           {/each}
-          <input id="compose-to" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('to'); } }} onblur={() => commitRecipient('to')} />
+          <input id="compose-to" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('to'); } }} onblur={() => commitRecipient('to')} />
         </div>
         {#if fieldError('to') || fieldError('toEmail')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('to') ?? fieldError('toEmail')}</p>{/if}
       </div>
@@ -523,14 +525,14 @@
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-cc">{t('mail.cc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.cc ?? '') as address (address.email)}
-              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={t('compose.removeRecipient', { field: t('mail.cc'), email: address.email })} onclick={() => removeRecipient('cc', address.email)}>×</button></span>
+              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.cc'), email: address.email })} onclick={() => removeRecipient('cc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
             {/each}
-            <input id="compose-cc" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
+            <input id="compose-cc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
           </div>
           {#if fieldError('cc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('cc')}</p>{/if}
         {:else}
           <button
-            class="w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
+            class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
             type="button"
             aria-expanded="false"
             onclick={() => (showCc = true)}
@@ -545,14 +547,14 @@
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-bcc">{t('mail.bcc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.bcc ?? '') as address (address.email)}
-              <span class="inline-flex items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]">{address.name || address.email}<button type="button" aria-label={t('compose.removeRecipient', { field: t('mail.bcc'), email: address.email })} onclick={() => removeRecipient('bcc', address.email)}>×</button></span>
+              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.bcc'), email: address.email })} onclick={() => removeRecipient('bcc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
             {/each}
-            <input id="compose-bcc" class="min-w-32 flex-1 border-0 bg-transparent px-1 py-1 text-sm outline-none" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
+            <input id="compose-bcc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
           </div>
           {#if fieldError('bcc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('bcc')}</p>{/if}
         </div>
       {:else}
-        <button class="w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]" type="button" onclick={() => (showBcc = true)}>{t('compose.addBcc')}</button>
+        <button class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]" type="button" onclick={() => (showBcc = true)}>{t('compose.addBcc')}</button>
       {/if}
 
       <TextField
@@ -578,27 +580,35 @@
       oninput={(event) => updateInput('body', event.currentTarget.value)}
     />
 
-    <TextArea
-      id="compose-html"
-      label={t('compose.htmlLabel')}
-      hint={t('compose.htmlHint')}
-      rows={8}
-      placeholder={t('compose.htmlPlaceholder')}
-      value={input.html ?? ''}
-      error={fieldError('html')}
-      class="min-h-[10rem] max-w-full font-mono text-xs"
-      oninput={(event) => updateInput('html', event.currentTarget.value)}
-    />
+    <details class="compose-advanced" bind:open={showHtml}>
+      <summary class="fm-touch-target flex cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2 text-xs font-medium text-[var(--fm-text-secondary)]">
+        <span>{t('compose.htmlLabel')}</span>
+        <span class="text-[11px] text-[var(--fm-text-muted)]">{t('compose.htmlHint')}</span>
+      </summary>
+      <div class="pt-2">
+        <TextArea
+          id="compose-html"
+          label={t('compose.htmlLabel')}
+          hint={t('compose.htmlHint')}
+          rows={8}
+          placeholder={t('compose.htmlPlaceholder')}
+          value={input.html ?? ''}
+          error={fieldError('html')}
+          class="min-h-[10rem] max-w-full font-mono text-xs"
+          oninput={(event) => updateInput('html', event.currentTarget.value)}
+        />
+      </div>
+    </details>
 
     <section class="grid gap-3" aria-labelledby="compose-attachments-title">
       <div class="flex items-center justify-between gap-3">
         <h2 id="compose-attachments-title" class="text-sm font-medium text-[var(--fm-text)]">{t('mail.attachments')} <span class="font-normal text-[var(--fm-text-muted)]">({input.attachments?.length ?? 0}/10)</span></h2>
-        <button class="inline-flex min-h-9 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" />{t('compose.chooseFile')}</button>
+        <button class="fm-touch-target inline-flex min-h-9 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" />{t('compose.chooseFile')}</button>
         <input bind:this={fileInput} class="sr-only" type="file" multiple aria-label={t('compose.chooseAttachment')} onchange={(event) => void addFiles([...event.currentTarget.files ?? []])} />
         <input bind:this={retryFileInput} class="sr-only" type="file" aria-label={t('compose.retryChooseAttachment')} onchange={(event) => retryPersistedAttachment(event.currentTarget.files?.[0])} />
       </div>
       <div
-        class="grid min-h-20 place-items-center rounded-[var(--radius-md)] border border-dashed px-4 py-3 text-center text-xs text-[var(--fm-text-muted)]"
+        class="fm-touch-target grid min-h-20 place-items-center rounded-[var(--radius-md)] border border-dashed px-4 py-3 text-center text-xs text-[var(--fm-text-muted)]"
         class:border-[var(--fm-primary)]={dragActive}
         class:bg-[var(--fm-primary-soft)]={dragActive}
         role="button"
@@ -629,12 +639,12 @@
           {#each input.attachments as attachment (attachment.id)}
             <li class="flex min-w-0 flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
               <Paperclip class="size-4 shrink-0 text-[var(--fm-primary)]" aria-hidden="true" />
-              <input class="fm-field min-w-32 flex-1 px-2 py-1 text-xs" aria-label={t('compose.attachmentName', { filename: attachment.filename })} disabled={attachment.state !== undefined && attachment.state !== 'ready'} value={attachment.id ? renameValues[attachment.id] ?? attachment.filename : attachment.filename} oninput={(event) => { if (attachment.id) renameValues = { ...renameValues, [attachment.id]: event.currentTarget.value }; }} />
+              <input class="fm-field min-w-0 flex-[1_1_10rem] px-2 py-1 text-xs" aria-label={t('compose.attachmentName', { filename: attachment.filename })} disabled={attachment.state !== undefined && attachment.state !== 'ready'} value={attachment.id ? renameValues[attachment.id] ?? attachment.filename : attachment.filename} oninput={(event) => { if (attachment.id) renameValues = { ...renameValues, [attachment.id]: event.currentTarget.value }; }} />
               <span class="text-[11px] text-[var(--fm-text-muted)]">{formatAttachmentSize(attachment.size)}</span>
               {#if attachment.state && attachment.state !== 'ready'}<span class="text-[11px] text-[var(--fm-danger)]">{attachment.state === 'failed' ? t('compose.uploadFailed') : t('compose.uploadIncomplete')}</span>{/if}
-              {#if attachment.id && attachment.state === 'failed'}<button class="grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={t('compose.retryUpload', { filename: attachment.filename })} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}
-              {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" onclick={() => void renameAttachment(attachment.id!)}>{t('compose.rename')}</button>{/if}
-              {#if attachment.id}<button class="grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={t('compose.deleteAttachment', { filename: attachment.filename })} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></button>{/if}
+              {#if attachment.id && attachment.state === 'failed'}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={t('compose.retryUpload', { filename: attachment.filename })} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}
+              {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="fm-touch-target min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" onclick={() => void renameAttachment(attachment.id!)}>{t('compose.rename')}</button>{/if}
+              {#if attachment.id}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={t('compose.deleteAttachment', { filename: attachment.filename })} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></button>{/if}
             </li>
           {/each}
         </ul>
@@ -643,7 +653,7 @@
         <ul class="grid gap-2" aria-label={t('compose.uploadStatus')}>
           {#each attachmentTasks as task (task.id)}
             <li class="grid gap-1 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 py-2 text-xs">
-              <div class="flex items-center gap-2"><span class="min-w-0 flex-1 truncate">{task.file.name}</span><span>{task.state === 'failed' ? t('compose.failed') : `${task.progress}%`}</span>{#if task.state === 'failed'}<button class="grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={t('compose.retryUpload', { filename: task.file.name })} onclick={() => void startAttachmentUpload(task.id, task.file)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}<button class="grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={t('compose.cancelUpload', { filename: task.file.name })} onclick={() => void cancelAttachmentTask(task)}><X class="size-4" aria-hidden="true" /></button></div>
+              <div class="flex min-w-0 items-center gap-2"><span class="min-w-0 flex-1 truncate" title={task.file.name}>{task.file.name}</span><span class="shrink-0">{task.state === 'failed' ? t('compose.failed') : `${task.progress}%`}</span>{#if task.state === 'failed'}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" aria-label={t('compose.retryUpload', { filename: task.file.name })} onclick={() => void startAttachmentUpload(task.id, task.file)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" aria-label={t('compose.cancelUpload', { filename: task.file.name })} onclick={() => void cancelAttachmentTask(task)}><X class="size-4" aria-hidden="true" /></button></div>
               {#if task.state === 'failed'}<p class="text-[var(--fm-danger)]" role="alert">{task.error}</p>{:else}<progress class="h-1.5 w-full" max="100" value={task.progress}>{task.progress}%</progress>{/if}
             </li>
           {/each}
@@ -686,6 +696,7 @@
 
 {#if showCloseConfirm}
   <Dialog
+    id="compose-close-dialog"
     open
     title={t('compose.unsavedTitle')}
     description={t('compose.unsavedDescription')}
@@ -702,3 +713,42 @@
     {/snippet}
   </Dialog>
 {/if}
+
+<style>
+  .compose-advanced > summary {
+    list-style: none;
+  }
+
+  .compose-advanced > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .compose-advanced > summary span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .recipient-remove {
+    display: inline-grid;
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 999px;
+  }
+
+  .recipient-remove:hover {
+    color: var(--fm-danger);
+    background: var(--fm-danger-soft);
+  }
+
+  @media (max-width: 420px) {
+    .compose-advanced > summary {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 0.125rem;
+    }
+  }
+</style>

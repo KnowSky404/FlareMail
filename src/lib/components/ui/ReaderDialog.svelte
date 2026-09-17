@@ -8,6 +8,7 @@
   let {
     open = false,
     title,
+    id,
     children,
     onClose,
     showHeader = true,
@@ -15,6 +16,7 @@
   }: {
     open?: boolean;
     title: string;
+    id?: string;
     children?: Snippet;
     onClose?: () => void;
     showHeader?: boolean;
@@ -26,7 +28,12 @@
   let restoreElement: HTMLElement | null = null;
   const overlayToken = {};
   const inertTargets: Array<{ element: HTMLElement; hadAttribute: boolean }> = [];
-  let readerId = `reader-${Math.random().toString(36).slice(2, 8)}`;
+  const stableId = (value: string) => {
+    let hash = 0;
+    for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+    return hash.toString(36);
+  };
+  const readerId = $derived(id ?? `reader-${stableId(title)}`);
 
   function focusables() {
     return [...readerElement?.querySelectorAll<HTMLElement>(

@@ -234,6 +234,10 @@
     margin-bottom: var(--space-6);
   }
 
+  header > div {
+    min-width: 0;
+  }
+
   h1 {
     margin: 0;
     font-size: 22px;
@@ -278,6 +282,12 @@
     font-weight: 600;
   }
 
+  .configuration-row > div,
+  .diagnostic-grid dt,
+  .diagnostic-grid dd {
+    min-width: 0;
+  }
+
   .configuration-row p,
   .section-note {
     margin: var(--space-1) 0 0;
@@ -298,6 +308,8 @@
     margin: 0;
     color: var(--fm-text-secondary);
     font-size: 13px;
+    overflow-wrap: anywhere;
+    text-align: end;
   }
 
   .save-row {

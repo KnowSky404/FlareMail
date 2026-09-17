@@ -40,7 +40,7 @@
     {disabled}
     autocomplete="off"
     enterkeyhint="search"
-    class="fm-field h-9 w-full pl-9 pr-10 text-sm"
+    class="fm-field h-9 min-h-11 w-full pl-9 pr-10 text-sm sm:min-h-0"
     aria-label={t('mail.search')}
     aria-describedby={`${id}-hint`}
     oninput={(event) => onQueryChange?.(event.currentTarget.value)}
@@ -50,7 +50,7 @@
       ariaLabel={t('mail.clearSearch')}
       title={t('mail.clearSearch')}
       size="sm"
-      class="absolute right-1 top-1/2 size-11 -translate-y-1/2 sm:size-7"
+      class="fm-search-clear absolute right-1 top-1/2 size-11 -translate-y-1/2 sm:size-7"
       onclick={() => onQueryChange?.('')}
     >
       <X class="size-4" aria-hidden="true" />

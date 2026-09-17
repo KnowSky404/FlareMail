@@ -22,7 +22,7 @@
     type InboundMessageDetail,
     type MailMessage
   } from '$lib/domain/mail';
-  import { ConfirmDialog, DropdownMenu, StatusBadge } from '$lib/components/ui';
+  import { ConfirmDialog, DropdownMenu, IconButton, StatusBadge } from '$lib/components/ui';
   import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -82,6 +82,7 @@
 
   let removeConfirmOpen = $state(false);
   let actionsMenuOpen = $state(false);
+  let subjectExpanded = $state(false);
   const i18n = useLocale();
   const { t } = i18n;
 
@@ -93,6 +94,9 @@
       hour: '2-digit',
       minute: '2-digit'
     }).format(new Date(value));
+
+  const formatCompactDate = (value: string) =>
+    new Intl.DateTimeFormat(i18n.locale, { month: 'short', day: 'numeric' }).format(new Date(value));
 
   const formatBytes = (value: number) => {
     if (value < 1024) return `${formatNumber(value, i18n.locale)} B`;
@@ -164,122 +168,99 @@
   const hasActions = $derived(Boolean(
     trashMode
       ? onRestore || onPermanentDelete
-      : standaloneHref || onEditDraft || onToggleRead || onRemove
+      : standaloneHref || onEditDraft || onToggleRead || onRemove || onReloadInboundDetail || onReloadDeliveryDetail || onRetryDelivery || downloadHref
   ));
+  const longSubject = $derived((message?.subject ?? '').length > 88);
 </script>
 
 {#if message}
   <header class="flex-none border-b border-[var(--fm-border)] bg-[var(--fm-surface)]">
-    <div class="flex min-h-14 items-center gap-1 border-b border-[var(--fm-border)] px-3 sm:px-5">
+    <div class="message-header-row flex min-h-12 items-center gap-1 border-b border-[var(--fm-border)] px-3 py-1 sm:px-5">
       {#if showBack}
-        <button
-          class="grid size-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)] xl:hidden"
-          aria-label={t('mail.backToList')}
-          title={t('mail.backToList')}
-          type="button"
-          onclick={() => onBack?.()}
-        >
-          <ArrowLeft class="size-5" aria-hidden="true" />
-        </button>
+        <IconButton ariaLabel={t('mail.backToList')} title={t('mail.backToList')} size="sm" class="shrink-0 xl:hidden" onclick={() => onBack?.()}>
+          <ArrowLeft class="size-4" aria-hidden="true" />
+        </IconButton>
       {/if}
-      <div class="min-w-0 flex-1">
+      <div class="message-subject min-w-0 flex-1">
         <div class="flex min-w-0 items-center gap-2">
-          <h1 class="truncate text-base font-semibold text-[var(--fm-text)] sm:text-lg" title={message.subject || t('mail.noSubject')}>{message.subject || t('mail.noSubject')}</h1>
+          <h1 class:subject-collapsed={longSubject && !subjectExpanded} class="min-w-0 flex-1 text-base font-semibold text-[var(--fm-text)] sm:text-lg" title={message.subject || t('mail.noSubject')}>{message.subject || t('mail.noSubject')}</h1>
+          {#if longSubject}
+            <button class="subject-toggle fm-touch-target shrink-0" type="button" aria-expanded={subjectExpanded} onclick={() => (subjectExpanded = !subjectExpanded)}>
+              {subjectExpanded ? t('mail.collapseSubject') : t('mail.expandSubject')}
+            </button>
+          {/if}
           {#if message.folder === 'sent' && deliveryStatus}
-            <StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)} class="hidden shrink-0 sm:inline-flex">
-              {deliveryLabel(deliveryStatus)}
-            </StatusBadge>
+            <span class="hidden shrink-0 sm:inline-flex">
+              <StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge>
+            </span>
           {/if}
         </div>
-        <p class="truncate text-xs text-[var(--fm-text-muted)]">{message.preview || t('mail.noPreview')}</p>
       </div>
-      <div class="flex shrink-0 items-center gap-0.5">
+      <div class="message-header-tools flex shrink-0 items-center gap-0.5">
         {#if !trashMode && onOpenReader}
-          <button
-            class="hidden size-11 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)] sm:grid"
-            aria-label={t('mail.openReader')}
-            title={t('mail.openReader')}
-            type="button"
-            onclick={() => onOpenReader?.(message)}
-          >
-            <Maximize2 class="size-[18px]" aria-hidden="true" />
-          </button>
+          <IconButton ariaLabel={t('mail.openReader')} title={t('mail.openReader')} size="sm" class="hidden sm:inline-flex" onclick={() => onOpenReader?.(message)}>
+            <Maximize2 class="size-4" aria-hidden="true" />
+          </IconButton>
           {#if standaloneHref}
-            <a
-              class="hidden size-11 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)] sm:grid"
-              href={standaloneHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={t('mail.openNewWindow')}
-              title={t('mail.openNewWindow')}
-            >
-              <ArrowUpRight class="size-[18px]" aria-hidden="true" />
+            <a class="fm-touch-target hidden size-8 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)] sm:grid" href={standaloneHref} target="_blank" rel="noopener noreferrer" aria-label={t('mail.openNewWindow')} title={t('mail.openNewWindow')}>
+              <ArrowUpRight class="size-4" aria-hidden="true" />
             </a>
           {/if}
         {/if}
-        {#if !trashMode && onToggleStar}<button
-          class="grid size-11 place-items-center rounded-[var(--radius-md)] hover:bg-[var(--fm-surface-hover)]"
-          class:text-[var(--fm-brand-orange)]={message.starred}
-          class:text-[var(--fm-text-muted)]={!message.starred}
-          aria-label={message.starred ? t('mail.unstar') : t('mail.star')}
-          title={message.starred ? t('mail.unstar') : t('mail.star')}
-          type="button"
-          onclick={() => onToggleStar?.(message)}
-          disabled={pending}
-        >
-          <Star class="size-[18px]" fill={message.starred ? 'currentColor' : 'none'} aria-hidden="true" />
-        </button>{/if}
-        {#if !trashMode && onToggleRead}<button
-          class="hidden size-11 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)] sm:grid"
-          aria-label={message.read ? t('mail.markUnread') : t('mail.markRead')}
-          title={message.read ? t('mail.markUnread') : t('mail.markRead')}
-          type="button"
-          onclick={() => onToggleRead?.(message)}
-          disabled={pending}
-        >
-          <Mail class="size-[18px]" aria-hidden="true" />
-        </button>{/if}
-        {#if hasActions}<DropdownMenu
-          open={actionsMenuOpen}
-          align="end"
-          class="message-actions-menu"
-          onOpenChange={(open) => (actionsMenuOpen = open)}
-        >
-          {#snippet trigger()}
-            <MoreHorizontal class="size-[18px]" aria-hidden="true" />
-            <span class="sr-only">{t('mail.moreActions')}</span>
-          {/snippet}
-          {#snippet children()}
-            {#if trashMode}
-              {#if onRestore}<button class="menu-action" role="menuitem" type="button" onclick={() => onRestore?.(message)}><RotateCcw class="size-4" aria-hidden="true" />{t('mail.restoreOriginal')}</button>{/if}
-              {#if onPermanentDelete}<button class="menu-action text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{t('mail.permanentDelete')}</button>{/if}
-            {:else}
-              {#if standaloneHref}
-                <a class="menu-action" role="menuitem" href={standaloneHref} target="_blank" rel="noopener noreferrer"><ArrowUpRight class="size-4" aria-hidden="true" />{t('mail.openNewWindowShort')}</a>
+        {#if !trashMode && onToggleStar}
+          <IconButton ariaLabel={message.starred ? t('mail.unstar') : t('mail.star')} title={message.starred ? t('mail.unstar') : t('mail.star')} size="sm" ariaPressed={message.starred} class={message.starred ? 'text-[var(--fm-brand-orange)]' : 'text-[var(--fm-text-muted)]'} onclick={() => onToggleStar?.(message)} disabled={pending}>
+            <Star class="size-4" fill={message.starred ? 'currentColor' : 'none'} aria-hidden="true" />
+          </IconButton>
+        {/if}
+        {#if !trashMode && onToggleRead}
+          <IconButton ariaLabel={message.read ? t('mail.markUnread') : t('mail.markRead')} title={message.read ? t('mail.markUnread') : t('mail.markRead')} size="sm" class="hidden text-[var(--fm-text-muted)] sm:inline-flex" onclick={() => onToggleRead?.(message)} disabled={pending}>
+            <Mail class="size-4" aria-hidden="true" />
+          </IconButton>
+        {/if}
+        {#if hasActions}
+          <DropdownMenu id="message-actions" open={actionsMenuOpen} align="end" showChevron={false} triggerAriaLabel={t('mail.moreActions')} triggerTitle={t('mail.moreActions')} class="message-actions-menu" onOpenChange={(open) => (actionsMenuOpen = open)}>
+            {#snippet trigger()}
+              <MoreHorizontal class="size-[18px]" aria-hidden="true" />
+            {/snippet}
+            {#snippet children()}
+              {#if trashMode}
+                {#if onRestore}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onRestore?.(message)}><RotateCcw class="size-4" aria-hidden="true" />{t('mail.restoreOriginal')}</button>{/if}
+                {#if onPermanentDelete}<button class="menu-action fm-touch-target text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{t('mail.permanentDelete')}</button>{/if}
+              {:else}
+                {#if standaloneHref}<a class="menu-action fm-touch-target" role="menuitem" href={standaloneHref} target="_blank" rel="noopener noreferrer"><ArrowUpRight class="size-4" aria-hidden="true" />{t('mail.openNewWindowShort')}</a>{/if}
+                {#if message.folder === 'drafts' && onEditDraft}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onEditDraft?.(message)}><Archive class="size-4" aria-hidden="true" />{t('mail.continueDraft')}</button>{/if}
+                {#if message.folder === 'inbox' && onToggleRead}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onToggleRead?.(message)}><Mail class="size-4" aria-hidden="true" />{message.read ? t('mail.markUnread') : t('mail.markRead')}</button>{/if}
+                {#if message.source === 'inbound' && onReloadInboundDetail}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onReloadInboundDetail?.(message)} disabled={pending || inboundDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{inboundDetailPending ? t('mail.loadingBody') : t('mail.reloadBody')}</button>{/if}
+                {#if message.folder === 'sent' && onReloadDeliveryDetail}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onReloadDeliveryDetail?.(message)} disabled={pending || deliveryDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{deliveryDetailPending ? t('mail.loadingReceipt') : t('mail.reloadReceipt')}</button>{/if}
+                {#if canRetry && onRetryDelivery}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onRetryDelivery?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />{t('mail.retryDelivery')}</button>{/if}
+                {#if downloadHref}<a class="menu-action fm-touch-target" role="menuitem" href={downloadHref} download rel="noopener noreferrer"><ArrowUpRight class="size-4" aria-hidden="true" />{t('mail.downloadRaw')}</a>{/if}
+                {#if onRemove}<button class="menu-action fm-touch-target text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{t('mail.moveTrash')}</button>{/if}
               {/if}
-              {#if message.folder === 'drafts' && onEditDraft}
-                <button class="menu-action" role="menuitem" type="button" onclick={() => onEditDraft?.(message)}><Archive class="size-4" aria-hidden="true" />{t('mail.continueDraft')}</button>
-              {/if}
-              {#if message.folder === 'inbox' && onToggleRead}
-                <button class="menu-action" role="menuitem" type="button" onclick={() => onToggleRead?.(message)}><Mail class="size-4" aria-hidden="true" />{message.read ? t('mail.markUnread') : t('mail.markRead')}</button>
-              {/if}
-              {#if onRemove}<button class="menu-action text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{t('mail.moveTrash')}</button>{/if}
-            {/if}
-          {/snippet}
-        </DropdownMenu>
+            {/snippet}
+          </DropdownMenu>
         {/if}
         {#if onCloseReader}
-          <button
-            class="grid size-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)]"
-            aria-label={t('reader.close')}
-            title={t('reader.close')}
-            type="button"
-            onclick={() => onCloseReader?.()}
-          >
-            <X class="size-[18px]" aria-hidden="true" />
-          </button>
+          <IconButton ariaLabel={t('reader.close')} title={t('reader.close')} size="sm" class="text-[var(--fm-text-secondary)]" onclick={() => onCloseReader?.()}>
+            <X class="size-4" aria-hidden="true" />
+          </IconButton>
         {/if}
       </div>
+      <nav class="message-primary-actions flex shrink-0 items-center gap-1" aria-label={t('mail.actions')}>
+        {#if trashMode}
+          {#if onRestore}<IconButton ariaLabel={t('mail.restore')} title={t('mail.restore')} variant="primary" size="sm" onclick={() => onRestore?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" /></IconButton>{/if}
+          {#if onPermanentDelete}<IconButton ariaLabel={t('mail.permanentDelete')} title={t('mail.permanentDelete')} variant="danger" size="sm" onclick={() => (removeConfirmOpen = true)} disabled={pending}><Trash2 class="size-4" aria-hidden="true" /></IconButton>{/if}
+        {:else if message.folder !== 'drafts'}
+          {#if onReply}<IconButton ariaLabel={t('mail.reply')} title={t('mail.reply')} variant="primary" size="sm" onclick={() => onReply?.(message)} disabled={pending}><Reply class="size-4" aria-hidden="true" /></IconButton>{/if}
+          {#if onReplyAll}
+            <IconButton ariaLabel={t('mail.replyAll')} title={t('mail.replyAll')} variant="outline" size="sm" onclick={() => onReplyAll?.(message)} disabled={pending}><ReplyAll class="size-4" aria-hidden="true" /></IconButton>
+          {/if}
+        {/if}
+        {#if !trashMode}
+          {#if message.folder !== 'drafts' && onForward}
+            <IconButton ariaLabel={t('mail.forward')} title={t('mail.forward')} variant="outline" size="sm" onclick={() => onForward?.(message)} disabled={pending}><Forward class="size-4" aria-hidden="true" /></IconButton>
+          {/if}
+        {/if}
+      </nav>
     </div>
 
     <div class="px-4 pb-3 pt-2 sm:px-5 sm:pb-3 sm:pt-3">
@@ -293,7 +274,7 @@
             <span class="truncate text-xs text-[var(--fm-text-secondary)]">&lt;{senderEmail || t('mail.unknownAddress')}&gt;</span>
           </div>
           <details class="mt-1 text-xs text-[var(--fm-text-muted)]">
-            <summary class="inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
+            <summary class="fm-touch-target inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
               <span>{t('mail.contactDetails', { label: counterpartLabel })}</span><ChevronDown class="size-3" aria-hidden="true" />
             </summary>
             <dl class="mt-2 grid max-w-xl grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
@@ -306,7 +287,7 @@
           </details>
           {#if inboundDetail}
             <details class="mt-1 text-xs text-[var(--fm-text-muted)]">
-              <summary class="inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
+              <summary class="fm-touch-target inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
                 <span>{t('mail.technicalDetails')}</span><ChevronDown class="size-3" aria-hidden="true" />
               </summary>
               <div class="mt-2 max-w-3xl rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
@@ -334,7 +315,7 @@
                 {/if}
                 {#if inboundDetail.headers.length}
                   <details class="mt-3 border-t border-[var(--fm-border)] pt-2">
-                    <summary class="cursor-pointer font-medium text-[var(--fm-text-secondary)]">{translateCount(i18n.locale, 'mail.filteredHeaders', inboundDetail.headers.length)}</summary>
+                    <summary class="fm-touch-target cursor-pointer font-medium text-[var(--fm-text-secondary)]">{translateCount(i18n.locale, 'mail.filteredHeaders', inboundDetail.headers.length)}</summary>
                     <dl class="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                       {#each inboundDetail.headers as header}
                         <dt class="font-mono">{header.name}</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{header.value}</dd>
@@ -346,12 +327,12 @@
             </details>
           {/if}
         </div>
-        <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatDate(message.sentAt)}</time>
+        <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatCompactDate(message.sentAt)}</time>
       </div>
 
-      <div class="mt-4 flex flex-wrap items-center gap-2">
+      <div class="mt-2 flex flex-wrap items-center gap-2">
         {#if message.folder === 'sent' && deliveryStatus}
-          <StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)} class="sm:hidden">{deliveryLabel(deliveryStatus)}</StatusBadge>
+          <span class="inline-flex sm:hidden"><StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge></span>
         {/if}
         {#if message.labels.length}
           {#each message.labels as label}<span class="rounded-full bg-[var(--fm-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--fm-text-secondary)]">{label}</span>{/each}
@@ -361,32 +342,6 @@
         {/if}
       </div>
 
-      <nav class="mt-3 flex flex-wrap items-center gap-2" aria-label={t('mail.actions')}>
-        {#if trashMode}
-          {#if onRestore}<button class="action-button action-button-primary" type="button" onclick={() => onRestore?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />{t('mail.restore')}</button>{/if}
-          {#if onPermanentDelete}<button class="action-button" type="button" onclick={() => (removeConfirmOpen = true)} disabled={pending}><Trash2 class="size-4" aria-hidden="true" />{t('mail.permanentDelete')}</button>{/if}
-        {:else if message.folder !== 'drafts'}
-          {#if onReply}<button class="action-button action-button-primary" type="button" onclick={() => onReply?.(message)} disabled={pending}><Reply class="size-4" aria-hidden="true" />{t('mail.reply')}</button>{/if}
-          {#if onReplyAll}
-            <button class="action-button" type="button" onclick={() => onReplyAll?.(message)} disabled={pending}><ReplyAll class="size-4" aria-hidden="true" />{t('mail.replyAll')}</button>
-          {/if}
-        {/if}
-        {#if !trashMode}
-          {#if message.folder !== 'drafts' && onForward}
-            <button class="action-button" type="button" onclick={() => onForward?.(message)} disabled={pending}><Forward class="size-4" aria-hidden="true" />{t('mail.forward')}</button>
-          {/if}
-          {#if message.source === 'inbound' && onReloadInboundDetail}
-            <button class="action-button" type="button" onclick={() => onReloadInboundDetail?.(message)} disabled={pending || inboundDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{inboundDetailPending ? t('mail.loadingBody') : t('mail.reloadBody')}</button>
-          {/if}
-          {#if message.folder === 'sent' && onReloadDeliveryDetail}
-            <button class="action-button" type="button" onclick={() => onReloadDeliveryDetail?.(message)} disabled={pending || deliveryDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{deliveryDetailPending ? t('mail.loadingReceipt') : t('mail.reloadReceipt')}</button>
-            {#if canRetry && onRetryDelivery}<button class="action-button" type="button" onclick={() => onRetryDelivery?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />{t('mail.retryDelivery')}</button>{/if}
-          {/if}
-          {#if downloadHref}
-            <a class="action-button" href={downloadHref} download rel="noopener noreferrer"><ArrowUpRight class="size-4" aria-hidden="true" />{t('mail.downloadRaw')}</a>
-          {/if}
-        {/if}
-      </nav>
     </div>
   </header>
 {:else}
@@ -395,6 +350,7 @@
 
 {#if message}
   <ConfirmDialog
+    id={`message-remove-confirm-${message.id}`}
     open={removeConfirmOpen}
     title={trashMode ? t('mail.permanentDeleteConfirm') : t('mail.moveTrashConfirm')}
     description={trashMode ? t('mail.permanentDeleteDescription') : t('mail.moveTrashDescription')}
@@ -410,34 +366,39 @@
 {/if}
 
 <style>
-  .action-button {
-    display: inline-flex;
-    min-height: 36px;
-    align-items: center;
-    gap: 0.375rem;
-    border: 1px solid var(--fm-border);
-    border-radius: var(--radius-md);
-    padding: 0.375rem 0.75rem;
-    color: var(--fm-text-secondary);
-    background: var(--fm-surface);
-    font-size: 0.75rem;
-    font-weight: 600;
-    transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+  .subject-collapsed {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
   }
 
-  .action-button:hover:not(:disabled) { color: var(--fm-text); background: var(--fm-surface-hover); border-color: var(--fm-border-strong); }
-  .action-button:disabled { cursor: not-allowed; opacity: 0.5; }
-  .action-button-primary { border-color: var(--fm-primary); color: var(--fm-text-inverse); background: var(--fm-primary); }
-  .action-button-primary:hover:not(:disabled) { color: var(--fm-text-inverse); background: var(--fm-primary-hover); }
+  .message-subject h1 {
+    overflow-wrap: anywhere;
+  }
+
+  .subject-toggle {
+    border-radius: var(--radius-sm);
+    padding: 0 0.25rem;
+    color: var(--fm-primary);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .subject-toggle:hover { background: var(--fm-primary-soft); }
+
   .menu-action { display: flex; width: 100%; min-height: 36px; align-items: center; gap: 0.5rem; border-radius: var(--radius-md); padding: 0.55rem 0.625rem; text-align: left; font-size: 0.75rem; color: var(--fm-text-secondary); }
   .menu-action:hover { background: var(--fm-surface-hover); color: var(--fm-text); }
 
   :global(.message-actions-menu > button) {
     display: grid;
-    width: 44px;
-    height: 44px;
+    width: var(--control-compact);
+    height: var(--control-compact);
     place-items: center;
     gap: 0;
+    padding: 0;
     border-radius: var(--radius-md);
     color: var(--fm-text-muted);
   }
@@ -446,8 +407,23 @@
   :global(.message-actions-menu > button > svg:last-child) { display: none; }
   :global(.message-actions-menu [role='menu']) { width: 13rem; }
 
-  @media (max-width: 767px) {
-    .action-button { min-height: 44px; padding-inline: 0.75rem; }
+  @media (max-width: 900px) {
+    .message-header-row {
+      flex-wrap: wrap;
+    }
+
+    .message-primary-actions {
+      flex-basis: 100%;
+      justify-content: flex-end;
+      border-top: 1px solid var(--fm-border);
+      padding-top: 0.25rem;
+    }
+
+    :global(.message-actions-menu > button) {
+      width: 44px;
+      height: 44px;
+    }
+
     .menu-action { min-height: 44px; }
   }
 </style>

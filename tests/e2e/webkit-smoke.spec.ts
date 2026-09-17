@@ -96,7 +96,8 @@ test('keeps plain text safe while exercising HTML, CID, remote consent, and repo
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent('download');
-  await detail.getByRole('button', { name: '下载显示问题报告' }).click();
+  await detail.getByRole('region', { name: '邮件正文' }).getByRole('button', { name: '更多邮件操作' }).click();
+  await detail.getByRole('menuitem', { name: '下载显示问题报告', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^flaremail-html-display-email_e2e-html-inbox-message\.json$/u);
   const path = await download.path();
@@ -183,7 +184,8 @@ test('sends successfully and exposes a typed failure without claiming success', 
   const failure = page.getByRole('alert').filter({ hasText: 'WebKit smoke provider failure' });
   await expect(failure).toContainText('详情 ID：webkit-failure-');
   if (!projectIsMobile(testInfo.project.name)) {
-    await expect(page.getByText('全局状态需处理', { exact: true })).toBeVisible();
+    const degradedStatus = page.locator('summary[aria-label="查看工作区服务状态"]');
+    await expect(degradedStatus).toHaveClass(/degraded/u);
   }
   const failedDialog = page.getByRole('dialog', { name: '新邮件' });
   await failedDialog.getByRole('button', { name: '取消', exact: true }).click();
@@ -196,7 +198,7 @@ test('sends successfully and exposes a typed failure without claiming success', 
   await page.unroute('**/api/send');
   await page.getByRole('button', { name: '刷新邮件列表' }).click();
   if (!projectIsMobile(testInfo.project.name)) {
-    await expect(page.getByText('全局状态正常', { exact: true })).toBeVisible();
+    await expect(page.locator('summary[aria-label="查看工作区服务状态"]')).not.toHaveClass(/degraded/u);
   }
   await assertNoConsoleErrors(consoleErrors.filter((message) => !message.includes('503')));
 });

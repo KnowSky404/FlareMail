@@ -462,7 +462,7 @@ Header：
 - 不可信 HTML 禁止直接插入应用 DOM。
 - 如提供 HTML 视图，使用禁用脚本、默认阻止远程内容的 sandbox iframe。
 - 保持空白和合适阅读行宽。
-- 正文使用 `clamp(22rem, 68dvh, 56rem)` 的 HTML 最小阅读高度和约 78–86ch 的文本行宽，避免固定 `62vh/28rem` 把内容空间锁死。
+- 正文使用 `clamp(18rem, 68dvh, 56rem)` 的 HTML 最小阅读高度和约 78–86ch 的文本行宽，避免固定 `62vh/28rem` 把内容空间锁死。
 - 详情可以通过专注阅读 dialog 或 `/messages/[id]` 独立地址打开；两者都必须保留同一套安全 HTML、附件、投递和 owner isolation 契约。
 - 外链安全打开，使用 `noopener noreferrer`。
 - 若支持远程图片，必须由用户显式加载。
@@ -793,3 +793,33 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 - [ ] 浏览器检查覆盖桌面、平板、手机及 light/dark/system；留存无横向滚动、focus 和关键状态截图/结果。
 - [ ] 审查明确禁止项：无黑色窄栏主导航、serif/editorial、paper、重阴影、渐变、玻璃拟态、大圆角卡片、全大写、低对比元数据、供应商 Chip 泛滥、raw HTML 注入、hover-only action、仿冒 Cloudflare、仅浅色或仅桌面。
 - [ ] 数据库迁移、API、UI、Worker 和文档版本一致；每个阶段有独立 Conventional Commit，未把无关工作树改动纳入提交。
+
+## 24. 2026-09-17 阅读空间与壳层落地记录
+
+本轮实现保持现有 FlareMail 的蓝色主色、浅色/深色主题、可折叠侧栏、可调列表分隔条、标准/紧凑密度、焦点阅读和邮件安全边界；改动集中在布局约束、信息优先级和可发现性。
+
+### 24.1 顶栏和常用操作
+
+- 桌面顶栏固定约 50 px；右侧只保留三个入口，顺序为服务状态、显示偏好、账号菜单。健康服务只显示图标，降级服务显示图标和状态数量，点击后查看完整指标。
+- 显示偏好菜单承载主题、显示密度和语言；账号菜单承载当前身份、设置和退出。工作区名称使用可截断但可查看完整值的控件。
+- 邮件搜索只有一个真实输入状态：桌面位于顶栏，窄视口位于文件夹标题区；输入、清除、文件夹范围、debounce、竞态保护、URL 状态和 `/` 快捷键保持同一条路径。
+- 高频操作优先使用 `IconButton`；低频操作进入带键盘导航的 `DropdownMenu`。发送、删除、关键错误和必须理解的状态保留文字或确认，不以图标猜测替代语义。
+
+### 24.2 尺寸、响应式和滚动
+
+- 桌面按钮采用约 30–32 px 的紧凑视觉尺寸；`max-width: 900px` 时仅由 `.fm-touch-target` 为交互入口扩展到至少 44 × 44 CSS px，避免给整页所有链接和表单控件统一加最小尺寸。
+- `Button`/`IconButton` 的基础显示样式位于组件层，断点上的 `hidden`/`sm:inline-flex` 等工具类可以可靠地覆盖它；响应式状态徽章同样由外层控制显示，避免隐藏内容参与 flex 计算。
+- 工作台使用 `min-width: 0`、`min-height: 0` 和 `minmax(0, 1fr)` 维持明确的高度/滚动链；详情头固定，`.fm-detail-scroll` 承担正文滚动，应用根节点不使用全局横向裁剪来掩盖溢出。
+- 详情头在窄屏允许操作栏换行，主题标题保持可见、可选择和可换行；联系人、抄送/密送、技术头和投递详情按需展开，减少首屏重复预览。
+
+### 24.3 交互与可访问性约束
+
+- 纯图标入口必须有准确 accessible name；当前共享控件暴露 `aria-pressed`、`aria-expanded`、`aria-controls`、`aria-describedby`、loading/disabled 和稳定的 SSR ID。
+- Tooltip 的 `aria-describedby` 指向真正可聚焦的触发元素，而非包裹触发器的装饰节点；菜单支持 outside click、Escape、方向键/Home/End、Tab 和关闭后的焦点恢复，并限制在视口内。
+- 阅读正文的 HTML 使用 sandbox iframe，禁用脚本和 `allow-same-origin`；远程图片默认不加载，显式开启后可撤销 URL。局部表格允许自身横向滚动，应用 UI 不依靠全局 `overflow-x: hidden`。
+
+### 24.4 本轮证据与标准基线
+
+本轮浏览器证据使用隔离的本地 Worker、D1/R2 合成 fixture 和 Chromium Playwright fallback；Browser plugin 不在当前环境中。回归尺寸包含 320、390、480、768、900、901、1023、1024、1280、1366 px，并覆盖短视口、移动横屏、中文/英文、浅色/深色、标准/紧凑密度、侧栏状态、长主题和长正文。1366 × 768 的几何验收要求正文起点不超过 220 px，实际可见正文至少占视口 60%；可见高度按视口、详情面板和祖先裁剪区域的交集计算，不使用 `scrollHeight` 或 iframe 声明高度冒充可见空间。
+
+可访问性和 CSS 依据于 2026-09-17 复核的 [W3C WCAG 2.2](https://www.w3.org/TR/WCAG22/)、[WAI-ARIA Authoring Practices Guide](https://www.w3.org/WAI/ARIA/apg/)、[Tailwind CSS 加载样式层文档](https://tailwindcss.com/docs/adding-custom-styles#using-css-layers)；实现保留项目现有组件和 token，不引入全局 `!important`、隐藏滚动条、缩放/变形或无证据的大范围重构。

@@ -114,7 +114,7 @@
   };
 </script>
 
-<div class:fm-reader-body={readerMode} class="flex h-full min-h-0 min-w-0 flex-col bg-[var(--fm-surface)]">
+<div class:fm-reader-body={readerMode} class="fm-detail-shell flex h-full min-h-0 min-w-0 flex-col bg-[var(--fm-surface)]">
   <MessageHeader
     {message}
     {deliveryDetail}
@@ -144,8 +144,8 @@
   />
 
   {#if message}
-    <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <article class="mx-auto w-full max-w-none px-4 py-4 sm:px-6 sm:py-5 lg:px-8" aria-label={t('mail.bodyDetail')}>
+    <div class="fm-detail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <article class="mx-auto min-w-0 w-full max-w-none px-4 py-4 sm:px-6 sm:py-5 lg:px-8" aria-label={t('mail.bodyDetail')}>
         {#if inboundDetailError || deliveryDetailError || workspaceBodyError}
           <div class="mb-5 grid gap-2" aria-live="polite">
             {#if inboundDetailError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">{t('mail.bodyLoadError', { error: inboundDetailError })}</p>{/if}
@@ -192,7 +192,7 @@
             <ol class="mt-3 grid gap-1">
               {#each threadMessages as threadMessage (threadMessage.id)}
                 <li>
-                  <button class="flex min-h-14 w-full items-center gap-3 rounded-[var(--radius-md)] border border-transparent px-3 py-2 text-left hover:bg-[var(--fm-surface-hover)]" class:bg-[var(--fm-surface-selected)]={threadMessage.id === message.id} type="button" onclick={() => onSelectThreadMessage?.(threadMessage)} aria-current={threadMessage.id === message.id ? 'true' : undefined}>
+                  <button class="fm-touch-target flex min-h-14 w-full items-center gap-3 rounded-[var(--radius-md)] border border-transparent px-3 py-2 text-left hover:bg-[var(--fm-surface-hover)]" class:bg-[var(--fm-surface-selected)]={threadMessage.id === message.id} type="button" onclick={() => onSelectThreadMessage?.(threadMessage)} aria-current={threadMessage.id === message.id ? 'true' : undefined}>
                     <span class="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--fm-surface-subtle)] text-xs font-semibold text-[var(--fm-text-secondary)]" aria-hidden="true">{(threadMessage.fromName || threadMessage.fromEmail || '?').slice(0, 1).toUpperCase()}</span>
                     <span class="min-w-0 flex-1"><span class="block truncate text-xs font-medium text-[var(--fm-text)]">{threadMessage.preview || threadMessage.subject || t('mail.noSubject')}</span><span class="mt-0.5 block text-[11px] text-[var(--fm-text-muted)]">{folderLabel(threadMessage.folder)}</span></span>
                     <time class="shrink-0 text-[11px] text-[var(--fm-text-muted)]" datetime={threadMessage.sentAt}>{new Intl.DateTimeFormat(i18n.locale, { month: 'short', day: 'numeric' }).format(new Date(threadMessage.sentAt))}</time>
@@ -215,7 +215,12 @@
 
 <style>
   .fm-reader-body :global(.message-html-frame) {
-    min-height: clamp(22rem, 68dvh, 56rem);
+    min-height: clamp(18rem, 68dvh, 56rem);
+  }
+
+  .fm-detail-scroll {
+    min-width: 0;
+    overflow-x: clip;
   }
 
   .fm-reader-body :global(.message-plain-body) {

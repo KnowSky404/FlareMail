@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { RefreshCw } from '@lucide/svelte';
   import { IconButton } from '$lib/components/ui';
   import MailFilterBar, { type MailFilter } from './MailFilterBar.svelte';
@@ -49,6 +50,18 @@
   const countLabel = $derived(query.trim()
     ? translateCount(i18n.locale, 'mail.resultCount', count)
     : translateCount(i18n.locale, 'mail.folderCount', count));
+
+  let showMobileSearch = $state(false);
+
+  onMount(() => {
+    const media = matchMedia('(max-width: 900px)');
+    const syncMobileSearch = () => {
+      showMobileSearch = media.matches;
+    };
+    syncMobileSearch();
+    media.addEventListener('change', syncMobileSearch);
+    return () => media.removeEventListener('change', syncMobileSearch);
+  });
 </script>
 
 <header class="border-b border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-3 sm:px-5">
@@ -73,8 +86,12 @@
   </div>
 
   {#if activeSection !== 'profile'}
-    <div class="mt-3 grid gap-2">
-      <MailSearchBar {query} disabled={loading} onQueryChange={onQueryChange} />
+    <div class="folder-search mt-3 grid gap-2">
+      {#if showMobileSearch}
+        <div class="folder-search-field">
+          <MailSearchBar {query} disabled={loading} onQueryChange={onQueryChange} />
+        </div>
+      {/if}
       <MailFilterBar {filter} disabled={loading} onFilterChange={onFilterChange} />
     </div>
   {/if}

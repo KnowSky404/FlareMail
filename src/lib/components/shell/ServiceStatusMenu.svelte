@@ -32,21 +32,46 @@
   const { t } = i18n;
 
   const healthy = $derived(!serviceDegraded);
+  const attentionCount = $derived(delayedCount + failedCount + bouncedCount + complainedCount + staleDeliveryCount);
+  let statusElement = $state<HTMLDetailsElement>();
+  let summaryElement = $state<HTMLElement>();
+  let open = $state(false);
+
+  $effect(() => {
+    if (!open || typeof document === 'undefined') return;
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !statusElement?.contains(target)) open = false;
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      open = false;
+      summaryElement?.focus({ preventScroll: true });
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  });
 </script>
 
-<details class="status-menu">
-  <summary class:degraded={!healthy} aria-label={t('status.view')}>
+<details bind:this={statusElement} bind:open class="status-menu">
+  <summary bind:this={summaryElement} class:degraded={!healthy} aria-label={t('status.view')} aria-controls="service-status-content" title={healthy ? t('status.healthy') : t('status.degraded')}>
     {#if healthy}
       <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
-      <span>{t('status.healthy')}</span>
+      <span class="sr-only">{t('status.healthy')}</span>
     {:else}
       <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
-      <span>{t('status.degraded')}</span>
+      <span class="sr-only">{t('status.degraded')}</span>
+      <span class="attention-count" aria-hidden="true">{formatNumber(attentionCount, i18n.locale)}</span>
     {/if}
     <ChevronDown class="chevron" size={14} aria-hidden="true" />
   </summary>
 
-  <div class="status-popover">
+  <div id="service-status-content" class="status-popover" role="region" aria-label={t('status.view')} tabindex="-1">
     <div class="status-heading">
       <strong>{t('status.workspace')}</strong>
       <span class:healthy>{runtimeLabel}</span>
@@ -72,10 +97,12 @@
 
   summary {
     display: inline-flex;
-    min-height: var(--control-default);
+    min-height: 32px;
+    min-width: 32px;
     align-items: center;
+    justify-content: center;
     gap: 7px;
-    padding: 0 var(--space-3);
+    padding: 0 8px;
     border: 1px solid var(--fm-border);
     border-radius: var(--radius-md);
     color: var(--fm-text-secondary);
@@ -98,6 +125,14 @@
     color: var(--fm-danger);
   }
 
+  .attention-count {
+    min-width: 1.1rem;
+    color: var(--fm-danger);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+  }
+
   .status-menu[open] :global(.chevron) {
     transform: rotate(180deg);
   }
@@ -112,6 +147,8 @@
     top: calc(100% + var(--space-2));
     right: 0;
     width: 288px;
+    max-height: min(70dvh, 28rem);
+    overflow-y: auto;
     padding: var(--space-4);
     border: 1px solid var(--fm-border);
     border-radius: var(--radius-lg);

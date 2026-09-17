@@ -15,9 +15,9 @@ export const buttonVariants: Record<ButtonVariant, string> = {
 };
 
 export const buttonSizes: Record<ControlSize, string> = {
-  sm: 'min-h-11 min-w-11 px-2.5 text-xs sm:min-h-8 sm:min-w-0',
-  md: 'min-h-11 min-w-11 px-3.5 text-sm sm:min-h-9 sm:min-w-0',
-  lg: 'min-h-11 min-w-11 px-4 text-sm sm:min-h-10 sm:min-w-0'
+  sm: 'min-h-8 min-w-0 px-2.5 text-xs',
+  md: 'min-h-9 min-w-0 px-3.5 text-sm',
+  lg: 'min-h-10 min-w-0 px-4 text-sm'
 };
 
 export const controlBase =
@@ -28,7 +28,7 @@ export const focusRing =
 
 export function buttonClass(variant: ButtonVariant = 'primary', size: ControlSize = 'md', className = '') {
   return cn(
-    'inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors',
+    'fm-button fm-touch-target items-center justify-center gap-2 rounded-[var(--radius-md)] font-medium transition-colors',
     'outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40 focus-visible:ring-offset-1',
     'disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
     buttonVariants[variant],

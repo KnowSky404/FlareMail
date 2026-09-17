@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { ExternalLink, FileDown, FileWarning, ImageOff, LoaderCircle } from '@lucide/svelte';
+  import { ExternalLink, FileDown, FileWarning, ImageOff, LoaderCircle, MoreHorizontal } from '@lucide/svelte';
+  import { DropdownMenu } from '$lib/components/ui';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
@@ -30,6 +31,7 @@
 
   let localView = $state<'text' | 'html'>('text');
   let localRemoteImages = $state(false);
+  let displayActionsOpen = $state(false);
   const activeView = $derived(onViewChange ? view : localView);
   const activeRemoteImages = $derived(onRemoteImagesChange ? allowRemoteImages : localRemoteImages);
   const changeView = (next: 'text' | 'html') => onViewChange ? onViewChange(next) : (localView = next);
@@ -72,12 +74,26 @@
           <button class={`min-h-11 rounded-[calc(var(--radius-md)-2px)] px-3 text-xs font-medium sm:min-h-9 ${activeView === 'text' ? 'bg-[var(--fm-primary)] text-[var(--fm-text-inverse)]' : ''}`} type="button" aria-pressed={activeView === 'text'} onclick={() => changeView('text')}>{t('mail.plainText')}</button>
           <button class={`min-h-11 rounded-[calc(var(--radius-md)-2px)] px-3 text-xs font-medium sm:min-h-9 ${activeView === 'html' ? 'bg-[var(--fm-primary)] text-[var(--fm-text-inverse)]' : ''}`} type="button" aria-pressed={activeView === 'html'} onclick={() => changeView('html')}>{t('mail.safeHtml')}</button>
         </div>
-        <div class="flex flex-wrap items-center gap-1.5">
-          {#if printUrl}
-            <a class="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] sm:min-h-9" href={printUrl} target="_blank" rel="noopener noreferrer"><ExternalLink class="size-3.5" aria-hidden="true" />{t('mail.printView')}</a>
-          {/if}
-          <button class="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] sm:min-h-9" type="button" onclick={downloadDisplayReport}><FileDown class="size-3.5" aria-hidden="true" />{t('mail.displayReport')}</button>
-        </div>
+        <DropdownMenu
+          id="message-display-actions"
+          open={displayActionsOpen}
+          align="end"
+          showChevron={false}
+          triggerAriaLabel={t('mail.moreActions')}
+          triggerTitle={t('mail.moreActions')}
+          class="message-display-actions"
+          onOpenChange={(open) => (displayActionsOpen = open)}
+        >
+          {#snippet trigger()}
+            <MoreHorizontal class="size-4" aria-hidden="true" />
+          {/snippet}
+          {#snippet children()}
+            {#if printUrl}
+              <a class="menu-action fm-touch-target" role="menuitem" href={printUrl} target="_blank" rel="noopener noreferrer"><ExternalLink class="size-4" aria-hidden="true" />{t('mail.printView')}</a>
+            {/if}
+            <button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={downloadDisplayReport}><FileDown class="size-4" aria-hidden="true" />{t('mail.displayReport')}</button>
+          {/snippet}
+        </DropdownMenu>
       </div>
     {/if}
     {#if hasHtml && activeView === 'html' && htmlUrl}
@@ -111,7 +127,8 @@
 
 <style>
   .message-html-frame {
-    height: clamp(22rem, 68dvh, 56rem);
+    height: clamp(18rem, 68dvh, 56rem);
+    min-height: 18rem;
   }
 
   .message-plain-body {
@@ -120,5 +137,23 @@
 
   :global(.fm-reader-body) .message-plain-body {
     width: min(100%, 86ch);
+  }
+
+  :global(.message-display-actions > button) {
+    width: var(--control-compact);
+    height: var(--control-compact);
+    padding: 0;
+    color: var(--fm-text-secondary);
+  }
+
+  :global(.message-display-actions [role='menu']) {
+    width: 15rem;
+  }
+
+  @media (max-width: 900px) {
+    :global(.message-display-actions > button) {
+      width: 44px;
+      height: 44px;
+    }
   }
 </style>

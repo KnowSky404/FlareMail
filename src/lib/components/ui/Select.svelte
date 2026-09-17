@@ -41,7 +41,7 @@
       {disabled}
       {value}
       aria-invalid={error ? 'true' : undefined}
-      class={cn(controlBase, 'w-full appearance-none px-3 py-2 pr-9', error && 'border-red-400 focus-visible:border-red-500 focus-visible:ring-red-500/25', className)}
+      class={cn(controlBase, 'fm-touch-target w-full appearance-none px-3 py-2 pr-9', error && 'border-red-400 focus-visible:border-red-500 focus-visible:ring-red-500/25', className)}
       onchange={(event) => onchange?.(event.currentTarget.value, event)}
     >
       {#each options as option (option.value)}

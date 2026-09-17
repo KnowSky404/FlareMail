@@ -68,7 +68,7 @@
   </button>
 </header>
 
-<Drawer {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
+<Drawer id="mobile-navigation-drawer" {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
     <nav class="mobile-nav-list" aria-label={t('shell.mobileNavigation')}>
       <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
         <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span><small>{formattedInboxCount}</small>

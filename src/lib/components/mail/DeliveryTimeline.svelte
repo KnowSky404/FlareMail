@@ -137,7 +137,7 @@
       <p class="mt-4 text-xs text-[var(--fm-text-muted)]">{t('mail.noDeliveryEvents')}</p>
     {:else}
       <details class="mt-4 group" open>
-        <summary class="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-[var(--fm-text-secondary)]">
+        <summary class="fm-touch-target flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-[var(--fm-text-secondary)]">
           <span class="transition-transform group-open:rotate-90" aria-hidden="true">›</span>
           {translateCount(i18n.locale, 'mail.viewDeliveryEvents', sortedEvents.length)}
         </summary>

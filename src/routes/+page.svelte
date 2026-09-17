@@ -2,6 +2,7 @@
   import { goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, untrack } from 'svelte';
+  import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Star, Trash2 } from '@lucide/svelte';
   import type { PageData } from './$types';
   import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
   import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
@@ -17,6 +18,7 @@
   import ReaderDialog from '$lib/components/ui/ReaderDialog.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
+  import { DropdownMenu, IconButton } from '$lib/components/ui';
   import { ClientApiError } from '$lib/client/api';
   import {
     ComposeAutosaveController,
@@ -151,6 +153,7 @@
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let selectedMessageIds = $state<string[]>([]);
+  let bulkSelectInput = $state<HTMLInputElement>();
   let searchQuery = $state('');
   let mailFilter = $state<MailFilter>('all');
   let mobileDetailOpen = $state(false);
@@ -383,6 +386,18 @@
       return matchesFilter;
     })
   );
+  const bulkSelectableIds = $derived.by(() => activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile'
+    ? []
+    : visibleThreads.length
+      ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
+      : visibleMessages.map((message) => message.id));
+  const bulkSelectedVisibleCount = $derived(bulkSelectableIds.filter((id) => selectedMessageIds.includes(id)).length);
+  const bulkAllSelected = $derived(bulkSelectableIds.length > 0 && bulkSelectedVisibleCount === bulkSelectableIds.length);
+  const bulkSomeSelected = $derived(bulkSelectedVisibleCount > 0 && !bulkAllSelected);
+
+  $effect(() => {
+    if (bulkSelectInput) bulkSelectInput.indeterminate = bulkSomeSelected;
+  });
   const selectedThread = $derived.by(() => {
     if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile') {
       return null;
@@ -962,12 +977,10 @@
   }
 
   function selectAllVisible() {
-    const ids = activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile'
-      ? []
-      : visibleThreads.length
-        ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
-        : visibleMessages.map((message) => message.id);
-    selectedMessageIds = selectedMessageIds.length === ids.length ? [] : ids.slice(0, 100);
+    const ids = bulkSelectableIds;
+    selectedMessageIds = bulkAllSelected
+      ? selectedMessageIds.filter((id) => !ids.includes(id))
+      : [...new Set([...selectedMessageIds, ...ids])];
   }
 
   async function handleBulkMutation(action: import('$lib/domain/mail').MailboxMutationAction) {
@@ -1924,15 +1937,14 @@
         {serviceDegraded}
         staleDeliveryCount={metrics.staleDeliveryCount}
         unreadCount={unreadCount}
+        searchQuery={searchQuery}
         {density}
         onEditProfile={() => {
           setSection('profile');
           notify(t('notify.settingsOpened'));
         }}
         onLogout={handleLogout}
-        onSearch={() => {
-          window.dispatchEvent(new CustomEvent('flaremail:focus-search'));
-        }}
+        onSearchQueryChange={handleSearchQueryChange}
         onToggleDensity={toggleDensity}
       />
 
@@ -2012,22 +2024,43 @@
                       <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending || trashItems.length === 0} onclick={() => (emptyTrashConfirmOpen = true)}>{t('mail.emptyTrash')}</button>
                     </div>
                   {:else if activeSection !== 'drafts'}
-                    <div class="flex flex-wrap items-center gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2" aria-label={t('mail.bulkActions')}>
-                      <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={selectAllVisible}>
-                        {selectedMessageIds.length ? t('mail.clearSelection') : t('mail.selectPage')}
-                      </button>
-                      {#if selectedMessageIds.length > 0}
-                        {#if activeSection === 'archive'}
-                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unarchive')}>{t('mail.moveToInbox')}</button>
-                        {:else if activeSection === 'inbox'}
-                          <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('archive')}>{t('shell.archive')}</button>
-                        {/if}
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('read')}>{t('mail.markRead')}</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unread')}>{t('mail.markUnread')}</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('star')}>{t('mail.star')}</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-2.5 text-xs font-medium text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('unstar')}>{t('mail.unstar')}</button>
-                        <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending} onclick={() => void handleBulkMutation('trash')}>{t('mail.moveTrash')}</button>
-                        <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.selectedCount', selectedMessageIds.length)}</span>
+                    <div class="bulk-toolbar" aria-label={t('mail.bulkActions')}>
+                      <label class="bulk-select-control fm-touch-target" title={bulkAllSelected ? t('mail.clearSelection') : t('mail.selectPage')}>
+                        <input
+                          bind:this={bulkSelectInput}
+                          type="checkbox"
+                          checked={bulkAllSelected}
+                          aria-label={bulkAllSelected ? t('mail.clearSelection') : t('mail.selectPage')}
+                          aria-checked={bulkSomeSelected ? 'mixed' : bulkAllSelected ? 'true' : 'false'}
+                          disabled={bulkSelectableIds.length === 0}
+                          onchange={selectAllVisible}
+                        />
+                      </label>
+                      <span class="bulk-context">
+                        {bulkSelectedVisibleCount > 0
+                          ? translateCount(i18n.locale, 'mail.selectedCount', bulkSelectedVisibleCount)
+                          : t('mail.selectPage')}
+                      </span>
+                      {#if bulkSelectedVisibleCount > 0}
+                        <div class="bulk-actions">
+                          {#if activeSection === 'archive'}
+                            <IconButton ariaLabel={t('mail.moveToInbox')} title={t('mail.moveToInbox')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('unarchive')}><Inbox class="size-4" aria-hidden="true" /></IconButton>
+                          {:else if activeSection === 'inbox'}
+                            <IconButton ariaLabel={t('shell.archive')} title={t('shell.archive')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('archive')}><Archive class="size-4" aria-hidden="true" /></IconButton>
+                          {/if}
+                          <IconButton ariaLabel={t('mail.markRead')} title={t('mail.markRead')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('read')}><MailOpen class="size-4" aria-hidden="true" /></IconButton>
+                          <IconButton ariaLabel={t('mail.moveTrash')} title={t('mail.moveTrash')} variant="ghost" size="sm" class="text-[var(--fm-danger)]" disabled={pending} onclick={() => void handleBulkMutation('trash')}><Trash2 class="size-4" aria-hidden="true" /></IconButton>
+                          <DropdownMenu id="bulk-more-actions" align="end" showChevron={false} triggerAriaLabel={t('mail.moreActions')} triggerTitle={t('mail.moreActions')} class="bulk-action-menu">
+                            {#snippet trigger()}
+                              <MoreHorizontal class="size-4" aria-hidden="true" />
+                            {/snippet}
+                            {#snippet children()}
+                              <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('unread')}><Mail class="size-4" aria-hidden="true" />{t('mail.markUnread')}</button>
+                              <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('star')}><Star class="size-4" aria-hidden="true" />{t('mail.star')}</button>
+                              <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('unstar')}><Star class="size-4" aria-hidden="true" />{t('mail.unstar')}</button>
+                            {/snippet}
+                          </DropdownMenu>
+                        </div>
                       {/if}
                     </div>
                   {/if}
@@ -2126,7 +2159,7 @@
     </div>
 
     {#if readerOpen && selectedMessage}
-      <ReaderDialog open showHeader={false} title={selectedMessage.subject || t('mail.noSubject')} onClose={() => (readerOpen = false)}>
+      <ReaderDialog id="reader-dialog" open showHeader={false} title={selectedMessage.subject || t('mail.noSubject')} onClose={() => (readerOpen = false)}>
         <MessageDetail
           message={selectedMessage}
           deliveryDetail={selectedDeliveryDetail}
@@ -2215,6 +2248,7 @@
     {/if}
 
     <Dialog
+      id="shortcut-dialog"
       open={shortcutHelpOpen}
       title={t('shortcut.title')}
       description={t('shortcut.description')}
@@ -2236,6 +2270,7 @@
     </Dialog>
 
     <ConfirmDialog
+      id="empty-trash-confirm"
       open={emptyTrashConfirmOpen}
       title={t('mail.emptyTrashConfirm')}
       description={t('mail.emptyTrashDescription')}
@@ -2311,6 +2346,65 @@
     background: var(--fm-surface);
   }
 
+  .bulk-toolbar {
+    display: flex;
+    min-width: 0;
+    min-height: 42px;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--fm-border);
+    background: var(--fm-surface-subtle);
+    padding: 0.25rem 0.75rem;
+  }
+
+  .bulk-select-control {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+  }
+
+  .bulk-select-control:hover {
+    background: var(--fm-surface-hover);
+  }
+
+  .bulk-select-control input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--fm-primary);
+  }
+
+  .bulk-context {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--fm-text-muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bulk-actions {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.125rem;
+    margin-left: auto;
+  }
+
+  :global(.bulk-action-menu > button) {
+    width: var(--control-compact);
+    height: var(--control-compact);
+    padding: 0;
+    color: var(--fm-text-secondary);
+  }
+
+  :global(.bulk-action-menu [role='menu']) {
+    width: 13rem;
+  }
+
   .mail-detail-panel {
     min-width: 0;
     min-height: 0;
@@ -2360,6 +2454,17 @@
 
     .mail-splitter {
       display: none;
+    }
+
+    .bulk-select-control,
+    :global(.bulk-action-menu > button) {
+      width: 44px;
+      height: 44px;
+    }
+
+    .bulk-toolbar {
+      min-height: 50px;
+      padding-block: 0.25rem;
     }
 
     .mail-detail-panel,

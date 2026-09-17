@@ -348,7 +348,7 @@
   {:else if bindingLink}
     <div class="generated-link" bind:this={generatedLinkElement} tabindex="-1" role="group" aria-label={t('telegram.generatedLink')}>
       <strong>{t('telegram.generatedLink')}</strong>
-      <a class="bind-link" href={bindingLink} target="_blank" rel="noreferrer">{t('telegram.openToBind')}</a>
+      <a class="bind-link fm-touch-target inline-flex items-center" href={bindingLink} target="_blank" rel="noreferrer">{t('telegram.openToBind')}</a>
       <label class="muted" for="telegram-binding-link">{t('telegram.copyFullLink')}</label>
       <textarea id="telegram-binding-link" class="link-value" readonly value={bindingLink} rows="3" onclick={(event) => event.currentTarget.select()}></textarea>
       <p class="muted">{t('telegram.commandInstruction')}</p>
@@ -378,6 +378,7 @@
 <style>
   .stack { display: grid; gap: var(--space-3); }
   .notice { display: flex; align-items: center; gap: var(--space-3); color: var(--fm-text-secondary); font-size: 13px; }
+  .notice > span:last-child { min-width: 0; overflow-wrap: anywhere; }
   .notice.warning { color: var(--fm-warning); }
   .identity-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
   .identity-summary strong { color: var(--fm-text); font-size: 13px; }

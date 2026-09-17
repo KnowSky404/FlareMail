@@ -103,6 +103,7 @@
 <label class={`language-switcher ${className}`.trim()}>
   <span class="visually-hidden">{t('shell.languageSwitcher')}</span>
   <select
+    class="fm-touch-target"
     aria-label={t('shell.languageSwitcher')}
     disabled={disabled}
     value={visiblePreference}

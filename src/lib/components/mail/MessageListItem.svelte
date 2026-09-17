@@ -3,15 +3,13 @@
     AlertCircle,
     Ban,
     CheckCircle2,
-    ChevronRight,
     Clock3,
     FileText,
-    Mail,
     Paperclip,
     Star,
     XCircle
   } from '@lucide/svelte';
-  import { StatusBadge } from '$lib/components/ui';
+  import { IconButton, StatusBadge } from '$lib/components/ui';
   import { formatNumber, translateCount } from '$lib/i18n';
   import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
@@ -128,7 +126,7 @@
   >
     {#if selected}<span class="absolute inset-y-0 left-0 w-[3px] bg-[var(--fm-brand-orange)]" aria-hidden="true"></span>{/if}
     {#if selectable}
-      <label class="grid min-h-11 min-w-11 shrink-0 place-items-center">
+      <label class="fm-touch-target grid min-h-8 min-w-8 shrink-0 place-items-center">
         <span class="sr-only">{t('mail.select', { subject: itemSubject })}</span>
         <input
           class="size-4 accent-[var(--fm-primary)]"
@@ -189,22 +187,20 @@
           <span class="hidden sm:inline-flex"><StatusBadge status={formatDelivery(itemMessage.deliveryStatus)} /></span>
           <span class="inline-flex sm:hidden" title={formatDelivery(itemMessage.deliveryStatus)}><DeliveryIcon class="size-3.5 text-[var(--fm-text-muted)]" aria-hidden="true" /></span>
         {/if}
-        {#if itemMessage.source === 'inbound'}<Mail class="hidden size-3.5 text-[var(--fm-text-muted)] sm:block" aria-hidden="true" />{/if}
       </span>
     </button>
     {#if activeSection !== 'trash'}
-      <button
-        type="button"
-        class="mr-1 grid min-h-11 min-w-11 shrink-0 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-muted)] transition-colors hover:bg-[var(--fm-surface)] hover:text-[var(--fm-brand-orange)] focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
-        aria-label={isStarred ? t('mail.unstar') : t('mail.star')}
-        aria-pressed={isStarred}
+      <IconButton
+        ariaLabel={isStarred ? t('mail.unstar') : t('mail.star')}
         title={isStarred ? t('mail.unstar') : t('mail.star')}
+        ariaPressed={isStarred}
+        size="sm"
+        class={`mr-1 shrink-0 text-[var(--fm-text-muted)] hover:text-[var(--fm-brand-orange)] ${isStarred ? 'text-[var(--fm-brand-orange)]' : ''}`}
         onclick={handleStar}
       >
-        <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)] text-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />
-      </button>
+        <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />
+      </IconButton>
     {/if}
-    <ChevronRight class="mr-2 hidden size-4 shrink-0 text-[var(--fm-text-muted)] sm:block" aria-hidden="true" />
   </article>
 {:else}
   <div class="min-h-[72px] border-b border-[var(--fm-border)]" aria-hidden="true"></div>

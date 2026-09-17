@@ -9,6 +9,7 @@
     open = false,
     title,
     description,
+    id,
     children,
     footer,
     onClose,
@@ -21,6 +22,7 @@
     open?: boolean;
     title: string;
     description?: string;
+    id?: string;
     children?: Snippet;
     footer?: Snippet;
     onClose?: () => void;
@@ -35,7 +37,12 @@
   let drawerElement = $state<HTMLDivElement>();
   let restoreElement: HTMLElement | null = null;
   const overlayToken = {};
-  let drawerId = `drawer-${Math.random().toString(36).slice(2, 8)}`;
+  const stableId = (value: string) => {
+    let hash = 0;
+    for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+    return hash.toString(36);
+  };
+  const drawerId = $derived(id ?? `drawer-${stableId(title)}`);
   const widths = { sm: 'w-full max-w-sm', md: 'w-full max-w-md', lg: 'w-full max-w-2xl' };
   const positions = { left: 'left-0', right: 'right-0' };
 
@@ -66,7 +73,7 @@
 {#if open}
   <div class="fixed inset-0 z-50 bg-[var(--fm-overlay)]" role="presentation" onclick={(event) => { if (closeOnBackdrop && event.target === event.currentTarget) onClose?.(); }}>
     <div bind:this={drawerElement} class={cn('absolute inset-y-0 flex max-h-full flex-col border-[var(--fm-border)] bg-[var(--fm-surface)] shadow-[var(--fm-shadow-overlay)]', positions[side], widths[width], side === 'left' ? 'border-r' : 'border-l', className)} role="dialog" aria-modal="true" aria-labelledby={`${drawerId}-title`} aria-describedby={description ? `${drawerId}-description` : undefined}>
-      <header class="flex items-start justify-between gap-4 border-b border-[var(--fm-border)] px-5 py-4"><div><h2 id={`${drawerId}-title`} class="text-base font-semibold">{title}</h2>{#if description}<p id={`${drawerId}-description`} class="mt-1 text-sm text-[var(--fm-text-muted)]">{description}</p>{/if}</div>{#if dismissible}<button class={cn('rounded p-1 text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)]', focusRing)} type="button" aria-label={t('common.close')} onclick={() => onClose?.()}><X class="size-4" aria-hidden="true" /></button>{/if}</header>
+      <header class="flex items-start justify-between gap-4 border-b border-[var(--fm-border)] px-5 py-4"><div><h2 id={`${drawerId}-title`} class="text-base font-semibold">{title}</h2>{#if description}<p id={`${drawerId}-description`} class="mt-1 text-sm text-[var(--fm-text-muted)]">{description}</p>{/if}</div>{#if dismissible}<button class={cn('fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-text-muted)] hover:bg-[var(--fm-surface-hover)]', focusRing)} type="button" aria-label={t('common.close')} onclick={() => onClose?.()}><X class="size-4" aria-hidden="true" /></button>{/if}</header>
       {#if children}<div class="min-h-0 flex-1 overflow-y-auto p-5">{@render children()}</div>{/if}
       {#if footer}<footer class="flex items-center justify-end gap-2 border-t border-[var(--fm-border)] px-5 py-3">{@render footer()}</footer>{/if}
     </div>
