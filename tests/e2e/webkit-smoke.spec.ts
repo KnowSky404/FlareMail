@@ -262,7 +262,7 @@ test('keeps WebKit viewport, focus, drawer, dialog and touch semantics accessibl
   } else {
     const searchInput = page.getByLabel('搜索邮件');
     if (projectIsMobile(testInfo.project.name)) await searchInput.tap({ force: true });
-    else await page.getByRole('button', { name: /搜索邮件/u }).first().click();
+    else await searchInput.click();
     await expect(searchInput).toBeFocused();
   }
 
