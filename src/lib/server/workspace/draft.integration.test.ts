@@ -47,6 +47,30 @@ const fixture = () => {
 const input = (extra: Record<string, unknown> = {}) => ({ toEmail: 'alice@example.net', cc: '', subject: 'Subject', body: 'Body', ...extra });
 
 describe('draft optimistic concurrency', () => {
+  test('persists a server-owned sender snapshot and ignores an untrusted Reply-To header', async () => {
+    const { env, session, database } = fixture();
+    database.query(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name)
+      VALUES ('domain-1', 'user-1', 'example.test', 'zone-1', 'flaremail')`).run();
+    database.query(`INSERT INTO mail_addresses (
+        id, owner_user_id, domain_id, email, local_part, display_name, signature, lifecycle_status
+      ) VALUES ('address-1', 'user-1', 'domain-1', 'mail@example.test', 'mail', 'Mail team', '-- Mail team', 'active')`).run();
+
+    const draft = await saveWorkspaceDraft(env, session, input({
+      senderAddressId: 'address-1',
+      replyTo: ['attacker@outside.test']
+    }));
+    expect(draft.message).toMatchObject({
+      senderAddressId: 'address-1', fromName: 'Mail team', fromEmail: 'mail@example.test', replyToAddresses: []
+    });
+    expect(database.query(`SELECT sender_address_id, from_name, from_email, reply_to_json FROM workspace_drafts WHERE id = ?`)
+      .get(draft.message.id)).toEqual({
+      sender_address_id: 'address-1', from_name: 'Mail team', from_email: 'mail@example.test', reply_to_json: '[]'
+    });
+
+    await expect(saveWorkspaceDraft(env, session, input({ senderAddressId: 'address-from-another-owner' })))
+      .rejects.toMatchObject({ code: 'DRAFT_SENDER_NOT_AVAILABLE' });
+  });
+
   test('separates create, versioned update, conflict, overwrite and save-as-copy', async () => {
     const { DB, env, session, database } = fixture();
     const created = await saveWorkspaceDraft(env, session, input());

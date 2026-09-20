@@ -8,7 +8,7 @@
   } from '$lib/domain/mail';
   import { Paperclip, RefreshCw, Trash2, Upload, X } from '@lucide/svelte';
   import { Button, Dialog, TextArea, TextField } from '$lib/components/ui';
-  import type { ComposeInput, ComposeMode, MailMessage, UserProfile } from '$lib/domain/mail';
+  import type { ComposeInput, ComposeMode, MailMessage, UserProfile, WorkspaceSnapshot } from '$lib/domain/mail';
   import { withComposePersistence } from '$lib/client/compose-controller';
   import {
     deleteDraftAttachment,
@@ -50,7 +50,9 @@
       attachmentRevision: value.attachmentRevision ?? 0,
       messageId: value.messageId ?? null,
       inReplyTo: value.inReplyTo ?? null,
-      references: value.references ?? null
+      references: value.references ?? null,
+      senderAddressId: value.senderAddressId ?? null,
+      replyTo: parseAddressList(value.replyTo ?? [])
     });
 
   let {
@@ -60,7 +62,7 @@
     bodyRevision = undefined,
     mode = 'new',
     profile,
-    senderEmail = null,
+    senderAddresses = [],
     pending = false,
     autosaveStatus = 'idle',
     autosaveMessage = '',
@@ -80,7 +82,7 @@
     draftId?: string | undefined;
     mode?: ComposeMode;
     profile: UserProfile;
-    senderEmail?: string | null;
+    senderAddresses?: WorkspaceSnapshot['mailIdentityOptions']['addresses'];
     pending?: boolean;
     autosaveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
     autosaveMessage?: string;
@@ -175,6 +177,7 @@
   const title = $derived(
     mode === 'new' ? t('compose.new') : mode === 'reply' ? t('compose.reply') : mode === 'forward' ? t('compose.forward') : t('compose.editDraft')
   );
+  const selectedSender = $derived(senderAddresses.find((address) => address.id === input.senderAddressId) ?? null);
   const inputWithRecipientDrafts = $derived.by(() => {
     const next = { ...input };
     for (const field of ['to', 'cc', 'bcc'] as const) {
@@ -200,7 +203,7 @@
   const attachmentBusy = $derived(attachmentTasks.some((task) => task.state !== 'failed'));
   const attachmentFailed = $derived(attachmentTasks.some((task) => task.state === 'failed'));
   const persistedAttachmentBlocked = $derived((input.attachments ?? []).some((attachment) => attachment.state && attachment.state !== 'ready'));
-  const sendDisabled = $derived(pending || forwardAttachmentImporting || attachmentBusy || attachmentFailed || persistedAttachmentBlocked || !validation.ok);
+  const sendDisabled = $derived(pending || forwardAttachmentImporting || attachmentBusy || attachmentFailed || persistedAttachmentBlocked || !validation.ok || !selectedSender?.sendReady);
   const autosaveTone = $derived(
     autosaveStatus === 'error'
       ? 'text-[var(--fm-danger)]'
@@ -496,7 +499,7 @@
   id="compose-dialog"
   open
   {title}
-  description={profile.email}
+  description={profile.name || t('compose.workspaceIdentity')}
   size="xl"
   class="compose-dialog !max-w-[56rem] max-sm:fixed max-sm:inset-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:rounded-none"
   closeOnBackdrop={false}
@@ -504,11 +507,38 @@
 >
   <form class="flex min-h-[34rem] flex-col gap-3 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
     <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)]">
-      <span>{t('compose.workspaceIdentity')}：<strong class="font-medium text-[var(--fm-text)]">{profile.name || profile.email}</strong> &lt;{profile.email}&gt;</span>
-      <span class="hidden shrink-0 sm:inline">{t('compose.actualDelivery')}：{senderEmail ?? t('compose.unconfigured')} · {t('compose.plainTextFallback')}</span>
+      <span>{t('compose.workspaceIdentity')}：<strong class="font-medium text-[var(--fm-text)]">{profile.name || t('compose.workspaceIdentity')}</strong></span>
+      <span class="hidden shrink-0 sm:inline">{t('compose.actualDelivery')}：{selectedSender?.email ?? t('compose.unconfigured')} · {t('compose.plainTextFallback')}</span>
     </div>
 
     <div class="grid gap-3">
+      <div class="grid gap-2">
+        <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-from">{t('compose.senderAddress')}</label>
+        <select
+          id="compose-from"
+          class="min-h-11 w-full rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 text-sm text-[var(--fm-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
+          value={input.senderAddressId ?? ''}
+          aria-describedby="compose-from-status"
+          onchange={(event) => updateInput('senderAddressId', event.currentTarget.value || null)}
+        >
+          <option value="">{t('compose.chooseSender')}</option>
+          {#each senderAddresses as address (address.id)}
+            <option value={address.id} disabled={!address.sendReady && address.id !== input.senderAddressId}>
+              {address.email}{address.isDefaultSender ? ` · ${t('settings.defaultSender')}` : ''}
+            </option>
+          {/each}
+        </select>
+        <p id="compose-from-status" class="text-xs text-[var(--fm-text-muted)]" role="status">
+          {#if selectedSender && !selectedSender.sendReady}
+            {t('compose.senderNotReady')}
+          {:else if !selectedSender}
+            {t('compose.noSenderAvailable')}
+          {:else}
+            {t('compose.actualDelivery')}：{selectedSender.email}
+          {/if}
+        </p>
+      </div>
+
       <div class="grid gap-2">
         <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-to">{t('mail.to')}</label>
         <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">

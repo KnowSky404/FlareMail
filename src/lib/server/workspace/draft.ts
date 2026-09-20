@@ -6,6 +6,8 @@ import { findOwnedDraft, insertDraft, overwriteDraft, updateDraftIfVersion } fro
 import { createDraftMessage, mapDraftRow, serializeDraftForInsert, type ComposeInput, type WorkspaceContext } from '$lib/server/workspace/shared';
 import { draftAttachmentSnapshot } from '$lib/server/workspace/attachment';
 import { sanitizeComposeInput } from '$lib/server/workspace/compose-body';
+import { getManagedMailAddress } from '$lib/server/db/mail-identities';
+import { ApiError } from '$lib/server/http/api';
 
 export class DraftConflictError extends Error {
   readonly code = 'DRAFT_CONFLICT';
@@ -58,11 +60,36 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
     throw new DraftBodyReloadRequiredError();
   }
 
+  const defaultSender = !currentRow && normalizedInput.senderAddressId === undefined
+    ? await env.DB.prepare(`
+        SELECT id FROM mail_addresses
+        WHERE owner_user_id = ? AND is_default_sender = 1
+        LIMIT 1
+      `).bind(session.userId).first<{ id: string }>()
+    : null;
+  const senderAddressId = normalizedInput.senderAddressId === undefined
+    ? currentRow?.sender_address_id ?? defaultSender?.id ?? null
+    : normalizedInput.senderAddressId;
+  const selectedSender = senderAddressId
+    ? await getManagedMailAddress(env.DB, session.userId, senderAddressId)
+    : null;
+  if (senderAddressId && !selectedSender) {
+    throw new ApiError(409, 'DRAFT_SENDER_NOT_AVAILABLE', '所选发件地址不属于当前工作区或已不存在。', undefined, undefined, false);
+  }
+  const from = selectedSender
+    ? {
+        ...session.profile,
+        name: selectedSender.display_name || selectedSender.local_part,
+        email: selectedSender.email,
+        signature: selectedSender.signature
+      }
+    : { ...session.profile, name: '', email: '', signature: '' };
+
   const now = new Date().toISOString();
   const timestamp = currentRow && now <= currentRow.updated_at
     ? new Date(Date.parse(currentRow.updated_at) + 1).toISOString()
     : now;
-  const draft = createDraftMessage({ id: requestedId, from: session.profile, to: normalizedInput.to, toEmail: normalizedInput.toEmail, cc: normalizedInput.cc, bcc: normalizedInput.bcc,
+  const draft = createDraftMessage({ id: requestedId, from, senderAddressId, replyTo: [], to: normalizedInput.to, toEmail: normalizedInput.toEmail, cc: normalizedInput.cc, bcc: normalizedInput.bcc,
     subject: normalizedInput.subject, body: normalizedInput.body, html: normalizedInput.html, starred: Boolean(currentRow?.is_starred), updatedAt: timestamp,
     messageId: normalizedInput.messageId, inReplyTo: normalizedInput.inReplyTo, references: normalizedInput.references });
   const serialized = serializeDraftForInsert(session.userId, draft);

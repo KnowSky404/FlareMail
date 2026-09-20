@@ -387,7 +387,9 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   await expect(detail).toContainText('FlareMail 未独立执行 SPF、DKIM 或 DMARC 验证');
   await detail.getByRole('button', { name: '回复全部', exact: true }).click();
   const replyAllDialog = page.getByRole('dialog', { name: '回复邮件' });
-  await expect(replyAllDialog.getByRole('button', { name: '移除收件人 support@flaremail.test' })).toBeVisible();
+  await expect(replyAllDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
+  await expect(replyAllDialog.getByRole('button', { name: /移除(?:收件人|抄送) support@flaremail\.test/u })).toHaveCount(0);
+  await expect(replyAllDialog.getByLabel('发件地址')).toHaveValue('00000000-0000-4000-8000-000000000021');
   await expect(replyAllDialog.getByRole('button', { name: '移除抄送 observer@flaremail.test' })).toBeVisible();
   await expect(replyAllDialog.getByRole('button', { name: '移除抄送 team@flaremail.test' })).toBeVisible();
   await replyAllDialog.getByRole('button', { name: '关闭' }).click();
@@ -741,6 +743,9 @@ test('sends through the local fake provider and applies a signed delivered webho
   });
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  const sender = page.getByLabel('发件地址');
+  await expect(sender).toHaveValue('00000000-0000-4000-8000-000000000021');
+  await sender.selectOption('00000000-0000-4000-8000-000000000022');
   const subject = 'E2E fake send';
   await page.getByLabel('收件人').fill('send-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
@@ -751,6 +756,7 @@ test('sends through the local fake provider and applies a signed delivered webho
   await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
   await expect(detail.getByText('已提交', { exact: true }).first()).toBeVisible();
   expect(externalRequests).toEqual([]);
+  expect(outboundPayload?.senderAddressId).toBe('00000000-0000-4000-8000-000000000022');
   expect(outboundPayload?.html).toBe('<p>This <em>HTML</em> message is sent by the local fake provider.</p>');
 
   const providerLine = detail.locator('p').filter({ hasText: 'Provider ID' }).first();

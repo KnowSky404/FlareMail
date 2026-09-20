@@ -24,7 +24,7 @@ describe('release preflight', () => {
       status: 'PASS', details: { snapshotAligned: true }
     });
     expect(report.checks.find(({ category }) => category === 'health')).toMatchObject({
-      status: 'PASS', details: { missingTables: [] }
+      status: 'PASS', details: { missingTables: [], authenticatedReadiness: true, minimalPublicLiveness: true }
     });
     expect(report.checks.find(({ category }) => category === 'config')).toMatchObject({
       status: 'PASS', details: {

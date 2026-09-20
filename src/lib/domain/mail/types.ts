@@ -11,6 +11,7 @@ import type { MailAddress, MailAddressInput } from './addresses';
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
 /** A persisted mail folder plus the user-facing archive section. */
 export type MailboxSection = MailFolder | 'archive';
+export type MailboxIdentityFilter = { kind: 'domain' | 'address'; id: string };
 export type MailSource = 'workspace' | 'inbound';
 export type MailSearchHitField = 'all' | 'from' | 'to' | 'cc' | 'subject' | 'label' | 'state' | 'attachment' | 'date' | 'status';
 
@@ -104,6 +105,8 @@ export interface InboundMessageDetail {
   attachments: MailAttachmentSummary[];
   rawSize: number;
   hasHtml?: boolean;
+  envelopeRecipient: string;
+  recipientAddressId?: string | null;
   toAddresses: MailAddress[];
   ccAddresses: MailAddress[];
   replyTo: MailAddress[];
@@ -123,6 +126,13 @@ export interface MailMessage extends MailRfcHeaders {
   source: MailSource;
   fromName: string;
   fromEmail: string;
+  /** Managed address selected for an outbound message, when known. */
+  senderAddressId?: string | null;
+  /** Managed address that received this delivery or was a direct recipient. */
+  recipientAddressId?: string | null;
+  /** Trusted Cloudflare envelope recipient, distinct from MIME To. */
+  envelopeRecipient?: string;
+  replyToAddresses?: MailAddress[];
   toName: string;
   toEmail: string;
   cc?: string;
@@ -185,6 +195,7 @@ export interface WorkspaceMetrics {
   unreadCount: number;
   starredCount: number;
   inboxCount: number;
+  archiveCount: number;
   sentCount: number;
   draftsCount: number;
   trashCount: number;
@@ -239,6 +250,7 @@ export interface MailboxPage {
   limit: number;
   query: string;
   filter: MailboxFilter;
+  identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
   /** Exact match count for the first page of a server-side search. */
   searchTotal?: number;
@@ -251,8 +263,19 @@ export interface WorkspaceSnapshot extends WorkspacePayload {
   activeFolder: MailboxSection;
   activePage: MailboxPage;
   mailboxPages: Partial<Record<MailboxSection, MailboxPage>>;
-  /** Effective envelope sender configured for outbound delivery. */
-  outboundSenderEmail: string | null;
+  mailIdentityOptions: {
+    domains: Array<{ id: string; domainName: string }>;
+    addresses: Array<{
+      id: string;
+      domainId: string;
+      email: string;
+      displayName: string;
+      lifecycleStatus: 'active' | 'disabled' | 'deleted';
+      sendEnabled: boolean;
+      isDefaultSender: boolean;
+      sendReady: boolean;
+    }>;
+  };
 }
 
 export interface MailboxMessageSummary {
@@ -297,7 +320,7 @@ export interface DeliveryDetail {
 }
 
 export interface LoginInput {
-  email: string;
+  username: string;
   password: string;
   remember: boolean;
 }
@@ -321,6 +344,9 @@ export interface ComposeInput extends MailRfcHeaders {
   forwardAttachmentCandidates?: MailAttachmentSummary[];
   /** Optimistic concurrency token for the draft attachment relation. */
   attachmentRevision?: number;
+  /** Client intent only; the server resolves and authorizes its From snapshot. */
+  senderAddressId?: string | null;
+  replyTo?: MailAddressInput[] | string;
   subject: string;
   body: string;
   /** Optional HTML body. The server sanitizes it before persistence or delivery. */
@@ -335,6 +361,8 @@ export interface MessagePatch {
 export interface DraftMessageInput {
   id?: string;
   from: UserProfile;
+  senderAddressId?: string | null;
+  replyTo?: MailAddressInput[] | string;
   to?: MailAddressInput[] | string;
   cc?: MailAddressInput[] | string;
   bcc?: MailAddressInput[] | string;
@@ -379,7 +407,8 @@ export function cloneMessage(message: MailMessage): MailMessage {
     labels: [...message.labels],
     toAddresses: message.toAddresses?.map((address) => ({ ...address })),
     ccAddresses: message.ccAddresses?.map((address) => ({ ...address })),
-    bccAddresses: message.bccAddresses?.map((address) => ({ ...address }))
+    bccAddresses: message.bccAddresses?.map((address) => ({ ...address })),
+    replyToAddresses: message.replyToAddresses?.map((address) => ({ ...address }))
   };
 }
 
@@ -412,6 +441,7 @@ export function getMailboxMetrics(mailbox: MailboxState): WorkspaceMetrics {
       mailbox.sent.filter((message) => message.starred).length +
       mailbox.drafts.filter((message) => message.starred).length,
     inboxCount: mailbox.inbox.length,
+    archiveCount: mailbox.inbox.filter((message) => Boolean(message.archivedAt)).length,
     sentCount: mailbox.sent.length,
     draftsCount: mailbox.drafts.length,
     trashCount: 0,

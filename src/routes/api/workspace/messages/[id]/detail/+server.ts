@@ -73,6 +73,8 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
       body,
       rawSize: record.raw_size,
       hasHtml,
+      envelopeRecipient: record.to,
+      recipientAddressId: record.mail_address_id,
       toAddresses: storedToAddresses.length ? storedToAddresses : parseAddressList(record.to),
       ccAddresses: storedCcAddresses.length ? storedCcAddresses : parseAddressList(record.cc),
       replyTo: parseAddressJson(record.reply_to_json),

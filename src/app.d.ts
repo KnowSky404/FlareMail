@@ -23,6 +23,9 @@ declare global {
       workspaceSessionId?: string | null;
       workspaceSessionToken?: string | null;
       workspaceSession?: WorkspaceContext | null;
+      authMode?: 'local' | 'cloudflare-access';
+      authPrincipalId?: string | null;
+      authConfigured?: boolean;
       locale?: Locale;
     }
 

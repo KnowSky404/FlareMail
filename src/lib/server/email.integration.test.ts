@@ -132,12 +132,26 @@ const environment = (failBatch = false) => {
     INSERT INTO workspace_users (
       id, login_email, name, role, email, company, location, timezone,
       forwarding_enabled, signature, incoming_sequence
-    ) VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '', 0)
+    ) VALUES ('user-1', 'legacy-login@example.test', 'Owner', 'Owner', 'profile@example.test', '', '', 'UTC', 0, '', 0)
   `).run();
+  database.query('INSERT INTO workspace_owner (singleton, user_id) VALUES (1, ?)').run('user-1');
+  database.query(`
+    INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name)
+    VALUES ('domain-1', 'user-1', 'example.test', 'zone-1', 'flaremail')
+  `).run();
+  addManagedAddress(database, 'address-1', 'owner@example.test');
   const DB = new TestD1(database);
   DB.failBatch = failBatch;
   const BUCKET = new TestBucket();
   return { database, DB, BUCKET, env: { DB, BUCKET, OUTBOUND_PROVIDER: 'demo' } as unknown as import('./cloudflare').CloudflareEnv };
+};
+
+const addManagedAddress = (database: Database, id: string, email: string) => {
+  database.query(`
+    INSERT INTO mail_addresses (
+      id, owner_user_id, domain_id, email, local_part, receive_enabled, routing_state, routing_rule_id, routing_rule_source, routing_owner
+    ) VALUES (?, 'user-1', 'domain-1', ?, ?, 1, 'active', ?, 'api', 'flaremail')
+  `).run(id, email, email.slice(0, email.indexOf('@')), `rule-${id}`);
 };
 
 const captureResend = async <T>(action: () => Promise<T>) => {
@@ -381,7 +395,7 @@ describe('inbound email persistence', () => {
     expect(payload.text).not.toContain('The original email was forwarded.');
   });
 
-  test('honors global and per-user notification switches without inheriting another owner setting', async () => {
+  test('honors global and Owner notification switches across multiple managed addresses', async () => {
     const disabled = notificationEnvironment();
     const disabledCapture = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'owner@example.test').value, disabled.env));
     expect(disabledCapture.requests).toHaveLength(0);
@@ -398,23 +412,34 @@ describe('inbound email persistence', () => {
 
     const multiUser = notificationEnvironment();
     multiUser.database.query(`UPDATE workspace_users SET forwarding_enabled = 1 WHERE id = 'user-1'`).run();
-    multiUser.database.query(`INSERT INTO workspace_users
-      (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
-      VALUES ('user-2', 'second@example.test', 'Second', 'Member', 'second@example.test', '', '', 'UTC', 0, '', 0)`).run();
+    addManagedAddress(multiUser.database, 'address-2', 'second@example.test');
     const firstOwner = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'owner@example.test').value, multiUser.env));
     const secondOwner = await captureResend(() => handleInboundEmail(message(fixtureBytes(), 'second@example.test').value, multiUser.env));
     expect(firstOwner.requests).toHaveLength(1);
-    expect(secondOwner.requests).toHaveLength(0);
+    expect(secondOwner.requests).toHaveLength(1);
     expect(multiUser.database.query(`SELECT owner_user_id FROM email_messages ORDER BY created_at ASC`).all()).toEqual([
       { owner_user_id: 'user-1' },
-      { owner_user_id: 'user-2' }
+      { owner_user_id: 'user-1' }
     ]);
   });
 
-  test('stores an unknown recipient without assigning readable ownership', async () => {
+  test('rejects an unknown address before reading raw mail or writing R2', async () => {
     const test = environment();
-    await handleInboundEmail(message(fixtureBytes(), 'unknown@example.test').value, test.env);
-    expect(test.database.query('SELECT owner_user_id FROM email_messages').get()).toEqual({ owner_user_id: null });
+    let reads = 0;
+    const rejected = message(fixtureBytes(), 'unknown@example.test');
+    Object.defineProperty(rejected.value, 'raw', {
+      value: {
+        getReader() {
+          reads += 1;
+          throw new Error('the raw stream must not be read');
+        }
+      }
+    });
+    await handleInboundEmail(rejected.value, test.env);
+    expect(rejected.rejected()).toBe('The recipient address is not enabled.');
+    expect(reads).toBe(0);
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+    expect(test.BUCKET.objects.size).toBe(0);
   });
 
   test('rejects a declared oversize message before reading or writing storage', async () => {

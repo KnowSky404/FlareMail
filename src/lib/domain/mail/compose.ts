@@ -76,6 +76,7 @@ function sharedRfcFields(input: { messageId?: string | null; inReplyTo?: string 
 /** Build a new draft without any provider or framework dependencies. */
 export function createDraftMessage(input: DraftMessageInput): MailMessage {
   const recipients = composeAddresses(input);
+  const replyToAddresses = dedupeAddresses(parseAddressList(input.replyTo ?? []));
   const toEmail = recipients.to[0]?.email ?? (input.to === undefined ? input.toEmail?.trim() ?? '' : '');
   const body = input.body.trim();
   const html = input.html?.trim() ?? '';
@@ -87,6 +88,8 @@ export function createDraftMessage(input: DraftMessageInput): MailMessage {
     source: 'workspace',
     fromName: input.from.name,
     fromEmail: input.from.email,
+    senderAddressId: input.senderAddressId ?? null,
+    replyToAddresses,
     toName: recipients.to[0]?.name || (toEmail ? deriveToName(toEmail) : '待填写'),
     toEmail,
     cc: serializeAddressList(recipients.cc),
@@ -110,8 +113,10 @@ export function createDraftMessage(input: DraftMessageInput): MailMessage {
 /** Build a sent message in the submitted/queued state, never delivered by implication. */
 export function createSentMessage(input: SentMessageInput): MailMessage {
   const recipients = composeAddresses(input);
+  const replyToAddresses = dedupeAddresses(parseAddressList(input.replyTo ?? []));
   const toEmail = recipients.to[0]?.email ?? (input.to === undefined ? input.toEmail?.trim() ?? '' : '');
-  const signatureBlock = input.from.signature ? `\n\n${input.from.signature}` : '';
+  const signature = input.from.signature.trim();
+  const signatureBlock = signature ? `\n\n${signature}` : '';
   const cc = serializeAddressList(recipients.cc);
   const body = input.body.trim();
   const html = input.html?.trim() ?? '';
@@ -123,6 +128,8 @@ export function createSentMessage(input: SentMessageInput): MailMessage {
     source: 'workspace',
     fromName: input.from.name,
     fromEmail: input.from.email,
+    senderAddressId: input.senderAddressId ?? null,
+    replyToAddresses,
     toName: recipients.to[0]?.name || deriveToName(toEmail),
     toEmail,
     cc,
@@ -160,6 +167,8 @@ export function createComposeInputFromDraft(message: MailMessage): ComposeInput 
     cc: message.ccAddresses ?? parseAddressList(message.cc ?? ''),
     bcc: message.bccAddresses ?? parseAddressList(message.bcc ?? ''),
     toEmail: message.toEmail,
+    senderAddressId: message.senderAddressId,
+    replyTo: message.replyToAddresses,
     subject: message.subject === '未命名草稿' ? '' : message.subject,
     body: message.body,
     html: message.html ?? '',
@@ -183,6 +192,7 @@ export function createReplyComposeInput(
   const references = composeReferences(message);
 
   return {
+    senderAddressId: message.folder === 'sent' ? message.senderAddressId : message.recipientAddressId ?? null,
     to: target ? [target] : [],
     cc: [],
     bcc: [],
@@ -196,6 +206,7 @@ export function createReplyComposeInput(
 
 export interface ReplyAllOptions {
   selfEmail: string;
+  selfEmails?: readonly string[];
   /** Parsed RFC Reply-To mailboxes. These take precedence over From for inbound mail. */
   replyTo?: readonly MailAddress[];
 }
@@ -206,9 +217,9 @@ export function createReplyAllComposeInput(
   options: ReplyAllOptions,
   quotedBody = message.body
 ): ComposeInput {
-  const selfEmail = normalizeMailboxEmail(options.selfEmail);
+  const selfEmails = new Set([options.selfEmail, ...(options.selfEmails ?? [])].map(normalizeMailboxEmail));
   const withoutSelf = (addresses: readonly MailAddress[]) =>
-    parseAddressList(addresses).filter(({ email }) => email !== selfEmail);
+    parseAddressList(addresses).filter(({ email }) => !selfEmails.has(email));
   const originalTo = withoutSelf(message.toAddresses ?? parseAddressList(message.toEmail));
   const originalCc = withoutSelf(message.ccAddresses ?? parseAddressList(message.cc ?? ''));
   const from = withoutSelf([{ name: message.fromName, email: message.fromEmail }]);
@@ -232,6 +243,7 @@ export function createReplyAllComposeInput(
   const references = composeReferences(message);
 
   return {
+    senderAddressId: message.folder === 'sent' ? message.senderAddressId : message.recipientAddressId ?? null,
     to,
     cc,
     bcc: [],

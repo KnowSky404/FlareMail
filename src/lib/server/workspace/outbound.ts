@@ -48,7 +48,8 @@ import {
 } from '$lib/server/workspace/delivery';
 import { DraftBodyReloadRequiredError, DraftConflictError } from '$lib/server/workspace/draft';
 import { sanitizeComposeInput } from '$lib/server/workspace/compose-body';
-import { resolveOutboundFromEmail } from '$lib/server/config/env';
+import { resolveManagedMailSender } from '$lib/server/mail-identities/sending';
+import { ApiError } from '$lib/server/http/api';
 
 export interface OutboundSubmissionOptions {
   requestId?: string | null;
@@ -66,16 +67,31 @@ const safeRequestId = (value: string | null | undefined) => value?.trim().match(
 const headerValue = (value: string | null | undefined) => value?.replace(/[\r\n]+/g, ' ').trim() || undefined;
 const isUniqueConstraintError = (error: unknown) => error instanceof Error && /unique constraint|constraint failed/iu.test(error.message);
 
-const sender = (env: CloudflareEnv | undefined, message: MailMessage) => {
-  const email = resolveOutboundFromEmail(env) || message.fromEmail.trim();
-  const name = headerValue(env?.OUTBOUND_FROM_NAME || message.fromName);
-  return name ? `${name} <${email}>` : email;
+const sender = (message: MailMessage) => {
+  const email = message.fromEmail.trim();
+  const name = headerValue(message.fromName) ?? '';
+  return serializeAddress({ name, email });
 };
 
-const localMessageId = (id: string, env: CloudflareEnv | undefined, fallbackEmail: string) => {
-  const domain = (resolveOutboundFromEmail(env) || fallbackEmail).split('@')[1]?.trim() || 'flaremail.invalid';
+const escapeHtml = (value: string) => value.replace(/[&<>"']/gu, (character) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+}[character]!));
+
+const localMessageId = (id: string, senderEmail: string) => {
+  const domain = senderEmail.split('@')[1]?.trim() || 'flaremail.invalid';
   return `<${id.replace(/[^A-Za-z0-9._-]/g, '-')}@${domain}>`;
 };
+
+async function assertPersistedSenderAvailable(env: CloudflareEnv, userId: string, message: MailMessage) {
+  if (!message.senderAddressId) {
+    throw new ApiError(409, 'DELIVERY_SENDER_UNAVAILABLE', '此邮件没有可验证的历史发件地址。请检查邮件记录后再决定是否重发。', undefined, undefined, false);
+  }
+  const { address } = await resolveManagedMailSender(env.DB, userId, message.senderAddressId);
+  if (address.email.trim().toLowerCase() !== message.fromEmail.trim().toLowerCase()) {
+    throw new ApiError(409, 'DELIVERY_SENDER_CHANGED', '邮件保存的发件地址与当前受管地址不一致，未执行重发。', undefined, undefined, false);
+  }
+  return address;
+}
 
 const threadKey = (message: MailMessage) => {
   const value = headerValue(message.references)?.split(/\s+/)[0] || headerValue(message.inReplyTo) || headerValue(message.messageId);
@@ -136,21 +152,19 @@ async function loadOutboundAttachments(
 }
 
 const gatewayInput = (
-  env: CloudflareEnv | undefined,
   message: MailMessage,
   idempotencyKey: string,
   body?: CanonicalBody,
   attachments?: OutboundMailAttachment[]
 ): OutboundMailInput => ({
   idempotencyKey,
-  from: sender(env, message),
+  from: sender(message),
   to: providerRecipients(message.toAddresses ?? parseAddressList(message.toEmail)),
   cc: optionalProviderRecipients(message.ccAddresses ?? parseAddressList(message.cc ?? '')),
   bcc: optionalProviderRecipients(message.bccAddresses ?? parseAddressList(message.bcc ?? '')),
   subject: message.subject,
   text: body?.textBody ?? message.body,
   html: body?.htmlBody || undefined,
-  replyTo: resolveOutboundFromEmail(env) ? [resolveOutboundFromEmail(env)!] : [message.fromEmail.trim()],
   headers: Object.fromEntries([
     ['Message-ID', headerValue(message.messageId)],
     ['In-Reply-To', headerValue(message.inReplyTo)],
@@ -232,7 +246,7 @@ async function submitPersistedMessage(
   console.log(JSON.stringify({ event: 'outbound_phase', phase: 'd1_attempt_persist', durationMs: Date.now() - d1StartedAt }));
 
   try {
-    const result = await gateway.send(gatewayInput(env, message, idempotencyKey, body, attachments));
+    const result = await gateway.send(gatewayInput(message, idempotencyKey, body, attachments));
     const completedAt = nowIso();
     const state = statusPayload({ session, messageId: message.id, idempotencyKey, provider, status: 'submitted',
       attempts: attemptNumber, providerMessageId: result.providerMessageId, remoteTimestamp: completedAt });
@@ -299,12 +313,19 @@ export async function sendWorkspaceMessage(
     }
     return refreshedResult(env, session, existing.id);
   }
+  const existingDraft = draftId && capabilities.drafts ? await findOwnedDraft(env.DB, session.userId, draftId) : null;
+  if (draftId && (!capabilities.drafts || !existingDraft)) {
+    throw new ApiError(404, 'DRAFT_NOT_FOUND', '草稿不存在或已被删除。', undefined, undefined, false);
+  }
+  const requestedSenderId = composeInput.senderAddressId === undefined && existingDraft
+    ? existingDraft.sender_address_id ?? null
+    : composeInput.senderAddressId;
+  const { address: senderAddress } = await resolveManagedMailSender(env.DB, session.userId, requestedSenderId);
   const rateLimit = await consumeOutboundSend(env.DB, session.userId);
   if (!rateLimit.allowed) throw new OutboundRateLimitError(rateLimit.retryAfterSeconds);
   const gateway = options.gateway ?? createOutboundGateway(env);
   const provider = options.gateway ? 'injected' : outboundProviderName(env);
 
-  const existingDraft = draftId && capabilities.drafts ? await findOwnedDraft(env.DB, session.userId, draftId) : null;
   const draftAttachments = existingDraft
     ? await loadOutboundAttachments(env, session.userId, 'draft', existingDraft.id)
     : { rows: [], provider: [] };
@@ -333,17 +354,28 @@ export async function sendWorkspaceMessage(
     }
   }
 
-  const message = createSentMessage({ id: messageId, from: session.profile, to: composeInput.to, toEmail: composeInput.toEmail, subject: composeInput.subject,
-    body: canonicalBody.textBody, html: canonicalBody.htmlBody, cc: composeInput.cc, bcc: composeInput.bcc, messageId: composeInput.messageId || localMessageId(messageId, env, session.profile.email),
+  const senderProfile = {
+    ...session.profile,
+    name: senderAddress.display_name || senderAddress.local_part,
+    email: senderAddress.email,
+    signature: senderAddress.signature
+  };
+  const signatureHtml = senderAddress.signature.trim()
+    ? `<br><br>${escapeHtml(senderAddress.signature.trim()).replace(/\r?\n/gu, '<br>')}`
+    : '';
+  const outboundHtml = canonicalBody.htmlBody ? `${canonicalBody.htmlBody}${signatureHtml}` : '';
+  const message = createSentMessage({ id: messageId, from: senderProfile, senderAddressId: senderAddress.id, replyTo: [],
+    to: composeInput.to, toEmail: composeInput.toEmail, subject: composeInput.subject,
+    body: canonicalBody.textBody, html: outboundHtml, cc: composeInput.cc, bcc: composeInput.bcc, messageId: composeInput.messageId || localMessageId(messageId, senderAddress.email),
     inReplyTo: composeInput.inReplyTo, references: composeInput.references, deliveryStatus: 'submitting', deliveryAttempts: 0 });
   message.threadKey = threadKey(message);
   if (draftAttachments.rows.length) message.labels = [...message.labels, 'Attachment'];
   const timestamp = nowIso();
-  const bodyObject = await prepareBodyObject('workspace_message', message.id, canonicalBody.textBody, canonicalBody.htmlBody, { force: Boolean(canonicalBody.htmlBody.trim()) });
+  const bodyObject = await prepareBodyObject('workspace_message', message.id, message.body, outboundHtml, { force: Boolean(outboundHtml.trim()) });
   if (bodyObject && !env.BUCKET) throw new Error('BODY_STORAGE_UNAVAILABLE');
   if (bodyObject) await putBodyObject(env.BUCKET, bodyObject);
-  const projected = projectBody(canonicalBody.textBody, canonicalBody.htmlBody, message.preview);
-  const serialized = serializeMessageForInsert(session.userId, { ...message, body: bodyObject ? projected.textBody : canonicalBody.textBody, preview: projected.snippet }, idempotencyKey);
+  const projected = projectBody(message.body, outboundHtml, message.preview);
+  const serialized = serializeMessageForInsert(session.userId, { ...message, body: bodyObject ? projected.textBody : message.body, preview: projected.snippet }, idempotencyKey);
   serialized.bodyObjectId = bodyObject?.id ?? null;
   const statements: D1PreparedStatement[] = [];
   if (existingDraft) {
@@ -446,6 +478,7 @@ export async function retryWorkspaceMessageDelivery(
     }
     throw error;
   }
+  await assertPersistedSenderAvailable(env, session.userId, message);
   const rateLimit = await consumeOutboundSend(env.DB, session.userId);
   if (!rateLimit.allowed) throw new OutboundRateLimitError(rateLimit.retryAfterSeconds);
   const gateway = options.gateway ?? createOutboundGateway(env);

@@ -1,10 +1,11 @@
-import type { MailboxSection } from '$lib/domain/mail';
+import type { MailboxIdentityFilter, MailboxSection } from '$lib/domain/mail';
 import type { MailFilter, WorkspaceSection } from './mailbox-controller';
 
 export type WorkspaceUrlState = {
   section: WorkspaceSection;
   query: string;
   filter: MailFilter;
+  identityFilter: MailboxIdentityFilter | null;
   messageId: string | null;
 };
 
@@ -12,16 +13,20 @@ export type WorkspaceUrlUpdates = {
   section?: WorkspaceSection;
   query?: string;
   filter?: MailFilter;
+  identityFilter?: MailboxIdentityFilter | null;
   messageId?: string | null;
 };
 
 export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
   const filter = url.searchParams.get('filter');
+  const identity = url.searchParams.get('identity');
+  const identityMatch = identity?.match(/^(domain|address):([A-Za-z0-9:._-]{1,128})$/u);
   return {
     section: folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox',
     query: url.searchParams.get('q')?.slice(0, 200) ?? '',
     filter: filter === 'unread' || filter === 'starred' ? filter : 'all',
+    identityFilter: identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
     messageId: url.searchParams.get('message')
   };
 }
@@ -37,6 +42,10 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
   if (updates.filter !== undefined) {
     if (updates.filter === 'all') next.searchParams.delete('filter');
     else next.searchParams.set('filter', updates.filter);
+  }
+  if (updates.identityFilter !== undefined) {
+    if (updates.identityFilter) next.searchParams.set('identity', `${updates.identityFilter.kind}:${updates.identityFilter.id}`);
+    else next.searchParams.delete('identity');
   }
   if (updates.messageId !== undefined) {
     if (updates.messageId) next.searchParams.set('message', updates.messageId);

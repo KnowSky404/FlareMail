@@ -56,6 +56,8 @@ export interface WorkspaceCapabilities {
 export interface WorkspaceContext {
   id: string;
   userId: string;
+  authMethod?: 'local' | 'cloudflare-access';
+  principalId?: string | null;
   profile: UserProfile;
   incomingSequence: number;
   createdAt: string;
@@ -69,7 +71,7 @@ export interface WorkspaceSession extends WorkspaceContext {
 
 export interface WorkspaceUserRow {
   id: string;
-  login_email: string;
+  login_email: string | null;
   name: string;
   role: string;
   email: string;
@@ -90,6 +92,8 @@ export interface WorkspaceSessionJoinRow extends WorkspaceUserRow {
   session_id: string;
   created_at: string;
   updated_at: string;
+  auth_method: 'local' | 'cloudflare-access';
+  principal_id: string | null;
 }
 
 export interface WorkspaceMessageRow {
@@ -115,6 +119,9 @@ export interface WorkspaceMessageRow {
   cc_json?: string | null;
   bcc_json?: string | null;
   idempotency_key?: string | null;
+  sender_address_id?: string | null;
+  recipient_address_id?: string | null;
+  reply_to_json?: string | null;
   archived_at?: string | null;
   deleted_at?: string | null;
   body_object_id?: string | null;
@@ -144,6 +151,10 @@ export interface WorkspaceDraftRow {
   search_snippet?: string | null;
   search_total?: number;
   attachment_revision?: number;
+  sender_address_id?: string | null;
+  from_name?: string;
+  from_email?: string;
+  reply_to_json?: string | null;
 }
 
 export interface WorkspaceInboundRow {
@@ -159,6 +170,8 @@ export interface WorkspaceInboundRow {
   in_reply_to?: string | null;
   references?: string | null;
   thread_key?: string | null;
+  mail_address_id?: string | null;
+  mail_domain_id?: string | null;
   text_body?: string;
   body_object_id?: string | null;
   archived_at?: string | null;
@@ -256,6 +269,9 @@ export const mapWorkspaceMessageRow = (
   source: 'workspace',
   fromName: row.from_name,
   fromEmail: row.from_email,
+  senderAddressId: row.sender_address_id ?? null,
+  recipientAddressId: row.recipient_address_id ?? null,
+  replyToAddresses: parseAddressJson(row.reply_to_json),
   toName: toAddresses[0]?.name || row.to_name,
   toEmail: toAddresses[0]?.email || row.to_email,
   subject: row.subject,
@@ -296,10 +312,13 @@ export const mapWorkspaceMessageRow = (
 export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile, searchHitFields: MailMessage['searchHitFields'] = []): MailMessage => {
   const storedToAddresses = parseAddressJson(row.to_json);
   const storedCcAddresses = parseAddressJson(row.cc_json);
+  const draftProfile = { ...profile, name: row.from_name ?? profile.name, email: row.from_email ?? '' };
   return {
     ...createDraftMessage({
     id: row.id,
-    from: profile,
+    from: draftProfile,
+    senderAddressId: row.sender_address_id ?? null,
+    replyTo: parseAddressJson(row.reply_to_json),
     to: storedToAddresses.length ? storedToAddresses : parseAddressList(row.to_email),
     cc: storedCcAddresses.length ? storedCcAddresses : parseAddressList(row.cc),
     bcc: parseAddressJson(row.bcc_json),
@@ -312,6 +331,8 @@ export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile, search
     inReplyTo: row.in_reply_to,
       references: row.references
     }),
+    senderAddressId: row.sender_address_id ?? null,
+    replyToAddresses: parseAddressJson(row.reply_to_json),
     searchSnippet: row.search_snippet ?? undefined,
     searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined
   };
@@ -329,6 +350,8 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, se
     fromEmail: sender.email,
     toName: recipient.name || profile.name,
     toEmail: recipient.email || profile.email,
+    envelopeRecipient: row.to,
+    recipientAddressId: row.mail_address_id ?? null,
     subject: row.subject || '(no subject)',
     preview: snippet,
     body: row.text_body?.trim() || snippet,
@@ -408,12 +431,15 @@ export function serializeMessageForInsert(userId: string, message: MailMessage, 
   const toAddresses = message.toAddresses ?? parseAddressList(message.toEmail);
   const ccAddresses = message.ccAddresses ?? parseAddressList(message.cc ?? '');
   const bccAddresses = message.bccAddresses ?? parseAddressList(message.bcc ?? '');
+  const replyToAddresses = message.replyToAddresses ?? [];
   return { userId, id: message.id, folder: message.folder, fromName: message.fromName, fromEmail: message.fromEmail,
     toName: message.toName, toEmail: message.toEmail, subject: message.subject, preview: message.preview, body: message.body, bodyObjectId: null as string | null,
     sentAt: message.sentAt, labelsJson: JSON.stringify(message.labels), isRead: message.read ? 1 : 0,
     isStarred: message.starred ? 1 : 0, messageId: message.messageId ?? null, inReplyTo: message.inReplyTo ?? null,
     references: message.references ?? null, threadKey: message.threadKey ?? null, cc: serializeAddressList(ccAddresses),
     toJson: serializeAddressJson(toAddresses), ccJson: serializeAddressJson(ccAddresses), bccJson: serializeAddressJson(bccAddresses),
+    senderAddressId: message.senderAddressId ?? null, recipientAddressId: message.recipientAddressId ?? null,
+    replyToJson: serializeAddressJson(replyToAddresses),
     idempotencyKey, createdAt: timestamp, updatedAt: timestamp };
 }
 
@@ -423,11 +449,16 @@ export function serializeDraftForInsert(userId: string, draft: MailMessage) {
   const toAddresses = draft.toAddresses ?? parseAddressList(draft.toEmail);
   const ccAddresses = draft.ccAddresses ?? parseAddressList(draft.cc ?? '');
   const bccAddresses = draft.bccAddresses ?? parseAddressList(draft.bcc ?? '');
+  const replyToAddresses = draft.replyToAddresses ?? [];
   return { userId, id, toEmail: toAddresses[0]?.email ?? '',
     cc: serializeAddressList(ccAddresses), toJson: serializeAddressJson(toAddresses), ccJson: serializeAddressJson(ccAddresses), bccJson: serializeAddressJson(bccAddresses),
     subject: draft.subject === '未命名草稿' ? '' : draft.subject, body: draft.body, bodyObjectId: null as string | null, isStarred: draft.starred ? 1 : 0,
     messageId: draft.messageId ?? null, inReplyTo: draft.inReplyTo ?? null, references: draft.references ?? null,
     threadKey: draft.references ?? draft.inReplyTo ?? draft.messageId ?? null,
+    senderAddressId: draft.senderAddressId ?? null,
+    fromName: draft.fromName,
+    fromEmail: draft.fromEmail,
+    replyToJson: serializeAddressJson(replyToAddresses),
     idempotencyKey: `flaremail:draft:${id}`,
     createdAt: timestamp, updatedAt: timestamp };
 }

@@ -37,6 +37,16 @@ function setup() {
   database.query(`INSERT INTO workspace_users
     (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '', 0)`).run();
+  database.query(`INSERT INTO mail_domains (
+    id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, enabled,
+    resend_status, resend_sending_status, resend_checked_at
+  ) VALUES ('domain-1', 'user-1', 'example.test', 'zone-1', 'flaremail', 1,
+    'verified', 'enabled', ?)`).run(new Date().toISOString());
+  database.query(`INSERT INTO mail_addresses (
+    id, owner_user_id, domain_id, email, local_part, display_name, receive_enabled,
+    send_enabled, lifecycle_status, routing_state, is_default_sender
+  ) VALUES ('sender-1', 'user-1', 'domain-1', 'mail@example.test', 'mail', 'Owner',
+    1, 1, 'active', 'active', 1)`).run();
   const session: WorkspaceSession = {
     id: 'session-1', userId: 'user-1', profile: { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' },
     mailbox: { inbox: [], sent: [], drafts: [] }, incomingSequence: 0,

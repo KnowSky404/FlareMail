@@ -10,6 +10,8 @@
 
   let {
     loginError = '',
+    authConfigured = false,
+    authMode = 'local',
     pending = false,
     onLogin
   }: {
@@ -17,17 +19,19 @@
     dbBound: boolean;
     bucketBound: boolean;
     loginError?: string;
+    authConfigured?: boolean;
+    authMode?: 'local' | 'cloudflare-access';
     pending?: boolean;
     onLogin: (payload: LoginInput) => void | Promise<void>;
   } = $props();
 
-  let email = $state('');
+  let username = $state('');
   let password = $state('');
   const { t } = useLocale();
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    await onLogin({ email, password, remember: true });
+    await onLogin({ username, password, remember: true });
   }
 </script>
 
@@ -39,16 +43,23 @@
       <p>{t('auth.loginIntro')}</p>
     </div>
 
+    {#if !authConfigured && authMode === 'local'}
+      <div class="px-6 pt-5">
+        <Banner variant="warning" title={t('auth.setupRequired')}>{t('auth.setupRequiredDescription')}</Banner>
+      </div>
+    {/if}
+
     <form onsubmit={submit}>
       <TextField
-        id="login-email"
-        name="email"
-        type="email"
-        label={t('auth.email')}
-        bind:value={email}
+        id="login-username"
+        name="username"
+        type="text"
+        label={t('auth.username')}
+        bind:value={username}
         autocomplete="username"
-        placeholder="name@example.com"
+        placeholder="flower"
         required
+        maxlength={128}
         disabled={pending}
       />
       <TextField

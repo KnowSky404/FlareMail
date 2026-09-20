@@ -6,7 +6,7 @@ const emptyResult: TrashListResult = {
   items: [],
   hasMore: false,
   metrics: {
-    inboxCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
+    inboxCount: 0, archiveCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
     queuedCount: 0, delayedCount: 0, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0
   }
 };

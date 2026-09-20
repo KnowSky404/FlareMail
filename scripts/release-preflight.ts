@@ -353,12 +353,29 @@ async function checkSchema(root: string): Promise<{ schema: PreflightCheck; heal
   const schema = aligned
     ? pass('schema', `Migration order, schema version ${latest}, and schema snapshot are aligned.`, { latest, migrationCount: files.length, snapshotAligned: true })
     : fail('schema', 'Migration order, schema version, or schema snapshot is inconsistent.', { latest, declared, migrationMarker, snapshotAligned: shapeAligned, files });
+  const readinessSource = await readText(root, 'src/routes/api/readiness/+server.ts');
   const healthSource = await readText(root, 'src/routes/api/health/+server.ts');
-  const required = healthTables(healthSource);
+  const required = healthTables(readinessSource);
   const missing = required.filter((table) => !migratedTables.includes(table));
-  const health = required.length > 0 && missing.length === 0 && JSON.stringify(migratedTables.sort()) === JSON.stringify(snapshotTables.sort())
-    ? pass('health', 'Health readiness table contract exists in the migrated schema.', { requiredTables: required, missingTables: [] })
-    : fail('health', 'Health readiness table contract is missing or diverges from the schema snapshot.', { requiredTables: required, missingTables: missing });
+  const authenticatedReadiness = /requireWorkspaceSession\(event\)/u.test(readinessSource);
+  const minimalPublicLiveness = /json\(\s*\{\s*ok:\s*true\s*\}/u.test(healthSource) &&
+    !/validateEnvironment|workspace_schema_metadata|REQUIRED_TABLES/u.test(healthSource);
+  const contractsAligned = required.length > 0 && missing.length === 0 &&
+    JSON.stringify(migratedTables.sort()) === JSON.stringify(snapshotTables.sort()) &&
+    authenticatedReadiness && minimalPublicLiveness;
+  const health = contractsAligned
+    ? pass('health', 'Public minimal liveness and authenticated readiness contracts match the migrated schema.', {
+        requiredTables: required,
+        missingTables: [],
+        authenticatedReadiness,
+        minimalPublicLiveness
+      })
+    : fail('health', 'Liveness/readiness security or readiness table contract is missing or diverges from the schema snapshot.', {
+        requiredTables: required,
+        missingTables: missing,
+        authenticatedReadiness,
+        minimalPublicLiveness
+      });
   return { schema, health };
 }
 

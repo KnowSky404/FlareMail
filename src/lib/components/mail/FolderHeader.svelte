@@ -4,7 +4,7 @@
   import { IconButton } from '$lib/components/ui';
   import MailFilterBar, { type MailFilter } from './MailFilterBar.svelte';
   import MailSearchBar from './MailSearchBar.svelte';
-  import type { MailboxSection } from '$lib/domain/mail';
+  import type { MailboxIdentityFilter, MailboxSection, WorkspaceSnapshot } from '$lib/domain/mail';
   import { translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -16,9 +16,12 @@
     unreadCount = 0,
     query = '',
     filter = 'all',
+    identityFilter = null,
+    identityOptions = { domains: [], addresses: [] },
     loading = false,
     onQueryChange,
     onFilterChange,
+    onIdentityFilterChange,
     onRefresh,
     title
   }: {
@@ -27,9 +30,12 @@
     unreadCount?: number;
     query?: string;
     filter?: MailFilter;
+    identityFilter?: MailboxIdentityFilter | null;
+    identityOptions?: WorkspaceSnapshot['mailIdentityOptions'];
     loading?: boolean;
     onQueryChange?: (query: string) => void;
     onFilterChange?: (filter: MailFilter) => void;
+    onIdentityFilterChange?: (filter: MailboxIdentityFilter | null) => void;
     onRefresh?: () => void | Promise<void>;
     title?: string;
   } = $props();
@@ -50,6 +56,22 @@
   const countLabel = $derived(query.trim()
     ? translateCount(i18n.locale, 'mail.resultCount', count)
     : translateCount(i18n.locale, 'mail.folderCount', count));
+  const identityValue = $derived(identityFilter ? `${identityFilter.kind}:${identityFilter.id}` : '');
+
+  function changeIdentity(value: string) {
+    if (!value) {
+      onIdentityFilterChange?.(null);
+      return;
+    }
+    const separator = value.indexOf(':');
+    const kind = value.slice(0, separator);
+    const id = value.slice(separator + 1);
+    if (kind === 'domain' && identityOptions.domains.some((item) => item.id === id)) {
+      onIdentityFilterChange?.({ kind, id });
+    } else if (kind === 'address' && identityOptions.addresses.some((item) => item.id === id)) {
+      onIdentityFilterChange?.({ kind, id });
+    }
+  }
 
   let showMobileSearch = $state(false);
 
@@ -91,6 +113,24 @@
         <div class="folder-search-field">
           <MailSearchBar {query} disabled={loading} onQueryChange={onQueryChange} />
         </div>
+      {/if}
+      {#if activeSection !== 'trash' && identityOptions.domains.length > 0}
+        <label class="sr-only" for="mail-identity-filter">{t('mail.identityFilter')}</label>
+        <select
+          id="mail-identity-filter"
+          class="min-h-11 w-full rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 text-sm text-[var(--fm-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
+          value={identityValue}
+          disabled={loading}
+          onchange={(event) => changeIdentity(event.currentTarget.value)}
+        >
+          <option value="">{t('mail.allIdentities')}</option>
+          {#each identityOptions.domains as domain (domain.id)}
+            <option value={`domain:${domain.id}`}>{t('mail.domainIdentityOption', { domain: domain.domainName })}</option>
+          {/each}
+          {#each identityOptions.addresses as address (address.id)}
+            <option value={`address:${address.id}`}>{t('mail.addressIdentityOption', { email: address.email })}</option>
+          {/each}
+        </select>
       {/if}
       <MailFilterBar {filter} disabled={loading} onFilterChange={onFilterChange} />
     </div>

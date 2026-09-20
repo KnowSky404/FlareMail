@@ -108,8 +108,13 @@ function validateMailInput(input: unknown, requireSendFields: boolean): Validati
   if (record.html !== undefined && typeof record.html !== 'string') {
     typeIssues.push({ field: 'html', message: 'HTML 正文必须是字符串。' });
   }
+  if (record.senderAddressId !== undefined && record.senderAddressId !== null &&
+      (typeof record.senderAddressId !== 'string' || record.senderAddressId.trim().length > 128)) {
+    typeIssues.push({ field: 'senderAddressId', message: '发件地址选择无效。' });
+  }
   const normalizedInput = {
     ...(record as unknown as ComposeInput),
+    ...(typeof record.senderAddressId === 'string' ? { senderAddressId: record.senderAddressId.trim() || null } : {}),
     subject: subjectValue,
     body: bodyValue
   };

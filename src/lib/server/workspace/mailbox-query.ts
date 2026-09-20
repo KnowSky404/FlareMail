@@ -2,6 +2,7 @@ import type {
   DeliveryStatus,
   MailFolder,
   MailboxFilter,
+  MailboxIdentityFilter,
   MailboxSection,
   MailSearchQuery
 } from '$lib/domain/mail';
@@ -43,12 +44,14 @@ export interface MailboxCursor {
   id: string;
   query: string;
   filter: MailboxFilter;
+  identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
 }
 
 export interface MailboxCursorContext {
   query: string;
   filter: MailboxFilter;
+  identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
 }
 
@@ -60,7 +63,29 @@ export interface MailboxQuery {
   query: string;
   search: MailSearchQuery | null;
   filter: MailboxFilter;
+  identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
+}
+
+function parseIdentityFilter(value: string | null): MailboxIdentityFilter | null {
+  if (value === null || value === '') return null;
+  const separator = value.indexOf(':');
+  const kind = value.slice(0, separator);
+  const id = value.slice(separator + 1);
+  if (
+    separator <= 0 ||
+    (kind !== 'domain' && kind !== 'address') ||
+    !/^[A-Za-z0-9:._-]{1,128}$/u.test(id)
+  ) {
+    throw new ApiError(400, 'INVALID_IDENTITY_FILTER', '邮件地址筛选无效。', {
+      identity: ['请从已配置的域名或邮件地址中选择。']
+    });
+  }
+  return { kind, id };
+}
+
+function sameIdentityFilter(left: MailboxIdentityFilter | null | undefined, right: MailboxIdentityFilter | null | undefined) {
+  return (left?.kind ?? null) === (right?.kind ?? null) && (left?.id ?? null) === (right?.id ?? null);
 }
 
 const isIsoTimestamp = (value: string) => {
@@ -97,8 +122,15 @@ export function decodeMailboxCursor(
       parsed.query.length > 200 ||
       !filters.has(parsed.filter as MailboxFilter) ||
       (parsed.deliveryStatus !== null && !deliveryStatuses.has(parsed.deliveryStatus as DeliveryStatus)) ||
+      (parsed.identityFilter !== undefined && parsed.identityFilter !== null && (
+        typeof parsed.identityFilter !== 'object' ||
+        !['domain', 'address'].includes(parsed.identityFilter.kind) ||
+        typeof parsed.identityFilter.id !== 'string' ||
+        !/^[A-Za-z0-9:._-]{1,128}$/u.test(parsed.identityFilter.id)
+      )) ||
       parsed.query !== expected.query ||
       parsed.filter !== expected.filter ||
+      !sameIdentityFilter(parsed.identityFilter, expected.identityFilter) ||
       parsed.deliveryStatus !== expected.deliveryStatus
     ) throw new Error('invalid cursor');
     return parsed as MailboxCursor;
@@ -177,12 +209,14 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   }
 
   const deliveryStatus = statusValue ? statusValue as DeliveryStatus : null;
+  const identityFilter = parseIdentityFilter(params.get('identity'));
   const cursorValue = params.get('cursor');
   return {
     folder,
     cursor: cursorValue ? decodeMailboxCursor(cursorValue, folder, section, {
       query,
       filter: filterValue as MailboxFilter,
+      identityFilter,
       deliveryStatus
     }) : null,
     section,
@@ -190,6 +224,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
     query,
     search,
     filter: filterValue as MailboxFilter,
+    identityFilter,
     deliveryStatus
   };
 }

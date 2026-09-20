@@ -9,8 +9,8 @@ maintenance and recovery procedures, and
 gate.
 
 This document contains operator commands, but this repository task does not
-run production deployment, remote D1 migrations, Email Routing changes,
-Resend sends or webhook registration. Keep production data, credentials and
+run production deployment, remote D1 migrations, Email Routing or Access
+changes, Resend sends or webhook registration. Keep production data, credentials and
 secrets out of terminals shared with other people and out of release evidence.
 
 ## Production Quick Start
@@ -68,6 +68,20 @@ bun x wrangler d1 migrations list flaremail-db --remote --config wrangler.deploy
 
 PAUSE: verify that `d1 info` identifies the intended production database and
 that the Time Travel bookmark/timestamp is recorded before the first migration.
+For an existing database, first review a local copy with the read-only audit
+(it rejects `--remote`):
+
+```bash
+bun run mail:identity:dry-run -- --domain example.com --json
+```
+
+The report includes historical users and Owner mappings, envelope recipients,
+outbound and draft addresses, attachment/body and Telegram ownership, unowned
+records and conflicts. It does not change D1 or promote login/profile emails to
+managed addresses. Migrations `0023` and `0024` are additive; there is no
+generic down migration. Multiple historical users require an explicit
+`FLAREMAIL_OWNER_USER_ID` during bootstrap; do not merge their data implicitly.
+
 Then, after a separate migration approval:
 
 ```bash
@@ -78,11 +92,11 @@ Bootstrap the administrator only after migrations succeed. The password is
 read from the current shell and is never written to a config file:
 
 ```bash
-export FLAREMAIL_ADMIN_EMAIL='mail@example.com'
+export FLAREMAIL_ADMIN_USERNAME='flower'
 export FLAREMAIL_ADMIN_NAME='FlareMail Administrator'
 export FLAREMAIL_ADMIN_PASSWORD='use-a-long-unique-password'
 bun run auth:bootstrap:remote
-unset FLAREMAIL_ADMIN_EMAIL FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
+unset FLAREMAIL_ADMIN_USERNAME FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
 ```
 
 Run the local release gates from the clean, locked checkout:
@@ -104,27 +118,29 @@ Keep Email Routing disabled. Create the Worker first:
 bun run deploy
 ```
 
-This bootstrap deploy is allowed to create the Worker before Resend secrets
-exist because the current private config does not declare Wrangler
-`secrets.required`. The application intentionally fails closed while required
-production values are absent, so a temporary `/api/health` 503 is expected at
-this checkpoint. Do not send traffic to it and do not enable Email Routing.
+This bootstrap deploy creates the Worker before mail secrets exist. Public
+`/api/health` is only a minimal liveness check and may return `200` while
+configuration or D1 is unavailable. Private routes fail closed. Do not treat
+liveness as readiness, enable Email Routing, or run a mail smoke test at this
+checkpoint.
 
 After the Worker exists, attach the reviewed Custom Domain and create the
 Resend webhook for that public URL. Prepare a mode-0600 secrets file through
-the operator's secret manager outside the repository. It must contain exactly
-the two values needed by this Worker, for example:
+the operator's secret manager outside the repository. It contains the two
+required Resend secrets and, when using the in-app address manager, the
+separate zone-scoped Email Routing Rules token:
 
 ```json
 {
   "RESEND_API_KEY": "<value supplied by the secret manager>",
-  "RESEND_WEBHOOK_SECRET": "<value copied from Resend>"
+  "RESEND_WEBHOOK_SECRET": "<value copied from Resend>",
+  "CLOUDFLARE_EMAIL_ROUTING_TOKEN": "<zone-scoped Email Routing Rules token>"
 }
 ```
 
 Do not commit this file, put it under the project directory, or paste its
-contents into a shell transcript. Then upload code and both secrets as one
-Worker version:
+contents into a shell transcript. Then upload code and selected secrets as
+one Worker version:
 
 ```bash
 bun run build
@@ -136,7 +152,7 @@ bun x wrangler secret list --config wrangler.deploy.toml --format pretty
 
 PAUSE: `secret list` may show names only; never print or record values. The
 `--secrets-file` upload is the first-deployment final release step: it makes
-the code, config, bindings and both Resend secrets available in one Worker
+the code, config, bindings and selected Worker secrets available in one Worker
 version. Remove the temporary file through the secret manager after the
 operator has confirmed its retention policy.
 
@@ -144,9 +160,10 @@ operator has confirmed its retention policy.
 curl --fail --silent --show-error https://mail.example.com/api/health
 ```
 
-Expected health status is HTTP 200. Only after that response and the binding,
-secret, domain and webhook review pass may the operator enable Email Routing
-and run the inbound/outbound smoke tests described below.
+HTTP 200 proves only that the Worker HTTP entry point responds. Sign in through
+the configured auth mode and request `/api/readiness` before continuing. Only
+after readiness and the binding, secret, domain and webhook review pass may
+the operator enable Email Routing and run the inbound/outbound smoke tests.
 
 ## First Production Deployment
 
@@ -297,6 +314,108 @@ Never put `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`,
 Use Wrangler secrets for the two Resend values. `.dev.vars` is for local
 development only and is not a production input.
 
+### Authentication mode and stable Owner
+
+Set `AUTH_MODE` explicitly. `local` uses a custom username and password;
+`cloudflare-access` accepts only a validated Access JWT for the configured
+Owner. Do not configure local credentials as a fallback to Access. Both modes
+use the same `workspace_owner.user_id`; changing mode does not move mail or
+create another Owner.
+
+For local mode, set a username such as `flower` and a password in the current
+shell; no email is required. An optional `FLAREMAIL_PROFILE_EMAIL` is contact
+data only. `bun run auth:bootstrap:remote` updates local credentials and
+revokes earlier local sessions. Keep each value out of config, command
+arguments, logs, and shared terminal transcripts.
+
+For Access-only mode:
+
+1. Back up D1 and preserve the current Owner ID. On a new Access-only
+   installation, `bun run auth:bootstrap:access:remote` creates the stable
+   Owner without a local username or password. If historical users exist,
+   first review them and provide `FLAREMAIL_OWNER_USER_ID`; the bootstrap
+   refuses to choose among multiple users implicitly.
+2. In the private Worker config set `AUTH_MODE = "cloudflare-access"`,
+   `ACCESS_OWNER_USER_ID` to that same Owner ID, `ACCESS_ISSUER` to the exact
+   `https://<team>.cloudflareaccess.com` origin, `ACCESS_AUDIENCE` to the
+   Access application's AUD, `ACCESS_JWKS_URL` to that issuer's exact
+   `/cdn-cgi/access/certs` endpoint, and `ACCESS_ALLOWED_SUBJECT` to the one
+   intended Owner `sub`. The Worker verifies JWT signature, allowed algorithm,
+   issuer, audience and time claims; it does not trust email headers or decode
+   an unverified token.
+3. Configure the Cloudflare Access HTTP application for every hostname that
+   reaches the Worker, including `workers.dev`, and use an Allow/Include policy
+   for only the Owner's intended identity. Do not use an entire email domain as
+   the only authorization rule. Keep the app's AUD, issuer, and configured
+   subject aligned; invalid or unavailable verification fails closed.
+4. In the outer Access policy, exempt only the exact paths
+   `/api/webhooks/resend` and `/api/webhooks/telegram` on the provider-facing
+   hostname, using the platform's exact hostname/path rule. Do not exempt
+   `/api`, `/api/*`, or mailbox paths. Each webhook still enforces Svix or
+   Telegram secret validation. `/api/health` is deliberately public and
+   returns only liveness; `/api/readiness` remains private.
+5. Confirm a normal private page and `/api/readiness` work through Access and
+   that an alternate Worker hostname without an Access assertion returns
+   `401`. The application independently verifies Access on every private
+   request, including SSR/data, reader, HTML/CID, raw, and attachment paths.
+
+Application logout revokes its D1 session and redirects through
+`/cdn-cgi/access/logout`. This ends the Access application session; whether an
+upstream IdP session also ends depends on that IdP. If Access immediately
+authenticates the browser again, use the IdP's own logout when signing out of
+that provider is required.
+
+To return to local login, back up D1, change `AUTH_MODE` to `local`, run
+`bun run auth:bootstrap:remote` with a new username/password, and deploy the
+reviewed config. The Owner ID, mail addresses, and historical data stay fixed;
+no Access email is copied into a mailbox address. These are operator-side
+remote actions and are not part of a local verification run.
+
+### Managed mail domain and address setup
+
+Configure only domains you explicitly intend to receive. Record the actual
+mail domain, its exact Cloudflare zone ID, account ID when needed, Worker name,
+and unknown-recipient policy. A subdomain is an independent mapping; do not
+infer its zone from the parent or enroll every zone visible to the API token.
+
+The secret `CLOUDFLARE_EMAIL_ROUTING_TOKEN` is separate from the Wrangler
+deployment token. On the selected zone(s), grant `Email Routing Rules Read`
+for list/catch-all checks and `Email Routing Rules Edit` for create/delete
+(the API endpoint reference labels that write permission `Email Routing Rules
+Write`). The client does not manage or verify destination addresses, so it
+does not need the account-level Email Routing Addresses permissions. Do not
+grant account-wide editing or reuse a deploy token. The token is never stored
+in D1 or returned to the UI. See the current [Cloudflare token permission
+groups](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)
+and [Email Routing rule endpoint permissions](https://developers.cloudflare.com/api/resources/email_routing/subresources/rules/).
+
+Use `bun run mail:domain:configure -- --remote` with
+`FLAREMAIL_MAIL_DOMAIN_NAME`, `FLAREMAIL_CLOUDFLARE_ZONE_ID`,
+`FLAREMAIL_EMAIL_WORKER_NAME`, and optional
+`FLAREMAIL_CLOUDFLARE_ACCOUNT_ID` / `FLAREMAIL_UNKNOWN_RECIPIENT_POLICY` in
+the current shell. This records one explicit domain mapping in D1. Then use
+Profile → Mail identities to add addresses and check routing and Resend state.
+The Worker creates exact literal `to` rules for its own email handler; it does
+not create Email Routing destination addresses or forwarding rules. A matching
+existing rule for this Worker may be imported after review. A rule that targets
+another Worker or email destination is a conflict and remains untouched.
+
+Cloudflare Email Routing receiving readiness and Resend sending readiness are
+separate. Resend must show the domain of the actual `From` address as verified
+and sending-enabled; a `send.example.com` return-path/DKIM setup does not
+authorize a different `@example.com` From address. Each same-domain address
+reuses the domain check. An address may receive mail while sending remains
+disabled or unverified.
+
+The default unknown-address policy is reject. `collect` may be selected only
+when a recent check proves the existing catch-all targets this Worker. A
+collected unknown address cannot send. Disabled/deleted explicit addresses are
+rejected before catch-all handling. Do not edit, enable, or remove an external
+catch-all. Deleting this application's precise rule does not stop delivery
+through a separate external catch-all; the UI reports that boundary. To
+restore an address, use its explicit restore action; the deleted row is never
+silently revived by synchronization.
+
 ### Telegram notification channel (optional, additive)
 
 Telegram is disabled in the checked-in templates. Read
@@ -316,8 +435,9 @@ TELEGRAM_TIMEOUT_MS = "5000"
 value. `TELEGRAM_WEBHOOK_SECRET` is optional and only needed as an independent
 override. `wrangler.deploy.toml.example` includes
 `keep_vars = true` so future code deployments preserve Dashboard-managed
-variables. Apply migrations 0019-0022 and verify schema metadata 22 before the
-first enabled deployment. After deployment, log in to FlareMail and click
+variables. Apply the checkout's ordered migrations through schema version 24
+(Telegram-specific migrations are 0019-0022) before the first enabled
+deployment. After deployment, log in to FlareMail and click
 **连接 / 更新 Webhook**; the page verifies `getMe` and registers only
 `/api/webhooks/telegram` with `allowed_updates=["message"]`. No local `.env`,
 manual `curl`, or administrator/ordinary-user role split is needed for this
@@ -325,8 +445,9 @@ personal-use flow.
 
 After the Worker and webhook are verified, bind through the authenticated
 settings page. `/start <token>` creates a disabled candidate, click
-**确认绑定**, and separately enable notifications. The channel trusts
-`login_email`, not the editable profile email. `/stop`, UI unbind, token
+**确认绑定**, and separately enable notifications. The channel uses the
+resolved managed envelope recipient and stable Owner, not the local username,
+Access email, or editable profile email. `/stop`, UI unbind, token
 rotation, and disabling the global var are additive and do not alter inbound
 mail, Resend, or the legacy email notification channel.
 
@@ -341,29 +462,24 @@ of ordinary repository verification without separate authorization.
 
 Check these relationships before creating routes or sending mail.
 
-#### Email Routing recipient ↔ FlareMail administrator
+#### Email Routing envelope recipient ↔ managed address
 
-The current owner lookup in `src/lib/server/db/inbound.ts` is equivalent to:
+The Worker resolves `ForwardableEmailMessage.to` against an explicitly
+configured `mail_domains` row and an active, receive-enabled `mail_addresses`
+row before reading the raw message or writing to R2. It stores that exact
+envelope recipient in `email_messages."to"` and links the managed address ID.
+MIME To/Cc and parsed `Delivered-To` are independent snapshots and do not grant
+ownership. Local login username, Access identity/email, and profile email do
+not affect mail ownership.
 
-```sql
-WHERE lower(login_email) = lower(?) OR lower(email) = lower(?)
-```
-
-The administrator bootstrap writes the normalized address to both columns.
-Under the current single-administrator model, the Cloudflare Email Routing
-recipient must therefore match `FLAREMAIL_ADMIN_EMAIL` (and the resulting
-FlareMail `login_email`/`email`). A mismatch stores the message as an
-unassigned inbound record instead of showing it in that administrator's Inbox.
-
-Recommended first deployment mapping:
-
-```text
-Cloudflare Email Routing recipient: mail@example.com
-FLAREMAIL_ADMIN_EMAIL:              mail@example.com
-```
-
-The lookup is case-insensitive, but do not rely on aliases or plus-addressing
-unless the current code and a controlled smoke test explicitly support them.
+Configure the actual domain-to-zone/Worker mapping with
+`bun run mail:domain:configure -- --remote`, then create or explicitly import
+an exact Worker routing rule for each address from Profile → Mail identities.
+The default unknown-recipient policy is reject. Optional collect requires a
+recent check that the existing catch-all targets this Worker and never creates
+a sendable address. A repeated delivery with the same RFC Message-ID to two
+managed addresses remains distinct because recipient participates in
+deduplication.
 
 #### Browser origin ↔ incoming Worker domain
 
@@ -377,17 +493,21 @@ unreachable without requiring an application configuration change.
 Sessions use host-only cookies and are intentionally not shared across
 different domains. A user must sign in separately on each hostname.
 
-#### OUTBOUND_FROM_EMAIL ↔ Resend verified domain
+#### Selected From address ↔ Resend verified domain
 
-If the configured sender is:
+Workspace sends use the explicitly selected or ready default managed address,
+not `OUTBOUND_FROM_EMAIL`. If an address is:
 
 ```text
 OUTBOUND_FROM_EMAIL=flaremail@send.example.com
 ```
 
-then `send.example.com` must be verified in Resend before production sending.
-The application accepts `submitted` after the Resend API accepts a message;
-only a verified signed `email.delivered` webhook can establish `delivered`.
+then the exact domain `send.example.com` must be verified and sending-enabled in
+Resend before that address can send. A sending/Return-Path subdomain does not
+authorize a From address on another domain. `OUTBOUND_FROM_EMAIL` / `MAIL_FROM`
+are reserved for system auto-replies and inbound notifications. The application
+accepts `submitted` after the Resend API accepts a message; only a verified
+signed `email.delivered` webhook can establish `delivered`.
 
 #### Recommended domain topology
 
@@ -425,18 +545,18 @@ Use the current dashboard output as the authority:
 - Add DMARC at the sending domain after SPF/DKIM are understood. Starting with
   an observation policy such as `p=none` is an operator choice; tighten it
   after reviewing reports and alignment.
-- Wait for Resend to show the domain as `verified` before setting
-  `OUTBOUND_FROM_EMAIL` to an address on that domain or running an outbound
-  smoke test.
+- Wait for Resend to show the exact domain of the intended managed `From`
+  address as verified and sending-enabled before enabling that address for
+  workspace sending. `OUTBOUND_FROM_EMAIL` is only a system auto-reply / inbound
+  notification sender setting.
 
 References: [Resend domain verification](https://resend.com/docs/dashboard/domains/introduction)
 and [Resend DMARC guidance](https://resend.com/docs/dashboard/domains/dmarc).
 
 ### 8. D1 migrations and pre-migration evidence
 
-At the current checkout, `migrations/0001_baseline.sql` through
-`migrations/0022_telegram_delivery_privacy_snapshot.sql` are present and
-`src/lib/server/db/schema-version.ts` declares schema version `22`. Treat this
+At the current checkout, migrations `0001` through `0024` are present and
+`src/lib/server/db/schema-version.ts` declares schema version `24`. Treat this
 as a checked-in fact for this release, not a permanent promise: derive the
 latest migration and schema version from the checkout before every release.
 
@@ -467,8 +587,8 @@ bun run db:migrate:remote
 Migrations are append-only release history. Never edit an already published
 migration, skip a number, or downgrade D1 merely to run an older Worker. Apply
 the migration before deploying Worker code that requires its schema. After the
-command, verify `workspace_schema_metadata.schema_version` and the health
-required tables through the health check and the release evidence.
+command, verify `workspace_schema_metadata.schema_version` and required tables
+through authenticated `/api/readiness`; public `/api/health` is liveness only.
 
 D1 Time Travel is the normal short-window rollback evidence for supported
 production databases. It is always on for the supported production backend;
@@ -488,37 +608,40 @@ Never delete `workspace_search_documents` as a shortcut.
 References: [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/)
 and [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/).
 
-### 9. Administrator bootstrap
+### 9. Owner bootstrap
 
-The bootstrap script requires an email, name and password in the current shell;
-it rejects passwords shorter than 12 characters and performs an upsert by
-`login_email`, updating credentials rather than creating duplicate admins.
-Use a unique password stored in a password manager. Shell history and process
-environment exposure are operator risks; unset the variables immediately.
+Local mode requires a custom username and password in the current shell; the
+username need not be an email. Passwords must be at least 12 characters. An
+optional profile email is not an authorization or mail identity. Resetting the
+local credential updates the existing Owner and revokes its earlier local
+sessions. Use a unique password stored in a password manager. Shell history and
+process environment exposure are operator risks; unset values immediately.
 
 POSIX shell:
 
 ```bash
-export FLAREMAIL_ADMIN_EMAIL='mail@example.com'
+export FLAREMAIL_ADMIN_USERNAME='flower'
 export FLAREMAIL_ADMIN_NAME='FlareMail Administrator'
 export FLAREMAIL_ADMIN_PASSWORD='use-a-long-unique-password'
 bun run auth:bootstrap:remote
-unset FLAREMAIL_ADMIN_EMAIL FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
+unset FLAREMAIL_ADMIN_USERNAME FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
 ```
 
 PowerShell:
 
 ```powershell
-$env:FLAREMAIL_ADMIN_EMAIL = 'mail@example.com'
+$env:FLAREMAIL_ADMIN_USERNAME = 'flower'
 $env:FLAREMAIL_ADMIN_NAME = 'FlareMail Administrator'
 $env:FLAREMAIL_ADMIN_PASSWORD = '<read a long unique password securely>'
 bun run auth:bootstrap:remote
-Remove-Item Env:FLAREMAIL_ADMIN_EMAIL, Env:FLAREMAIL_ADMIN_NAME, Env:FLAREMAIL_ADMIN_PASSWORD
+Remove-Item Env:FLAREMAIL_ADMIN_USERNAME, Env:FLAREMAIL_ADMIN_NAME, Env:FLAREMAIL_ADMIN_PASSWORD
 ```
 
-The administrator email must be the same address selected in the Email Routing
-recipient invariant above. Do not put it in a secret file or commit it with a
-password.
+For a new Access-only Owner, use `bun run auth:bootstrap:access:remote` without
+local credentials. For an existing database with multiple historical users,
+review the owner audit and set `FLAREMAIL_OWNER_USER_ID` to the explicitly
+selected existing ID; bootstrap will not transfer or merge other users' mail.
+The resulting Owner ID is the one configured as `ACCESS_OWNER_USER_ID`.
 
 ### 10. Pre-deployment verification
 
@@ -652,7 +775,7 @@ Phase B is the final reviewed release of the exact SHA. With the fallback
 
 ### 12. Enable Cloudflare Email Routing last
 
-Only after the final `/api/health` response is HTTP 200 and the operator has
+Only after authenticated `/api/readiness` succeeds and the operator has
 reviewed D1, R2, Resend, Custom Domain and webhook configuration:
 
 1. Open the zone's **Email Routing** dashboard and choose **Enable/Get
@@ -662,31 +785,42 @@ reviewed D1, R2, Resend, Custom Domain and webhook configuration:
    mailbox, and complete the verification email. The destination address is a
    Cloudflare Email Routing setup prerequisite and verification target; it is
    not the incoming FlareMail recipient.
-3. Open **Routing Rules** (the dashboard may label this **Routes**) and choose
-   **Create address** for the intended incoming recipient, for example
-   `mail@example.com`. This address must still equal the bootstrapped
-   administrator email under the current owner lookup.
-4. Choose **Send to a Worker**, then select the deployed `flaremail` Worker.
-   Do not choose **Forward to email**; forwarding bypasses the Worker
-   `email()` handler.
-5. Confirm the rule is active, matches the intended recipient, and is not
-   shadowed by a higher-priority catch-all or forwarding rule.
-6. Send the controlled inbound smoke message only after the route is active.
+3. Set `FLAREMAIL_MAIL_DOMAIN_NAME`, `FLAREMAIL_CLOUDFLARE_ZONE_ID`,
+   `FLAREMAIL_EMAIL_WORKER_NAME=flaremail`, and the optional account/policy
+   values in the operator shell. Run `bun run mail:domain:configure -- --remote`
+   only after the reviewed remote D1 change is approved. The script writes one
+   explicit domain mapping; it does not discover or enroll other zones.
+4. Add `CLOUDFLARE_EMAIL_ROUTING_TOKEN` as a Worker Secret. It must be a
+   separate token with `Email Routing Rules Read` and `Email Routing Rules
+   Edit` (write) on the configured zone. Never reuse the Wrangler deployment
+   token.
+5. Log in to FlareMail and use Profile → Mail identities to add each address.
+   The Worker creates an exact literal `to` rule targeting the configured
+   Worker email handler. A pre-existing matching Worker rule may be imported
+   after a read-only check. A rule to another Worker or a forward destination
+   is reported as a conflict and is not taken over.
+6. Review the exact address rule, domain-level catch-all status, and policy in
+   the UI. Do not enable or modify an external catch-all. Deleting an exact
+   FlareMail rule cannot intercept mail that an external catch-all still
+   receives. Send the controlled inbound smoke message only after the exact
+   address is active and receive-enabled.
 
 See [Cloudflare Email Routing destination addresses](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/)
 and [Cloudflare route emails to a Worker](https://developers.cloudflare.com/email-service/get-started/route-emails/).
 
 ### 13. Health check and production smoke
 
-Run the runtime readiness check:
+`/api/health` is public liveness only:
 
 ```bash
 curl --fail --silent --show-error https://mail.example.com/api/health
 ```
 
-HTTP 200 proves that runtime configuration, D1 bindings and the required
-schema tables are ready. It does not prove login, Email Routing, R2 object
-integrity, Resend API acceptance, webhook delivery or mailbox delivery.
+HTTP 200 from `/api/health` proves only that the HTTP entry point responds.
+Sign in through the configured auth mode and open `/api/readiness` to verify
+runtime configuration, D1 bindings, required schema tables, and safe cleanup
+counts. Readiness still does not prove Email Routing, R2 object integrity,
+Resend API acceptance, webhook delivery, or mailbox delivery.
 
 #### Inbound smoke
 
@@ -736,7 +870,8 @@ For every later release:
 3. Record the D1 target and a current Time Travel bookmark/timestamp before
    any migration.
 4. Review and apply new migrations in order with `bun run db:migrate:remote`.
-5. Deploy the exact release with `bun run deploy` and verify `/api/health`.
+5. Deploy the exact release with `bun run deploy`, verify public liveness, then
+   authenticate and verify private `/api/readiness`.
 6. Preserve the existing Custom Domain, webhook and Email Routing rules unless
    a separately approved change is required. Run the smallest controlled smoke
    test that covers the changed behavior.
@@ -753,7 +888,8 @@ Before a release, record:
 - D1 database target, schema version and pre-change Time Travel bookmark;
 - the reviewed D1/R2 binding names and config checksum (without secrets);
 - the Resend webhook endpoint, subscribed event set and secret-present status;
-- Email Routing recipient, rule priority and Worker target; and
+- configured managed domains/addresses, exact rule IDs, catch-all status and
+  Worker targets; and
 - the latest health, search, cleanup, attachment-integrity and delivery-review
   reports.
 

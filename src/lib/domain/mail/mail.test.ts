@@ -125,13 +125,18 @@ describe('compose domain', () => {
       ],
       ccAddresses: [
         { name: 'Team duplicate', email: 'TEAM@example.com' },
-        { name: 'Copy', email: 'copy@example.com' }
+        { name: 'Copy', email: 'copy@example.com' },
+        { name: 'Owner alias', email: 'alias@example.com' }
       ],
       bccAddresses: [{ name: 'Hidden', email: 'hidden@example.com' }]
     });
     const reply = createReplyAllComposeInput(source, {
       selfEmail: 'owner@example.com',
-      replyTo: [{ name: 'Support', email: 'SUPPORT@example.com' }]
+      selfEmails: ['alias@example.com'],
+      replyTo: [
+        { name: 'Support', email: 'SUPPORT@example.com' },
+        { name: 'Owner alias', email: 'alias@example.com' }
+      ]
     });
 
     expect(reply.to).toEqual([{ name: 'Support', email: 'support@example.com' }]);
@@ -142,6 +147,15 @@ describe('compose domain', () => {
     expect(reply.bcc).toEqual([]);
     expect(reply.inReplyTo).toBe('<current@example.com>');
     expect(reply.references).toBe('<root@example.com> <current@example.com>');
+  });
+
+  test('replies from the address that received the exact inbound delivery', () => {
+    const source = message({
+      envelopeRecipient: 'alias@example.com',
+      recipientAddressId: 'address-alias'
+    });
+    expect(createReplyComposeInput(source).senderAddressId).toBe('address-alias');
+    expect(createReplyAllComposeInput(source, { selfEmail: 'owner@example.com' }).senderAddressId).toBe('address-alias');
   });
 
   test('Reply All on sent mail targets original To and CC instead of the sender account', () => {

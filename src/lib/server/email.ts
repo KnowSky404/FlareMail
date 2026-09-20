@@ -2,7 +2,8 @@ import type { CloudflareEnv } from './cloudflare';
 import { MAX_RECIPIENTS, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
 import { insertBodyObject } from '$lib/server/db/body';
-import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, findInboundOwnerId, findTrustedInboundOwnerId, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
+import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
+import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 import { hasTelegramTables, insertTelegramDeliveryIfEligible } from '$lib/server/db/telegram';
 import { findUserInboundNotificationSettings } from '$lib/server/db/users';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
@@ -144,7 +145,26 @@ export async function handleInboundEmail(
 ) {
   const startedAt = Date.now();
   const correlationId = resolveInboundCorrelationId(message.headers, env.APP_ENV);
-  if (!env.DB || !env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
+  if (!env.DB) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
+  const recipientRoute = await resolveInboundRecipient(env.DB, message.to);
+  if (!recipientRoute.accepted) {
+    const rejectionReasons = {
+      invalid_recipient: 'The envelope recipient is invalid.',
+      unknown_domain: 'The recipient domain is not configured.',
+      domain_disabled: 'The recipient domain is disabled.',
+      address_unavailable: 'The recipient address is not enabled.',
+      address_domain_mismatch: 'The recipient address is not managed by this domain.'
+    } as const;
+    safeLog('inbound_rejected', {
+      correlationId,
+      code: 'INBOUND_RECIPIENT_REJECTED',
+      reason: recipientRoute.reason,
+      durationMs: Date.now() - startedAt
+    });
+    message.setReject(rejectionReasons[recipientRoute.reason]);
+    return;
+  }
+  if (!env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
 
   const rawLimit = configuredLimit(env.INBOUND_MAX_RAW_BYTES, DEFAULT_INBOUND_LIMITS.rawBytes, DEFAULT_INBOUND_LIMITS.rawBytes);
   let raw: ArrayBuffer;
@@ -183,7 +203,7 @@ export async function handleInboundEmail(
     safeLog('inbound_size_mismatch', { correlationId, declaredBytes: message.rawSize, actualBytes: raw.byteLength });
   }
 
-  const recipient = message.to.trim().toLowerCase();
+  const recipient = recipientRoute.recipient;
   const messageId = parsed.messageId ?? message.headers.get('message-id');
   const dedupeKey = await createInboundDedupeKey(messageId, recipient, raw);
   const existing = await findInboundByDedupeKey(env.DB, dedupeKey);
@@ -211,12 +231,12 @@ export async function handleInboundEmail(
     return;
   }
   const rawKey = `inbound/${date.slice(0, 10)}/${storageId}/message.eml`;
-  const ownerUserId = await findInboundOwnerId(env.DB, recipient);
+  const ownerUserId = recipientRoute.ownerUserId;
   let telegramOwnerUserId: string | null = null;
   const telegramConfig = resolveTelegramConfig(env);
   if (telegramConfig.ready) {
     try {
-      if (await hasTelegramTables(env.DB)) telegramOwnerUserId = await findTrustedInboundOwnerId(env.DB, recipient);
+      if (await hasTelegramTables(env.DB)) telegramOwnerUserId = recipientRoute.ownerUserId;
     } catch {
       // Telegram is an optional secondary channel. A missing or unavailable
       // notification schema must never reject accepted inbound mail.
@@ -302,6 +322,9 @@ export async function handleInboundEmail(
       rawKey,
       rawSize: raw.byteLength,
       ownerUserId,
+      mailDomainId: recipientRoute.mailDomainId,
+      mailAddressId: recipientRoute.mailAddressId,
+      recipientStatus: recipientRoute.recipientStatus,
       bodyObjectId: bodyObject?.id ?? null
     }), ...(bodyObject ? [insertBodyObject(env.DB, {
       id: bodyObject.id, owner_user_id: ownerUserId, entity_type: 'email_message', entity_id: storageId,

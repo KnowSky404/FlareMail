@@ -24,6 +24,11 @@ crons = ["* * * * *"]
 [vars]
 APP_ENV = "production"
 OUTBOUND_PROVIDER = "resend"
+# Explicitly switch to cloudflare-access after configuring its issuer, AUD,
+# JWKS URL, allowed subject, and the stable Owner ID in this same vars block.
+AUTH_MODE = "local"
+# This sender is only for system auto-replies and inbound notifications.
+# User messages select a verified managed address in the workspace.
 OUTBOUND_FROM_EMAIL = "flaremail@send.example.com"
 OUTBOUND_FROM_NAME = "FlareMail"
 RESEND_API_BASE_URL = "https://api.resend.com"
@@ -37,6 +42,15 @@ APP_BASE_URL = "https://mail.example.com"
 TELEGRAM_TIMEOUT_MS = "5000"
 NOTIFICATION_EMAIL = "ops@example.com"
 NOTIFICATION_SUBJECT_PREFIX = "[FlareMail] 新入站邮件"
+# Access-only example (replace every value before enabling this mode):
+# AUTH_MODE = "cloudflare-access"
+# ACCESS_ISSUER = "https://<team>.cloudflareaccess.com"
+# ACCESS_AUDIENCE = "<application-aud>"
+# ACCESS_JWKS_URL = "https://<team>.cloudflareaccess.com/cdn-cgi/access/certs"
+# ACCESS_ALLOWED_SUBJECT = "<single-owner-subject>"
+# ACCESS_OWNER_USER_ID = "<stable-workspace-owner-id>"
+# Keep CLOUDFLARE_EMAIL_ROUTING_TOKEN in Worker Secrets, scoped to the
+# explicitly configured Email Routing zone(s); do not reuse a deploy token.
 
 [assets]
 directory = "build"

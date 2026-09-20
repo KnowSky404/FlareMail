@@ -21,6 +21,9 @@ crons = ["* * * * *"]
 APP_ENV = "development"
 ALLOW_FAKE_SERVICES = "true"
 OUTBOUND_PROVIDER = "demo"
+# Local custom username/password authentication.
+AUTH_MODE = "local"
+# Optional system sender only; workspace messages use managed addresses.
 OUTBOUND_FROM_EMAIL = "dev@example.com"
 OUTBOUND_FROM_NAME = "FlareMail"
 AUTO_REPLY_ENABLED = "false"

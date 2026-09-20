@@ -1,6 +1,6 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { clearLoginAttempts, consumeLoginAttempt } from './rate-limit';
+import { clearLoginAttempts, consumeLoginAttempt, isValidLoginUsername, normalizeLoginUsername } from './rate-limit';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -40,5 +40,18 @@ describe('D1 login rate limiter', () => {
     expect(row.identity_hash).not.toContain('owner@example.test');
     await clearLoginAttempts(db, '198.51.100.1:owner@example.test');
     expect((await consumeLoginAttempt(db, '198.51.100.1:owner@example.test', 1_001, 1, 10_000)).allowed).toBe(true);
+  });
+});
+
+describe('local login usernames', () => {
+  test('normalizes without imposing email syntax', () => {
+    expect(normalizeLoginUsername('  Ｆlower  ')).toBe('flower');
+    expect(isValidLoginUsername('flower')).toBe(true);
+    expect(isValidLoginUsername('owner.name+local')).toBe(true);
+    expect(isValidLoginUsername('user@example.test')).toBe(true);
+    expect(isValidLoginUsername('')).toBe(false);
+    expect(isValidLoginUsername('-starts-with-punctuation')).toBe(false);
+    expect(isValidLoginUsername('bad/name')).toBe(false);
+    expect(isValidLoginUsername('x'.repeat(129))).toBe(false);
   });
 });

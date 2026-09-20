@@ -3,6 +3,7 @@ import {
   cloneMailbox,
   cloneProfile,
   type MailboxSection,
+  type MailboxIdentityFilter,
   type MailMessage,
   type MailboxPage,
   type MailboxState,
@@ -36,7 +37,7 @@ export type WorkspaceViewState = MailboxSnapshot & {
   selectedMessageIds: string[];
   searchQuery: string;
   mailFilter: MailFilter;
-  outboundSenderEmail: string | null;
+  identityFilter: MailboxIdentityFilter | null;
 };
 
 export function createEmptyWorkspaceViewState(): WorkspaceViewState {
@@ -46,6 +47,7 @@ export function createEmptyWorkspaceViewState(): WorkspaceViewState {
     mailboxPages: null,
     metrics: {
       inboxCount: 0,
+      archiveCount: 0,
       sentCount: 0,
       draftsCount: 0,
       trashCount: 0,
@@ -63,7 +65,7 @@ export function createEmptyWorkspaceViewState(): WorkspaceViewState {
     selectedMessageIds: [],
     searchQuery: '',
     mailFilter: 'all',
-    outboundSenderEmail: null
+    identityFilter: null
   };
 }
 
@@ -88,7 +90,7 @@ export function workspaceViewStateFromSnapshot(
     selectedMessageIds: [],
     searchQuery: options.clearMailView ? '' : activePage?.query ?? '',
     mailFilter: options.clearMailView ? 'all' : activePage?.filter ?? 'all',
-    outboundSenderEmail: snapshot.outboundSenderEmail
+    identityFilter: options.clearMailView ? null : activePage?.identityFilter ?? null
   };
 }
 
@@ -310,12 +312,12 @@ export class MailboxController {
     private readonly callbacks: MailboxControllerCallbacks
   ) {}
 
-  async refresh(folder: MailboxSection, query: string, filter: MailFilter) {
+  async refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null) {
     const request = this.request.begin();
     this.callbacks.onLoading(true);
     try {
       const params = new URLSearchParams({ folder, limit: '40' });
-      this.addFilters(params, query, filter);
+      this.addFilters(params, query, filter, identityFilter);
       const result = await this.fetchPage(params, request.signal);
       if (request.isCurrent()) {
         this.callbacks.onPage(result.page, false);
@@ -329,7 +331,7 @@ export class MailboxController {
     return false;
   }
 
-  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined) {
+  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null) {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return;
     const request = this.request.begin();
     this.callbacks.onLoading(true);
@@ -339,7 +341,7 @@ export class MailboxController {
         cursor: currentPage.nextCursor,
         limit: String(currentPage.limit)
       });
-      this.addFilters(params, query, filter);
+      this.addFilters(params, query, filter, identityFilter);
       const result = await this.fetchPage(params, request.signal);
       if (request.isCurrent()) {
         this.callbacks.onPage(result.page, true);
@@ -357,8 +359,9 @@ export class MailboxController {
     this.request.cancel();
   }
 
-  private addFilters(params: URLSearchParams, query: string, filter: MailFilter) {
+  private addFilters(params: URLSearchParams, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null) {
     if (query.trim()) params.set('q', query.trim());
     if (filter !== 'all') params.set('filter', filter);
+    if (identityFilter) params.set('identity', `${identityFilter.kind}:${identityFilter.id}`);
   }
 }

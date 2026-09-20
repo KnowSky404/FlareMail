@@ -107,8 +107,8 @@ describe('Telegram D1 state', () => {
     db.query(`INSERT INTO workspace_telegram_bindings
       (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, authorization_version, created_at, updated_at)
       VALUES ('user-1', 'binding-1', 'active', '42', '42', 1, 1, '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z')`).run();
-    db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id)
-      VALUES ('email-1', 'sender@example.test', 'owner@example.test', 'Subject', '2026-09-09T12:00:00.000Z', 'Summary', 'raw/email-1', 'dedupe-1', 'user-1')`).run();
+    db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id, mail_address_id, recipient_status)
+      VALUES ('email-1', 'sender@example.test', 'owner@example.test', 'Subject', '2026-09-09T12:00:00.000Z', 'Summary', 'raw/email-1', 'dedupe-1', 'user-1', 'address-1', 'managed')`).run();
     await d1.batch([insertTelegramDeliveryIfEligible(d1 as unknown as D1Database, {
       deliveryId: 'delivery-1', ownerUserId: 'user-1', emailMessageId: 'email-1',
       nextAttemptAt: '2026-09-09T12:00:00.000Z', now: '2026-09-09T12:00:00.000Z'
@@ -130,8 +130,8 @@ describe('Telegram D1 state', () => {
     db.query(`INSERT INTO workspace_telegram_bindings
       (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, authorization_version, created_at, updated_at)
       VALUES ('user-1', 'binding-1', 'active', '42', '42', 1, 1, '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z')`).run();
-    db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id)
-      VALUES ('email-1', 'sender@example.test', 'owner@example.test', 'Subject', '2026-09-09T12:00:00.000Z', 'Summary', 'raw/email-1', 'dedupe-1', 'user-1')`).run();
+    db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id, mail_address_id, recipient_status)
+      VALUES ('email-1', 'sender@example.test', 'owner@example.test', 'Subject', '2026-09-09T12:00:00.000Z', 'Summary', 'raw/email-1', 'dedupe-1', 'user-1', 'address-1', 'managed')`).run();
     await d1.batch([insertTelegramDeliveryIfEligible(d1 as unknown as D1Database, {
       deliveryId: 'delivery-1', ownerUserId: 'user-1', emailMessageId: 'email-1',
       nextAttemptAt: '2026-09-09T12:00:00.000Z', now: '2026-09-09T12:00:00.000Z'

@@ -8,6 +8,7 @@
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
+  import MailIdentityManager from '$lib/components/mail/MailIdentityManager.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
   import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
@@ -38,7 +39,8 @@
     status = '',
     statusError = false,
     pending = false,
-    onSave
+    onSave,
+    onIdentitiesChanged
   }: {
     profile: UserProfile;
     diagnostics?: RuntimeDiagnostics | null;
@@ -48,6 +50,7 @@
     statusError?: boolean;
     pending?: boolean;
     onSave: (next: UserProfile) => void | Promise<void>;
+    onIdentitiesChanged?: (options: import('$lib/domain/mail').WorkspaceSnapshot['mailIdentityOptions']) => void;
   } = $props();
 
   let nextProfile = $state<UserProfile>(
@@ -217,6 +220,7 @@
       {/if}
     </div>
   </form>
+  <MailIdentityManager onOptionsChange={onIdentitiesChanged} />
   <TelegramNotificationPanel />
 </div>
 

@@ -32,8 +32,8 @@ function fixture(status: 'pending' | 'retryable' = 'pending') {
   db.query(`INSERT INTO workspace_telegram_bindings
     (user_id, binding_id, state, telegram_user_id, telegram_chat_id, telegram_username, enabled, privacy_mode, summary_enabled, authorization_version, created_at, updated_at)
     VALUES ('user-1', 'binding-1', 'active', '42', '42', 'alice', 1, 0, 1, 1, '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z')`).run();
-  db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id, created_at)
-    VALUES ('email-1', 'Sender <sender@example.test>', 'owner@example.test', 'Subject', '2000-01-01T00:00:00.000Z', 'A bounded summary.', 'raw/email-1', 'dedupe-1', 'user-1', '2026-09-09T12:34:00.000Z')`).run();
+  db.query(`INSERT INTO email_messages (id, "from", "to", subject, timestamp, snippet, raw_key, dedupe_key, owner_user_id, created_at, mail_address_id, recipient_status)
+    VALUES ('email-1', 'Sender <sender@example.test>', 'owner@example.test', 'Subject', '2000-01-01T00:00:00.000Z', 'A bounded summary.', 'raw/email-1', 'dedupe-1', 'user-1', '2026-09-09T12:34:00.000Z', 'address-1', 'managed')`).run();
   db.query(`INSERT INTO workspace_telegram_deliveries
     (id, owner_user_id, email_message_id, channel, binding_id, authorization_version, privacy_mode, summary_enabled, status, next_attempt_at, created_at, updated_at)
     VALUES ('delivery-1', 'user-1', 'email-1', 'telegram', 'binding-1', 1, 0, 1, ?, '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z', '2026-09-09T11:00:00.000Z')`).run(status);

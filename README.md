@@ -6,7 +6,7 @@
   <img src="./static/brand/flaremail-logo.svg" alt="FlareMail logo" width="286" />
 </p>
 
-FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户端。一个 Worker composition root 同时承载 SvelteKit Web/API 的 `fetch()` 与 Cloudflare Email Routing 的 `email()`，D1 保存结构化数据和状态，R2 保存原始 `.eml` 与附件，生产外发统一使用 Resend。
+FlareMail 是一个部署在 Cloudflare Workers 上的个人自托管邮件工作区。一个稳定 Owner 管理多个显式配置的域名和邮件地址；邮件地址只是收发资源，不是登录账号。一个 Worker composition root 同时承载 SvelteKit Web/API 的 `fetch()` 与 Cloudflare Email Routing 的 `email()`，D1 保存结构化数据和状态，R2 保存原始 `.eml` 与附件，生产外发使用 Resend。
 
 仓库固定使用 Bun `1.4.0`。CI 和本地测试均可从没有 `.svelte-kit`、`build`、`.wrangler` 产物的 clean checkout 开始；`tsconfig.json` 保留 `$lib` 的显式源代码映射，避免测试命令依赖先启动过 SvelteKit。
 
@@ -16,10 +16,12 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 - D1/R2 持久化：入站原文与带 SHA-256 的附件、用户归属、已读/星标、归档、批量邮箱操作、草稿、已发送、投递状态和事件时间线；下载在返回 bytes 前验证 ownership、size 与 checksum。
 - Resend 出站：稳定幂等键、`reply_to`/RFC headers、R2 流式附件上传与完整性校验、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
-- 单管理员认证：PBKDF2 密码哈希、D1 session token hash/expiry、Cookie、Origin/CSRF、登录限速和安全响应头。
+- 明确的 `AUTH_MODE=local|cloudflare-access` 认证：本地用户名（无需邮箱）和 PBKDF2 密码，或验签后的 Cloudflare Access 身份映射到相同稳定 Owner；两种模式共用 D1 会话吊销、Cookie、Origin/CSRF、登录限速和安全响应头。
+- 多域名邮件身份：域名通过受控配置显式加入；地址路由只使用限定 zone 的 Cloudflare Email Routing Rules API 精确规则。收件在读取正文/R2 前按信封收件人解析地址，统一邮箱支持服务端域名/地址筛选，搜索、计数、分页和草稿使用同一筛选范围。
+- 多发件身份：每封新邮件、回复、草稿和重试都携带受管地址 ID；服务端检查 Owner、地址状态和域级 Resend 发信验证，再固定 From/签名快照。旧 `OUTBOUND_FROM_EMAIL` / `MAIL_FROM` 仅供系统自动回复和通知使用。
 - 响应式阅读工作台：桌面三栏、可折叠侧栏、280–480 px 可拖拽/键盘调整的邮件列表、标准/紧凑显示密度、平板/手机 drill-in、近全屏专注阅读和 `/messages/[id]` 独立阅读地址；列表宽度会在详情区可用空间不足时临时收窄，按 Enter 可恢复 360 px 默认值；同一用户打开的窗口只同步邮件状态信号，不传播正文、地址或凭据。
 - 双语界面：服务端按安全 locale cookie（显式语言或跟随浏览器）以及 `Accept-Language` 首屏选择 zh-CN 或 en，浏览器端支持显式语言、跟随浏览器和持久化；日期、数字、计数和辅助标签随语言更新，邮件主题、地址、正文与附件文件名保持原文。
-- 版本化 D1 migration：`migrations/0001` 至 `0022`，包括登录与出站发送限速、schema metadata、inbound claim、归档/垃圾箱、收件元数据、FTS5、出站附件与 lease/retry/manual-review 清理队列，以及 Telegram 绑定、webhook 去重、持久 outbox、账户删除清理触发器、challenge 消费溯源和通知隐私快照，并由 `schema.sql` 保存最新结构快照。
+- 版本化 D1 migration：`migrations/0001` 至 `0024`。`0023` 将稳定 Owner 与本地用户名/凭据分开，`0024` 添加受管域名/地址和邮件身份快照；历史邮件不会因资料邮箱或旧登录邮箱自动变成可收发地址。`schema.sql` 是最新结构快照。
 - Telegram 入站通知：一个部署级 Bot、每个工作区用户一个私聊绑定、一次性深链确认、隐私/摘要开关、D1 durable outbox、每分钟 Cron、429/backoff/unknown-delivery 状态和现有邮件详情链接；实现边界与真实投递验证见 [docs/TELEGRAM.md](./docs/TELEGRAM.md)。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
 - 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention/orphan 报告，以及有界 claim、lease、backoff、max-attempts 和人工复核的 canonical R2 cleanup lifecycle。
@@ -33,7 +35,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的单工作区邮件客户�
 | preview | 按私有配置 | 独立 preview 资源 | 不应复用生产凭据或 D1 |
 | production | 仅 `resend` | 真实 D1/R2 与 Wrangler secrets | 缺少必要 binding/secret 时 fail closed |
 
-仓库不包含固定登录密码。使用 `scripts/bootstrap-admin.ts` 将管理员凭据安全写入本地或远程 D1；密码只通过当前 shell 环境变量传入，不写入配置文件。
+仓库不包含固定登录密码。使用 `scripts/bootstrap-admin.ts` 将 Owner 的本地用户名/凭据写入本地或远程 D1；登录名使用 `FLAREMAIL_ADMIN_USERNAME`，资料邮箱 `FLAREMAIL_PROFILE_EMAIL` 可选且不授予收发信权限。Access-only 初始化可通过 `bun run auth:bootstrap:access` 建立同一稳定 Owner，而无需设置本地密码。
 
 本地 `wrangler.toml` 默认启用 demo provider，目的仅是验证 UI 与本地持久化。它不代表生产发送成功，也不会证明真实 Resend、Email Routing 或远程 Cloudflare 资源可用。
 
@@ -70,14 +72,14 @@ bun run audit:dependencies
 bun run db:migrate:local
 ```
 
-在当前 shell 交互式设置管理员信息，不要把密码保存到项目 `.env`：
+在当前 shell 设置本地管理员用户名和密码，不要把密码保存到项目 `.env`：
 
 ```bash
-export FLAREMAIL_ADMIN_EMAIL='admin@example.test'
+export FLAREMAIL_ADMIN_USERNAME='flower'
 export FLAREMAIL_ADMIN_NAME='FlareMail Administrator'
 export FLAREMAIL_ADMIN_PASSWORD='use-a-long-local-password'
 bun run auth:bootstrap:local
-unset FLAREMAIL_ADMIN_EMAIL FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
+unset FLAREMAIL_ADMIN_USERNAME FLAREMAIL_ADMIN_NAME FLAREMAIL_ADMIN_PASSWORD
 ```
 
 启动开发或 Worker 预览：
@@ -92,8 +94,7 @@ bun run preview
 `bun run dev` 主要用于页面开发；要执行 Worker 的 `email()` handler，请使用
 `bun run preview`。本地入口是
 `/cdn-cgi/handler/email?from=...&to=...`，POST body 必须是完整的 RFC5322
-原文而不是 JSON。`to` 必须与本地 bootstrap 的
-`FLAREMAIL_ADMIN_EMAIL` 一致，否则邮件会保存为未归属记录。生产部署顺序请
+原文而不是 JSON。`to` 必须匹配显式受管域名中的启用地址，或符合域名已核实的 collect 策略；登录用户名和资料邮箱不决定收件归属。用 `bun run mail:domain:configure` 配置本地测试域名，再通过身份设置或测试 fixture 添加地址。生产部署顺序请
 使用 [DEPLOY.md](./DEPLOY.md)，不要套用本地 `demo` provider。
 
 本地 `OUTBOUND_PROVIDER=demo`/`fake` 只验证 UI、D1/R2 和状态机，不访问 Resend，
@@ -138,6 +139,7 @@ Domain、Resend、D1 Time Travel 与 Email Routing 顺序的唯一权威说明�
 - [DESIGN.md](./DESIGN.md)：权威设计系统与响应式/可访问性规则。
 - [REFACTOR_PLAN.md](./REFACTOR_PLAN.md)：阶段实施、回滚点和最终验收边界。
 - [DEPLOY.md](./DEPLOY.md)：权威生产首次部署、升级、回滚与 smoke test。
+- [docs/adr/0014-owner-managed-mail-identities-and-access.md](./docs/adr/0014-owner-managed-mail-identities-and-access.md)：稳定 Owner、认证模式、多邮件身份与收件路由的架构决策。
 - [docs/API.md](./docs/API.md)：工作区 snapshot、邮箱分页、草稿并发、批量操作和投递重试契约。
 - [docs/TELEGRAM.md](./docs/TELEGRAM.md)：Telegram Bot、绑定、Webhook、outbox、Cron、隐私、限速与生产运维边界。
 - [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md)：维护 dry-run、stale claim 和投递 review 报告。

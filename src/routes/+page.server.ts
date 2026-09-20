@@ -3,7 +3,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { MailboxSection } from '$lib/domain/mail';
 import { loadWorkspaceSnapshot } from '$lib/server/workspace';
 import { parseMailboxQuery } from '$lib/server/workspace/mailbox-query';
-import { parseBoolean, resolveOutboundFromEmail } from '$lib/server/config/env';
+import { parseBoolean } from '$lib/server/config/env';
 import { telegramConfigurationSummary } from '$lib/server/telegram/config';
 import { classifyRuntimeError, runtimeUnavailableState } from '$lib/server/http/api';
 import type { RuntimeState } from '$lib/domain/runtime-state';
@@ -20,7 +20,7 @@ function safeRuntimeDiagnostics(env: CloudflareEnv) {
     outboundConfigured: provider === 'resend' ? Boolean(env.RESEND_API_KEY?.trim()) : /^(demo|fake)$/u.test(provider),
     outboundMode: provider === 'resend' ? 'Resend' : /^(demo|fake)$/u.test(provider) ? '开发假服务' : '未配置',
     webhookConfigured: Boolean(env.RESEND_WEBHOOK_SECRET?.trim()),
-    senderConfigured: Boolean(resolveOutboundFromEmail(env)),
+    senderConfigured: false,
     autoReplyEnabled: parseBoolean(env.AUTO_REPLY_ENABLED),
     notificationEnabled: parseBoolean(env.INBOUND_NOTIFICATION_ENABLED),
     telegramEnabled: telegram.enabled,
@@ -37,6 +37,8 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
   const dbBound = Boolean(env?.DB);
   const bucketBound = Boolean(env?.BUCKET);
   const context = locals.workspaceSession;
+  const authMode = locals.authMode ?? 'local';
+  const authConfigured = locals.authConfigured ?? false;
   const requestId = locals.requestId ?? crypto.randomUUID();
 
   const emptyData = (runtimeState: RuntimeState) => ({
@@ -47,6 +49,8 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
     runtimeDiagnostics: null,
     schemaReady: runtimeState.state === 'ready',
     runtimeState,
+    authMode,
+    authConfigured,
     totalMessages: 0,
     lastSubject: null,
     lastTimestamp: null
@@ -67,7 +71,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
   try {
     const activeFolder = requestedFolder(url.searchParams.get('folder'));
     const params = new URLSearchParams({ limit: '40', folder: activeFolder });
-    for (const key of ['q', 'filter', 'status']) {
+    for (const key of ['q', 'filter', 'status', 'identity']) {
       const value = url.searchParams.get(key);
       if (value) params.set(key, value);
     }
@@ -77,6 +81,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       limit: activeQuery.limit,
       query: activeQuery.query,
       filter: activeQuery.filter,
+      identityFilter: activeQuery.identityFilter,
       deliveryStatus: activeQuery.deliveryStatus
     });
     const workspace = loaded.workspace;
@@ -90,6 +95,8 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       runtimeDiagnostics: safeRuntimeDiagnostics(env),
       schemaReady: true,
       runtimeState: { state: 'ready' as const, requestId },
+      authMode,
+      authConfigured,
       totalMessages: workspace.metrics.inboxCount + workspace.metrics.sentCount,
       lastSubject: latest?.subject ?? null,
       lastTimestamp: latest?.sentAt ?? null

@@ -2,9 +2,17 @@ import { isValidResendWebhookSecret } from '$lib/server/resend-webhook';
 
 export const APP_ENV_VALUES = ['development', 'preview', 'test', 'production'] as const;
 export type AppEnv = (typeof APP_ENV_VALUES)[number];
+export const AUTH_MODES = ['local', 'cloudflare-access'] as const;
+export type AuthMode = (typeof AUTH_MODES)[number];
 
 export interface RuntimeConfig {
   appEnv: AppEnv;
+  authMode: AuthMode;
+  accessIssuer: string | null;
+  accessAudience: string | null;
+  accessJwksUrl: string | null;
+  accessAllowedSubject: string | null;
+  accessOwnerUserId: string | null;
   outboundProvider: string | null;
   hasD1: boolean;
   hasR2: boolean;
@@ -22,6 +30,17 @@ export interface RuntimeConfig {
 export interface EnvironmentDiagnostic {
   code:
     | 'invalid_app_env'
+    | 'invalid_auth_mode'
+    | 'missing_access_issuer'
+    | 'invalid_access_issuer'
+    | 'missing_access_audience'
+    | 'invalid_access_audience'
+    | 'missing_access_jwks_url'
+    | 'invalid_access_jwks_url'
+    | 'missing_access_allowed_subject'
+    | 'invalid_access_allowed_subject'
+    | 'missing_access_owner_user_id'
+    | 'invalid_access_owner_user_id'
     | 'missing_d1'
     | 'missing_r2'
     | 'missing_resend_api_key'
@@ -61,6 +80,40 @@ function asString(value: unknown): string | null {
 }
 
 const TELEGRAM_USERNAME_PATTERN = /^[A-Za-z0-9_]{5,32}$/u;
+const CLOUDFLARE_ACCESS_ISSUER_HOST = /(?:^|\.)cloudflareaccess\.com$/iu;
+
+export function parseAuthMode(value: unknown): AuthMode | null {
+  if (value === undefined || value === null || (typeof value === 'string' && !value.trim())) return 'local';
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return AUTH_MODES.includes(normalized as AuthMode) ? normalized as AuthMode : null;
+}
+
+export function parseAccessIssuer(value: unknown): string | null {
+  const raw = asString(value);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.pathname !== '/' ||
+      parsed.search || parsed.hash || !CLOUDFLARE_ACCESS_ISSUER_HOST.test(parsed.hostname) || parsed.port) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function parseAccessJwksUrl(value: unknown, issuer: string | null): string | null {
+  const raw = asString(value);
+  if (!raw || !issuer) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' || parsed.origin !== issuer || parsed.pathname !== '/cdn-cgi/access/certs' ||
+      parsed.username || parsed.password || parsed.search || parsed.hash || parsed.port) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
 
 export function parseTrustedAppBaseUrl(value: unknown, appEnv: AppEnv): string | null {
   const raw = asString(value);
@@ -136,25 +189,61 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   const outboundFrom = asString(environment.OUTBOUND_FROM_EMAIL);
   const mailFrom = asString(environment.MAIL_FROM);
   const effectiveOutboundFrom = resolveOutboundFromEmail(environment);
+  const autoReplyEnabled = parseBoolean(environment.AUTO_REPLY_ENABLED);
   const notificationsEnabled = parseBoolean(environment.INBOUND_NOTIFICATION_ENABLED);
+  const systemOutboundEnabled = autoReplyEnabled || notificationsEnabled;
   const fakeServicesExplicit = parseBoolean(environment.ALLOW_FAKE_SERVICES) ||
     parseBoolean(environment.DEV_FAKE_SERVICES) || parseBoolean(environment.USE_FAKE_SERVICES);
   const diagnostics: EnvironmentDiagnostic[] = [];
   const error = (code: EnvironmentDiagnostic['code'], message: string) => diagnostics.push({ code, severity: 'error', message });
+  const warning = (code: EnvironmentDiagnostic['code'], message: string) => diagnostics.push({ code, severity: 'warning', message });
   const isEmail = (value: string | null) => Boolean(value && /^[^\s@\r\n]+@[^\s@\r\n]+\.[^\s@\r\n]+$/u.test(value) && value.length <= 254);
 
   if (rawEnvValue && !APP_ENV_VALUES.includes(rawEnvValue.toLowerCase() as AppEnv)) {
     error('invalid_app_env', 'APP_ENV must be development, preview, test, or production.');
   }
+  const rawAuthMode = asString(environment.AUTH_MODE);
+  const authMode = parseAuthMode(rawAuthMode);
+  if (!authMode) error('invalid_auth_mode', 'AUTH_MODE must be local or cloudflare-access.');
+  const accessIssuer = parseAccessIssuer(environment.ACCESS_ISSUER);
+  const rawAccessAudience = asString(environment.ACCESS_AUDIENCE);
+  const accessAudience = rawAccessAudience && rawAccessAudience.length <= 256 && !/\s/u.test(rawAccessAudience)
+    ? rawAccessAudience
+    : null;
+  const accessJwksUrl = parseAccessJwksUrl(environment.ACCESS_JWKS_URL, accessIssuer);
+  const rawAccessAllowedSubject = asString(environment.ACCESS_ALLOWED_SUBJECT);
+  const accessAllowedSubject = rawAccessAllowedSubject && rawAccessAllowedSubject.length <= 256 && !/\s/u.test(rawAccessAllowedSubject)
+    ? rawAccessAllowedSubject
+    : null;
+  const rawAccessOwnerUserId = asString(environment.ACCESS_OWNER_USER_ID);
+  const accessOwnerUserId = rawAccessOwnerUserId && rawAccessOwnerUserId.length <= 128 && !/\s/u.test(rawAccessOwnerUserId)
+    ? rawAccessOwnerUserId
+    : null;
+  if (authMode === 'cloudflare-access') {
+    if (!asString(environment.ACCESS_ISSUER)) error('missing_access_issuer', 'ACCESS_ISSUER is required in cloudflare-access mode.');
+    else if (!accessIssuer) error('invalid_access_issuer', 'ACCESS_ISSUER must be a Cloudflare Access team HTTPS origin.');
+    if (!rawAccessAudience) error('missing_access_audience', 'ACCESS_AUDIENCE is required in cloudflare-access mode.');
+    else if (!accessAudience) error('invalid_access_audience', 'ACCESS_AUDIENCE must be a single non-empty value of at most 256 characters.');
+    if (!asString(environment.ACCESS_JWKS_URL)) error('missing_access_jwks_url', 'ACCESS_JWKS_URL is required in cloudflare-access mode.');
+    else if (!accessJwksUrl) error('invalid_access_jwks_url', 'ACCESS_JWKS_URL must be the trusted issuer /cdn-cgi/access/certs endpoint.');
+    if (!rawAccessAllowedSubject) error('missing_access_allowed_subject', 'ACCESS_ALLOWED_SUBJECT is required in cloudflare-access mode.');
+    else if (!accessAllowedSubject) error('invalid_access_allowed_subject', 'ACCESS_ALLOWED_SUBJECT must be a single non-empty subject value.');
+    if (!rawAccessOwnerUserId) error('missing_access_owner_user_id', 'ACCESS_OWNER_USER_ID is required in cloudflare-access mode.');
+    else if (!accessOwnerUserId) error('invalid_access_owner_user_id', 'ACCESS_OWNER_USER_ID must be a single non-empty Owner ID.');
+  }
   if (appEnv === 'production' && !hasD1) error('missing_d1', 'Production requires a D1 binding.');
   if (appEnv === 'production' && !hasR2) error('missing_r2', 'Production requires an R2 binding.');
-  if (appEnv === 'production' && !hasResendApiKey) error('missing_resend_api_key', 'Production requires a Resend API key.');
-  if (appEnv === 'production' && !hasResendWebhookSecret) error('missing_resend_webhook_secret', 'Production requires a Resend webhook secret.');
   if (outboundFrom && mailFrom && outboundFrom.toLowerCase() !== mailFrom.toLowerCase()) {
-    error('conflicting_outbound_from', 'OUTBOUND_FROM_EMAIL and MAIL_FROM must match when both are configured.');
+    (systemOutboundEnabled ? error : warning)(
+      'conflicting_outbound_from',
+      'OUTBOUND_FROM_EMAIL and MAIL_FROM conflict; managed workspace senders are unaffected.'
+    );
   }
-  if (appEnv === 'production' && !outboundFrom && !mailFrom) error('missing_outbound_from', 'Production requires OUTBOUND_FROM_EMAIL or MAIL_FROM.');
-  if (appEnv === 'production' && effectiveOutboundFrom && !isEmail(effectiveOutboundFrom)) error('invalid_email', 'The configured outbound sender must be a valid email address.');
+  if (systemOutboundEnabled && !effectiveOutboundFrom) {
+    error('missing_outbound_from', 'Configure OUTBOUND_FROM_EMAIL for automatic replies and inbound notification email.');
+  } else if (effectiveOutboundFrom && !isEmail(effectiveOutboundFrom)) {
+    (systemOutboundEnabled ? error : warning)('invalid_email', 'The configured system notification sender must be a valid email address.');
+  }
   if (telegramEnabled) {
     if (!hasTelegramBotToken) error('missing_telegram_bot_token', 'TELEGRAM_BOT_TOKEN is required when Telegram notifications are enabled.');
     if (!hasTelegramBotUsername) error('missing_telegram_bot_username', 'TELEGRAM_BOT_USERNAME is required when Telegram notifications are enabled.');
@@ -167,7 +256,6 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
   const notificationEmail = asString(environment.NOTIFICATION_EMAIL);
   if (notificationsEnabled && !notificationEmail) error('invalid_email', 'NOTIFICATION_EMAIL is required when notifications are enabled.');
   if (notificationsEnabled && notificationEmail && !isEmail(notificationEmail)) error('invalid_email', 'NOTIFICATION_EMAIL must be a valid email address.');
-  if (appEnv === 'production' && !provider) error('missing_outbound_provider', 'Production requires OUTBOUND_PROVIDER=resend.');
   if (provider && !['demo', 'fake', 'resend'].includes(provider.toLowerCase())) {
     error('invalid_outbound_provider', 'OUTBOUND_PROVIDER is not supported.');
   }
@@ -207,6 +295,12 @@ export function validateEnvironment(environment: RawEnvironment = {}): Environme
 
   const config: RuntimeConfig = {
     appEnv,
+    authMode: authMode ?? 'local',
+    accessIssuer,
+    accessAudience,
+    accessJwksUrl,
+    accessAllowedSubject,
+    accessOwnerUserId,
     outboundProvider: provider,
     hasD1,
     hasR2,

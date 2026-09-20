@@ -46,6 +46,22 @@ describe('compose controller', () => {
     });
   });
 
+  test('round-trips the selected sender identity and reply-to snapshot with a saved draft', () => {
+    const draft = savedDraft({
+      senderAddressId: 'address-1',
+      replyToAddresses: [{ name: 'Reply contact', email: 'reply@example.net' }]
+    });
+    const input = composeInputFromSavedDraft(draft);
+    expect(input).toMatchObject({
+      senderAddressId: 'address-1',
+      replyTo: [{ name: 'Reply contact', email: 'reply@example.net' }]
+    });
+    expect(JSON.parse(serializeComposeInput(input))).toMatchObject({
+      senderAddressId: 'address-1',
+      replyTo: [{ name: 'Reply contact', email: 'reply@example.net' }]
+    });
+  });
+
   test('keeps authoritative persistence metadata when closing a stale modal snapshot', () => {
     const staleModal = {
       ...composeInputFromSavedDraft(savedDraft(), 'body-object-1'),

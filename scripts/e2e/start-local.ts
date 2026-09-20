@@ -24,6 +24,7 @@ if (
   throw new Error(`Refusing to clear non-isolated E2E persistence path: ${persistTo}`);
 }
 const adminEmail = 'e2e-admin@flaremail.test';
+const adminUsername = 'flower';
 const adminPassword = 'FlareMail-E2E-password-2026!';
 const userId = 'e2e-admin-user';
 const inboxId = 'e2e-inbox-message';
@@ -32,6 +33,7 @@ const deepInboundId = 'e2e-deep-inbound-message';
 const htmlCidKey = 'e2e/html-cid.png';
 const htmlCidBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 const timestamp = '2026-08-13T08:00:00.000Z';
+const identityCheckedAt = new Date().toISOString();
 const webhookSecret = `whsec_${btoa('FlareMail E2E webhook secret 2026')}`;
 
 type Child = { exited: Promise<number>; kill: (signal?: string) => void };
@@ -58,12 +60,13 @@ const bulkInboxSeed = Array.from({ length: 45 }, (_, index) => {
   return `INSERT OR IGNORE INTO workspace_messages (
     id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body,
     sent_at, labels_json, is_read, is_starred, message_id, thread_key, direction, text_body,
-    html_body, cc, dedupe_key, created_at, updated_at
+    html_body, cc, dedupe_key, created_at, updated_at, recipient_address_id
   ) VALUES (
     ${sql(id)}, ${sql(userId)}, 'inbox', 'Bulk Sender', 'bulk@flaremail.test', 'E2E Administrator',
     ${sql(adminEmail)}, ${sql(`E2E Bulk ${ordinal}`)}, 'Paginated fixture', 'Paginated fixture body',
     ${sql(sentAt)}, '[]', ${index % 2}, 0, ${sql(`<${id}@flaremail.test>`)}, ${sql(`legacy:${id}`)},
-    'inbound', 'Paginated fixture body', '', '', ${sql(`legacy:${id}`)}, ${sql(sentAt)}, ${sql(sentAt)}
+    'inbound', 'Paginated fixture body', '', '', ${sql(`legacy:${id}`)}, ${sql(sentAt)}, ${sql(sentAt)},
+    '00000000-0000-4000-8000-000000000021'
   );`;
 }).join('\n');
 const draftSubjects = [
@@ -86,24 +89,44 @@ await run('bunx', [
   'wrangler', 'd1', 'migrations', 'apply', 'flaremail-db', '--local', '--config', 'wrangler.toml', '--persist-to', persistTo
 ]);
 
-const { hashPassword, PASSWORD_HASH_COST } = await import('../../src/lib/server/auth/password');
+const { hashPassword } = await import('../../src/lib/server/auth/password');
 const credentialHash = await hashPassword(adminPassword);
 const seed = `
 INSERT OR IGNORE INTO workspace_users (
   id, login_email, name, role, email, company, location, timezone,
-  forwarding_enabled, signature, incoming_sequence, credential_hash,
-  credential_iterations, credential_updated_at, created_at, updated_at
+  forwarding_enabled, signature, incoming_sequence, created_at, updated_at
 ) VALUES (
-  ${sql(userId)}, ${sql(adminEmail)}, 'E2E Administrator', 'Workspace Owner', ${sql(adminEmail)},
-  'FlareMail E2E', '', 'UTC', 1, '', 0, ${sql(credentialHash)}, ${PASSWORD_HASH_COST},
-  ${sql(timestamp)}, ${sql(timestamp)}, ${sql(timestamp)}
+  ${sql(userId)}, NULL, 'E2E Administrator', 'Owner', ${sql(adminEmail)},
+  'FlareMail E2E', '', 'UTC', 1, '', 0, ${sql(timestamp)}, ${sql(timestamp)}
 );
+INSERT OR IGNORE INTO workspace_owner (singleton, user_id) VALUES (1, ${sql(userId)});
+INSERT OR REPLACE INTO workspace_auth_credentials (user_id, username, credential_hash, updated_at)
+VALUES (${sql(userId)}, ${sql(adminUsername)}, ${sql(credentialHash)}, ${sql(timestamp)});
+INSERT OR IGNORE INTO mail_domains (
+  id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, enabled,
+  resend_status, resend_sending_status, resend_checked_at, created_at, updated_at
+) VALUES
+  ('00000000-0000-4000-8000-000000000011', ${sql(userId)}, 'flaremail.test', 'e2e-zone-flaremail', 'flaremail', 1,
+   'verified', 'enabled', ${sql(identityCheckedAt)}, ${sql(timestamp)}, ${sql(timestamp)}),
+  ('00000000-0000-4000-8000-000000000012', ${sql(userId)}, 'example.test', 'e2e-zone-example', 'flaremail', 1,
+   'verified', 'enabled', ${sql(identityCheckedAt)}, ${sql(timestamp)}, ${sql(timestamp)});
+INSERT OR IGNORE INTO mail_addresses (
+  id, owner_user_id, domain_id, email, local_part, display_name, receive_enabled,
+  send_enabled, lifecycle_status, routing_state, routing_owner, is_default_sender,
+  created_at, updated_at
+) VALUES
+  ('00000000-0000-4000-8000-000000000021', ${sql(userId)}, '00000000-0000-4000-8000-000000000011', ${sql(adminEmail)}, 'e2e-admin', 'E2E Administrator', 1,
+   1, 'active', 'active', 'flaremail', 1, ${sql(timestamp)}, ${sql(timestamp)}),
+  ('00000000-0000-4000-8000-000000000022', ${sql(userId)}, '00000000-0000-4000-8000-000000000011', 'support@flaremail.test', 'support', 'E2E Support', 1,
+   1, 'active', 'active', 'flaremail', 0, ${sql(timestamp)}, ${sql(timestamp)}),
+  ('00000000-0000-4000-8000-000000000023', ${sql(userId)}, '00000000-0000-4000-8000-000000000012', 'postmaster@example.test', 'postmaster', 'E2E Example', 1,
+   1, 'active', 'active', 'flaremail', 0, ${sql(timestamp)}, ${sql(timestamp)});
 INSERT OR IGNORE INTO workspace_settings (user_id, theme, settings_json, created_at, updated_at)
 VALUES (${sql(userId)}, 'system', '{}', ${sql(timestamp)}, ${sql(timestamp)});
 INSERT OR IGNORE INTO workspace_messages (
   id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body,
   sent_at, labels_json, is_read, is_starred, message_id, thread_key, direction,
-  text_body, html_body, cc, dedupe_key, created_at, updated_at
+  text_body, html_body, cc, dedupe_key, created_at, updated_at, recipient_address_id
 ) VALUES (
   ${sql(inboxId)}, ${sql(userId)}, 'inbox', 'E2E Sender', 'sender@flaremail.test',
   'E2E Administrator', ${sql(adminEmail)}, 'E2E Inbox Welcome',
@@ -111,12 +134,13 @@ INSERT OR IGNORE INTO workspace_messages (
   'This message is seeded in the isolated local D1 database.', ${sql(timestamp)}, '[]', 0, 0,
   '<e2e-inbox-message@flaremail.test>', 'legacy:e2e-inbox-message', 'inbound',
   'This message is seeded in the isolated local D1 database.', '', '', ${sql(`legacy:${inboxId}`)},
-  ${sql(timestamp)}, ${sql(timestamp)}
+  ${sql(timestamp)}, ${sql(timestamp)}, '00000000-0000-4000-8000-000000000021'
 );
 INSERT OR IGNORE INTO email_messages (
   id, message_id, "from", "to", subject, "timestamp", snippet, raw_key, raw_size,
   direction, text_body, html_body, cc, to_json, cc_json, reply_to_json, return_path,
-  delivered_to, headers_json, authentication_results_json, dedupe_key, owner_user_id, created_at
+  delivered_to, headers_json, authentication_results_json, dedupe_key, owner_user_id, created_at,
+  mail_domain_id, mail_address_id, recipient_status
 ) VALUES (
   ${sql(htmlInboxId)}, '<e2e-html-inbox-message@flaremail.test>',
   'HTML Safety Sender <html-sender@flaremail.test>', ${sql(adminEmail)}, 'E2E HTML Safety',
@@ -130,7 +154,8 @@ INSERT OR IGNORE INTO email_messages (
   'bounce@flaremail.test', ${sql(adminEmail)},
   ${sql(JSON.stringify([{ name: 'authentication-results', value: 'mx.flaremail.test; spf=pass; dkim=pass; dmarc=pass' }]))},
   ${sql(JSON.stringify([{ method: 'spf', result: 'pass' }, { method: 'dkim', result: 'pass' }, { method: 'dmarc', result: 'pass' }]))},
-  ${sql(`legacy:${htmlInboxId}`)}, ${sql(userId)}, ${sql(timestamp)}
+  ${sql(`legacy:${htmlInboxId}`)}, ${sql(userId)}, ${sql(timestamp)},
+  '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000021', 'managed'
 );
 INSERT OR IGNORE INTO email_messages (
   id, message_id, "from", "to", subject, "timestamp", snippet, raw_key, raw_size,
@@ -153,12 +178,13 @@ ${bulkInboxSeed}
 INSERT OR IGNORE INTO workspace_messages (
   id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body,
   sent_at, labels_json, is_read, is_starred, message_id, thread_key, direction,
-  text_body, html_body, cc, dedupe_key, created_at, updated_at
+  text_body, html_body, cc, dedupe_key, created_at, updated_at, sender_address_id
 ) VALUES (
   'e2e-sent-message', ${sql(userId)}, 'sent', 'E2E Administrator', ${sql(adminEmail)},
   'Recipient', 'recipient@flaremail.test', 'E2E Seeded Sent', 'Seeded sent preview', 'Seeded sent body',
   ${sql(timestamp)}, '[]', 1, 0, '<e2e-sent-message@flaremail.test>', 'legacy:e2e-sent-message',
-  'outbound', 'Seeded sent body', '', '', 'legacy:e2e-sent-message', ${sql(timestamp)}, ${sql(timestamp)}
+  'outbound', 'Seeded sent body', '', '', 'legacy:e2e-sent-message', ${sql(timestamp)}, ${sql(timestamp)},
+  '00000000-0000-4000-8000-000000000021'
 );
 INSERT OR IGNORE INTO workspace_delivery_statuses (
   message_id, user_id, status, attempts, idempotency_key, provider, provider_message_id,

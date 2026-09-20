@@ -120,8 +120,13 @@
   const counterpartLabel = $derived(message?.folder === 'inbox' ? t('mail.from') : t('mail.to'));
   const downloadHref = $derived(safeHref(rawDownloadHref));
   const deliveryStatus = $derived(message?.folder === 'sent' ? (message.deliveryStatus ?? 'submitted') : null);
+  const technicalToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.toAddresses) : '');
+  const technicalCcSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.ccAddresses) : '');
+  const replyToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.replyTo) : '');
   const toSummary = $derived(message
-    ? serializeAddressList(message.toAddresses ?? [{ name: message.toName, email: message.toEmail }])
+    ? message.source === 'inbound'
+      ? technicalToSummary
+      : serializeAddressList(message.toAddresses ?? [{ name: message.toName, email: message.toEmail }])
     : '');
   const ccSummary = $derived(message
     ? serializeAddressList(message.ccAddresses ?? parseAddressList(message.cc ?? ''))
@@ -129,9 +134,6 @@
   const bccSummary = $derived(message
     ? serializeAddressList(message.bccAddresses ?? parseAddressList(message.bcc ?? ''))
     : '');
-  const technicalToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.toAddresses) : '');
-  const technicalCcSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.ccAddresses) : '');
-  const replyToSummary = $derived(inboundDetail ? serializeAddressList(inboundDetail.replyTo) : '');
 
   const deliveryLabel = (status: string | null) => {
     const labels: Record<string, string> = {
@@ -279,7 +281,12 @@
             </summary>
             <dl class="mt-2 grid max-w-xl grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
               <dt>{t('mail.from')}</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.fromName} &lt;{message.fromEmail}&gt;</dd>
-              <dt>{t('mail.to')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{toSummary}</dd>
+              {#if message.source === 'inbound'}
+                <dt>{t('mail.actualDeliveredTo')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{message.envelopeRecipient || message.toEmail}</dd>
+                <dt>{t('mail.to')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{toSummary || t('mail.notProvided')}</dd>
+              {:else}
+                <dt>{t('mail.to')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{toSummary}</dd>
+              {/if}
               {#if ccSummary}<dt>{t('mail.cc')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{ccSummary}</dd>{/if}
               {#if bccSummary}<dt>{t('mail.bcc')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{bccSummary}</dd>{/if}
               {#if message.messageId}<dt>{t('mail.messageId')}</dt><dd class="truncate font-mono text-[var(--fm-text-secondary)]">{message.messageId}</dd>{/if}
@@ -293,6 +300,7 @@
               <div class="mt-2 max-w-3xl rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
                 <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
                   <dt>{t('mail.to')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{technicalToSummary || t('mail.notProvided')}</dd>
+                  <dt>{t('mail.actualDeliveredTo')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{inboundDetail.envelopeRecipient || message.envelopeRecipient || message.toEmail}</dd>
                   {#if technicalCcSummary}<dt>{t('mail.cc')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{technicalCcSummary}</dd>{/if}
                   {#if replyToSummary}<dt>{t('mail.replyTo')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{replyToSummary}</dd>{/if}
                   <dt>{t('mail.date')}</dt><dd class="break-words font-mono text-[var(--fm-text-secondary)]">{inboundDetail.date}</dd>

@@ -23,6 +23,9 @@ export interface InboundMessageInsert {
   rawKey: string;
   rawSize: number;
   ownerUserId: string | null;
+  mailDomainId: string;
+  mailAddressId: string | null;
+  recipientStatus: 'managed' | 'unregistered';
   bodyObjectId?: string | null;
 }
 
@@ -90,35 +93,15 @@ export async function findInboundByDedupeKey(db: D1Database, dedupeKey: string) 
     .bind(dedupeKey).first<{ id: string; raw_key: string }>();
 }
 
-export async function findInboundOwnerId(db: D1Database, recipient: string) {
-  const row = await db.prepare(`
-    SELECT id FROM workspace_users
-    WHERE lower(login_email) = lower(?) OR lower(email) = lower(?)
-    ORDER BY CASE WHEN lower(login_email) = lower(?) THEN 0 ELSE 1 END, created_at ASC
-    LIMIT 1
-  `).bind(recipient, recipient, recipient).first<{ id: string }>();
-  return row?.id ?? null;
-}
-
-/** Telegram enqueueing trusts only the login address used for authentication.
- * The editable profile email remains intentionally excluded from this path. */
-export async function findTrustedInboundOwnerId(db: D1Database, recipient: string) {
-  const row = await db.prepare(`
-    SELECT id FROM workspace_users
-    WHERE lower(login_email) = lower(?)
-    LIMIT 1
-  `).bind(recipient).first<{ id: string }>();
-  return row?.id ?? null;
-}
-
 export function insertInboundMessage(db: D1Database, message: InboundMessageInsert) {
   return db.prepare(`
     INSERT INTO email_messages (
       id, message_id, "from", "to", cc, to_json, cc_json, reply_to_json,
       return_path, delivered_to, headers_json, authentication_results_json, subject, "timestamp", snippet,
       text_body, html_body, in_reply_to, "references", thread_key,
-      direction, dedupe_key, idempotency_key, raw_key, raw_size, owner_user_id, body_object_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?)
+      direction, dedupe_key, idempotency_key, raw_key, raw_size, owner_user_id, body_object_id,
+      mail_domain_id, mail_address_id, recipient_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     message.id,
     message.messageId,
@@ -145,7 +128,10 @@ export function insertInboundMessage(db: D1Database, message: InboundMessageInse
     message.rawKey,
     message.rawSize,
     message.ownerUserId,
-    message.bodyObjectId ?? null
+    message.bodyObjectId ?? null,
+    message.mailDomainId,
+    message.mailAddressId,
+    message.recipientStatus
   );
 }
 
@@ -156,6 +142,7 @@ export async function findOwnedInboundMessage(
 ) {
   return db.prepare(`
     SELECT id, message_id, "from", "to", cc, to_json, cc_json, reply_to_json,
+      mail_domain_id, mail_address_id, recipient_status,
       return_path, delivered_to, headers_json, authentication_results_json, subject, "timestamp", snippet,
       text_body, html_body, in_reply_to, "references", thread_key,
       raw_key, raw_size, body_object_id, created_at
@@ -170,6 +157,9 @@ export async function findOwnedInboundMessage(
     to_json: string;
     cc_json: string;
     reply_to_json: string;
+    mail_domain_id: string | null;
+    mail_address_id: string | null;
+    recipient_status: 'managed' | 'unregistered' | 'legacy-unmapped';
     return_path: string | null;
     delivered_to: string | null;
     headers_json: string;
@@ -197,7 +187,7 @@ export async function findOwnedInboundState(
 ) {
   const bodyColumn = options.includeBody === false ? "''" : 'e.text_body';
   return db.prepare(`
-    SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
+    SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet, e.mail_address_id, e.mail_domain_id,
       e.message_id, e.in_reply_to, e."references", e.thread_key, ${bodyColumn} AS text_body, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e LEFT JOIN workspace_email_states AS s
@@ -205,6 +195,7 @@ export async function findOwnedInboundState(
     WHERE e.id = ? AND e.owner_user_id = ? AND s.deleted_at IS NULL
   `).bind(userId, messageId, userId).first<{
     email_id: string; from: string; to: string; subject: string; timestamp: string; snippet: string;
+    mail_address_id: string | null; mail_domain_id: string | null;
     message_id: string | null; in_reply_to: string | null; references: string | null; thread_key: string | null;
     text_body: string; archived_at: string | null; is_read: number; is_starred: number;
   }>();

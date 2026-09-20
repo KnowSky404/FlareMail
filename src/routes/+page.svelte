@@ -100,6 +100,7 @@
     type InboundMessageDetail,
     type LoginInput,
     type MailboxSection,
+    type MailboxIdentityFilter,
     type MailMessage,
     type MailboxState,
     type MailboxPage,
@@ -107,7 +108,8 @@
     type MessagePatch,
     type TrashItem,
     type UserProfile,
-    type WorkspaceMetrics
+    type WorkspaceMetrics,
+    type WorkspaceSnapshot
   } from '$lib/domain/mail';
 
   type AppSection = WorkspaceSection;
@@ -140,7 +142,7 @@
   let authenticated = $state(false);
   let profile = $state<UserProfile>(cloneProfile());
   let mailbox = $state<MailboxState>(cloneMailbox());
-  let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
+  let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, archiveCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
     queuedCount: 0, delayedCount: 0, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0 });
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let trashItems = $state<TrashItem[]>([]);
@@ -149,13 +151,14 @@
   let trashLoaded = $state(false);
   let trashError = $state('');
   let emptyTrashConfirmOpen = $state(false);
-  let outboundSenderEmail = $state<string | null>(null);
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let selectedMessageIds = $state<string[]>([]);
   let bulkSelectInput = $state<HTMLInputElement>();
   let searchQuery = $state('');
   let mailFilter = $state<MailFilter>('all');
+  let mailIdentityFilter = $state<MailboxIdentityFilter | null>(null);
+  let mailIdentityOptions = $state<WorkspaceSnapshot['mailIdentityOptions']>({ domains: [], addresses: [] });
   let mobileDetailOpen = $state(false);
   let readerOpen = $state(false);
   let sidebarCollapsed = $state(false);
@@ -231,6 +234,7 @@
     if (!detail) return message;
     return {
       ...message,
+      recipientAddressId: detail.recipientAddressId ?? message.recipientAddressId,
       toAddresses: detail.toAddresses.length ? detail.toAddresses : message.toAddresses,
       ccAddresses: detail.ccAddresses.length ? detail.ccAddresses : message.ccAddresses
     };
@@ -276,12 +280,14 @@
   const urlSection = $derived(urlState.section);
   const urlQuery = $derived(urlState.query);
   const urlFilter = $derived(urlState.filter);
+  const urlIdentityFilter = $derived(urlState.identityFilter);
   const urlMessageId = $derived(urlState.messageId);
 
   $effect(() => {
     activeSection = urlSection;
     searchQuery = urlQuery;
     mailFilter = urlFilter;
+    mailIdentityFilter = urlIdentityFilter;
     selectedMessageId = urlMessageId;
     selectedMessageIds = [];
     mobileDetailOpen = Boolean(urlMessageId);
@@ -443,6 +449,7 @@
       selectedMessage.folder !== 'drafts' &&
       hasDistinctReplyAllRecipients(replySource(selectedMessage), {
         selfEmail: profile.email,
+        selfEmails: mailIdentityOptions.addresses.map((address) => address.email),
         replyTo: isInboundMessageId(selectedMessage.id) ? inboundDetails[selectedMessage.id]?.replyTo : undefined
       })
   ));
@@ -581,12 +588,14 @@
     if (options?.clearMailView) {
       searchQuery = '';
       mailFilter = 'all';
+      mailIdentityFilter = null;
       mobileDetailOpen = false;
     }
     selectedMessageId = merged.selectedMessageId;
     if (options?.section) {
       mobileDetailOpen = options.section !== 'profile' && Boolean(selectedMessageId);
-      updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
+      updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined,
+        identityFilter: options.clearMailView ? null : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
     }
   }
 
@@ -693,12 +702,13 @@
     mailbox = next.mailbox;
     metrics = next.metrics;
     mailboxPages = next.mailboxPages;
-    outboundSenderEmail = next.outboundSenderEmail;
     activeSection = next.activeSection;
     selectedMessageId = next.selectedMessageId;
     selectedMessageIds = next.selectedMessageIds;
     searchQuery = next.searchQuery;
     mailFilter = next.mailFilter;
+    mailIdentityFilter = next.identityFilter;
+    mailIdentityOptions = workspace.mailIdentityOptions;
     mobileDetailOpen = false;
     authenticated = true;
     workspaceSnapshotController.noteUser(workspace.profile.email);
@@ -709,6 +719,7 @@
           section: next.activeSection,
           query: next.searchQuery,
           filter: next.mailFilter,
+          identityFilter: next.identityFilter,
           messageId: next.activeSection === 'profile' ? null : next.selectedMessageId
         },
         true
@@ -730,7 +741,8 @@
     metrics = initial.metrics;
     searchQuery = initial.searchQuery;
     mailFilter = initial.mailFilter;
-    outboundSenderEmail = initial.outboundSenderEmail;
+    mailIdentityFilter = initial.identityFilter;
+    mailIdentityOptions = { domains: [], addresses: [] };
     mobileDetailOpen = false;
     shortcutHelpOpen = false;
     mailboxLoading = false;
@@ -796,6 +808,7 @@
       section?: AppSection;
       query?: string;
       filter?: MailFilter;
+      identityFilter?: MailboxIdentityFilter | null;
       messageId?: string | null;
     },
     replaceHistory = false
@@ -835,7 +848,7 @@
       if (syncUrl) {
         updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
       }
-      if (authenticated) void mailboxController.refresh(section, '', 'all');
+      if (authenticated) void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
       return;
     }
 
@@ -852,7 +865,7 @@
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
-    if (authenticated && section === 'drafts') void mailboxController.refresh(section, '', 'all');
+    if (authenticated && section === 'drafts') void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
   }
 
   function clearMailboxRefreshTimer() {
@@ -866,14 +879,15 @@
     folder: AppSection,
     query: string,
     filter: MailFilter,
-    delayMs = 250
+    delayMs = 250,
+    identityFilter: MailboxIdentityFilter | null = mailIdentityFilter
   ) {
     clearMailboxRefreshTimer();
     if (!authenticated || folder === 'profile' || folder === 'trash') return;
     mailboxRefreshTimer = setTimeout(() => {
       mailboxRefreshTimer = undefined;
       if (authenticated && activeSection === folder) {
-        void mailboxController.refresh(folder, query, filter);
+        void mailboxController.refresh(folder, query, filter, identityFilter);
       }
     }, delayMs);
   }
@@ -896,14 +910,24 @@
     scheduleMailboxRefresh(activeSection, searchQuery, filter, 0);
   }
 
-  function clearMailFilters() {
-    searchQuery = '';
-    mailFilter = 'all';
+  function handleIdentityFilterChange(identityFilter: MailboxIdentityFilter | null) {
+    mailIdentityFilter = identityFilter;
     selectedMessageId = null;
     selectedMessageIds = [];
     mobileDetailOpen = false;
-    updateWorkspaceUrl({ query: '', filter: 'all', messageId: null }, true);
-    scheduleMailboxRefresh(activeSection, '', 'all', 0);
+    updateWorkspaceUrl({ identityFilter, messageId: null });
+    scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, identityFilter);
+  }
+
+  function clearMailFilters() {
+    searchQuery = '';
+    mailFilter = 'all';
+    mailIdentityFilter = null;
+    selectedMessageId = null;
+    selectedMessageIds = [];
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ query: '', filter: 'all', identityFilter: null, messageId: null }, true);
+    scheduleMailboxRefresh(activeSection, '', 'all', 0, null);
   }
 
   async function refreshWorkspace(announce = true) {
@@ -918,7 +942,8 @@
     const refreshed = await mailboxController.refresh(
       activeSection === 'profile' ? 'inbox' : activeSection,
       searchQuery,
-      mailFilter
+      mailFilter,
+      mailIdentityFilter
     );
     if (refreshed) {
       runtimeOperationError = false;
@@ -1026,26 +1051,31 @@
 
   async function loadMoreMailbox() {
     if (activeSection === 'profile' || activeSection === 'trash') return;
-    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection]);
+    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter);
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
+    const defaultSenderId = mailIdentityOptions.addresses.find((address) => address.isDefaultSender && address.sendReady)?.id ?? null;
+    const senderAddressId = initialInput?.senderAddressId !== undefined
+      ? initialInput.senderAddressId
+      : mode === 'new' || mode === 'forward' ? defaultSenderId : null;
+    const nextInitialInput = { ...(initialInput ?? createEmptyComposeInput()), senderAddressId };
     clearComposeAutosaveTimer();
     composeAutosave.reset();
     composeMode = mode;
-    composeInitialInput = initialInput;
-    composeDraftId = initialInput?.draftId;
+    composeInitialInput = nextInitialInput;
+    composeDraftId = nextInitialInput.draftId;
     composeSubmissionId = crypto.randomUUID();
-    composeLiveInput = initialInput ? { ...initialInput } : createEmptyComposeInput();
+    composeLiveInput = { ...nextInitialInput };
     composeTouched = false;
     composeAutosavePending = false;
     draftConflict = null;
     draftConflictLocalEditedAt = null;
-    composeAutosaveStatus = initialInput?.draftId ? 'saved' : 'idle';
-    composeAutosaveMessage = initialInput?.draftId
+    composeAutosaveStatus = nextInitialInput.draftId ? 'saved' : 'idle';
+    composeAutosaveMessage = nextInitialInput.draftId
       ? t('compose.draftLoaded')
       : t('compose.autosaveIdle');
-    composeLastSavedSignature = initialInput?.draftId ? serializeComposeInput(initialInput) : '';
+    composeLastSavedSignature = nextInitialInput.draftId ? serializeComposeInput(nextInitialInput) : '';
     composeOpen = true;
   }
 
@@ -1157,9 +1187,13 @@
     pending = true;
 
     try {
-      await deleteSession();
+      const result = await deleteSession();
       workspaceSync?.publish({ type: 'session-ended' });
       resetWorkspace();
+      if (result.logoutUrl) {
+        window.location.assign(result.logoutUrl);
+        return;
+      }
       await goto(buildWorkspaceUrl(page.url, {
         section: 'inbox', query: '', filter: 'all', messageId: null
       }), { replaceState: true, noScroll: true, keepFocus: false });
@@ -1769,6 +1803,7 @@
 
     openCompose('reply', createReplyAllComposeInput(replySource(message), {
       selfEmail: profile.email,
+      selfEmails: mailIdentityOptions.addresses.map((address) => address.email),
       replyTo: isInboundMessageId(message.id) ? inboundDetails[message.id]?.replyTo : undefined
     }, quotedBody));
     notify(t('notify.replyAll', { subject: message.subject }));
@@ -1915,6 +1950,8 @@
     <RuntimeUnavailableView state={data.runtimeState} />
   {:else if !authenticated}
     <LoginView
+      authConfigured={data.authConfigured}
+      authMode={data.authMode}
       dbBound={data.dbBound}
       bucketBound={data.bucketBound}
       {loginError}
@@ -1989,10 +2026,14 @@
                   {pending}
                   {profile}
                   {serviceDegraded}
-                  diagnostics={data.runtimeDiagnostics}
+                  diagnostics={data.runtimeDiagnostics ? {
+                    ...data.runtimeDiagnostics,
+                    senderConfigured: mailIdentityOptions.addresses.some((address) => address.sendReady)
+                  } : null}
                   status={profileStatus}
                   statusError={profileStatusError}
                   onSave={saveProfile}
+                  onIdentitiesChanged={(options) => (mailIdentityOptions = options)}
                 />
               </div>
             {:else}
@@ -2007,15 +2048,21 @@
                 <section class="mail-list-panel" aria-label={t('mail.listLabel', { section: t('shell.mailNavigation') })}>
                   <FolderHeader
                     activeSection={activeSection}
-                    count={searchQuery.trim() && activeSection !== 'trash'
+                  count={searchQuery.trim() && activeSection !== 'trash'
                       ? mailboxPages?.[activeSection]?.searchTotal ?? 0
-                      : activeSection === 'drafts' || activeSection === 'trash' ? activeMessages.length : activeThreads.length}
+                      : activeSection === 'inbox' ? metrics.inboxCount
+                        : activeSection === 'archive' ? metrics.archiveCount
+                          : activeSection === 'sent' ? metrics.sentCount
+                            : activeSection === 'drafts' ? metrics.draftsCount : activeMessages.length}
                     unreadCount={activeSection === 'inbox' ? unreadCount : 0}
                     query={searchQuery}
                     filter={mailFilter}
+                    identityFilter={mailIdentityFilter}
+                    identityOptions={mailIdentityOptions}
                     loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
                     onQueryChange={handleSearchQueryChange}
                     onFilterChange={handleFilterChange}
+                    onIdentityFilterChange={handleIdentityFilterChange}
                     onRefresh={refreshWorkspace}
                   />
                   {#if activeSection === 'trash'}
@@ -2211,7 +2258,7 @@
         mode={composeMode}
         pending={composeBusy}
         {profile}
-        senderEmail={outboundSenderEmail}
+        senderAddresses={mailIdentityOptions.addresses}
         onClose={closeCompose}
         onDiscard={discardCompose}
         draftConflict={draftConflict}

@@ -3,16 +3,20 @@ import { validateCsrfOrigin } from '$lib/server/auth/csrf';
 import { validateEnvironment } from '$lib/server/config/env';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import {
+  getWorkspaceSessionCookieName,
   getWorkspaceSession,
   isSecureSessionRequest,
   legacyWorkspaceSessionCookie,
+  sessionCookieOptions,
   secureWorkspaceSessionCookie,
   workspaceSessionCookie
 } from '$lib/server/workspace';
-import { WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
+import { createAccessWorkspaceSession, WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError, apiFailure, classifyRuntimeError, getRequestId, runtimeUnavailableState } from '$lib/server/http/api';
 import { resolveLocale } from '$lib/client/locale-preferences';
+import { verifyCloudflareAccessAssertion } from '$lib/server/auth/cloudflare-access';
+import { findWorkspaceOwnerId, hasWorkspaceOwnerCredential } from '$lib/server/db/users';
 
 const setSecurityHeaders = (response: Response, secure: boolean, requestId?: string) => {
   response.headers.set('referrer-policy', 'no-referrer');
@@ -34,11 +38,16 @@ export function sessionCookieNamesForRequest(url: URL): readonly string[] {
 
 export const isPrivateReaderPath = (pathname: string): boolean => pathname.startsWith('/messages/');
 
+export const isAccessExemptPath = (pathname: string): boolean =>
+  pathname === '/api/health' || pathname === '/api/webhooks/resend' || pathname === '/api/webhooks/telegram';
+
 export const handle: Handle = async ({ event, resolve }) => {
   const requestId = getRequestId(event);
   const env = event.platform?.env as CloudflareEnv | undefined;
-  const isHealth = event.url.pathname === '/api/health';
+  const isResendWebhook = event.url.pathname === '/api/webhooks/resend';
   const isTelegramWebhook = event.url.pathname === '/api/webhooks/telegram';
+  const isSignedWebhook = isResendWebhook || isTelegramWebhook;
+  const isAccessExempt = isAccessExemptPath(event.url.pathname);
   const isApi = event.url.pathname.startsWith('/api/');
   const secure = event.url.protocol === 'https:';
   const locale = resolveLocale({
@@ -51,20 +60,59 @@ export const handle: Handle = async ({ event, resolve }) => {
     event.locals.runtimeState = runtimeUnavailableState(error, requestId);
   };
   const environment = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
-  // The Telegram handler must validate its secret before parsing the body or
-  // touching D1. This exception is exact-path only; the route performs its
-  // own configuration and schema checks after authentication.
-  if (!environment.ok && !isHealth && !isTelegramWebhook) {
+  // These exact machine/public paths have their own validation. The signed
+  // webhook handlers verify provider credentials before parsing request data.
+  if (!environment.ok && !isAccessExempt) {
     const error = new ApiError(503, 'CONFIG_INVALID', '服务配置尚未完成。', undefined, undefined, false);
     markUnavailable(error);
     if (isApi) return failApi(error);
+    return setSecurityHeaders(new Response('Service configuration is unavailable.', {
+      status: 503,
+      headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }
+    }), secure, requestId);
   }
+
+  let accessPrincipalId: string | null = null;
+  let accessExpiresAt: number | null = null;
+  if (!isAccessExempt && environment.ok && environment.config.authMode === 'cloudflare-access') {
+    const verified = await verifyCloudflareAccessAssertion(
+      event.request.headers.get('cf-access-jwt-assertion'),
+      {
+        issuer: environment.config.accessIssuer!,
+        audience: environment.config.accessAudience!,
+        jwksUrl: environment.config.accessJwksUrl!,
+        allowedSubject: environment.config.accessAllowedSubject!
+      }
+    );
+    if (verified.status === 'invalid') {
+      if (isApi) return setSecurityHeaders(apiFailure(event,
+        new ApiError(401, 'ACCESS_REQUIRED', '需要有效的 Cloudflare Access 身份。')), secure, requestId);
+      return setSecurityHeaders(new Response('Authentication required.', {
+        status: 401,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }
+      }), secure, requestId);
+    }
+    if (verified.status === 'unavailable') {
+      const error = new ApiError(503, 'ACCESS_UNAVAILABLE', 'Cloudflare Access 身份验证暂时不可用。');
+      markUnavailable(error);
+      console.error(JSON.stringify({ level: 'error', event: 'access_jwks_unavailable', requestId }));
+      if (isApi) return failApi(error);
+      return setSecurityHeaders(new Response('Authentication is temporarily unavailable.', {
+        status: 503,
+        headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }
+      }), secure, requestId);
+    }
+    accessPrincipalId = verified.subject;
+    accessExpiresAt = verified.expiresAt;
+  }
+
   let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
-  const sessionToken = sessionCookieNamesForRequest(event.url)
+  let authConfigured = false;
+  let sessionToken = sessionCookieNamesForRequest(event.url)
     .map((name) => event.cookies.get(name))
     .find((value): value is string => Boolean(value)) ?? null;
 
-  if (!isHealth && !isTelegramWebhook && environment.ok) {
+  if (!isAccessExempt && environment.ok) {
     try {
       if (!env?.DB) {
         const error = new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
@@ -75,7 +123,43 @@ export const handle: Handle = async ({ event, resolve }) => {
         markUnavailable(error);
         if (isApi) return failApi(error);
       } else {
-        session = await getWorkspaceSession(env, sessionToken);
+        if (environment.config.authMode === 'cloudflare-access') {
+          const ownerId = environment.config.accessOwnerUserId!;
+          const mappedOwnerId = await findWorkspaceOwnerId(env.DB);
+          if (mappedOwnerId !== ownerId) {
+            const error = new ApiError(503, 'OWNER_MAPPING_REQUIRED', '工作区 Owner 尚未初始化或与受信配置不匹配。');
+            markUnavailable(error);
+            if (isApi) return failApi(error);
+            return setSecurityHeaders(new Response('Owner mapping is not ready.', {
+              status: 503,
+              headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }
+            }), secure, requestId);
+          } else if (accessPrincipalId && accessExpiresAt) {
+            authConfigured = true;
+            session = await getWorkspaceSession(env, sessionToken, {
+              authMethod: 'cloudflare-access',
+              principalId: accessPrincipalId
+            });
+            if (!session) {
+              const authenticated = await createAccessWorkspaceSession(
+                env,
+                ownerId,
+                accessPrincipalId,
+                accessExpiresAt
+              );
+              session = authenticated.session;
+              sessionToken = authenticated.token;
+              const cookieName = getWorkspaceSessionCookieName(secure);
+              const maxAgeSeconds = Math.max(1, Math.floor((Date.parse(authenticated.expiresAt) - Date.now()) / 1000));
+              event.cookies.set(cookieName, authenticated.token, sessionCookieOptions(false, secure, maxAgeSeconds));
+              if (cookieName !== workspaceSessionCookie) event.cookies.delete(workspaceSessionCookie, { path: '/', maxAge: 0 });
+              event.cookies.delete(legacyWorkspaceSessionCookie, { path: '/', maxAge: 0 });
+            }
+          }
+        } else {
+          session = await getWorkspaceSession(env, sessionToken, { authMethod: 'local' });
+          authConfigured = Boolean(session) || await hasWorkspaceOwnerCredential(env.DB);
+        }
       }
     } catch (error) {
       const classified = error instanceof WorkspaceAuthUnavailableError
@@ -89,9 +173,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.workspaceSessionToken = sessionToken;
   event.locals.workspaceSessionId = session?.id ?? null;
   event.locals.workspaceSession = session;
+  event.locals.authMode = environment.config.authMode;
+  event.locals.authPrincipalId = accessPrincipalId;
+  event.locals.authConfigured = authConfigured;
 
   const isApiMutation = event.url.pathname.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(event.request.method.toUpperCase());
-  const isSignedWebhook = event.url.pathname === '/api/webhooks/resend';
   if (isApiMutation && !isSignedWebhook && !isTelegramWebhook) {
     const csrf = validateCsrfOrigin(event.request);
     if (!csrf.ok) {
@@ -106,7 +192,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     const response = await resolve(event, {
       transformPageChunk: ({ html }) => html.replace(/<html lang="(?:zh-CN|en)">/u, `<html lang="${locale}">`)
     });
-    if (isPrivateReaderPath(event.url.pathname)) {
+    if (isPrivateReaderPath(event.url.pathname) || !isAccessExempt) {
       response.headers.set('cache-control', 'private, no-store');
     }
     return setSecurityHeaders(response, secure, requestId);

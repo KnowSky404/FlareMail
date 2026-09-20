@@ -10,6 +10,7 @@
     name,
     type = 'text',
     placeholder = '',
+    maxlength,
     required = false,
     disabled = false,
     readonly = false,
@@ -25,6 +26,7 @@
     name?: string;
     type?: string;
     placeholder?: string;
+    maxlength?: number;
     required?: boolean;
     disabled?: boolean;
     readonly?: boolean;
@@ -48,6 +50,7 @@
     {name}
     {type}
     {placeholder}
+    {maxlength}
     {required}
     {disabled}
     {readonly}

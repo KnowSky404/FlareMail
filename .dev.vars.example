@@ -1,8 +1,10 @@
 APP_ENV=development
 ALLOW_FAKE_SERVICES=true
 OUTBOUND_PROVIDER=demo
-# Recommended sender configuration. MAIL_FROM is accepted as a legacy runtime
-# alias; configure only one name, or give both the same value.
+# Local username/password authentication; no email address is required.
+AUTH_MODE=local
+# Optional system sender for automatic replies and inbound notifications.
+# Workspace messages use a selected, server-authorized managed mail address.
 OUTBOUND_FROM_EMAIL=dev@example.com
 # MAIL_FROM=dev@example.com
 OUTBOUND_FROM_NAME=FlareMail
@@ -19,6 +21,16 @@ APP_BASE_URL=http://127.0.0.1:8787
 # TELEGRAM_BOT_TOKEN=replace-with-local-secret
 # Optional independent override; otherwise FlareMail derives it from the Bot Token.
 # TELEGRAM_WEBHOOK_SECRET=optional-webhook-secret
+# Optional server-only Email Routing Rules API token, scoped to the explicitly
+# configured zone(s) with Email Routing Rules Read and Edit (write). Never use
+# the deployment token here.
+# CLOUDFLARE_EMAIL_ROUTING_TOKEN=
+# Domain configuration script inputs (set in the shell only when configuring):
+# FLAREMAIL_MAIL_DOMAIN_NAME=example.test
+# FLAREMAIL_CLOUDFLARE_ZONE_ID=zone-id
+# FLAREMAIL_CLOUDFLARE_ACCOUNT_ID=account-id
+# FLAREMAIL_EMAIL_WORKER_NAME=flaremail
+# FLAREMAIL_UNKNOWN_RECIPIENT_POLICY=reject
 INBOUND_MAX_RAW_BYTES=26214400
 INBOUND_MAX_ATTACHMENT_COUNT=50
 INBOUND_MAX_ATTACHMENT_BYTES=15728640

@@ -20,6 +20,9 @@ import type {
 export type SessionResponse = {
   ok: boolean;
   authenticated: boolean;
+  authMode?: 'local' | 'cloudflare-access';
+  authConfigured?: boolean;
+  logoutUrl?: string;
   workspace: WorkspaceSnapshot | null;
   error?: string;
 };

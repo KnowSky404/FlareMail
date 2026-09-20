@@ -2,6 +2,7 @@ import { expect, test as base, type Page } from '@playwright/test';
 
 // Browser diagnostics are safe to retain only because every credential and
 // mailbox value is a fixed, non-routable synthetic fixture.
+export const E2E_USERNAME = 'flower';
 export const E2E_EMAIL = 'e2e-admin@flaremail.test';
 export const E2E_PASSWORD = 'FlareMail-E2E-password-2026!';
 
@@ -25,11 +26,11 @@ export async function login(page: Page) {
   const loginHeading = page.getByRole('heading', { name: '登录邮件工作台' });
   if (!await workspace.isVisible().catch(() => false)) {
     await loginHeading.waitFor({ state: 'visible' });
-    const email = page.getByLabel('邮箱地址');
+    const username = page.getByLabel('管理员用户名');
     const password = page.getByLabel('密码');
-    await email.fill(E2E_EMAIL);
+    await username.fill(E2E_USERNAME);
     await password.fill(E2E_PASSWORD);
-    await expect(email).toHaveValue(E2E_EMAIL);
+    await expect(username).toHaveValue(E2E_USERNAME);
     await expect(password).toHaveValue(E2E_PASSWORD);
     await page.getByRole('button', { name: '登录' }).click();
   }

@@ -84,7 +84,6 @@ export interface ClaimedTelegramDelivery {
   privacy_mode: number;
   summary_enabled: number;
   telegram_username: string | null;
-  login_email: string;
   timezone: string;
   from_address: string;
   to_address: string;
@@ -541,12 +540,11 @@ export function insertTelegramDeliveryIfEligible(
     SELECT ?, e.owner_user_id, e.id, 'telegram', b.binding_id,
       b.authorization_version, b.privacy_mode, b.summary_enabled, 'pending', 0, 5, ?, ?, ?
     FROM email_messages AS e
-    JOIN workspace_users AS u ON u.id = e.owner_user_id
     JOIN workspace_telegram_bindings AS b
       ON b.user_id = e.owner_user_id AND b.state = 'active' AND b.enabled = 1
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = e.owner_user_id AND s.email_message_id = e.id
-    WHERE e.id = ? AND e.owner_user_id = ? AND lower(e."to") = lower(u.login_email)
+    WHERE e.id = ? AND e.owner_user_id = ? AND e.recipient_status IN ('managed', 'unregistered')
       AND s.deleted_at IS NULL
     ON CONFLICT(channel, owner_user_id, email_message_id) DO NOTHING
   `).bind(input.deliveryId, input.nextAttemptAt, input.now, input.now, input.emailMessageId, input.ownerUserId);
@@ -607,7 +605,7 @@ export async function claimTelegramDelivery(db: D1Database, now: string, leaseUn
       CASE WHEN b.privacy_mode = 1 OR d.privacy_mode = 1 THEN 1 ELSE 0 END AS privacy_mode,
       CASE WHEN b.privacy_mode = 1 OR d.privacy_mode = 1 THEN 0
         WHEN b.summary_enabled = 1 AND d.summary_enabled = 1 THEN 1 ELSE 0 END AS summary_enabled,
-      b.telegram_username, u.login_email, u.timezone,
+      b.telegram_username, u.timezone,
       e."from" AS from_address, e."to" AS to_address, e.subject,
       COALESCE(e.created_at, e."timestamp") AS received_at, e.snippet,
       (SELECT COUNT(*) FROM workspace_attachments AS a WHERE a.message_id = e.id AND a.relation_type = 'inbound') AS attachment_count
@@ -618,7 +616,7 @@ export async function claimTelegramDelivery(db: D1Database, now: string, leaseUn
       AND b.authorization_version = d.authorization_version
     JOIN workspace_users AS u ON u.id = d.owner_user_id
     JOIN email_messages AS e ON e.id = d.email_message_id AND e.owner_user_id = d.owner_user_id
-      AND lower(e."to") = lower(u.login_email)
+      AND e.recipient_status IN ('managed', 'unregistered')
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = d.owner_user_id AND s.email_message_id = e.id
     WHERE d.id = ? AND d.claim_token = ? AND s.deleted_at IS NULL
@@ -690,12 +688,11 @@ export async function markTelegramExternalStarted(
       )
       AND EXISTS (
         SELECT 1 FROM email_messages AS e
-        JOIN workspace_users AS u ON u.id = d.owner_user_id
         LEFT JOIN workspace_email_states AS s
           ON s.user_id = d.owner_user_id AND s.email_message_id = e.id
         WHERE e.id = d.email_message_id
           AND e.owner_user_id = d.owner_user_id
-          AND lower(e."to") = lower(u.login_email) AND s.deleted_at IS NULL
+          AND e.recipient_status IN ('managed', 'unregistered') AND s.deleted_at IS NULL
       )
     RETURNING privacy_mode, summary_enabled
   `).bind(now, now, deliveryId, claimToken).first<{ privacy_mode: number; summary_enabled: number }>();

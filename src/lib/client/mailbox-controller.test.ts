@@ -13,7 +13,7 @@ import {
   workspaceViewStateFromSnapshot
 } from './mailbox-controller';
 
-const metrics: WorkspaceMetrics = { inboxCount: 1, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 1, starredCount: 0,
+const metrics: WorkspaceMetrics = { inboxCount: 1, archiveCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 1, starredCount: 0,
   queuedCount: 0, delayedCount: 0, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0 };
 const message = (id: string, folder: MailMessage['folder'], sentAt: string): MailMessage => ({
   id,
@@ -54,7 +54,7 @@ describe('mailbox controller', () => {
       activePage: page,
       mailbox: { inbox: page.messages, sent: [], drafts: [] },
       mailboxPages: { inbox: page },
-      outboundSenderEmail: 'mailer@example.com'
+      mailIdentityOptions: { domains: [], addresses: [] }
     });
 
     expect(hydrated.mailbox.inbox).toHaveLength(1);
@@ -108,7 +108,7 @@ describe('mailbox controller', () => {
       activePage: { ...page, hasMore: true, nextCursor: 'next' },
       mailbox: { inbox: page.messages, sent: [], drafts: [] },
       mailboxPages: { inbox: { ...page, hasMore: true, nextCursor: 'next' } },
-      outboundSenderEmail: 'mailer@example.com'
+      mailIdentityOptions: { domains: [], addresses: [] }
     }, { section: 'inbox', preferredMessageId: 'inbox', clearMailView: true });
 
     expect(state.metrics).toMatchObject({ inboxCount: 45, sentCount: 3, draftsCount: 2 });
@@ -117,7 +117,6 @@ describe('mailbox controller', () => {
     expect(state.selectedMessageIds).toEqual([]);
     expect(state.searchQuery).toBe('');
     expect(state.mailFilter).toBe('all');
-    expect(state.outboundSenderEmail).toBe('mailer@example.com');
   });
 
   test('does not select the first page item when a deep-linked target is absent', () => {
@@ -132,7 +131,7 @@ describe('mailbox controller', () => {
       activePage: page,
       mailbox: { inbox: page.messages, sent: [], drafts: [] },
       mailboxPages: { inbox: page },
-      outboundSenderEmail: null
+      mailIdentityOptions: { domains: [], addresses: [] }
     }, { section: 'inbox', preferredMessageId: 'email:older' });
 
     expect(state.selectedMessageId).toBeNull();
@@ -142,7 +141,7 @@ describe('mailbox controller', () => {
     const empty = createEmptyWorkspaceViewState();
     expect(empty).toMatchObject({
       activeSection: 'inbox', selectedMessageId: null, selectedMessageIds: [], searchQuery: '', mailFilter: 'all',
-      mailboxPages: null, outboundSenderEmail: null
+      mailboxPages: null
     });
     const first = message('first', 'inbox', '2026-08-14T02:00:00.000Z');
     const second = message('second', 'inbox', '2026-08-14T01:00:00.000Z');
@@ -223,6 +222,7 @@ function makePage(folder: MailMessage['folder'], messages: MailMessage[]) {
     limit: 40,
     query: '',
     filter: 'all' as const,
+    identityFilter: null,
     deliveryStatus: null
   };
 }

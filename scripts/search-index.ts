@@ -75,41 +75,44 @@ SELECT
 
 const inboundProjection = `
 INSERT INTO workspace_search_documents
-  (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+  (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
 SELECT owner_user_id, 'inbound', id,
   substr("from", 1, 2048), substr("to" || ' ' || to_json, 1, 4096), substr(cc || ' ' || cc_json, 1, 4096),
   substr(subject, 1, 1024), substr(CASE WHEN text_body <> '' THEN text_body ELSE snippet END, 1, 16384),
-  'Inbound Cloudflare', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  'Inbound Cloudflare', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), mail_address_id
 FROM email_messages WHERE owner_user_id IS NOT NULL
 ON CONFLICT(user_id, entity_kind, entity_id) DO UPDATE SET
   from_text = excluded.from_text, to_text = excluded.to_text, cc_text = excluded.cc_text,
   subject_text = excluded.subject_text, body_text = excluded.body_text, labels_text = excluded.labels_text,
-  indexed_at = excluded.indexed_at;`;
+  indexed_at = excluded.indexed_at, mail_address_id = excluded.mail_address_id;`;
 
 const messageProjection = `
 INSERT INTO workspace_search_documents
-  (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+  (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
 SELECT user_id, 'message', id,
   substr(from_name || ' ' || from_email, 1, 2048), substr(to_name || ' ' || to_email || ' ' || to_json, 1, 4096),
   substr(cc || ' ' || cc_json, 1, 4096), substr(subject, 1, 1024),
   substr(CASE WHEN text_body <> '' THEN text_body WHEN body <> '' THEN body ELSE preview END, 1, 16384),
-  substr(labels_json, 1, 4096), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  substr(labels_json, 1, 4096), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+  CASE WHEN folder = 'sent' THEN sender_address_id ELSE recipient_address_id END
 FROM workspace_messages WHERE 1 = 1
 ON CONFLICT(user_id, entity_kind, entity_id) DO UPDATE SET
   from_text = excluded.from_text, to_text = excluded.to_text, cc_text = excluded.cc_text,
   subject_text = excluded.subject_text, body_text = excluded.body_text, labels_text = excluded.labels_text,
-  indexed_at = excluded.indexed_at;`;
+  indexed_at = excluded.indexed_at, mail_address_id = excluded.mail_address_id;`;
 
 const draftProjection = `
 INSERT INTO workspace_search_documents
-  (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
-SELECT user_id, 'draft', id, '', substr(to_email || ' ' || to_json, 1, 4096), substr(cc || ' ' || cc_json, 1, 4096),
-  substr(subject, 1, 1024), substr(body, 1, 16384), 'Draft', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+  (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
+SELECT user_id, 'draft', id, substr(from_name || ' ' || from_email, 1, 2048),
+  substr(to_email || ' ' || to_json, 1, 4096), substr(cc || ' ' || cc_json, 1, 4096),
+  substr(subject, 1, 1024), substr(body, 1, 16384), 'Draft',
+  strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), sender_address_id
 FROM workspace_drafts WHERE 1 = 1
 ON CONFLICT(user_id, entity_kind, entity_id) DO UPDATE SET
   from_text = excluded.from_text, to_text = excluded.to_text, cc_text = excluded.cc_text,
   subject_text = excluded.subject_text, body_text = excluded.body_text, labels_text = excluded.labels_text,
-  indexed_at = excluded.indexed_at;`;
+  indexed_at = excluded.indexed_at, mail_address_id = excluded.mail_address_id;`;
 
 export const rebuildSearchIndexSql = `
 DELETE FROM workspace_search_documents AS d WHERE

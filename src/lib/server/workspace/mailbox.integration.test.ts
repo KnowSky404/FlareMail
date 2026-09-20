@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { SQLQueryBindings } from 'bun:sqlite';
 import { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox } from './mailbox';
+import { parseMailboxQuery } from './mailbox-query';
 import type { WorkspaceContext } from './shared';
 import { parseMailSearchQuery } from '$lib/domain/mail';
 
@@ -143,6 +144,59 @@ const query = (folder: 'inbox' | 'sent' | 'drafts', overrides: Record<string, un
 };
 
 describe('D1 mailbox pages', () => {
+  test('filters inbound, sent, drafts, search, metrics, options and cursors by owned domain and address', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name) VALUES
+        ('domain-a', 'user-1', 'alpha.example', 'zone-a', 'flaremail'),
+        ('domain-b', 'user-1', 'beta.example', 'zone-b', 'flaremail');
+      INSERT INTO mail_addresses (id, owner_user_id, domain_id, email, local_part, receive_enabled, routing_state) VALUES
+        ('address-a1', 'user-1', 'domain-a', 'ada@alpha.example', 'ada', 1, 'active'),
+        ('address-a2', 'user-1', 'domain-a', 'sales@alpha.example', 'sales', 1, 'active'),
+        ('address-b1', 'user-1', 'domain-b', 'ada@beta.example', 'ada', 1, 'active');
+      UPDATE workspace_messages SET recipient_address_id = 'address-a1' WHERE id = 'inbox-z';
+      UPDATE workspace_messages SET recipient_address_id = 'address-a2' WHERE id = 'inbox-a';
+      UPDATE workspace_messages SET sender_address_id = 'address-a2' WHERE id = 'sent-1';
+      UPDATE workspace_drafts SET sender_address_id = 'address-b1' WHERE id = 'draft-1';
+      UPDATE email_messages SET mail_domain_id = 'domain-b', mail_address_id = 'address-b1' WHERE id = 'incoming-1';
+    `);
+
+    const loaded = await loadWorkspaceSnapshot(env, workspace, {
+      activeFolder: 'inbox', identityFilter: { kind: 'domain', id: 'domain-a' }
+    });
+    expect(loaded.workspace.mailIdentityOptions.domains.map((domain) => domain.domainName)).toEqual(['alpha.example', 'beta.example']);
+    expect(loaded.workspace.mailIdentityOptions.addresses).toHaveLength(3);
+    expect(loaded.workspace.mailboxPages.inbox?.messages.map(({ id }) => id).sort()).toEqual(['inbox-a', 'inbox-z']);
+    expect(loaded.workspace.metrics).toMatchObject({ inboxCount: 2, archiveCount: 0, unreadCount: 1, starredCount: 1 });
+
+    const sent = await loadMailboxPage(env, workspace, query('sent', { identityFilter: { kind: 'domain', id: 'domain-a' } }));
+    expect(sent.messages.map(({ id }) => id)).toEqual(['sent-1']);
+    expect(sent.metrics).toMatchObject({ sentCount: 1, inboxCount: 2, unreadCount: 1 });
+
+    const drafts = await loadMailboxPage(env, workspace, query('drafts', { identityFilter: { kind: 'address', id: 'address-b1' } }));
+    expect(drafts.messages.map(({ id }) => id)).toEqual(['draft-1']);
+    expect(drafts.metrics).toMatchObject({ draftsCount: 1, inboxCount: 1, unreadCount: 1 });
+
+    const searched = await loadMailboxPage(env, workspace, query('inbox', {
+      query: 'subject:alert', identityFilter: { kind: 'address', id: 'address-b1' }
+    }));
+    expect(searched.messages.map(({ id }) => id)).toEqual(['email:incoming-1']);
+    expect(searched.searchTotal).toBe(1);
+
+    const first = await loadMailboxPage(env, workspace, query('inbox', {
+      limit: 1, identityFilter: { kind: 'domain', id: 'domain-a' }
+    }));
+    expect(first.nextCursor).not.toBeNull();
+    const nextQuery = parseMailboxQuery(new URLSearchParams({
+      folder: 'inbox', identity: 'domain:domain-a', limit: '1', cursor: first.nextCursor!
+    }));
+    const second = await loadMailboxPage(env, workspace, nextQuery);
+    expect(second.messages.map(({ id }) => id)).toHaveLength(1);
+    expect(() => parseMailboxQuery(new URLSearchParams({
+      folder: 'inbox', identity: 'address:address-a1', limit: '1', cursor: first.nextCursor!
+    }))).toThrow();
+  });
+
   test('merges inbound and workspace messages with a stable opaque cursor', async () => {
     const { env, workspace } = fixture();
     const first = await loadMailboxPage(env, workspace, query('inbox', { limit: 2 }));
@@ -237,6 +291,7 @@ describe('D1 mailbox pages', () => {
     expect(page.messages[0].deliveryLastEvent).toBe('email.delivered');
     expect(page.metrics).toEqual({
       inboxCount: 3,
+      archiveCount: 0,
       sentCount: 1,
       draftsCount: 1,
       trashCount: 0,
@@ -263,10 +318,9 @@ describe('D1 mailbox pages', () => {
     expect(loaded.workspace.activePage.hasMore).toBe(false);
     expect(loaded.workspace.activePage.messages.find((message) => message.source === 'inbound')?.body).toBe('');
     expect(db.queries.filter((sql) => sql.includes('SELECT d.id'))).toHaveLength(0);
-    expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(1);
+    expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(2);
     expect(db.queries.filter((sql) => sql.includes('SELECT COUNT(*)'))).toHaveLength(1);
     expect(db.queries.some((sql) => /\btext_body\b/u.test(sql))).toBe(false);
-    expect(loaded.workspace.outboundSenderEmail).toBeNull();
   });
 
   test('fresh-login snapshot exposes metrics and a usable next cursor for the active folder', async () => {
@@ -300,11 +354,11 @@ describe('D1 mailbox pages', () => {
     expect(nextPage.metrics).toBeUndefined();
   });
 
-  test('exposes the effective outbound sender separately from the workspace identity', async () => {
+  test('does not expose the legacy system sender in the workspace snapshot', async () => {
     const { env, workspace } = fixture();
     const loaded = await loadWorkspaceSnapshot({ ...env, OUTBOUND_FROM_EMAIL: 'mailer@example.test' }, workspace);
     expect(loaded.workspace.profile.email).toBe('ada@example.test');
-    expect(loaded.workspace.outboundSenderEmail).toBe('mailer@example.test');
+    expect('outboundSenderEmail' in loaded.workspace).toBe(false);
   });
 
   test('loads sent on demand without preloading inbox or drafts pages', async () => {
@@ -318,7 +372,7 @@ describe('D1 mailbox pages', () => {
     expect(loaded.workspace.mailbox.drafts).toEqual([]);
     expect(db.queries.filter((sql) => sql.includes('SELECT e.id AS email_id'))).toHaveLength(0);
     expect(db.queries.filter((sql) => sql.includes('SELECT d.id'))).toHaveLength(0);
-    expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(1);
+    expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(2);
   });
 
   test('archives and restores mixed inbound/workspace selections atomically', async () => {

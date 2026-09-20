@@ -124,7 +124,9 @@ describe('versioned D1 migrations', () => {
       '0019_telegram_notifications.sql',
       '0020_telegram_user_delete_cleanup.sql',
       '0021_telegram_challenge_provenance.sql',
-      '0022_telegram_delivery_privacy_snapshot.sql'
+      '0022_telegram_delivery_privacy_snapshot.sql',
+      '0023_owner_principal_auth.sql',
+      '0024_managed_mail_identities.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -132,7 +134,8 @@ describe('versioned D1 migrations', () => {
         'id', 'message_id', 'from', 'to', 'subject', 'timestamp', 'snippet', 'raw_key', 'raw_size', 'created_at',
         'in_reply_to', 'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key',
         'provider_message_id', 'idempotency_key', 'owner_user_id', 'body_object_id', 'to_json', 'cc_json',
-        'reply_to_json', 'return_path', 'delivered_to', 'headers_json', 'authentication_results_json'
+        'reply_to_json', 'return_path', 'delivered_to', 'headers_json', 'authentication_results_json',
+        'mail_domain_id', 'mail_address_id', 'recipient_status'
       ])
     );
     expect(tableColumns(db, 'workspace_messages')).toEqual(
@@ -140,31 +143,46 @@ describe('versioned D1 migrations', () => {
         'id', 'user_id', 'folder', 'from_name', 'from_email', 'to_name', 'to_email', 'subject', 'preview', 'body',
         'sent_at', 'labels_json', 'is_read', 'is_starred', 'created_at', 'updated_at', 'message_id', 'in_reply_to',
         'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'to_json', 'cc_json', 'bcc_json', 'dedupe_key', 'provider_message_id',
-        'idempotency_key', 'archived_at', 'deleted_at', 'body_object_id'
+        'idempotency_key', 'archived_at', 'deleted_at', 'body_object_id', 'sender_address_id',
+        'recipient_address_id', 'reply_to_json'
       ])
     );
     expect(tableColumns(db, 'workspace_users')).toEqual(
       new Set([
         'id', 'login_email', 'name', 'role', 'email', 'company', 'location', 'timezone', 'forwarding_enabled',
-        'signature', 'incoming_sequence', 'created_at', 'updated_at', 'credential_hash', 'credential_salt',
-        'credential_iterations', 'credential_updated_at'
+        'signature', 'incoming_sequence', 'created_at', 'updated_at'
       ])
     );
+    expect(tableColumns(db, 'workspace_owner')).toEqual(new Set(['singleton', 'user_id']));
+    expect(tableColumns(db, 'workspace_auth_credentials')).toEqual(new Set(['user_id', 'username', 'credential_hash', 'updated_at']));
+    expect(tableColumns(db, 'mail_domains')).toEqual(new Set([
+      'id', 'owner_user_id', 'domain_name', 'cloudflare_zone_id', 'cloudflare_account_id', 'worker_name',
+      'enabled', 'unknown_recipient_policy', 'catch_all_target', 'catch_all_checked_at', 'resend_domain_id',
+      'resend_status', 'resend_sending_status', 'resend_checked_at', 'cloudflare_checked_at',
+      'last_error_code', 'last_error_at', 'created_at', 'updated_at'
+    ]));
+    expect(tableColumns(db, 'mail_addresses')).toEqual(new Set([
+      'id', 'owner_user_id', 'domain_id', 'email', 'local_part', 'display_name', 'signature', 'receive_enabled',
+      'send_enabled', 'lifecycle_status', 'routing_state', 'routing_rule_id', 'routing_rule_source',
+      'routing_owner', 'is_default_sender', 'operation_token', 'operation_expires_at', 'last_error_code',
+      'last_error_at', 'deleted_at', 'created_at', 'updated_at'
+    ]));
     expect(tableColumns(db, 'workspace_drafts')).toEqual(
       new Set([
         'id', 'user_id', 'to_email', 'cc', 'to_json', 'cc_json', 'bcc_json', 'subject', 'body', 'is_starred', 'created_at', 'updated_at',
-        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id', 'deleted_at', 'attachment_revision'
+        'message_id', 'in_reply_to', 'references', 'thread_key', 'idempotency_key', 'body_object_id', 'deleted_at',
+        'attachment_revision', 'sender_address_id', 'from_name', 'from_email', 'reply_to_json'
       ])
     );
     expect(tableColumns(db, 'workspace_search_documents')).toEqual(new Set([
       'id', 'user_id', 'entity_kind', 'entity_id', 'from_text', 'to_text', 'cc_text',
-      'subject_text', 'body_text', 'labels_text', 'indexed_at'
+      'subject_text', 'body_text', 'labels_text', 'indexed_at', 'mail_address_id'
     ]));
     expect(tableColumns(db, 'workspace_search_fts')).toEqual(new Set([
       'from_text', 'to_text', 'cc_text', 'subject_text', 'body_text', 'labels_text'
     ]));
     expect(tableColumns(db, 'workspace_sessions')).toEqual(
-      new Set(['id', 'user_id', 'created_at', 'updated_at', 'token_hash', 'expires_at', 'revoked_at', 'last_seen_at'])
+      new Set(['id', 'user_id', 'created_at', 'updated_at', 'token_hash', 'expires_at', 'revoked_at', 'last_seen_at', 'auth_method', 'principal_id'])
     );
     expect(tableColumns(db, 'workspace_delivery_statuses')).toEqual(
       new Set([
@@ -233,7 +251,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 22 }
+      { schema_name: 'flaremail', schema_version: 24 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
@@ -243,7 +261,8 @@ describe('versioned D1 migrations', () => {
       new Set([
         'idx_email_messages_timestamp', 'idx_email_messages_from', 'idx_email_messages_to',
         'idx_email_messages_message_id', 'idx_email_messages_thread_key', 'idx_email_messages_dedupe_key',
-        'idx_email_messages_provider_message_id', 'idx_email_messages_recipient_cursor', 'idx_email_messages_owner_cursor'
+        'idx_email_messages_provider_message_id', 'idx_email_messages_recipient_cursor', 'idx_email_messages_owner_cursor',
+        'idx_email_messages_owner_address_cursor'
       ])
     );
     expect(indexNames(db, 'workspace_delivery_statuses')).toEqual(
@@ -338,7 +357,7 @@ describe('versioned D1 migrations', () => {
 
     const inbound = db.query(
       `SELECT message_id, thread_key, dedupe_key, direction, text_body, html_body, owner_user_id,
-        to_json, reply_to_json, headers_json, authentication_results_json
+        to_json, reply_to_json, headers_json, authentication_results_json, mail_domain_id, mail_address_id, recipient_status
        FROM email_messages WHERE id = 'legacy-email-1'`
     ).get() as Record<string, string | null>;
     expect(inbound).toMatchObject({
@@ -352,8 +371,17 @@ describe('versioned D1 migrations', () => {
       to_json: '[{"name":"","email":"admin@example.test"}]',
       reply_to_json: '[]',
       headers_json: '[]',
-      authentication_results_json: '[]'
+      authentication_results_json: '[]',
+      mail_domain_id: null,
+      mail_address_id: null,
+      recipient_status: 'legacy-unmapped'
     });
+    expect(tableCount(db, 'mail_domains')).toBe(0);
+    expect(tableCount(db, 'mail_addresses')).toBe(0);
+    expect(db.query(`SELECT sender_address_id, recipient_address_id FROM workspace_messages WHERE id = 'legacy-message-2'`).get())
+      .toEqual({ sender_address_id: null, recipient_address_id: null });
+    expect(db.query(`SELECT sender_address_id, from_email FROM workspace_drafts WHERE id = 'legacy-draft-1'`).get())
+      .toEqual({ sender_address_id: null, from_email: '' });
 
     const workspaceInbound = db.query(
       `SELECT direction, text_body, thread_key, dedupe_key
@@ -387,6 +415,10 @@ describe('versioned D1 migrations', () => {
     expect(session.last_seen_at).toBe('2026-08-12T11:00:00.000Z');
     expect(tableCount(db, 'workspace_settings')).toBe(1);
     expect(db.query(`SELECT theme FROM workspace_settings WHERE user_id = 'legacy-user-1'`).get()).toEqual({ theme: 'system' });
+    expect(db.query('SELECT singleton, user_id FROM workspace_owner').all()).toEqual([
+      { singleton: 1, user_id: 'legacy-user-1' }
+    ]);
+    expect(db.query(`SELECT username, credential_hash FROM workspace_auth_credentials`).all()).toEqual([]);
 
     const delivery = db.query(
       `SELECT status, attempts, provider, provider_message_id, last_event
@@ -408,5 +440,29 @@ describe('versioned D1 migrations', () => {
       delivery: tableCount(db, 'workspace_delivery_statuses'),
       attempts: tableCount(db, 'workspace_delivery_attempts')
     }).toEqual(afterFirstRun);
+  });
+
+  test('does not choose an Owner when multiple historical users exist', () => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0022_telegram_delivery_privacy_snapshot.sql');
+    db.query(`INSERT INTO workspace_users (
+      id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature
+    ) VALUES
+      ('user-a', 'a@example.test', 'A', 'Owner', '', '', '', 'UTC', 1, ''),
+      ('user-b', 'b@example.test', 'B', 'Owner', '', '', '', 'UTC', 1, '')`).run();
+    db.query(`UPDATE workspace_users SET credential_hash = 'hash-a' WHERE id = 'user-a'`).run();
+    db.query(`UPDATE workspace_users SET credential_hash = 'hash-b' WHERE id = 'user-b'`).run();
+
+    db.exec(readFileSync(join(migrationsDirectory, '0023_owner_principal_auth.sql'), 'utf8'));
+
+    expect(tableCount(db, 'workspace_owner')).toBe(0);
+    expect(db.query('SELECT user_id, username, credential_hash FROM workspace_auth_credentials ORDER BY user_id').all()).toEqual([
+      { user_id: 'user-a', username: 'a@example.test', credential_hash: 'hash-a' },
+      { user_id: 'user-b', username: 'b@example.test', credential_hash: 'hash-b' }
+    ]);
+    expect(db.query('SELECT id, login_email, email FROM workspace_users ORDER BY id').all()).toEqual([
+      { id: 'user-a', login_email: 'a@example.test', email: '' },
+      { id: 'user-b', login_email: 'b@example.test', email: '' }
+    ]);
   });
 });

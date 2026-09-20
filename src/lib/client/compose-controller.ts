@@ -22,7 +22,9 @@ export function serializeComposeInput(input: ComposeInput | null) {
     attachmentRevision: input.attachmentRevision ?? 0,
     messageId: input.messageId ?? null,
     inReplyTo: input.inReplyTo ?? null,
-    references: input.references ?? null
+    references: input.references ?? null,
+    senderAddressId: input.senderAddressId ?? null,
+    replyTo: parseAddressList(input.replyTo ?? [])
   });
 }
 
@@ -59,6 +61,8 @@ export function composeInputFromSavedDraft(
     cc: message.ccAddresses ?? parseAddressList(message.cc ?? ''),
     bcc: message.bccAddresses ?? parseAddressList(message.bcc ?? ''),
     toEmail: message.toEmail,
+    senderAddressId: message.senderAddressId ?? null,
+    replyTo: message.replyToAddresses ?? [],
     subject: message.subject === '未命名草稿' ? '' : message.subject,
     body: message.body,
     html: message.html ?? '',

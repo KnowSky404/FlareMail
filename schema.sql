@@ -27,7 +27,11 @@ CREATE TABLE IF NOT EXISTS email_messages (
   delivered_to TEXT,
   headers_json TEXT NOT NULL DEFAULT '[]',
   authentication_results_json TEXT NOT NULL DEFAULT '[]',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  mail_domain_id TEXT,
+  mail_address_id TEXT,
+  recipient_status TEXT NOT NULL DEFAULT 'legacy-unmapped'
+    CHECK (recipient_status IN ('managed', 'unregistered', 'legacy-unmapped'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_email_messages_timestamp
@@ -45,26 +49,111 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_email_messages_dedupe_key ON email_message
 CREATE INDEX IF NOT EXISTS idx_email_messages_provider_message_id ON email_messages(provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_email_messages_recipient_cursor ON email_messages("to", "timestamp" DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_email_messages_owner_cursor ON email_messages(owner_user_id, "timestamp" DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_email_messages_owner_address_cursor
+  ON email_messages(owner_user_id, mail_address_id, "timestamp" DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_users (
   id TEXT PRIMARY KEY,
-  login_email TEXT NOT NULL UNIQUE,
+  login_email TEXT UNIQUE,
   name TEXT NOT NULL,
   role TEXT NOT NULL,
-  email TEXT NOT NULL,
-  company TEXT NOT NULL,
-  location TEXT NOT NULL,
-  timezone TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  company TEXT NOT NULL DEFAULT '',
+  location TEXT NOT NULL DEFAULT '',
+  timezone TEXT NOT NULL DEFAULT 'UTC',
   forwarding_enabled INTEGER NOT NULL DEFAULT 1,
   signature TEXT NOT NULL DEFAULT '',
   incoming_sequence INTEGER NOT NULL DEFAULT 0,
-  credential_hash TEXT,
-  credential_salt TEXT,
-  credential_iterations INTEGER,
-  credential_updated_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+CREATE TABLE IF NOT EXISTS workspace_owner (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  user_id TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS workspace_auth_credentials (
+  user_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(trim(username)) BETWEEN 1 AND 128),
+  credential_hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE mail_domains (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  domain_name TEXT NOT NULL COLLATE NOCASE
+    CHECK (length(domain_name) BETWEEN 1 AND 253 AND instr(domain_name, '.') > 0),
+  cloudflare_zone_id TEXT NOT NULL CHECK (length(cloudflare_zone_id) BETWEEN 1 AND 64),
+  cloudflare_account_id TEXT,
+  worker_name TEXT NOT NULL CHECK (length(worker_name) BETWEEN 1 AND 253),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  unknown_recipient_policy TEXT NOT NULL DEFAULT 'reject'
+    CHECK (unknown_recipient_policy IN ('reject', 'collect')),
+  catch_all_target TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (catch_all_target IN ('unknown', 'this_worker', 'external', 'drop', 'none')),
+  catch_all_checked_at TEXT,
+  resend_domain_id TEXT,
+  resend_status TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (resend_status IN ('unknown', 'pending', 'verified', 'failed')),
+  resend_sending_status TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (resend_sending_status IN ('unknown', 'enabled', 'disabled')),
+  resend_checked_at TEXT,
+  cloudflare_checked_at TEXT,
+  last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) <= 64),
+  last_error_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE(owner_user_id, domain_name),
+  UNIQUE(cloudflare_zone_id, domain_name)
+);
+
+CREATE TABLE mail_addresses (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  domain_id TEXT NOT NULL,
+  email TEXT NOT NULL COLLATE NOCASE
+    CHECK (
+      length(email) BETWEEN 3 AND 90
+      AND instr(email, '@') > 1
+      AND instr(email, '@') < length(email)
+      AND length(email) - length(replace(email, '@', '')) = 1
+    ),
+  local_part TEXT NOT NULL CHECK (length(local_part) BETWEEN 1 AND 64),
+  display_name TEXT NOT NULL DEFAULT '' CHECK (length(display_name) <= 128),
+  signature TEXT NOT NULL DEFAULT '' CHECK (length(CAST(signature AS BLOB)) <= 16384),
+  receive_enabled INTEGER NOT NULL DEFAULT 0 CHECK (receive_enabled IN (0, 1)),
+  send_enabled INTEGER NOT NULL DEFAULT 0 CHECK (send_enabled IN (0, 1)),
+  lifecycle_status TEXT NOT NULL DEFAULT 'active'
+    CHECK (lifecycle_status IN ('active', 'disabled', 'deleted')),
+  routing_state TEXT NOT NULL DEFAULT 'pending'
+    CHECK (routing_state IN ('pending', 'provisioning', 'active', 'deleting', 'imported', 'unknown', 'error', 'deleted')),
+  routing_rule_id TEXT,
+  routing_rule_source TEXT CHECK (routing_rule_source IS NULL OR routing_rule_source IN ('api', 'wrangler')),
+  routing_owner TEXT CHECK (routing_owner IS NULL OR routing_owner IN ('flaremail', 'imported')),
+  is_default_sender INTEGER NOT NULL DEFAULT 0 CHECK (is_default_sender IN (0, 1)),
+  operation_token TEXT,
+  operation_expires_at TEXT,
+  last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) <= 64),
+  last_error_at TEXT,
+  deleted_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  UNIQUE(email)
+);
+
+CREATE INDEX idx_mail_domains_owner_enabled ON mail_domains(owner_user_id, enabled, domain_name);
+CREATE INDEX idx_mail_domains_zone ON mail_domains(cloudflare_zone_id, domain_name);
+CREATE INDEX idx_mail_addresses_owner_lifecycle
+  ON mail_addresses(owner_user_id, lifecycle_status, domain_id, email);
+CREATE INDEX idx_mail_addresses_domain_lifecycle
+  ON mail_addresses(domain_id, lifecycle_status, email);
+CREATE INDEX idx_mail_addresses_routing_state
+  ON mail_addresses(routing_state, updated_at);
+CREATE UNIQUE INDEX idx_mail_addresses_default_sender
+  ON mail_addresses(owner_user_id)
+  WHERE is_default_sender = 1 AND lifecycle_status = 'active' AND send_enabled = 1;
 
 CREATE TABLE IF NOT EXISTS workspace_sessions (
   id TEXT PRIMARY KEY,
@@ -73,6 +162,8 @@ CREATE TABLE IF NOT EXISTS workspace_sessions (
   expires_at TEXT,
   revoked_at TEXT,
   last_seen_at TEXT,
+  auth_method TEXT NOT NULL DEFAULT 'local' CHECK (auth_method IN ('local', 'cloudflare-access')),
+  principal_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -110,7 +201,10 @@ CREATE TABLE IF NOT EXISTS workspace_messages (
   deleted_at TEXT,
   body_object_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  sender_address_id TEXT,
+  recipient_address_id TEXT,
+  reply_to_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_sessions_user_id
@@ -119,6 +213,8 @@ CREATE INDEX IF NOT EXISTS idx_workspace_sessions_user_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_sessions_token_hash ON workspace_sessions(token_hash) WHERE token_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_sessions_expires_at ON workspace_sessions(expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_sessions_cleanup ON workspace_sessions(revoked_at, expires_at);
+CREATE INDEX IF NOT EXISTS idx_workspace_sessions_auth_principal
+  ON workspace_sessions(auth_method, principal_id, expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_sent_at
   ON workspace_messages(user_id, folder, sent_at DESC);
@@ -133,6 +229,10 @@ CREATE INDEX IF NOT EXISTS idx_workspace_messages_provider_message_id ON workspa
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_cursor ON workspace_messages(user_id, folder, sent_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_folder_archived ON workspace_messages(user_id, folder, archived_at, sent_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_messages_user_trash ON workspace_messages(user_id, deleted_at, sent_at DESC, id DESC);
+CREATE INDEX idx_workspace_messages_owner_sender_cursor
+  ON workspace_messages(user_id, sender_address_id, sent_at DESC, id DESC);
+CREATE INDEX idx_workspace_messages_owner_recipient_cursor
+  ON workspace_messages(user_id, recipient_address_id, sent_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS workspace_attachments (
   id TEXT PRIMARY KEY,
@@ -211,7 +311,11 @@ CREATE TABLE IF NOT EXISTS workspace_drafts (
   deleted_at TEXT,
   attachment_revision INTEGER NOT NULL DEFAULT 0 CHECK (attachment_revision >= 0),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  sender_address_id TEXT,
+  from_name TEXT NOT NULL DEFAULT '',
+  from_email TEXT NOT NULL DEFAULT '',
+  reply_to_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_updated_at
@@ -220,6 +324,8 @@ CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_updated_at
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_drafts_idempotency_key ON workspace_drafts(idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_workspace_drafts_thread_key ON workspace_drafts(user_id, thread_key, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_drafts_user_trash ON workspace_drafts(user_id, deleted_at, updated_at DESC, id DESC);
+CREATE INDEX idx_workspace_drafts_owner_sender_cursor
+  ON workspace_drafts(user_id, sender_address_id, updated_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS mail_body_objects (
   id TEXT PRIMARY KEY,
@@ -584,11 +690,14 @@ CREATE TABLE workspace_search_documents (
   body_text TEXT NOT NULL DEFAULT '' CHECK (length(CAST(body_text AS BLOB)) <= 65536),
   labels_text TEXT NOT NULL DEFAULT '' CHECK (length(CAST(labels_text AS BLOB)) <= 16384),
   indexed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  mail_address_id TEXT,
   UNIQUE(user_id, entity_kind, entity_id)
 );
 
 CREATE INDEX idx_workspace_search_documents_owner
   ON workspace_search_documents(user_id, entity_kind, entity_id);
+CREATE INDEX idx_workspace_search_documents_address
+  ON workspace_search_documents(user_id, mail_address_id, entity_kind, entity_id);
 
 CREATE VIRTUAL TABLE workspace_search_fts USING fts5(
   from_text,
@@ -621,7 +730,7 @@ END;
 
 CREATE TRIGGER email_messages_search_ai AFTER INSERT ON email_messages WHEN new.owner_user_id IS NOT NULL BEGIN
   INSERT INTO workspace_search_documents
-    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
   VALUES (
     new.owner_user_id, 'inbound', new.id,
     substr(new."from", 1, 2048),
@@ -630,15 +739,16 @@ CREATE TRIGGER email_messages_search_ai AFTER INSERT ON email_messages WHEN new.
     substr(new.subject, 1, 1024),
     substr(CASE WHEN new.text_body <> '' THEN new.text_body ELSE new.snippet END, 1, 16384),
     'Inbound Cloudflare',
-    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    new.mail_address_id
   );
 END;
 
 CREATE TRIGGER email_messages_search_au
-AFTER UPDATE OF owner_user_id, "from", "to", to_json, cc, cc_json, subject, text_body, snippet ON email_messages BEGIN
+AFTER UPDATE OF owner_user_id, "from", "to", to_json, cc, cc_json, subject, text_body, snippet, mail_address_id ON email_messages BEGIN
   DELETE FROM workspace_search_documents WHERE entity_kind = 'inbound' AND entity_id = old.id;
   INSERT INTO workspace_search_documents
-    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
   SELECT
     new.owner_user_id, 'inbound', new.id,
     substr(new."from", 1, 2048),
@@ -647,7 +757,8 @@ AFTER UPDATE OF owner_user_id, "from", "to", to_json, cc, cc_json, subject, text
     substr(new.subject, 1, 1024),
     substr(CASE WHEN new.text_body <> '' THEN new.text_body ELSE new.snippet END, 1, 16384),
     'Inbound Cloudflare',
-    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    new.mail_address_id
   WHERE new.owner_user_id IS NOT NULL;
 END;
 
@@ -657,7 +768,7 @@ END;
 
 CREATE TRIGGER workspace_messages_search_ai AFTER INSERT ON workspace_messages BEGIN
   INSERT INTO workspace_search_documents
-    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
   VALUES (
     new.user_id, 'message', new.id,
     substr(new.from_name || ' ' || new.from_email, 1, 2048),
@@ -666,15 +777,16 @@ CREATE TRIGGER workspace_messages_search_ai AFTER INSERT ON workspace_messages B
     substr(new.subject, 1, 1024),
     substr(CASE WHEN new.text_body <> '' THEN new.text_body WHEN new.body <> '' THEN new.body ELSE new.preview END, 1, 16384),
     substr(new.labels_json, 1, 4096),
-    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    CASE WHEN new.folder = 'sent' THEN new.sender_address_id ELSE new.recipient_address_id END
   );
 END;
 
 CREATE TRIGGER workspace_messages_search_au
-AFTER UPDATE OF user_id, from_name, from_email, to_name, to_email, to_json, cc, cc_json, subject, text_body, body, preview, labels_json ON workspace_messages BEGIN
+AFTER UPDATE OF user_id, from_name, from_email, to_name, to_email, to_json, cc, cc_json, subject, text_body, body, preview, labels_json, sender_address_id, recipient_address_id, folder ON workspace_messages BEGIN
   DELETE FROM workspace_search_documents WHERE entity_kind = 'message' AND entity_id = old.id;
   INSERT INTO workspace_search_documents
-    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
   VALUES (
     new.user_id, 'message', new.id,
     substr(new.from_name || ' ' || new.from_email, 1, 2048),
@@ -683,7 +795,8 @@ AFTER UPDATE OF user_id, from_name, from_email, to_name, to_email, to_json, cc, 
     substr(new.subject, 1, 1024),
     substr(CASE WHEN new.text_body <> '' THEN new.text_body WHEN new.body <> '' THEN new.body ELSE new.preview END, 1, 16384),
     substr(new.labels_json, 1, 4096),
-    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    CASE WHEN new.folder = 'sent' THEN new.sender_address_id ELSE new.recipient_address_id END
   );
 END;
 
@@ -693,31 +806,33 @@ END;
 
 CREATE TRIGGER workspace_drafts_search_ai AFTER INSERT ON workspace_drafts BEGIN
   INSERT INTO workspace_search_documents
-    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
   VALUES (
-    new.user_id, 'draft', new.id, '',
+    new.user_id, 'draft', new.id, substr(new.from_name || ' ' || new.from_email, 1, 2048),
     substr(new.to_email || ' ' || new.to_json, 1, 4096),
     substr(new.cc || ' ' || new.cc_json, 1, 4096),
     substr(new.subject, 1, 1024),
     substr(new.body, 1, 16384),
     'Draft',
-    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    new.sender_address_id
   );
 END;
 
 CREATE TRIGGER workspace_drafts_search_au
-AFTER UPDATE OF user_id, to_email, to_json, cc, cc_json, subject, body ON workspace_drafts BEGIN
+AFTER UPDATE OF user_id, to_email, to_json, cc, cc_json, subject, body, sender_address_id, from_name, from_email ON workspace_drafts BEGIN
   DELETE FROM workspace_search_documents WHERE entity_kind = 'draft' AND entity_id = old.id;
   INSERT INTO workspace_search_documents
-    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at)
+    (user_id, entity_kind, entity_id, from_text, to_text, cc_text, subject_text, body_text, labels_text, indexed_at, mail_address_id)
   VALUES (
-    new.user_id, 'draft', new.id, '',
+    new.user_id, 'draft', new.id, substr(new.from_name || ' ' || new.from_email, 1, 2048),
     substr(new.to_email || ' ' || new.to_json, 1, 4096),
     substr(new.cc || ' ' || new.cc_json, 1, 4096),
     substr(new.subject, 1, 1024),
     substr(new.body, 1, 16384),
     'Draft',
-    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+    new.sender_address_id
   );
 END;
 

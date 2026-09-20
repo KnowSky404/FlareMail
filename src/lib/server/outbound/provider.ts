@@ -5,7 +5,7 @@ import {
   ResendOutboundGateway,
   type OutboundMailGateway
 } from './gateway';
-import { parseBoolean, resolveOutboundFromEmail } from '$lib/server/config/env';
+import { parseBoolean } from '$lib/server/config/env';
 
 const timeoutMs = (value: string | undefined) => {
   const parsed = Number(value);
@@ -17,9 +17,6 @@ export function createOutboundGateway(env: CloudflareEnv | undefined): OutboundM
   if (provider === 'resend') {
     if (!env?.RESEND_API_KEY?.trim()) {
       throw new OutboundGatewayError('configuration', 'Resend API key is not configured.', { retryable: false });
-    }
-    if (env.APP_ENV === 'production' && !resolveOutboundFromEmail(env)) {
-      throw new OutboundGatewayError('configuration', 'Outbound sender is not configured.', { retryable: false });
     }
     return new ResendOutboundGateway({
       apiKey: env?.RESEND_API_KEY,

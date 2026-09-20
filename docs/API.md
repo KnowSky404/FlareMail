@@ -7,16 +7,21 @@ cross-owner requests without exposing mailbox existence.
 ## Workspace snapshot
 
 `GET /api/workspace/session` returns the authenticated workspace snapshot. The response
-contains `activeFolder`, `mailboxPages`, and `metrics`.
+contains `activeFolder`, `mailboxPages`, `metrics`, and `mailIdentityOptions`.
 
 - `activeFolder` is `inbox`, `sent`, `drafts`, or `archive`.
 - Only the active folder's first page is loaded during the initial snapshot.
 - `metrics` is fetched once for the snapshot and is not repeated per folder.
-- `metrics` contains global mailbox counts plus global outbound aggregates:
+- `metrics` contains mailbox counts and outbound aggregates for the full Owner
+  when no identity filter is selected, or for the selected domain/address when
+  one is active:
   `queuedCount`, `delayedCount`, `failedCount`, `bouncedCount`,
   `complainedCount`, and `staleDeliveryCount`. These values cover the owned
-  workspace, not only the currently loaded page. A submission is stale after
-  15 minutes in `submitting` state.
+  selected scope, not only the currently loaded page. A submission is stale
+  after 15 minutes in `submitting` state.
+- `mailIdentityOptions` contains the Owner's configured domains and address
+  choices. Address options expose lifecycle/send readiness and the selected
+  default, never Cloudflare tokens or remote API details.
 - Changing folder requests that folder's page lazily. `archive` is a mailbox
   section backed by inbox rows with `archived_at`, not a persisted `folder`
   value.
@@ -26,15 +31,58 @@ contains `activeFolder`, `mailboxPages`, and `metrics`.
 ## Mailbox pages
 
 `GET /api/workspace/mailbox?folder=inbox|sent|drafts|archive&limit=...&cursor=...`
-returns a page with an opaque cursor. `q` and `filter` are optional server-side
-query parameters; a cursor is only valid for the same folder, section, query,
-and filter.
+returns a page with an opaque cursor. `q`, `filter`, and `identity` are optional
+server-side query parameters; `identity` accepts `domain:<owned-id>` or
+`address:<owned-id>`. A cursor is only valid for the same folder, section,
+query, filter, delivery status, and identity. The selected scope applies before
+pagination to inbound mail, sent mail, drafts, search results, and metrics.
+Unknown or foreign identity IDs are rejected; identity filters do not rely on
+the current browser page.
 
 Mailbox list rows contain metadata and a short snippet but do not select or
 return stored inbound, sent, or draft bodies. Inbound text is loaded through
 the owned message detail route. Workspace sent text is loaded through
 `GET /api/workspace/messages/:id/body`; the response never contains raw HTML.
 Ownership is checked on every list and detail path.
+
+Inbound `email_messages."to"` is the Cloudflare Email Routing envelope
+recipient. MIME `To` and `Cc` remain separate parsed headers, and raw
+`Delivered-To` remains a separate header snapshot. The detail view displays
+the actual envelope destination independently from the message's To header.
+
+## Managed domains and addresses
+
+`GET /api/workspace/mail-identities` returns only the authenticated Owner's
+configured domains and addresses. Domain enrollment is an operator-controlled
+configuration step (`bun run mail:domain:configure`) that records the exact
+domain-to-zone and Worker mapping; the browser cannot choose an arbitrary zone,
+Worker, API origin, or Cloudflare endpoint.
+
+- `POST /api/workspace/mail-identities` creates an address in an already
+  configured domain. The Worker creates an exact Email Routing rule and stores
+  the returned rule ID. Repeated or concurrent requests reconcile the same
+  address operation; an uncertain remote result remains visible as pending or
+  error for a later check/retry.
+- `POST /api/workspace/mail-identities/domains/:domainId/check` reads that
+  configured zone's exact rules and catch-all, and checks the domain-level
+  Resend sending status. A matching Worker rule may be explicitly imported;
+  a duplicate or same-name rule to another target is a conflict and is never
+  overwritten automatically.
+- `POST /api/workspace/mail-identities/:addressId` supports `disable`,
+  `enable`, `import`, `restore`, `retry`, `enable_send`, `disable_send`, and
+  `make_default`. Receive lifecycle and sending permission are separate.
+- `DELETE /api/workspace/mail-identities/:addressId` requires
+  `{ "confirm": "delete" }`. It closes local send/receive access and records a
+  tombstone before remote rule cleanup. It does not delete historical mail,
+  drafts, or R2 content. Restoring the same identity is an explicit action.
+
+The default unknown-recipient policy is `reject`. Optional `collect` is allowed
+only for a configured domain whose recent read-only check confirms its catch-all
+targets this Worker; collected messages retain the actual envelope address and
+do not create a sendable identity. A previously disabled/deleted explicit
+address is rejected before catch-all collection. Deleting this application's
+exact rule cannot block an external Worker or forwarding catch-all that also
+matches the domain.
 
 ## Response and runtime errors
 
@@ -61,10 +109,12 @@ mail content, bindings, credentials, or raw exception messages. HTML page loads
 return a typed unavailable view with retry and the read-only health link; they
 do not turn a storage or schema failure into the login page.
 
-`GET /api/health` is the unauthenticated readiness endpoint. It returns HTTP
-`200` only when production configuration is valid, every required table exists,
-and `workspace_schema_metadata` equals the exact application schema version.
-Otherwise it returns HTTP `503` with a typed safe error and correlation ID.
+`GET /api/health` is a minimal public liveness endpoint and returns only
+`{ "ok": true }`; it does not read bindings or disclose deployment state.
+`GET /api/readiness` is private and requires a valid workspace session. It
+checks runtime configuration, the exact required schema version/tables, and
+reports safe cleanup-queue counts. Failures return a typed safe error and
+correlation ID without configuration values or schema internals.
 
 ## Telegram notification API
 
@@ -106,11 +156,14 @@ limits.
 
 `POST /api/send` is a compatibility adapter for the first-generation compose
 client. It is still an authenticated workspace operation; it is not a public
-Resend proxy. The adapter keeps `RESEND_API_KEY` server-side, applies the same
-recipient/subject/body limits and rate limits as the workspace send route, and
-uses `OUTBOUND_FROM_EMAIL` as the recommended sender setting. `MAIL_FROM` may be
-supplied by an older deployment as a runtime compatibility alias; when both are
-present they must match, or environment validation fails closed.
+Resend proxy. The adapter keeps `RESEND_API_KEY` server-side and applies the
+same recipient/subject/body limits, sender authorization, and rate limits as
+the workspace send route. `senderAddressId` is the requested managed identity;
+the server resolves its From name/email/signature from D1. A new message may
+omit the ID only when an explicit ready default sender exists. Arbitrary `from`
+and client-controlled `replyTo` values do not set the outgoing identity.
+Legacy `OUTBOUND_FROM_EMAIL` / `MAIL_FROM` values are used only for system
+auto-replies and inbound notifications, never to override a workspace sender.
 
 The minimum legacy request is:
 
@@ -120,6 +173,7 @@ Content-Type: application/json
 Idempotency-Key: flaremail-legacy-client-20260823-001
 
 {
+  "senderAddressId": "managed-address-uuid",
   "to": "recipient@example.test",
   "subject": "Hello",
   "html": "<p>Hello from FlareMail</p>"
@@ -128,7 +182,9 @@ Idempotency-Key: flaremail-legacy-client-20260823-001
 
 `to` may be a single address (the legacy shape); implementations may also
 accept the current address-list form. `text`, `cc`, `bcc`, and RFC threading
-fields are optional extensions. The server must reject an empty/invalid
+fields are optional extensions. New clients should send `senderAddressId`; the
+server still validates it against the authenticated Owner and current address
+and domain send readiness. The server must reject an empty/invalid
 recipient, an overlong subject/body, and malformed JSON. `Idempotency-Key` is
 recommended for retryable clients; when it is absent, the server uses the
 request correlation ID, so a later retry must reuse that ID to deduplicate the
@@ -164,6 +220,16 @@ window; HTTP `429` includes `Retry-After`. `400`, `401`, `409`, `429`, and `503`
 retain their normal meaning and are safe for clients to retry only when the
 response contract allows it.
 
+On the first accepted logical send, the server persists the chosen address ID,
+From name/email, signature-rendered body, recipient sets, threading data, and
+Message-ID domain. Same-key retries replay that persisted payload and never
+switch to a new default or signature. If that original address can no longer
+send, retry stops with an explicit error and leaves its persisted delivery
+state intact. `Reply-To` is omitted unless generated from trusted server state;
+it is never copied from the client. Replies to inbound mail default to the
+address that received that exact delivery, while replies to sent mail preserve
+the sent item's historical sender identity.
+
 ### HTML safety boundary
 
 The `html` field is email content, not trusted application markup. The adapter
@@ -189,15 +255,19 @@ dedicated mailbox and must not send secrets or personal data in fixtures.
 ## Draft concurrency
 
 `GET /api/workspace/drafts/:id` returns the current owned draft with its full
-text body, an opaque `bodyRevision`, visible attachment lifecycle summaries, and an integer
-`attachmentRevision`. Draft writes include `expectedUpdatedAt`,
+text body, server-owned `senderAddressId` and From snapshot, an opaque
+`bodyRevision`, visible attachment lifecycle summaries, and an integer
+`attachmentRevision`. Draft writes include `senderAddressId` when changing the
+selected identity and `expectedUpdatedAt`,
 the version observed by the editor, and echo `bodyRevision` after a canonical
 body write. A client must present that revision before changing a tiered body;
 an edit based only on a list projection returns `DRAFT_BODY_RELOAD_REQUIRED`.
 
 The server updates only when that version still matches. A stale write returns
 HTTP `409` with a typed `DRAFT_CONFLICT` error containing only `draftId` and
-`updatedAt`. The client keeps the local edit visible and explicitly fetches the
+`updatedAt`. The server validates the sender against the same Owner and stores
+its current identity snapshot; client From/Reply-To headers do not override
+that snapshot. The client keeps the local edit visible and explicitly fetches the
 owned current draft if the user chooses the server version; error envelopes do
 not reflect a mail body.
 

@@ -49,6 +49,18 @@ const setup = () => {
   database.query(`INSERT INTO workspace_users
     (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '-- Owner', 0)`).run();
+  const senderCheckAt = new Date().toISOString();
+  database.query(`INSERT INTO mail_domains (
+      id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, enabled,
+      resend_status, resend_sending_status, resend_checked_at
+    ) VALUES ('domain-1', 'user-1', 'example.test', 'zone-1', 'flaremail', 1, 'verified', 'enabled', ?)`)
+    .run(senderCheckAt);
+  database.query(`INSERT INTO mail_addresses (
+      id, owner_user_id, domain_id, email, local_part, display_name, signature,
+      receive_enabled, send_enabled, lifecycle_status, routing_state, routing_owner, is_default_sender
+    ) VALUES ('address-1', 'user-1', 'domain-1', 'mail@example.test', 'mail', 'FlareMail', '-- Owner',
+      1, 1, 'active', 'active', 'flaremail', 1)`)
+    .run();
   database.query(`INSERT INTO workspace_sessions (id, user_id) VALUES ('session-1', 'user-1')`).run();
   const DB = new TestD1(database) as unknown as D1Database;
   const BUCKET = new TestBucket() as unknown as R2Bucket;
@@ -90,9 +102,9 @@ describe('outbound workspace persistence', () => {
       to: ['Alice <alice@example.net>', 'second@example.net'],
       cc: ['Copy <copy@example.net>'],
       bcc: ['blind@example.net'],
-      replyTo: ['mail@example.test'],
       headers: { 'In-Reply-To': '<original@example.net>', References: '<root@example.net> <original@example.net>' }
     });
+    expect(gateway.sent[0]?.replyTo).toBeUndefined();
 
     const duplicate = await sendWorkspaceMessage(env, session, input, { requestId: 'compose-1', gateway });
     const duplicateSession = session;
@@ -113,6 +125,45 @@ describe('outbound workspace persistence', () => {
       .rejects.toMatchObject({ code: 'DELIVERY_NOT_RETRYABLE', reason: 'status_not_retryable' });
   });
 
+  test('authorizes a selected managed address and ignores the legacy global sender', async () => {
+    const { database, env, session } = setup();
+    database.query(`INSERT INTO mail_addresses (
+        id, owner_user_id, domain_id, email, local_part, display_name, signature,
+        receive_enabled, send_enabled, lifecycle_status, routing_state, routing_owner
+      ) VALUES ('address-2', 'user-1', 'domain-1', 'support@example.test', 'support', 'Support', '-- Support team',
+        1, 1, 'active', 'active', 'flaremail')`).run();
+    const gateway = new FakeOutboundGateway({ providerMessageId: 're_selected_sender' });
+    const sent = await sendWorkspaceMessage({ ...env, OUTBOUND_FROM_EMAIL: 'legacy@another.test', OUTBOUND_FROM_NAME: 'Legacy' }, session, {
+      senderAddressId: 'address-2', toEmail: 'alice@example.net', subject: 'Selected From', body: 'Hello'
+    }, { requestId: 'selected-from', gateway });
+
+    expect(gateway.sent[0]?.from).toBe('Support <support@example.test>');
+    expect(gateway.sent[0]?.text).toBe('Hello\n\n-- Support team');
+    expect(gateway.sent[0]?.replyTo).toBeUndefined();
+    expect(gateway.sent[0]?.headers?.['Message-ID']).toMatch(/@example\.test>$/u);
+    expect(sent.message).toMatchObject({ senderAddressId: 'address-2', fromName: 'Support', fromEmail: 'support@example.test' });
+    expect(database.query(`SELECT sender_address_id, from_name, from_email, reply_to_json FROM workspace_messages WHERE id = ?`)
+      .get(sent.message.id)).toEqual({
+      sender_address_id: 'address-2', from_name: 'Support', from_email: 'support@example.test', reply_to_json: '[]'
+    });
+
+    await expect(sendWorkspaceMessage(env, session, {
+      senderAddressId: 'another-owner-address', toEmail: 'alice@example.net', subject: 'Spoofed From', body: 'No'
+    }, { requestId: 'spoofed-from', gateway: new FakeOutboundGateway() }))
+      .rejects.toMatchObject({ code: 'OUTBOUND_SENDER_NOT_SELECTED' });
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_messages`).get()).toEqual({ count: 1 });
+  });
+
+  test('requires an explicit sender when the workspace has no default', async () => {
+    const { database, env, session } = setup();
+    database.query(`UPDATE mail_addresses SET is_default_sender = 0 WHERE id = 'address-1'`).run();
+    await expect(sendWorkspaceMessage(env, session, {
+      senderAddressId: null, toEmail: 'alice@example.net', subject: 'No sender', body: 'No'
+    }, { requestId: 'no-sender', gateway: new FakeOutboundGateway() }))
+      .rejects.toMatchObject({ code: 'OUTBOUND_SENDER_NOT_SELECTED' });
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_messages`).get()).toEqual({ count: 0 });
+  });
+
   test('sanitizes HTML-only payloads before provider submission and blocks remote images', async () => {
     const { env, session } = setup();
     const gateway = new FakeOutboundGateway({ providerMessageId: 're_html_1' });
@@ -120,8 +171,8 @@ describe('outbound workspace persistence', () => {
       toEmail: 'alice@example.net', subject: 'HTML', body: '',
       html: '<p>Hello <a href="https://example.com">portal</a></p><script>alert(1)</script><img src="https://tracker.example/pixel">'
     }, { requestId: 'html-1', gateway });
-    expect(gateway.sent[0]?.text).toBe('Hello portal');
-    expect(gateway.sent[0]?.html).toBe('<p>Hello <a href="https://example.com" target="_blank" rel="noopener noreferrer">portal</a></p>');
+    expect(gateway.sent[0]?.text).toBe('Hello portal\n\n-- Owner');
+    expect(gateway.sent[0]?.html).toBe('<p>Hello <a href="https://example.com" target="_blank" rel="noopener noreferrer">portal</a></p><br><br>-- Owner');
     expect(gateway.sent[0]?.html).not.toContain('fm-link-target');
     expect(gateway.sent[0]?.html).not.toContain('tracker.example');
   });
@@ -162,13 +213,38 @@ describe('outbound workspace persistence', () => {
     expect(result.message.deliveryResultKind).toBe('temporary_failure');
     expect(database.query(`SELECT status, completed_at FROM workspace_delivery_attempts`).get())
       .toEqual({ status: 'submitting', completed_at: null });
+    database.query(`UPDATE mail_addresses SET is_default_sender = 0 WHERE id = 'address-1'`).run();
+    database.query(`INSERT INTO mail_addresses (
+        id, owner_user_id, domain_id, email, local_part, display_name, signature,
+        receive_enabled, send_enabled, lifecycle_status, routing_state, routing_owner, is_default_sender
+      ) VALUES ('address-2', 'user-1', 'domain-1', 'other@example.test', 'other', 'Other sender', '-- Changed signature',
+        1, 1, 'active', 'active', 'flaremail', 1)`).run();
 
     const retryGateway = new FakeOutboundGateway({ providerMessageId: 're_after_unknown' });
-    const retried = await retryWorkspaceMessageDelivery(env, session, result.message.id, { gateway: retryGateway });
+    const retried = await retryWorkspaceMessageDelivery({ ...env, OUTBOUND_FROM_EMAIL: 'legacy@elsewhere.test', OUTBOUND_FROM_NAME: 'Legacy' }, session, result.message.id, { gateway: retryGateway });
     expect(retried?.message.deliveryStatus).toBe('submitted');
     expect(retryGateway.sent[0]?.idempotencyKey).toBe('flaremail:send:user-1:compose-unknown');
+    expect(retryGateway.sent[0]?.from).toBe('FlareMail <mail@example.test>');
+    expect(retryGateway.sent[0]?.text).toBe('Body\n\n-- Owner');
+    expect(retryGateway.sent[0]?.replyTo).toBeUndefined();
     expect(database.query(`SELECT status, attempts, provider_message_id FROM workspace_delivery_statuses`).get())
       .toEqual({ status: 'submitted', attempts: 2, provider_message_id: 're_after_unknown' });
+  });
+
+  test('does not change a persisted delivery state when its original sender is disabled', async () => {
+    const { database, env, session } = setup();
+    const firstGateway = new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'outcome unknown') });
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Retry guard', body: 'Body' }, {
+      requestId: 'retry-disabled-sender', gateway: firstGateway
+    });
+    database.query(`UPDATE mail_addresses SET send_enabled = 0, is_default_sender = 0 WHERE id = 'address-1'`).run();
+    const retryGateway = new FakeOutboundGateway({ providerMessageId: 'must_not_submit' });
+
+    await expect(retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway: retryGateway }))
+      .rejects.toMatchObject({ code: 'OUTBOUND_SENDER_DISABLED' });
+    expect(retryGateway.sent).toHaveLength(0);
+    expect(database.query(`SELECT status, attempts FROM workspace_delivery_statuses WHERE message_id = ?`).get(sent.message.id))
+      .toEqual({ status: 'submitting', attempts: 1 });
   });
 
   test('refuses ordinary retry after the provider idempotency window expires', async () => {
@@ -199,7 +275,7 @@ describe('outbound workspace persistence', () => {
       subject: 'Large draft',
       body: stored.body
     }, { gateway: legacyGateway });
-    expect(legacyGateway.sent[0]?.text).toBe(large);
+    expect(legacyGateway.sent[0]?.text).toBe(`${large}\n\n-- Owner`);
 
     const second = await saveWorkspaceDraft(env, session, {
       toEmail: 'alice@example.net', subject: 'Large draft 2', body: large
@@ -222,7 +298,7 @@ describe('outbound workspace persistence', () => {
       subject: 'Large draft 2',
       body: edited
     }, { gateway: editedGateway });
-    expect(editedGateway.sent[0]?.text).toBe(edited);
+    expect(editedGateway.sent[0]?.text).toBe(`${edited}\n\n-- Owner`);
   });
 
   test('atomically transfers verified draft attachments and reuses them on same-key retry', async () => {

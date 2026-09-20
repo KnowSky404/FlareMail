@@ -4,7 +4,7 @@ import { readWorkspaceUrl, updateWorkspaceUrl } from './workspace-url-controller
 describe('workspace URL controller', () => {
   test('normalizes invalid state without dropping unrelated parameters', () => {
     const url = new URL('https://flaremail.example/?folder=unknown&q=123456789&filter=bad&keep=yes');
-    expect(readWorkspaceUrl(url)).toEqual({ section: 'inbox', query: '123456789', filter: 'all', messageId: null });
+    expect(readWorkspaceUrl(url)).toEqual({ section: 'inbox', query: '123456789', filter: 'all', identityFilter: null, messageId: null });
     const next = updateWorkspaceUrl(url, { section: 'profile', query: '', filter: 'all', messageId: null });
     expect(next.toString()).toBe('https://flaremail.example/?folder=settings&keep=yes');
   });
@@ -14,9 +14,12 @@ describe('workspace URL controller', () => {
       section: 'sent',
       query: '  invoice ',
       filter: 'starred',
+      identityFilter: { kind: 'address', id: 'address-1' },
       messageId: 'message-1'
     });
-    expect(readWorkspaceUrl(next)).toEqual({ section: 'sent', query: 'invoice', filter: 'starred', messageId: 'message-1' });
-    expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=trash'))).toEqual({ section: 'trash', query: '', filter: 'all', messageId: null });
+    expect(readWorkspaceUrl(next)).toEqual({
+      section: 'sent', query: 'invoice', filter: 'starred', identityFilter: { kind: 'address', id: 'address-1' }, messageId: 'message-1'
+    });
+    expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=trash'))).toEqual({ section: 'trash', query: '', filter: 'all', identityFilter: null, messageId: null });
   });
 });

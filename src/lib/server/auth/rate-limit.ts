@@ -6,8 +6,13 @@ export interface RateLimitResult {
 const DEFAULT_LIMIT = 5;
 const DEFAULT_WINDOW_MS = 15 * 60 * 1000;
 
-export function normalizeLoginEmail(value: string) {
-  return value.trim().toLowerCase();
+export function normalizeLoginUsername(value: string) {
+  return value.trim().normalize('NFKC').toLowerCase();
+}
+
+export function isValidLoginUsername(value: string) {
+  const normalized = normalizeLoginUsername(value);
+  return normalized.length >= 1 && normalized.length <= 128 && /^[\p{L}\p{N}][\p{L}\p{N}._@+-]*$/u.test(normalized);
 }
 
 async function identityHash(key: string) {

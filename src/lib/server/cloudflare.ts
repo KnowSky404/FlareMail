@@ -6,7 +6,14 @@
 declare global {
   interface CloudflareEnv {
     APP_VERSION?: string;
+    AUTH_MODE?: string;
+    ACCESS_ISSUER?: string;
+    ACCESS_AUDIENCE?: string;
+    ACCESS_JWKS_URL?: string;
+    ACCESS_ALLOWED_SUBJECT?: string;
+    ACCESS_OWNER_USER_ID?: string;
     RESEND_API_KEY?: string;
+    CLOUDFLARE_EMAIL_ROUTING_TOKEN?: string;
     /** Legacy outbound sender alias retained for the compatibility send API. */
     MAIL_FROM?: string;
     RESEND_API_BASE_URL?: string;

@@ -9,10 +9,35 @@ export async function findUserByLogin(db: D1Database, loginEmail: string) {
 
 export async function findAuthUserByLogin(db: D1Database, loginEmail: string) {
   return db.prepare(`
-    SELECT ${userSelect}, credential_hash, credential_updated_at
-    FROM workspace_users
-    WHERE lower(login_email) = lower(?)
+    SELECT ${userSelect}, c.credential_hash, c.updated_at AS credential_updated_at
+    FROM workspace_owner AS owner
+    JOIN workspace_users AS u ON u.id = owner.user_id
+    JOIN workspace_auth_credentials AS c ON c.user_id = u.id
+    WHERE owner.singleton = 1 AND lower(c.username) = lower(?)
   `).bind(loginEmail).first<WorkspaceAuthUserRow>();
+}
+
+export async function findWorkspaceOwnerId(db: D1Database) {
+  const row = await db.prepare(`
+    SELECT owner.user_id AS id
+    FROM workspace_owner AS owner
+    JOIN workspace_users AS u ON u.id = owner.user_id
+    WHERE owner.singleton = 1
+  `).first<{ id: string }>();
+  return row?.id ?? null;
+}
+
+export async function hasWorkspaceOwnerCredential(db: D1Database) {
+  const row = await db.prepare(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM workspace_owner AS owner
+      JOIN workspace_users AS u ON u.id = owner.user_id
+      JOIN workspace_auth_credentials AS credential ON credential.user_id = owner.user_id
+      WHERE owner.singleton = 1 AND length(credential.credential_hash) > 0
+    ) AS configured
+  `).first<{ configured: number }>();
+  return row?.configured === 1;
 }
 
 export async function findUserById(db: D1Database, userId: string) {

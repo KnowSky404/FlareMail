@@ -25,6 +25,7 @@ export type { WorkspaceContext, WorkspaceSession } from '$lib/server/workspace/s
 export { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox, serializeWorkspace } from '$lib/server/workspace/mailbox';
 export {
   authenticateWorkspaceUser,
+  createAccessWorkspaceSession,
   clearSessionCookieOptions,
   destroyWorkspaceSession,
   getWorkspaceSessionCookieName,
@@ -34,6 +35,7 @@ export {
   sessionCookieOptions,
   secureWorkspaceSessionCookie,
   WorkspaceAuthUnavailableError,
+  WorkspaceAuthNotConfiguredError,
   workspaceSessionCookieNames,
   workspaceSessionCookie
 } from '$lib/server/workspace/session';

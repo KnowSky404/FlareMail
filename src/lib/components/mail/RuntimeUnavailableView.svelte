@@ -29,7 +29,7 @@
       <p class="request-id">{t('runtime.requestId')}：<code>{state.requestId}</code></p>
       <div class="actions">
         <button type="button" onclick={() => location.reload()} disabled={!state.retryable}><RefreshCw size={16} aria-hidden="true" />{t('mail.retry')}</button>
-        <a href="/api/health" target="_blank" rel="noreferrer">{t('runtime.openHealth')}</a>
+        <a href="/api/readiness" target="_blank" rel="noreferrer">{t('runtime.openHealth')}</a>
       </div>
     </div>
   </section>

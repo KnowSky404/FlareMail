@@ -1,7 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { resolveOutboundFromEmail } from '$lib/server/config/env';
 import { ApiError } from '$lib/server/http/api';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
+import { listMailboxIdentityOptions, mailboxIdentityFilterExists } from '$lib/server/db/mail-identities';
 import { buildFtsSearchPlan } from '$lib/server/search/fts';
 import {
   getMailboxMetrics,
@@ -14,7 +14,7 @@ import {
   listOwnedMailboxMutationRows,
   resolveOwnedMailboxThreadMessageIds
 } from '$lib/server/db/messages';
-import { findSessionJoin, findSessionJoinByTokenHash } from '$lib/server/db/sessions';
+import { findSessionJoin, findSessionJoinByTokenHash, type SessionAuthContext } from '$lib/server/db/sessions';
 import {
   mapDraftRow,
   mapInboundRow,
@@ -58,6 +58,7 @@ export interface WorkspaceSnapshotOptions {
   limit?: number;
   query?: string;
   filter?: MailboxFilter;
+  identityFilter?: MailboxPage['identityFilter'];
   deliveryStatus?: DeliveryStatus | null;
 }
 
@@ -136,6 +137,8 @@ function mapSessionRow(
   return {
     id: sessionRow.session_id,
     userId: sessionRow.id,
+    authMethod: sessionRow.auth_method,
+    principalId: sessionRow.principal_id,
     profile: mapUserRowToProfile(sessionRow),
     incomingSequence: sessionRow.incoming_sequence,
     createdAt: sessionRow.created_at,
@@ -149,8 +152,12 @@ export async function loadD1WorkspaceContext(env: CloudflareEnv, sessionId: stri
   return sessionRow ? mapSessionRow(sessionRow) : null;
 }
 
-export async function loadD1WorkspaceContextByTokenHash(env: CloudflareEnv, tokenHash: string): Promise<WorkspaceContext | null> {
-  const sessionRow = await findSessionJoinByTokenHash(env.DB, tokenHash);
+export async function loadD1WorkspaceContextByTokenHash(
+  env: CloudflareEnv,
+  tokenHash: string,
+  authContext: SessionAuthContext = { authMethod: 'local' }
+): Promise<WorkspaceContext | null> {
+  const sessionRow = await findSessionJoinByTokenHash(env.DB, tokenHash, undefined, authContext);
   return sessionRow ? mapSessionRow(sessionRow) : null;
 }
 
@@ -179,6 +186,9 @@ export async function loadMailboxPage(
 ): Promise<MailboxPage> {
   const section = query.section ?? query.folder;
   const persistedFolder: MailFolder = query.folder;
+  if (query.identityFilter && !(await mailboxIdentityFilterExists(env.DB, workspace.userId, query.identityFilter))) {
+    throw new ApiError(404, 'MAIL_IDENTITY_NOT_FOUND', '所选邮件身份不存在或不属于当前工作区。');
+  }
   const repositoryQuery = {
     folder: persistedFolder,
     section,
@@ -188,13 +198,14 @@ export async function loadMailboxPage(
     query: query.query,
     search: query.search,
     filter: query.filter,
+    identityFilter: query.identityFilter,
     deliveryStatus: query.deliveryStatus
   };
   const metricsPromise = query.cursor
     ? Promise.resolve<WorkspaceMetrics | undefined>(undefined)
     : knownMetrics
       ? Promise.resolve(knownMetrics)
-      : getMailboxMetrics(env.DB, workspace.userId);
+      : getMailboxMetrics(env.DB, workspace.userId, query.identityFilter);
   let messages;
   const searchHitFields = query.search ? buildFtsSearchPlan(query.search).hitFields : [];
   let searchTotal = 0;
@@ -232,12 +243,14 @@ export async function loadMailboxPage(
       id: last.id,
       query: query.query,
       filter: query.filter,
+      identityFilter: query.identityFilter,
       deliveryStatus: query.deliveryStatus
     }) : null,
     hasMore,
     limit: query.limit,
     query: query.query,
     filter: query.filter,
+    identityFilter: query.identityFilter,
     deliveryStatus: query.deliveryStatus,
     ...(query.search && !query.cursor ? { searchTotal, searchHitFields } : {}),
     ...(metrics ? { metrics } : {})
@@ -252,6 +265,7 @@ interface MailboxSummaryQuery {
   query: string;
   search: MailSearchQuery | null;
   filter: MailboxFilter;
+  identityFilter: MailboxPage['identityFilter'];
 }
 
 async function listInboundMessageSummaryPage(
@@ -275,6 +289,13 @@ async function listInboundMessageSummaryPage(
         : '1 = 1'
   ];
   const bindings: unknown[] = [userId];
+  if (input.identityFilter?.kind === 'address') {
+    conditions.push('e.mail_address_id = ?');
+    bindings.push(input.identityFilter.id);
+  } else if (input.identityFilter?.kind === 'domain') {
+    conditions.push('e.mail_domain_id = ?');
+    bindings.push(input.identityFilter.id);
+  }
   if (searchPlan?.expression) {
     conditions.push('workspace_search_fts MATCH ?');
     bindings.push(searchPlan.expression);
@@ -314,7 +335,8 @@ async function listInboundMessageSummaryPage(
     : `NULL`;
 
   const pageSelect = `
-    SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
+    SELECT e.id AS email_id, e."from", e."to", e.mail_address_id, e.mail_domain_id, e.recipient_status,
+      e.subject, e."timestamp", e.snippet,
       e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
       ${searchSnippet} AS search_snippet
@@ -338,7 +360,11 @@ export async function loadWorkspaceSnapshot(
   const normalized = typeof options === 'number' ? { limit: options } : options;
   const activeFolder = normalized.activeFolder ?? 'inbox';
   const persistedFolder: MailFolder = activeFolder === 'archive' ? 'inbox' : activeFolder;
-  const metrics = await getMailboxMetrics(env.DB, workspace.userId);
+  const identityFilter = normalized.identityFilter ?? null;
+  const [metrics, mailIdentityOptions] = await Promise.all([
+    getMailboxMetrics(env.DB, workspace.userId, identityFilter),
+    listMailboxIdentityOptions(env.DB, workspace.userId)
+  ]);
   const page = await loadMailboxPage(env, workspace, {
     folder: persistedFolder,
     section: activeFolder,
@@ -347,6 +373,7 @@ export async function loadWorkspaceSnapshot(
     query: normalized.query ?? '',
     search: normalized.query ? parseMailSearchQuery(normalized.query) : null,
     filter: normalized.filter ?? 'all',
+    identityFilter,
     deliveryStatus: normalized.deliveryStatus ?? null
   }, metrics);
   const mailbox: MailboxState = { inbox: [], sent: [], drafts: [] };
@@ -359,7 +386,7 @@ export async function loadWorkspaceSnapshot(
     activePage: page,
     mailbox,
     mailboxPages,
-    outboundSenderEmail: resolveOutboundFromEmail(env)
+    mailIdentityOptions
   };
   return { workspace: snapshot };
 }

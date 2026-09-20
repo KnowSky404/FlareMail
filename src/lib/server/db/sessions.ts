@@ -6,9 +6,14 @@ export interface ActiveSessionCapabilityRow {
   expires_at: string;
 }
 
+export interface SessionAuthContext {
+  authMethod: 'local' | 'cloudflare-access';
+  principalId?: string | null;
+}
+
 export async function findSessionJoin(db: D1Database, sessionId: string) {
   return db.prepare(`
-    SELECT s.id AS session_id, s.created_at, s.updated_at,
+    SELECT s.id AS session_id, s.created_at, s.updated_at, s.auth_method, s.principal_id,
       u.id, u.login_email, u.name, u.role, u.email, u.company, u.location, u.timezone,
       u.forwarding_enabled, u.signature, u.incoming_sequence
     FROM workspace_sessions AS s JOIN workspace_users AS u ON u.id = s.user_id
@@ -16,14 +21,21 @@ export async function findSessionJoin(db: D1Database, sessionId: string) {
   `).bind(sessionId).first<WorkspaceSessionJoinRow>();
 }
 
-export async function findSessionJoinByTokenHash(db: D1Database, tokenHash: string, timestamp = new Date().toISOString()) {
+export async function findSessionJoinByTokenHash(
+  db: D1Database,
+  tokenHash: string,
+  timestamp = new Date().toISOString(),
+  authContext: SessionAuthContext = { authMethod: 'local' }
+) {
   return db.prepare(`
-    SELECT s.id AS session_id, s.created_at, s.updated_at,
+    SELECT s.id AS session_id, s.created_at, s.updated_at, s.auth_method, s.principal_id,
       u.id, u.login_email, u.name, u.role, u.email, u.company, u.location, u.timezone,
       u.forwarding_enabled, u.signature, u.incoming_sequence
     FROM workspace_sessions AS s JOIN workspace_users AS u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?
-  `).bind(tokenHash, timestamp).first<WorkspaceSessionJoinRow>();
+      AND s.auth_method = ? AND s.principal_id IS ?
+  `).bind(tokenHash, timestamp, authContext.authMethod, authContext.principalId ?? null)
+    .first<WorkspaceSessionJoinRow>();
 }
 
 export async function findActiveSessionCapability(
@@ -38,13 +50,20 @@ export async function findActiveSessionCapability(
   `).bind(sessionId, timestamp).first<ActiveSessionCapabilityRow>();
 }
 
-export async function createSession(db: D1Database, userId: string, tokenHash: string, expiresAt: string) {
+export async function createSession(
+  db: D1Database,
+  userId: string,
+  tokenHash: string,
+  expiresAt: string,
+  authContext: SessionAuthContext = { authMethod: 'local' }
+) {
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
   await db.prepare(`
-    INSERT INTO workspace_sessions (id, user_id, token_hash, expires_at, last_seen_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(id, userId, tokenHash, expiresAt, timestamp, timestamp, timestamp).run();
+    INSERT INTO workspace_sessions (
+      id, user_id, token_hash, expires_at, last_seen_at, auth_method, principal_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(id, userId, tokenHash, expiresAt, timestamp, authContext.authMethod, authContext.principalId ?? null, timestamp, timestamp).run();
   return id;
 }
 
