@@ -71,7 +71,9 @@ test('keeps plain text safe while exercising HTML, CID, remote consent, and repo
   await detail.getByText('技术详情', { exact: true }).click();
   const replyAllDialog = page.getByRole('dialog', { name: '回复邮件' });
   await detail.getByRole('button', { name: '回复全部', exact: true }).click();
-  await expect(replyAllDialog.getByRole('button', { name: '移除收件人 support@flaremail.test' })).toBeVisible();
+  await expect(replyAllDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
+  await expect(replyAllDialog.getByRole('button', { name: /移除(?:收件人|抄送) support@flaremail\.test/u })).toHaveCount(0);
+  await expect(replyAllDialog.getByLabel('发件地址')).toHaveValue('00000000-0000-4000-8000-000000000021');
   await expect(replyAllDialog.getByRole('button', { name: '移除抄送 observer@flaremail.test' })).toBeVisible();
   await expect(replyAllDialog.getByRole('button', { name: '移除抄送 team@flaremail.test' })).toBeVisible();
   await replyAllDialog.getByRole('button', { name: '关闭' }).click();
