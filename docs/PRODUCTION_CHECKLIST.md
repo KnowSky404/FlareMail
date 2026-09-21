@@ -73,6 +73,21 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] Browser mutations are same-origin on every intended Worker hostname;
   cross-origin and missing-`Origin` mutations are rejected.
 
+## Browser authentication smoke
+
+- [ ] In a dedicated browser session, confirm same-origin `/api` requests carry
+  `X-Requested-With: XMLHttpRequest`; no request to an external origin carries
+  that header.
+- [ ] Expire Access while a draft is open. The UI keeps its current content,
+  stops polling/autosave, and offers a same-origin reauthentication path.
+- [ ] Reauthenticate in another tab and confirm the expired tab refreshes only
+  session/mailbox/detail GETs. It does not repeat a draft save, send, delete, or
+  bulk mutation until the user explicitly chooses an action.
+- [ ] Confirm `403`, provider-verification `503`, arbitrary HTML/`502`, and
+  offline/network errors remain distinguishable from an expired session.
+- [ ] Verify Access still protects HTML/CID, raw-message, standalone-reader,
+  and attachment routes on every Worker hostname; no mailbox route is exempted.
+
 ## D1 target and migration evidence
 
 - [ ] The intended D1 target is confirmed with:

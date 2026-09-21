@@ -361,6 +361,19 @@ For Access-only mode:
    `401`. The application independently verifies Access on every private
    request, including SSR/data, reader, HTML/CID, raw, and attachment paths.
 
+For an expired-session smoke, use a dedicated browser session and compose a
+local test draft. Expire Access in one tab, then trigger a same-origin workspace
+request. The browser should receive an Access AJAX `401`, keep the composer and
+its in-memory edits visible, and offer reauthentication. Authenticate in the
+same-origin sign-in path or another tab; the expired tab should refresh only
+session/mailbox/detail GETs. Confirm it does not autosave or replay a send,
+delete, or bulk action until the user chooses an action again. Explicitly save
+the draft once after recovery. If a send result is uncertain, check the persisted
+delivery state and retry with the same idempotency key; do not start a new
+logical send. This follows the
+[Access AJAX session guidance](https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/)
+and needs no D1 migration or new Access bypass.
+
 Application logout revokes its D1 session and redirects through
 `/cdn-cgi/access/logout`. This ends the Access application session; whether an
 upstream IdP session also ends depends on that IdP. If Access immediately

@@ -20,13 +20,41 @@ contains `activeFolder`, `mailboxPages`, `metrics`, and `mailIdentityOptions`.
   selected scope, not only the currently loaded page. A submission is stale
   after 15 minutes in `submitting` state.
 - `mailIdentityOptions` contains the Owner's configured domains and address
-  choices. Address options expose lifecycle/send readiness and the selected
-  default, never Cloudflare tokens or remote API details.
+  choices. Address options expose lifecycle, address/domain send switches,
+  Resend status and sending status, the last check time/failure flag, send
+  readiness, and the selected default; they never expose provider credentials
+  or remote API details.
 - Changing folder requests that folder's page lazily. `archive` is a mailbox
   section backed by inbox rows with `archived_at`, not a persisted `folder`
   value.
 - Logging out clears the client snapshot, metrics, selected message, detail
   cache, and mailbox pages before another user can log in.
+
+## Browser authentication expiry and recovery
+
+The browser client adds `X-Requested-With: XMLHttpRequest` to requests whose
+target is the current origin and `/api` or `/api/...`, including JSON requests
+and attachment uploads. It removes the header from requests to every other
+origin. This is Cloudflare Access's documented AJAX signal for returning
+`401` when an Access session expires instead of sending an XHR/fetch caller
+through a login redirect.
+
+On same-origin API requests, the client classifies a Worker JSON `401` with
+`ACCESS_REQUIRED` or `AUTHENTICATION_REQUIRED`, an edge non-JSON `401`, or a
+redirect that ends at a recognized Cloudflare Access login URL as a session
+expiry. Other HTML is not treated as a login page. `403` remains forbidden;
+`502`/`503`, arbitrary invalid responses, offline status, and network/CORS
+failures keep separate error states.
+
+After expiry, normal API work, polling, and compose autosave stop. The open
+composer and its edits remain in that tab's memory; credentials, tokens, and
+draft bodies are not copied to local storage or broadcast. The user can open a
+same-origin sign-in path or retry the session check. Once another tab has
+authenticated, the expired tab receives only an authentication-state signal,
+then refreshes `GET /api/workspace/session` and other safe workspace GETs.
+Failed writes, sends, deletions, and bulk actions are never automatically
+replayed. The user must choose the action again after recovery; a send retry
+continues to use the existing stable idempotency key.
 
 ## Mailbox pages
 
@@ -135,6 +163,23 @@ automatic redelivery when a handler throws. FlareMail therefore does not rely
 on throw-to-retry as a delivery guarantee. Inbound storage or D1 failures still
 throw rather than being converted to a permanent reject; their redelivery
 behavior must be verified against the deployed Cloudflare account separately.
+
+## Sender selection and readiness
+
+For new mail and forwards, a ready exact address selected in the mailbox filter
+is the initial sender. Other views, including a domain filter, use the ready
+global default; if the exact address is not ready, the client falls back to that
+ready global default or leaves From unset. Replies and Reply All keep the
+identity of the specific received message or sent message, regardless of a
+later filter change. An opened draft keeps its saved sender ID, including an
+explicitly empty sender, rather than adopting a newer default.
+
+The compose view explains whether sending is blocked by address or domain
+disablement, an unverified/disabled Resend sending state, a stale successful
+check, or a failed provider check. A refreshed identity list changes the
+available status and explanation without replacing the current From choice or
+discarding compose edits. Draft content can still be saved while its sender is
+not ready; the server independently enforces sender readiness before delivery.
 
 ## Scheduled provider health
 

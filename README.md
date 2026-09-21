@@ -16,9 +16,9 @@ FlareMail 是一个部署在 Cloudflare Workers 上的个人自托管邮件工�
 - D1/R2 持久化：入站原文与带 SHA-256 的附件、用户归属、已读/星标、归档、批量邮箱操作、草稿、已发送、投递状态和事件时间线；下载在返回 bytes 前验证 ownership、size 与 checksum。
 - Resend 出站：稳定幂等键、`reply_to`/RFC headers、R2 流式附件上传与完整性校验、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
-- 明确的 `AUTH_MODE=local|cloudflare-access` 认证：本地用户名（无需邮箱）和 PBKDF2 密码，或验签后的 Cloudflare Access 身份映射到相同稳定 Owner；两种模式共用 D1 会话吊销、Cookie、Origin/CSRF、登录限速和安全响应头。
+- 明确的 `AUTH_MODE=local|cloudflare-access` 认证：本地用户名（无需邮箱）和 PBKDF2 密码，或验签后的 Cloudflare Access 身份映射到相同稳定 Owner；两种模式共用 D1 会话吊销、Cookie、Origin/CSRF、登录限速和安全响应头。Access 过期时，浏览器保留当前标签中的写信内容，重新认证后只刷新安全 GET，不盲重放写请求。
 - 多域名邮件身份：域名通过受控配置显式加入；地址路由只使用限定 zone 的 Cloudflare Email Routing Rules API 精确规则。收件在读取正文/R2 前按信封收件人解析地址，统一邮箱支持服务端域名/地址筛选，搜索、计数、分页和草稿使用同一筛选范围。批量操作默认只修改已选的已加载邮件；筛选内会话和跨 Owner 地址的完整会话均需明确选择，回收站始终是 Owner 全局视图。
-- 多发件身份：每封新邮件、回复、草稿和重试都携带受管地址 ID；服务端检查 Owner、地址状态和域级 Resend 发信验证，再固定 From/签名快照。旧 `OUTBOUND_FROM_EMAIL` / `MAIL_FROM` 仅供系统自动回复和通知使用。
+- 多发件身份：新邮件优先采用当前精确地址筛选中的可发信地址，其他视图使用可发信的全局默认；回复和草稿保留各自原有身份。服务端检查 Owner、地址状态和域级 Resend 发信验证，再固定 From/签名快照；编辑器分别说明地址/域停用、验证状态、检查过期和失败。旧 `OUTBOUND_FROM_EMAIL` / `MAIL_FROM` 仅供系统自动回复和通知使用。
 - 响应式阅读工作台：桌面三栏、可折叠侧栏、280–480 px 可拖拽/键盘调整的邮件列表、标准/紧凑显示密度、平板/手机 drill-in、近全屏专注阅读和 `/messages/[id]` 独立阅读地址；列表宽度会在详情区可用空间不足时临时收窄，按 Enter 可恢复 360 px 默认值；同一用户打开的窗口只同步邮件状态信号，不传播正文、地址或凭据。
 - 双语界面：服务端按安全 locale cookie（显式语言或跟随浏览器）以及 `Accept-Language` 首屏选择 zh-CN 或 en，浏览器端支持显式语言、跟随浏览器和持久化；日期、数字、计数和辅助标签随语言更新，邮件主题、地址、正文与附件文件名保持原文。
 - 版本化 D1 migration：`migrations/0001` 至 `0026`。`0023` 将稳定 Owner 与本地用户名/凭据分开，`0024` 添加受管域名/地址和邮件身份快照，`0025` 添加独立的 Cloudflare/Resend 健康续检租约，`0026` 记录地址删除策略；历史邮件不会因资料邮箱或旧登录邮箱自动变成可收发地址。`schema.sql` 是最新结构快照。

@@ -15,7 +15,7 @@
 - cleanup bounded drain、原子 claim、lease recovery、指数 backoff、最大 attempts、manual review、幂等完成记录、health/backlog 摘要与无 PII 事件。
 - 确定性 near-limit runtime fixtures、本地 parser 测量、Preview correlation workflow、生产 checklist、release record 与建议性 SLO。
 - reading-space UI：可持久化侧栏折叠、280–480 px 键盘可调且按 Enter 可复位的列表栏、详情区最小空间约束、标准/紧凑密度、近全屏专注阅读、`/messages/[id]` owner-scoped reader、同源窗口状态同步，以及 zh-CN/en SSR-safe locale（含跟随浏览器选项）。尺寸与浏览器证据见 [docs/READING_SPACE_QA.md](./docs/READING_SPACE_QA.md)。
-- 邮件身份可靠性：当前视图批量操作的服务端范围约束、地址路由删除指纹/对账/恢复租约、schema 25 的 Cloudflare/Resend 独立只读续检、schema 26 的删除预览与三种删除策略，以及仅本地运行的历史地址 plan/apply/verify。仍需在独立环境验证调度、provider 与经授权的生产回填；`docs/PRODUCTION_CHECKLIST.md` 保留相应门禁。
+- 邮件身份与会话可靠性：当前视图批量操作的服务端范围约束、地址路由删除指纹/对账/恢复租约、schema 25 的 Cloudflare/Resend 独立只读续检、schema 26 的删除预览与三种删除策略、仅本地运行的历史地址 plan/apply/verify、筛选感知的 From 默认与逐封回复身份，以及 Access 过期后的草稿保留和安全 GET 恢复。仍需在独立环境验证调度、provider、浏览器 Access 会话边缘行为与经授权的生产回填；`docs/PRODUCTION_CHECKLIST.md` 保留相应门禁。
 
 仓库不会自动执行远程 migration、生产部署或真实邮件 smoke。操作者仍需在隔离 preview 测量近上限 MIME/附件的 CPU、内存和 subrequest，再按 `docs/DEPLOYMENT.md` 完成生产检查。
 

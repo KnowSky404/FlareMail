@@ -44,6 +44,18 @@ public application health route is minimal `/api/health`; detailed
 internal session and requests Cloudflare Access logout; logging out of an
 upstream identity provider remains a separate account-level action.
 
+Same-origin browser API requests use Access's documented
+`X-Requested-With: XMLHttpRequest` signal, and the client never adds it to an
+external origin. A known Worker authentication JSON `401`, Access edge `401`,
+or recognized Access login redirect enters a recoverable expired-session state;
+`403`, service errors, arbitrary HTML, and network/CORS failures remain distinct.
+Recovery keeps the active composer in tab memory, pauses polling and autosave,
+and accepts only an explicit session GET while locked. Reauthentication in
+another tab broadcasts only an authentication-state event; the old tab then
+refreshes safe GET resources. Writes are not blindly replayed, credentials and
+draft bodies are not stored in local storage, and a return path is restricted to
+the same-origin pathname.
+
 ### Managed domains and addresses
 
 `mail_domains` explicitly maps one actual receiving domain to its Cloudflare
@@ -128,12 +140,20 @@ identity remain readable and searchable in that unified view; deletion does
 not erase their history.
 
 Every outbound draft/send stores the authorized sender address ID and immutable
-From name/email and body/signature payload. New mail uses an explicitly ready
-default or a selected ready address. Replies to inbound mail use the exact
-envelope recipient for that delivery as From; replies to sent mail preserve
-that message's original sender. Reply-All excludes every managed self address
-and never copies inbound BCC. Client From/Reply-To values do not grant
-authority. Resend verification is checked at the actual From domain, separately
+From name/email and body/signature payload. New mail and forwards use a ready
+address selected by an exact-address filter when present; other views, including
+domain-filtered views, use the ready global default. If the filtered address is
+not ready, the composer falls back to the ready global default or leaves From
+unset. Replies to inbound mail use the exact envelope recipient for that
+delivery as From; replies to sent mail preserve that message's original sender.
+Reply-All excludes every managed self address and never copies inbound BCC.
+Drafts preserve their saved sender ID (including an explicit empty value) when
+opened, even after defaults change. Client From/Reply-To values do not grant
+authority. Readiness options distinguish disabled addresses/domains, provider
+verification or sending disablement, stale health, and failed checks; a refresh
+does not replace the active selection or discard draft edits. Draft content may
+still be saved while delivery is blocked, but the server checks the sender at
+send time. Resend verification is checked at the actual From domain, separately
 from Cloudflare receiving readiness. `OUTBOUND_FROM_EMAIL` and its legacy
 `MAIL_FROM` alias are reserved for system auto-replies and inbound
 notifications. A same-key retry reuses the first send's full persisted payload
