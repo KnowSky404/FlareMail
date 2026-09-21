@@ -100,6 +100,11 @@ recipient addresses or full R2 keys into shared evidence.
   copy was inspected with `bun run mail:identity:dry-run -- --domain <domain>
   --json`. The report and conflict decisions are retained without bodies or
   secrets; no unowned mail is implicitly assigned.
+- [ ] For any requested historical address association, the operator recorded
+  a verified D1 backup/Time Travel bookmark, then reviewed the explicit
+  Owner/address plan and applied/verified it only against an isolated local D1
+  copy. The current backfill tool rejects `--remote`; no production writes are
+  implied by local plan/apply/verify evidence.
 
 - [ ] The checkout's latest migration filename and schema version are recorded
   (currently migrations `0001` through `0026` and schema version `26`); the

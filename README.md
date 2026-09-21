@@ -23,6 +23,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的个人自托管邮件工�
 - 双语界面：服务端按安全 locale cookie（显式语言或跟随浏览器）以及 `Accept-Language` 首屏选择 zh-CN 或 en，浏览器端支持显式语言、跟随浏览器和持久化；日期、数字、计数和辅助标签随语言更新，邮件主题、地址、正文与附件文件名保持原文。
 - 版本化 D1 migration：`migrations/0001` 至 `0026`。`0023` 将稳定 Owner 与本地用户名/凭据分开，`0024` 添加受管域名/地址和邮件身份快照，`0025` 添加独立的 Cloudflare/Resend 健康续检租约，`0026` 记录地址删除策略；历史邮件不会因资料邮箱或旧登录邮箱自动变成可收发地址。`schema.sql` 是最新结构快照。
 - 地址删除会先展示只读远端规则/catch-all 预览，再由用户选择移除 FlareMail 精确规则或保留该规则作为 tombstone 拒收入口；导入规则保持不变，历史邮件和 R2 内容保留。删除某条精确规则不能阻止另一个外部 catch-all。
+- 历史地址关联保留显式 `mail:identity:dry-run` 审计，并提供默认只读的本地 plan/apply/verify 工具：只按已归属同一 Owner 的入站信封收件人回填，限定明确选择的地址；旧外发 From 和草稿不自动关联，计划绑定 schema、地址、隔离本地 D1 路径与 24 小时有效期。工具拒绝 `--remote`。
 - 无人值守域名续检：现有每分钟 Cron 保持 Telegram outbox 调度，另外按索引到期队列每次最多检查一个 Cloudflare 域名和一个 Resend 域名；成功后 16–20 小时再查，失败保留上次成功时间并退避。`/api/readiness` 只向登录 Owner 显示供应商状态；公开 `/api/health` 不变。临时 Cloudflare 健康错误只对曾明确授权的 `collect` 域名提供最多额外 24 小时的收集宽限，不延长成功时间。
 - Telegram 入站通知：一个部署级 Bot、每个工作区用户一个私聊绑定、一次性深链确认、隐私/摘要开关、D1 durable outbox、每分钟 Cron、429/backoff/unknown-delivery 状态和现有邮件详情链接；实现边界与真实投递验证见 [docs/TELEGRAM.md](./docs/TELEGRAM.md)。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。

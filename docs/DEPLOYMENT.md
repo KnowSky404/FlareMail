@@ -47,6 +47,64 @@ drop Telegram tables, delete outbox history, or reuse a production Bot for a
 local `getUpdates` session during rollback. A token rotation requires a
 reviewed secret update, `getMe`, `setWebhook`, and `getWebhookInfo` sequence.
 
+## Historical mail identity backfill
+
+`bun run mail:identity:dry-run` remains read-only. The separate
+`bun run mail:identity:backfill` workflow creates a bounded plan, applies only
+after `--apply` plus the matching `--confirm <sha256>`, and verifies the same
+plan. It requires an explicit Owner ID, address ID, schema version 26, and
+local Wrangler persistence directory. Its parser rejects `--remote`; the
+Wrangler invocation is fixed to `--local`, `wrangler.toml`, and
+`flaremail-db`. Do not point it at a shared development store when reviewing a
+production copy.
+
+Before a production migration is considered, record a verified D1 backup or
+Time Travel bookmark, retain the read-only identity audit and conflict
+decisions without message bodies or secrets, and restore a reviewed copy into
+an isolated local D1 persistence directory. Use the same persistence path for
+the audit, plan, apply, and verification commands:
+
+```bash
+LOCAL_STATE=/secure/flaremail-reviewed-local-copy
+PLAN_FILE=/secure/flaremail-address-backfill-plan.json
+
+bun ./scripts/wrangler-local.ts d1 migrations apply flaremail-db \
+  --local --config wrangler.toml --persist-to "$LOCAL_STATE"
+bun run mail:identity:dry-run -- --domain example.com --persist-to "$LOCAL_STATE" --json
+bun run mail:identity:backfill -- plan --persist-to "$LOCAL_STATE" \
+  --owner-id 'STABLE_OWNER_ID' --address-id 'MANAGED_ADDRESS_ID' \
+  --limit 100 --out "$PLAN_FILE"
+# Inspect the plan file and digest before explicitly confirming it.
+bun run mail:identity:backfill -- apply --persist-to "$LOCAL_STATE" \
+  --plan "$PLAN_FILE" --confirm 'PLAN_SHA256' --apply
+bun run mail:identity:backfill -- verify --persist-to "$LOCAL_STATE" --plan "$PLAN_FILE"
+bun run search:index -- --mode verify --persist-to "$LOCAL_STATE"
+```
+
+If the plan reports `hasMore`, inspect and apply the current page first, then
+create another plan using its `nextAfterId` and a new output path. Reapplying
+an unexpired plan is idempotent; the same path, schema, Owner/address target,
+and current row snapshots must still match.
+
+For example, add `--after-id 'LAST_ID_FROM_PREVIOUS_PAGE'` to the next `plan`
+command. Never put message bodies, provider credentials, or Access tokens in
+the plan file or command arguments.
+
+Review the final projection/index state and domain/address counts.
+The current tool intentionally cannot apply to remote D1. A production apply
+requires a separate explicit operational approval and a separately reviewed
+remote procedure; it is not authorized or performed by this local workflow.
+
+If an approved production apply is later performed, verify the same planned
+IDs are linked only to the selected Owner/address, all message and mailbox
+state snapshots and R2 references remain unchanged, and FTS projection/index
+verification passes. Since the metadata association is additive, ordinary
+Worker rollback does not remove the column or mail; correcting an incorrect
+association requires a reviewed conditional metadata update against a verified
+pre-change backup, followed by search-index verification. A D1 Time Travel
+restore remains an incident-only destructive recovery and requires a separate
+approval.
+
 ## Maintenance CLI
 
 The maintenance command is read-only by default. It reports expired/revoked

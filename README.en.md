@@ -32,6 +32,8 @@ The repository contains no fixed login password. Use `scripts/bootstrap-admin.ts
 
 Migrations `0023`–`0026` separate the stable Owner from local credentials, add managed domains/addresses and message identity snapshots, add independent Cloudflare/Resend health-check leases, and persist the address deletion policy. Historical login/profile emails are not automatically granted send or receive rights. Scheduled checks reuse the Telegram Cron, select only due domains, preserve prior successful timestamps on provider errors, and report privately through `/api/readiness`. A previously verified explicit `collect` domain receives at most 24 additional hours of bounded collection grace after transient Cloudflare health errors; its successful timestamp is not extended. Address deletion includes a read-only route/catch-all preview and can retain a verified exact FlareMail route so a deleted tombstone rejects that address before catch-all handling; imported rules stay untouched. Removing the exact rule cannot block a separate external catch-all. See the [architecture ADR](./docs/adr/0014-owner-managed-mail-identities-and-access.md) and [deployment guide](./DEPLOY.md).
 
+Historical address association keeps the read-only `mail:identity:dry-run` audit and adds an explicit local plan/apply/verify workflow. It maps only inbound envelope recipients whose existing owner already matches the selected stable Owner and address. Old outbound `From` snapshots and drafts are not inferred or rewritten. Plans bind the schema, target IDs, 24-hour expiry, and isolated local D1 persistence path; the tool rejects `--remote`.
+
 ## Local verification
 
 ```bash

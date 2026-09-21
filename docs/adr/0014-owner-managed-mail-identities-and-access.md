@@ -154,6 +154,23 @@ recipients and senders, drafts, storage and Telegram ownership, unowned counts,
 and conflicts. Multiple historical users require an explicit Owner selection;
 unowned records are not assigned to the first visitor.
 
+Historical address association is a separate, opt-in local workflow. The
+`mail:identity:backfill` command writes a versioned plan scoped to one explicit
+stable Owner and one configured address. It considers only inbound
+`email_messages."to"` values whose existing `owner_user_id` already matches;
+it never infers an address from MIME headers, `Delivered-To`, login/profile
+data, or an old outbound `from_email`. Outbound sender IDs and drafts are left
+for manual review/explicit sender choice. Plans are SHA-256-confirmed, expire
+after 24 hours, bind to one local D1 persistence path, and contain at most 100
+rows with a stable ID checkpoint. Apply revalidates the Owner/address/domain,
+schema, plan expiry, and every row snapshot before issuing one conditional
+metadata update; retries recognize rows already applied and report conflicts
+or partial outcomes. The existing inbound search trigger refreshes its
+address projection. IDs, ownership, message snapshots, mailbox flags, body and
+attachment references, and R2 objects are not rewritten. The tool has no
+remote mode; production changes remain a separately approved operation after
+a verified backup and review of a local copy.
+
 There is no generic down migration. If a migration needs reversal, stop writes
 and use a reviewed D1 restore to a recorded pre-migration bookmark; then verify
 R2 references and the matching Worker version. Ordinary code rollback keeps

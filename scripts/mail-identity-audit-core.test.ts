@@ -3,8 +3,8 @@ import { buildMailIdentityDryRunReport, parseMailIdentityAuditArguments } from '
 
 describe('local mail identity migration audit', () => {
   test('normalizes explicit domain scope and rejects all remote modes', () => {
-    expect(parseMailIdentityAuditArguments(['--domain', 'Example.Test.', '--domain=example.test', '--json']))
-      .toEqual({ domains: ['example.test'], json: true });
+    expect(parseMailIdentityAuditArguments(['--domain', 'Example.Test.', '--domain=example.test', '--json', '--persist-to', '/tmp/local-copy']))
+      .toEqual({ domains: ['example.test'], json: true, persistTo: '/tmp/local-copy' });
     expect(() => parseMailIdentityAuditArguments(['--remote'])).toThrow('local-only');
     expect(() => parseMailIdentityAuditArguments(['--domain', '--json'])).toThrow('--domain requires');
   });

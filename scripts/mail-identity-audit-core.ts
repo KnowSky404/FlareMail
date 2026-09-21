@@ -1,6 +1,7 @@
 export interface MailIdentityAuditArguments {
   domains: string[];
   json: boolean;
+  persistTo?: string;
 }
 
 export type MailIdentityAuditRow = Record<string, unknown> & { report_section: string };
@@ -23,6 +24,7 @@ function normalizeDomain(value: string) {
 export function parseMailIdentityAuditArguments(args: string[]): MailIdentityAuditArguments {
   const domains = new Set<string>();
   let json = false;
+  let persistTo: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
     if (argument === '--remote' || argument.startsWith('--remote=')) {
@@ -30,6 +32,14 @@ export function parseMailIdentityAuditArguments(args: string[]): MailIdentityAud
     }
     if (argument === '--json') {
       json = true;
+      continue;
+    }
+    if (argument === '--persist-to' || argument.startsWith('--persist-to=')) {
+      if (persistTo) throw new Error('--persist-to may be specified only once.');
+      const value = argument === '--persist-to' ? args[index + 1] : argument.slice('--persist-to='.length);
+      if (!value || value.startsWith('--')) throw new Error('--persist-to requires a local persistence directory.');
+      persistTo = value;
+      if (argument === '--persist-to') index += 1;
       continue;
     }
     if (argument === '--domain') {
@@ -45,7 +55,7 @@ export function parseMailIdentityAuditArguments(args: string[]): MailIdentityAud
     }
     throw new Error('Unsupported migration audit argument: ' + argument);
   }
-  return { domains: [...domains].sort(), json };
+  return { domains: [...domains].sort(), json, ...(persistTo ? { persistTo } : {}) };
 }
 
 function valueString(value: unknown) {

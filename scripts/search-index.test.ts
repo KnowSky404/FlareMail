@@ -17,6 +17,10 @@ describe('search index operations', () => {
     expect(parseSearchIndexArgs(['--mode', 'rebuild', '--remote', '--apply'])).toMatchObject({
       mode: 'rebuild', remote: true, apply: true, config: 'wrangler.deploy.toml'
     });
+    expect(parseSearchIndexArgs(['--mode', 'verify', '--persist-to', '/tmp/local-copy']))
+      .toMatchObject({ mode: 'verify', remote: false, persistTo: '/tmp/local-copy' });
+    expect(() => parseSearchIndexArgs(['--mode', 'verify', '--remote', '--persist-to', '/tmp/local-copy']))
+      .toThrow('--persist-to is only supported with local D1');
   });
 
   test('repairs projections and recreates the export-safe virtual layer', () => {

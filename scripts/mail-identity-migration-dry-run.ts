@@ -12,7 +12,8 @@ const environment = createLocalWranglerEnvironment();
 async function wranglerD1(extraArguments: string[]) {
   const child = Bun.spawn([
     'bun', 'x', 'wrangler', 'd1', 'execute', 'flaremail-db',
-    '--local', '--config', config, '--json', ...extraArguments
+    '--local', '--config', config, '--json',
+    ...(options.persistTo ? ['--persist-to', options.persistTo] : []), ...extraArguments
   ], {
     stdout: 'pipe',
     stderr: 'inherit',

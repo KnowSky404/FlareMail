@@ -33,6 +33,7 @@
     "auth:bootstrap:access:remote": "bun ./scripts/bootstrap-admin.ts --remote --access-only",
     "mail:domain:configure": "bun ./scripts/configure-mail-domain.ts",
     "mail:identity:dry-run": "bun ./scripts/mail-identity-migration-dry-run.ts",
+    "mail:identity:backfill": "bun ./scripts/mail-identity-backfill.ts",
     "deploy:dry-run": "bun run build && bun ./scripts/deploy.mjs dry-run",
     "deploy": "bun run build && bun ./scripts/deploy.mjs",
     "maintenance": "bun ./scripts/maintenance.ts",

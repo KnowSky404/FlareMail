@@ -9,6 +9,7 @@ export interface SearchIndexOptions {
   json: boolean;
   config: string;
   database: string;
+  persistTo?: string;
 }
 
 const usage = `Usage: bun scripts/search-index.ts [options]
@@ -19,6 +20,7 @@ Options:
   --apply              Required for rebuild or export preparation/restoration
   --config <path>      Wrangler config path
   --database <name>    D1 database name (default: flaremail-db)
+  --persist-to <path>  Isolate local D1 storage (not valid with --remote)
   --json                Print machine-readable output
   --help                Show this help
 `;
@@ -42,6 +44,8 @@ export function parseSearchIndexArgs(args: string[]): SearchIndexOptions {
   }
   const remote = args.includes('--remote');
   const apply = args.includes('--apply');
+  const persistTo = optionValue(args, '--persist-to');
+  if (remote && persistTo) throw new Error('--persist-to is only supported with local D1.');
   if (mode !== 'verify' && !apply) throw new Error(`${mode} requires explicit --apply.`);
   return {
     mode: mode as SearchIndexMode,
@@ -49,7 +53,8 @@ export function parseSearchIndexArgs(args: string[]): SearchIndexOptions {
     apply,
     json: args.includes('--json'),
     config: optionValue(args, '--config') ?? (remote ? 'wrangler.deploy.toml' : 'wrangler.toml'),
-    database: optionValue(args, '--database') ?? 'flaremail-db'
+    database: optionValue(args, '--database') ?? 'flaremail-db',
+    ...(persistTo ? { persistTo } : {})
   };
 }
 
@@ -176,7 +181,8 @@ function parseJsonOutput(output: string): unknown {
 async function execute(options: SearchIndexOptions, sql: string) {
   const child = Bun.spawn([
     'bun', 'x', 'wrangler', 'd1', 'execute', options.database,
-    options.remote ? '--remote' : '--local', '--config', options.config, '--command', sql, '--json',
+    options.remote ? '--remote' : '--local', '--config', options.config,
+    ...(options.persistTo ? ['--persist-to', options.persistTo] : []), '--command', sql, '--json',
     ...(options.apply ? ['--yes'] : [])
   ], {
     stdout: 'pipe', stderr: 'pipe',
