@@ -219,7 +219,7 @@ async function refreshedResult(env: CloudflareEnv, session: WorkspaceContext, me
     last_error: delivery.last_error, provider_message_id: delivery.provider_message_id, provider: delivery.provider,
     result_kind: delivery.result_kind, remote_status: delivery.remote_status, response_preview: delivery.response_preview ?? '', last_event: delivery.last_event, last_event_at: delivery.last_event_at
   } : undefined);
-  return { message, metrics: await getMailboxMetrics(env.DB, session.userId) };
+  return { message, metrics: await getMailboxMetrics(env.DB, session.userId), metricsScope: { identityFilter: null } };
 }
 
 async function submitPersistedMessage(

@@ -12,6 +12,22 @@ export type MailFolder = 'inbox' | 'sent' | 'drafts';
 /** A persisted mail folder plus the user-facing archive section. */
 export type MailboxSection = MailFolder | 'archive';
 export type MailboxIdentityFilter = { kind: 'domain' | 'address'; id: string };
+export type MailboxMutationSection = Exclude<MailboxSection, 'drafts'>;
+export type MailboxThreadScope = 'selected' | 'filtered' | 'owner';
+export interface MailboxMutationScope {
+  section: MailboxMutationSection;
+  identityFilter: MailboxIdentityFilter | null;
+  /** Always explicit: selected IDs, matching messages in the filtered thread, or the whole Owner thread. */
+  threadScope: MailboxThreadScope;
+  /** Used only by `filtered` thread expansion. */
+  query?: string;
+  filter?: MailboxFilter;
+  deliveryStatus?: DeliveryStatus | null;
+}
+export interface MailboxMetricsScope {
+  /** `null` means the complete Owner workspace. */
+  identityFilter: MailboxIdentityFilter | null;
+}
 export type MailSource = 'workspace' | 'inbound';
 export type MailSearchHitField = 'all' | 'from' | 'to' | 'cc' | 'subject' | 'label' | 'state' | 'attachment' | 'date' | 'status';
 
@@ -21,6 +37,8 @@ export interface MailboxMutationRequest {
   action: MailboxMutationAction;
   ids?: string[];
   threadKeys?: string[];
+  /** Required by current clients. Older clients that omit this scope are rejected. */
+  scope?: MailboxMutationScope;
 }
 
 export type DeliveryStatus =
@@ -297,6 +315,8 @@ export interface MailboxMovement {
 export interface MailboxMutationResult {
   summaries: MailboxMessageSummary[];
   metrics: WorkspaceMetrics;
+  metricsScope: MailboxMetricsScope;
+  scope: MailboxMutationScope;
   movement: MailboxMovement[];
 }
 

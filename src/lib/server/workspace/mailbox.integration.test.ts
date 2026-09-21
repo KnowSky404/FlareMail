@@ -143,6 +143,56 @@ const query = (folder: 'inbox' | 'sent' | 'drafts', overrides: Record<string, un
   return result;
 };
 
+const mutationScope = (
+  section: 'inbox' | 'sent' | 'archive' = 'inbox',
+  identityFilter: { kind: 'domain' | 'address'; id: string } | null = null,
+  threadScope: 'selected' | 'filtered' | 'owner' = 'selected',
+  queryText = '',
+  filter: 'all' | 'unread' | 'starred' = 'all'
+) => ({
+  section,
+  identityFilter,
+  threadScope,
+  ...(threadScope === 'filtered' ? { query: queryText, filter } : {})
+});
+
+function insertCrossAddressThread(database: Database) {
+  database.exec(`
+    INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name) VALUES
+      ('domain-a', 'user-1', 'alpha.example', 'zone-a', 'flaremail'),
+      ('domain-b', 'user-1', 'beta.example', 'zone-b', 'flaremail');
+    INSERT INTO mail_addresses (id, owner_user_id, domain_id, email, local_part, receive_enabled, routing_state) VALUES
+      ('address-a', 'user-1', 'domain-a', 'ada@alpha.example', 'ada', 1, 'active'),
+      ('address-b', 'user-1', 'domain-b', 'ada@beta.example', 'ada', 1, 'active');
+    UPDATE email_messages
+    SET message_id = '<shared-rfc@example.test>', thread_key = 'shared-rfc',
+      mail_domain_id = 'domain-a', mail_address_id = 'address-a'
+    WHERE id = 'incoming-1';
+    INSERT INTO email_messages (
+      id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key,
+      text_body, direction, message_id, thread_key, mail_domain_id, mail_address_id
+    ) VALUES ('incoming-b', 'user-1', 'Carol <carol@example.test>', 'ada@beta.example',
+      'Inbound alert', '2026-08-13T13:00:00.000Z', 'incoming preview', 'raw/incoming-b',
+      'incoming body', 'inbound', '<shared-rfc@example.test>', 'shared-rfc', 'domain-b', 'address-b');
+    INSERT INTO workspace_messages (
+      id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview,
+      body, sent_at, labels_json, is_read, is_starred, thread_key, recipient_address_id
+    ) VALUES ('inbox-b', 'user-1', 'inbox', 'Carol', 'carol@example.test', 'Ada',
+      'ada@beta.example', 'Inbound alert', 'incoming preview', 'body',
+      '2026-08-13T13:00:00.000Z', '[]', 0, 0, 'shared-rfc', 'address-b');
+    INSERT INTO email_messages (
+      id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key,
+      text_body, direction, message_id, thread_key, mail_domain_id, mail_address_id
+    ) VALUES ('incoming-a-read', 'user-1', 'Carol <carol@example.test>', 'ada@alpha.example',
+      'Older shared reply', '2026-08-13T12:30:00.000Z', 'older preview', 'raw/incoming-a-read',
+      'older body', 'inbound', '<shared-rfc@example.test>', 'shared-rfc', 'domain-a', 'address-a');
+    INSERT INTO workspace_email_states (
+      id, user_id, email_message_id, is_read, is_starred, created_at, updated_at
+    ) VALUES ('state-incoming-a-read', 'user-1', 'incoming-a-read', 1, 0,
+      '2026-08-13T12:30:00.000Z', '2026-08-13T12:30:00.000Z');
+  `);
+}
+
 describe('D1 mailbox pages', () => {
   test('filters inbound, sent, drafts, search, metrics, options and cursors by owned domain and address', async () => {
     const { env, workspace, database } = fixture();
@@ -262,11 +312,11 @@ describe('D1 mailbox pages', () => {
     const delivered = await loadMailboxPage(env, workspace, query('sent', { query: 'report status:delivered' }));
     expect(delivered.messages.map(({ id }) => id)).toEqual(['sent-1']);
 
-    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['inbox-z'] });
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['inbox-z'], scope: mutationScope() });
     const archived = await loadMailboxPage(env, workspace, query('inbox', { query: 'incident is:archived' }));
     expect(archived.messages.map(({ id }) => id)).toEqual(['inbox-z']);
 
-    await mutateWorkspaceMailbox(env, workspace, { action: 'trash', messageIds: ['inbox-z'] });
+    await mutateWorkspaceMailbox(env, workspace, { action: 'trash', messageIds: ['inbox-z'], scope: mutationScope('archive') });
     const trashed = await loadMailboxPage(env, workspace, query('inbox', { query: 'incident is:trash' }));
     expect(trashed.messages.map(({ id }) => id)).toEqual(['inbox-z']);
   });
@@ -379,7 +429,8 @@ describe('D1 mailbox pages', () => {
     const { env, workspace, database } = fixture();
     const result = await mutateWorkspaceMailbox(env, workspace, {
       action: 'archive',
-      messageIds: ['inbox-z', 'email:incoming-1', 'inbox-z']
+      messageIds: ['inbox-z', 'email:incoming-1', 'inbox-z'],
+      scope: mutationScope()
     });
 
     expect(result.summaries).toHaveLength(2);
@@ -391,7 +442,7 @@ describe('D1 mailbox pages', () => {
     expect(archivePage.folder).toBe('archive');
     expect(archivePage.messages.map(({ id }) => id).sort()).toEqual(['email:incoming-1', 'inbox-z']);
 
-    await mutateWorkspaceMailbox(env, workspace, { action: 'unarchive', messageIds: ['inbox-z', 'email:incoming-1'] });
+    await mutateWorkspaceMailbox(env, workspace, { action: 'unarchive', messageIds: ['inbox-z', 'email:incoming-1'], scope: mutationScope('archive') });
     const inboxPage = await loadMailboxPage(env, workspace, query('inbox'));
     expect(inboxPage.messages.map(({ id }) => id).sort()).toEqual(['email:incoming-1', 'inbox-a', 'inbox-z']);
   });
@@ -400,7 +451,8 @@ describe('D1 mailbox pages', () => {
     const { env, workspace, database } = fixture();
     await expect(mutateWorkspaceMailbox(env, workspace, {
       action: 'archive',
-      messageIds: ['inbox-z', 'not-owned']
+      messageIds: ['inbox-z', 'not-owned'],
+      scope: mutationScope()
     })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
     expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).toBeNull();
   });
@@ -409,7 +461,8 @@ describe('D1 mailbox pages', () => {
     const { env, workspace, database } = fixture();
     const result = await mutateWorkspaceMailbox(env, workspace, {
       action: 'trash',
-      messageIds: ['inbox-z', 'email:incoming-1']
+      messageIds: ['inbox-z', 'email:incoming-1'],
+      scope: mutationScope()
     });
 
     expect((database.query(`SELECT deleted_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { deleted_at: string | null }).deleted_at).not.toBeNull();
@@ -438,8 +491,12 @@ describe('D1 mailbox pages', () => {
     }
     const selected = messageIds.map((id) => `email:${id}`);
 
-    await mutateWorkspaceMailbox(env, workspace, { action, messageIds: selected });
-    await mutateWorkspaceMailbox(env, workspace, { action, messageIds: selected });
+    await mutateWorkspaceMailbox(env, workspace, { action, messageIds: selected, scope: mutationScope() });
+    await mutateWorkspaceMailbox(env, workspace, {
+      action,
+      messageIds: selected,
+      scope: mutationScope(action === 'archive' ? 'archive' : 'inbox')
+    });
 
     const rows = database.query(`
       SELECT id, email_message_id, is_read, is_starred, archived_at
@@ -466,7 +523,8 @@ describe('D1 mailbox pages', () => {
 
     await expect(mutateWorkspaceMailbox(env, workspace, {
       action: 'archive',
-      messageIds: ['inbox-z', 'email:incoming-1', 'email:foreign-1']
+      messageIds: ['inbox-z', 'email:incoming-1', 'email:foreign-1'],
+      scope: mutationScope()
     })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
 
     expect((database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'`).get() as { archived_at: string | null }).archived_at).toBeNull();
@@ -478,8 +536,167 @@ describe('D1 mailbox pages', () => {
     const ids = Array.from({ length: 101 }, (_, index) => `mail-${index}`);
     await expect(mutateWorkspaceMailbox(env, workspace, {
       action: 'read',
-      messageIds: ids
+      messageIds: ids,
+      scope: mutationScope()
     })).rejects.toMatchObject({ code: 'MAILBOX_SELECTION_TOO_LARGE' });
     expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states`).get()).toEqual({ count: 0 });
+  });
+
+  test.each(['archive', 'read', 'star', 'trash'] as const)(
+    'keeps address B unchanged when address A mutates a shared RFC thread (%s)',
+    async (action) => {
+      const { env, workspace, database } = fixture();
+      insertCrossAddressThread(database);
+
+      const result = await mutateWorkspaceMailbox(env, workspace, {
+        action,
+        messageIds: ['email:incoming-1'],
+        threadKeys: ['shared-rfc'],
+        scope: mutationScope('inbox', { kind: 'address', id: 'address-a' }, 'filtered', '', 'all')
+      });
+
+      expect(result.summaries.map((summary) => summary.id).sort()).toEqual(['email:incoming-1', 'email:incoming-a-read']);
+      const bState = database.query(`
+        SELECT is_read, is_starred, archived_at, deleted_at
+        FROM workspace_email_states WHERE user_id = 'user-1' AND email_message_id = 'incoming-b'
+      `).get();
+      expect(bState).toBeNull();
+      const workspaceB = database.query(`
+        SELECT is_read, is_starred, archived_at, deleted_at FROM workspace_messages WHERE id = 'inbox-b'
+      `).get() as { is_read: number; is_starred: number; archived_at: string | null; deleted_at: string | null };
+      expect(workspaceB).toEqual({ is_read: 0, is_starred: 0, archived_at: null, deleted_at: null });
+    }
+  );
+
+  test('selected-message scope does not expand to other messages in its thread', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'star',
+      messageIds: ['email:incoming-1'],
+      scope: mutationScope('inbox', { kind: 'address', id: 'address-a' }, 'selected')
+    });
+
+    expect(result.summaries.map((summary) => summary.id)).toEqual(['email:incoming-1']);
+    expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-1'`).get()).toEqual({ is_starred: 1 });
+    expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-a-read'`).get()).toEqual({ is_starred: 0 });
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'incoming-b'`).get()).toEqual({ count: 0 });
+  });
+
+  test('filtered thread actions change only messages matching the current unread filter', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'star',
+      messageIds: ['email:incoming-1'],
+      threadKeys: ['shared-rfc'],
+      scope: mutationScope('inbox', { kind: 'address', id: 'address-a' }, 'filtered', '', 'unread')
+    });
+
+    expect(result.summaries.map((summary) => summary.id)).toEqual(['email:incoming-1']);
+    expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-1'`).get()).toEqual({ is_starred: 1 });
+    expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-a-read'`).get()).toEqual({ is_starred: 0 });
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'incoming-b'`).get()).toEqual({ count: 0 });
+  });
+
+  test('filtered thread actions apply the current server-side search query', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'star',
+      messageIds: ['email:incoming-1'],
+      threadKeys: ['shared-rfc'],
+      scope: mutationScope('inbox', { kind: 'address', id: 'address-a' }, 'filtered', 'subject:alert')
+    });
+
+    expect(result.summaries.map((summary) => summary.id)).toEqual(['email:incoming-1']);
+    expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-1'`).get()).toEqual({ is_starred: 1 });
+    expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-a-read'`).get()).toEqual({ is_starred: 0 });
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'incoming-b'`).get()).toEqual({ count: 0 });
+  });
+
+  test('whole Owner thread expansion is explicit and crosses address filters', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ['email:incoming-1'],
+      threadKeys: ['shared-rfc'],
+      scope: mutationScope('inbox', { kind: 'address', id: 'address-a' }, 'owner')
+    });
+
+    expect(result.summaries.map((summary) => summary.id).sort()).toEqual([
+      'email:incoming-1', 'email:incoming-a-read', 'email:incoming-b', 'inbox-b'
+    ]);
+    expect(database.query(`SELECT is_read FROM workspace_email_states WHERE email_message_id = 'incoming-b'`).get()).toEqual({ is_read: 1 });
+    expect(database.query(`SELECT is_read FROM workspace_messages WHERE id = 'inbox-b'`).get()).toEqual({ is_read: 1 });
+    expect(result.metricsScope.identityFilter).toEqual({ kind: 'address', id: 'address-a' });
+  });
+
+  test('rejects out-of-scope IDs before writes', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+    database.query(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key, direction)
+      VALUES ('foreign-inbox', 'user-2', 'Foreign <f@example.test>', 'f@beta.example', 'Foreign',
+        '2026-08-13T14:00:00.000Z', 'foreign', 'raw/foreign-inbox', 'inbound')
+    `).run();
+
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ['email:incoming-b'],
+      scope: mutationScope('inbox', { kind: 'address', id: 'address-a' })
+    })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ['email:foreign-inbox'],
+      scope: mutationScope()
+    })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ['sent-1'],
+      scope: mutationScope('inbox')
+    })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ['email:incoming-1'],
+      scope: mutationScope('inbox', { kind: 'address', id: 'missing-address' })
+    })).rejects.toMatchObject({ code: 'MAIL_IDENTITY_NOT_FOUND' });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ['email:incoming-1'],
+      scope: mutationScope('inbox', { kind: 'address', id: '../address-a' })
+    })).rejects.toMatchObject({ code: 'INVALID_MAILBOX_SCOPE' });
+
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE user_id = 'user-1'`).get()).toEqual({ count: 1 });
+    expect(database.query(`SELECT is_read FROM workspace_messages WHERE id = 'inbox-b'`).get()).toEqual({ is_read: 0 });
+  });
+
+  test('rejects owner thread expansion above the cap before writes', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+    const insert = database.query(`
+      INSERT INTO email_messages (
+        id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key,
+        text_body, direction, message_id, thread_key, mail_domain_id, mail_address_id
+      ) VALUES (?, 'user-1', 'Carol <carol@example.test>', 'ada@beta.example', 'Overflow',
+        '2026-08-13T12:00:00.000Z', 'overflow', ?, 'body', 'inbound',
+        '<shared-rfc@example.test>', 'shared-rfc', 'domain-b', 'address-b')
+    `);
+    for (let index = 0; index < 98; index += 1) insert.run(`overflow-${index}`, `raw/overflow-${index}`);
+
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read',
+      messageIds: ['email:incoming-1'],
+      threadKeys: ['shared-rfc'],
+      scope: mutationScope('inbox', { kind: 'address', id: 'address-a' }, 'owner')
+    })).rejects.toMatchObject({ code: 'MAILBOX_SELECTION_TOO_LARGE' });
+
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE user_id = 'user-1'`).get()).toEqual({ count: 1 });
+    expect(database.query(`SELECT is_read FROM workspace_messages WHERE id = 'inbox-b'`).get()).toEqual({ is_read: 0 });
   });
 });

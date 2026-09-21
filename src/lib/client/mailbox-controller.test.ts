@@ -40,6 +40,16 @@ const message = (id: string, folder: MailMessage['folder'], sentAt: string): Mai
 });
 
 const snapshot = (mailbox: MailboxState) => ({ mailbox, mailboxPages: null, metrics });
+const delta = (value: MailMessage) => ({ message: value, metrics, metricsScope: { identityFilter: null } as const });
+const deltaOptions = (overrides: Partial<Parameters<typeof mergeMessageDelta>[2]> = {}) => ({
+  currentSection: 'inbox' as const,
+  currentSelectedMessageId: null,
+  identityFilter: null,
+  identityAddresses: [],
+  query: '',
+  filter: 'all' as const,
+  ...overrides
+});
 
 describe('mailbox controller', () => {
   test('hydrates the partial active-folder snapshot without inventing inactive pages', () => {
@@ -151,13 +161,11 @@ describe('mailbox controller', () => {
   test('applies a delta without changing unrelated folders and selects the result', () => {
     const inbox = message('inbox', 'inbox', '2026-08-14T02:00:00.000Z');
     const draft = message('draft', 'drafts', '2026-08-14T01:00:00.000Z');
-    const result = mergeMessageDelta(snapshot({ ...cloneMailbox(), inbox: [inbox], drafts: [draft] }), {
-      message: { ...inbox, starred: true },
-      metrics
-    }, {
-      currentSection: 'inbox',
-      currentSelectedMessageId: inbox.id
-    });
+    const result = mergeMessageDelta(
+      snapshot({ ...cloneMailbox(), inbox: [inbox], drafts: [draft] }),
+      delta({ ...inbox, starred: true }),
+      deltaOptions({ currentSelectedMessageId: inbox.id })
+    );
 
     expect(result.snapshot.mailbox.inbox[0]?.starred).toBe(true);
     expect(result.snapshot.mailbox.drafts[0]?.id).toBe('draft');
@@ -166,15 +174,56 @@ describe('mailbox controller', () => {
 
   test('adds a deep-linked archived message to an initially partial archive page', () => {
     const archived = { ...message('email:archived', 'inbox', '2026-08-14T01:00:00.000Z'), archivedAt: '2026-08-14T03:00:00.000Z' };
-    const result = mergeMessageDelta(snapshot(cloneMailbox()), { message: archived, metrics }, {
-      currentSection: 'archive',
-      currentSelectedMessageId: null,
-      section: 'archive',
-      preferredMessageId: archived.id
-    });
+    const result = mergeMessageDelta(
+      snapshot(cloneMailbox()),
+      delta(archived),
+      deltaOptions({ currentSection: 'archive', section: 'archive', preferredMessageId: archived.id })
+    );
 
     expect(result.snapshot.mailboxPages?.archive?.messages.map((item) => item.id)).toEqual([archived.id]);
     expect(result.selectedMessageId).toBe(archived.id);
+  });
+
+  test('drops an out-of-identity delta and its global metrics from the filtered view', () => {
+    const baseline = { ...metrics, inboxCount: 99 };
+    const before = snapshot(cloneMailbox());
+    before.metrics = baseline;
+    const foreign = { ...message('foreign', 'inbox', '2026-08-14T01:00:00.000Z'), recipientAddressId: 'address-b' };
+    const result = mergeMessageDelta(before, delta(foreign), deltaOptions({
+      identityFilter: { kind: 'address', id: 'address-a' },
+      identityAddresses: [
+        { id: 'address-a', domainId: 'domain-a' },
+        { id: 'address-b', domainId: 'domain-b' }
+      ]
+    }));
+
+    expect(result.snapshot.mailbox.inbox).toEqual([]);
+    expect(result.snapshot.metrics).toEqual(baseline);
+    expect(result.messageApplied).toBe(false);
+    expect(result.metricsApplied).toBe(false);
+  });
+
+  test('does not insert a new message into an active search or state-filtered page', () => {
+    const newMessage = message('new', 'inbox', '2026-08-14T01:00:00.000Z');
+    const result = mergeMessageDelta(snapshot(cloneMailbox()), delta(newMessage), deltaOptions({ query: 'invoice' }));
+
+    expect(result.snapshot.mailbox.inbox).toEqual([]);
+    expect(result.snapshot.metrics).toEqual(metrics);
+    expect(result.messageApplied).toBe(false);
+  });
+
+  test('removes a changed message from a page when it no longer matches its unread filter', () => {
+    const unread = message('unread', 'inbox', '2026-08-14T01:00:00.000Z');
+    const before = {
+      mailbox: { ...cloneMailbox(), inbox: [unread] },
+      mailboxPages: { inbox: { ...makePage('inbox', [unread]), filter: 'unread' as const } },
+      metrics
+    };
+    const result = mergeMessageDelta(before, delta({ ...unread, read: true }), deltaOptions({ filter: 'unread' }));
+
+    expect(result.snapshot.mailbox.inbox).toEqual([]);
+    expect(result.snapshot.mailboxPages?.inbox?.messages).toEqual([]);
+    expect(result.messageApplied).toBe(false);
   });
 
   test('removes only the targeted folder entry and moves selection safely', () => {

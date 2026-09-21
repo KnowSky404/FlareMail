@@ -35,11 +35,20 @@ export async function patchWorkspaceMessage(env: CloudflareEnv | undefined, sess
     statement = updateMessageFlags(env.DB, session.userId, messageId, patch.read ?? currentMessage.read, patch.starred ?? currentMessage.starred, timestamp);
   }
   await env.DB.batch([statement]);
-  return { message: normalizePatch(currentMessage, patch), metrics: await getMailboxMetrics(env.DB, session.userId) };
+  return {
+    message: normalizePatch(currentMessage, patch),
+    metrics: await getMailboxMetrics(env.DB, session.userId),
+    metricsScope: { identityFilter: null }
+  };
 }
 
 export async function deleteWorkspaceMessage(env: CloudflareEnv | undefined, session: WorkspaceContext, messageId: string) {
   const result = await moveWorkspaceMessageToTrash(env, session, messageId);
   if (!result || !env?.DB) return null;
-  return { ...result, removedId: messageId, metrics: await getMailboxMetrics(env.DB, session.userId) };
+  return {
+    ...result,
+    removedId: messageId,
+    metrics: await getMailboxMetrics(env.DB, session.userId),
+    metricsScope: { identityFilter: null }
+  };
 }

@@ -20,6 +20,7 @@ describe('workspace URL controller', () => {
     expect(readWorkspaceUrl(next)).toEqual({
       section: 'sent', query: 'invoice', filter: 'starred', identityFilter: { kind: 'address', id: 'address-1' }, messageId: 'message-1'
     });
-    expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=trash'))).toEqual({ section: 'trash', query: '', filter: 'all', identityFilter: null, messageId: null });
+    expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=trash&q=invoice&filter=starred&identity=address:address-1')))
+      .toEqual({ section: 'trash', query: '', filter: 'all', identityFilter: null, messageId: null });
   });
 });

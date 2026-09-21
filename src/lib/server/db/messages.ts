@@ -1,4 +1,4 @@
-import type { MailboxMutationAction } from '$lib/domain/mail';
+import type { MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
 import { fromInboundMessageId, isInboundMessageId } from '$lib/domain/mail';
 import type { WorkspaceCapabilities, WorkspaceInboundRow, WorkspaceMessageRow } from '$lib/server/workspace/shared';
 
@@ -14,6 +14,49 @@ export interface OwnedMailboxMutationRow {
 
 const placeholders = (values: string[]) => values.map(() => '?').join(', ');
 
+export interface MailboxMutationSqlScope {
+  section: MailboxMutationSection;
+  identityFilter: MailboxIdentityFilter | null;
+}
+
+function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
+  if (!scope) return { sql: '', bindings: [] as unknown[] };
+  const sectionSql = scope.section === 'sent'
+    ? `${alias}.folder = 'sent'`
+    : scope.section === 'archive'
+      ? `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NOT NULL`
+      : `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NULL`;
+  if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings: [] as unknown[] };
+  const addressColumn = scope.section === 'sent' ? 'sender_address_id' : 'recipient_address_id';
+  const identitySql = scope.identityFilter.kind === 'address'
+    ? ` AND EXISTS (
+        SELECT 1 FROM mail_addresses AS mutation_scope_address
+        WHERE mutation_scope_address.id = ${alias}.${addressColumn}
+          AND mutation_scope_address.owner_user_id = ${alias}.user_id
+          AND mutation_scope_address.id = ?
+      )`
+    : ` AND EXISTS (
+        SELECT 1 FROM mail_addresses AS mutation_scope_address
+        WHERE mutation_scope_address.id = ${alias}.${addressColumn}
+          AND mutation_scope_address.owner_user_id = ${alias}.user_id
+          AND mutation_scope_address.domain_id = ?
+      )`;
+  return { sql: ` AND ${sectionSql}${identitySql}`, bindings: [scope.identityFilter.id] };
+}
+
+function inboundScopeSql(alias: string, stateAlias: string, scope: MailboxMutationSqlScope | null) {
+  if (!scope) return { sql: '', bindings: [] as unknown[] };
+  if (scope.section === 'sent') return { sql: ' AND 1 = 0', bindings: [] as unknown[] };
+  const sectionSql = scope.section === 'archive'
+    ? `${stateAlias}.archived_at IS NOT NULL`
+    : `${stateAlias}.archived_at IS NULL`;
+  if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings: [] as unknown[] };
+  const identitySql = scope.identityFilter.kind === 'address'
+    ? ` AND ${alias}.mail_address_id = ?`
+    : ` AND ${alias}.mail_domain_id = ?`;
+  return { sql: ` AND ${sectionSql}${identitySql}`, bindings: [scope.identityFilter.id] };
+}
+
 function splitMailboxIds(messageIds: string[]) {
   return {
     workspaceIds: messageIds.filter((id) => !isInboundMessageId(id)),
@@ -24,19 +67,23 @@ function splitMailboxIds(messageIds: string[]) {
 export async function listOwnedMailboxMutationRows(
   db: D1Database,
   userId: string,
-  messageIds: string[]
+  messageIds: string[],
+  scope: MailboxMutationSqlScope | null
 ): Promise<OwnedMailboxMutationRow[]> {
   const { workspaceIds, inboundIds } = splitMailboxIds(messageIds);
   const rows: OwnedMailboxMutationRow[] = [];
   if (workspaceIds.length) {
+    const scopeClause = workspaceScopeSql('m', scope);
     const result = await db.prepare(`
-      SELECT id, 'workspace' AS source, folder, thread_key, is_read, is_starred, archived_at
-      FROM workspace_messages
-      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND deleted_at IS NULL AND id IN (${placeholders(workspaceIds)})
-    `).bind(userId, ...workspaceIds).all<OwnedMailboxMutationRow>();
+      SELECT m.id, 'workspace' AS source, m.folder, m.thread_key, m.is_read, m.is_starred, m.archived_at
+      FROM workspace_messages AS m
+      WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL${scopeClause.sql}
+        AND m.id IN (${placeholders(workspaceIds)})
+    `).bind(userId, ...scopeClause.bindings, ...workspaceIds).all<OwnedMailboxMutationRow>();
     rows.push(...(result.results ?? []));
   }
-  if (inboundIds.length) {
+  if (inboundIds.length && scope?.section !== 'sent') {
+    const scopeClause = inboundScopeSql('e', 's', scope);
     const result = await db.prepare(`
       SELECT 'email:' || e.id AS id, 'inbound' AS source, 'inbox' AS folder, e.thread_key,
         COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
@@ -44,8 +91,9 @@ export async function listOwnedMailboxMutationRows(
       FROM email_messages AS e
       LEFT JOIN workspace_email_states AS s
         ON s.user_id = ? AND s.email_message_id = e.id
-      WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND e.id IN (${placeholders(inboundIds)})
-    `).bind(userId, userId, ...inboundIds).all<OwnedMailboxMutationRow>();
+      WHERE e.owner_user_id = ? AND s.deleted_at IS NULL${scopeClause.sql}
+        AND e.id IN (${placeholders(inboundIds)})
+    `).bind(userId, userId, ...scopeClause.bindings, ...inboundIds).all<OwnedMailboxMutationRow>();
     rows.push(...(result.results ?? []));
   }
   return rows;
@@ -55,23 +103,29 @@ export async function resolveOwnedMailboxThreadMessageIds(
   db: D1Database,
   userId: string,
   threadKeys: string[],
-  includeSent = false
+  action: MailboxMutationAction,
+  maxResolved: number
 ): Promise<string[]> {
   if (!threadKeys.length) return [];
   const ids: string[] = [];
   const threadPlaceholders = placeholders(threadKeys);
+  const workspaceFolderScope = action === 'archive' || action === 'unarchive' ? "= 'inbox'" : "IN ('inbox', 'sent')";
   const workspaceRows = await db.prepare(`
-    SELECT id FROM workspace_messages
-    WHERE user_id = ? AND folder ${includeSent ? "IN ('inbox', 'sent')" : "= 'inbox'"} AND deleted_at IS NULL AND thread_key IN (${threadPlaceholders})
-  `).bind(userId, ...threadKeys).all<{ id: string }>();
+    SELECT m.id FROM workspace_messages AS m
+    WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.folder ${workspaceFolderScope}
+      AND m.thread_key IN (${threadPlaceholders})
+    LIMIT ?
+  `).bind(userId, ...threadKeys, maxResolved + 1).all<{ id: string }>();
   ids.push(...(workspaceRows.results ?? []).map((row) => row.id));
   const inboundRows = await db.prepare(`
     SELECT 'email:' || e.id AS id
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND e.thread_key IN (${threadPlaceholders})
-  `).bind(userId, userId, ...threadKeys).all<{ id: string }>();
+    WHERE e.owner_user_id = ? AND s.deleted_at IS NULL
+      AND e.thread_key IN (${threadPlaceholders})
+    LIMIT ?
+  `).bind(userId, userId, ...threadKeys, maxResolved + 1).all<{ id: string }>();
   ids.push(...(inboundRows.results ?? []).map((row) => row.id));
   return [...new Set(ids)];
 }
@@ -81,7 +135,8 @@ function inboundMutationStatement(
   userId: string,
   inboundId: string,
   action: MailboxMutationAction,
-  timestamp: string
+  timestamp: string,
+  scope: MailboxMutationSqlScope | null
 ) {
   const readExpression = action === 'read' ? '1' : action === 'unread' ? '0' : 'COALESCE(s.is_read, 0)';
   const starredExpression = action === 'star' ? '1' : action === 'unstar' ? '0' : 'COALESCE(s.is_starred, 0)';
@@ -93,6 +148,8 @@ function inboundMutationStatement(
   if (action === 'archive') bindings.push(timestamp);
   if (action === 'trash') bindings.push(timestamp);
   bindings.push(timestamp, timestamp, userId, userId, inboundId);
+  const scopeClause = inboundScopeSql('e', 's', scope);
+  bindings.push(...scopeClause.bindings);
   return db.prepare(`
     INSERT INTO workspace_email_states (
       id, user_id, email_message_id, is_read, is_starred, archived_at, deleted_at, created_at, updated_at
@@ -101,7 +158,7 @@ function inboundMutationStatement(
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE e.owner_user_id = ? AND e.id = ? AND s.deleted_at IS NULL
+    WHERE e.owner_user_id = ? AND e.id = ? AND s.deleted_at IS NULL${scopeClause.sql}
     ON CONFLICT(user_id, email_message_id) DO UPDATE SET
       is_read = excluded.is_read,
       is_starred = excluded.is_starred,
@@ -116,11 +173,13 @@ export function buildMailboxMutationStatements(
   userId: string,
   messageIds: string[],
   action: MailboxMutationAction,
-  timestamp: string
+  timestamp: string,
+  scope: MailboxMutationSqlScope | null
 ): D1PreparedStatement[] {
   const { workspaceIds, inboundIds } = splitMailboxIds(messageIds);
   const statements: D1PreparedStatement[] = [];
   if (workspaceIds.length) {
+    const scopeClause = workspaceScopeSql('m', scope);
     const archiveExpression = action === 'archive' ? 'COALESCE(archived_at, ?)' : action === 'unarchive' ? 'NULL' : 'archived_at';
     const setParts = [
       action === 'read' ? 'is_read = 1' : action === 'unread' ? 'is_read = 0' : '',
@@ -133,13 +192,15 @@ export function buildMailboxMutationStatements(
     if (action === 'archive') bindings.push(timestamp);
     if (action === 'trash') bindings.push(timestamp);
     bindings.push(timestamp, userId, ...workspaceIds);
+    bindings.push(...scopeClause.bindings);
     statements.push(db.prepare(`
-      UPDATE workspace_messages
+      UPDATE workspace_messages AS m
       SET ${setParts.join(', ')}
-      WHERE user_id = ? AND folder IN ('inbox', 'sent') AND deleted_at IS NULL AND id IN (${placeholders(workspaceIds)})
+      WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL
+        AND m.id IN (${placeholders(workspaceIds)})${scopeClause.sql}
     `).bind(...bindings));
   }
-  statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp)));
+  statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp, scope)));
   return statements;
 }
 

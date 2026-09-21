@@ -177,6 +177,7 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
     message: draft,
     html: responseHtml,
     metrics: await getMailboxMetrics(env.DB, session.userId),
+    metricsScope: { identityFilter: null },
     bodyRevision: serialized.bodyObjectId,
     attachments: attachmentSnapshot.attachments,
     attachmentRevision: attachmentSnapshot.attachmentRevision

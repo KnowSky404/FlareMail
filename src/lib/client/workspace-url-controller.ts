@@ -19,14 +19,15 @@ export type WorkspaceUrlUpdates = {
 
 export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
+  const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
   const filter = url.searchParams.get('filter');
   const identity = url.searchParams.get('identity');
   const identityMatch = identity?.match(/^(domain|address):([A-Za-z0-9:._-]{1,128})$/u);
   return {
-    section: folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox',
-    query: url.searchParams.get('q')?.slice(0, 200) ?? '',
-    filter: filter === 'unread' || filter === 'starred' ? filter : 'all',
-    identityFilter: identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
+    section,
+    query: section === 'trash' ? '' : url.searchParams.get('q')?.slice(0, 200) ?? '',
+    filter: section !== 'trash' && (filter === 'unread' || filter === 'starred') ? filter : 'all',
+    identityFilter: section !== 'trash' && identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
     messageId: url.searchParams.get('message')
   };
 }

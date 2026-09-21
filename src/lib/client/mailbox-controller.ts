@@ -4,6 +4,7 @@ import {
   cloneProfile,
   type MailboxSection,
   type MailboxIdentityFilter,
+  type MailboxMetricsScope,
   type MailMessage,
   type MailboxPage,
   type MailboxState,
@@ -22,6 +23,7 @@ export type MailFilter = 'all' | 'unread' | 'starred';
 export type MessageDelta = {
   message: MailMessage;
   metrics: WorkspaceMetrics;
+  metricsScope: MailboxMetricsScope;
 };
 
 export type MailboxSnapshot = {
@@ -90,7 +92,7 @@ export function workspaceViewStateFromSnapshot(
     selectedMessageIds: [],
     searchQuery: options.clearMailView ? '' : activePage?.query ?? '',
     mailFilter: options.clearMailView ? 'all' : activePage?.filter ?? 'all',
-    identityFilter: options.clearMailView ? null : activePage?.identityFilter ?? null
+    identityFilter: activeSection === 'trash' || options.clearMailView ? null : activePage?.identityFilter ?? null
   };
 }
 
@@ -110,6 +112,10 @@ export function mailboxSnapshotFromWorkspace(snapshot: WorkspaceSnapshot): Mailb
 export type MessageDeltaOptions = {
   currentSection: WorkspaceSection;
   currentSelectedMessageId: string | null;
+  identityFilter: MailboxIdentityFilter | null;
+  identityAddresses: Array<{ id: string; domainId: string }>;
+  query: string;
+  filter: MailFilter;
   section?: WorkspaceSection;
   preferredMessageId?: string | null;
   removeDraftId?: string;
@@ -215,6 +221,59 @@ export function mergeMessageDelta(
   }
 
   const section = options.section ?? options.currentSection;
+  const targetPage = section === 'profile' || section === 'trash' ? undefined : snapshot.mailboxPages?.[section];
+  const identityFilter = options.identityFilter ?? null;
+  const identityAddresses = options.identityAddresses ?? [];
+  const responseScope = result.metricsScope ?? { identityFilter: null };
+  const sameIdentityFilter = (left: MailboxIdentityFilter | null | undefined, right: MailboxIdentityFilter | null | undefined) =>
+    (left?.kind ?? null) === (right?.kind ?? null) && (left?.id ?? null) === (right?.id ?? null);
+  const metricsApplied = sameIdentityFilter(responseScope.identityFilter, identityFilter);
+  const addressId = result.message.folder === 'sent' || result.message.folder === 'drafts'
+    ? result.message.senderAddressId
+    : result.message.recipientAddressId;
+  const identityMatches = !identityFilter || Boolean(addressId && (
+    identityFilter.kind === 'address'
+      ? addressId === identityFilter.id
+      : identityAddresses.some((address) => address.id === addressId && address.domainId === identityFilter.id)
+  ));
+  const pageMatchesCurrentScope = !targetPage || sameIdentityFilter(targetPage.identityFilter, identityFilter);
+  const query = targetPage?.query ?? (section === options.currentSection ? options.query ?? '' : '');
+  const filter = targetPage?.filter ?? (section === options.currentSection ? options.filter ?? 'all' : 'all');
+  const canMergeMessage = identityMatches && pageMatchesCurrentScope && !query.trim() && filter === 'all';
+
+  if (options.removeDraftId && snapshot.mailboxPages?.drafts) {
+    const draftsPage = snapshot.mailboxPages.drafts;
+    snapshot = {
+      ...snapshot,
+      mailboxPages: {
+        ...snapshot.mailboxPages,
+        drafts: { ...draftsPage, messages: draftsPage.messages.filter((item) => item.id !== options.removeDraftId) }
+      }
+    };
+  }
+
+  if (!canMergeMessage) {
+    for (const folder of ['inbox', 'sent', 'drafts'] as const) {
+      nextMailbox[folder] = nextMailbox[folder].filter((item) => item.id !== result.message.id);
+    }
+    if (targetPage && pageMatchesCurrentScope) {
+      snapshot = {
+        ...snapshot,
+        mailboxPages: {
+          ...(snapshot.mailboxPages ?? {}),
+          [section]: { ...targetPage, messages: targetPage.messages.filter((item) => item.id !== result.message.id) }
+        }
+      };
+    }
+    return {
+      snapshot: { ...snapshot, mailbox: nextMailbox, metrics: metricsApplied ? result.metrics : snapshot.metrics },
+      selectedMessageId: options.currentSelectedMessageId,
+      section,
+      messageApplied: false,
+      metricsApplied
+    };
+  }
+
   if (section === 'archive') {
     const page = snapshot.mailboxPages?.archive;
     const nextMessages = sortMailboxMessages([
@@ -231,16 +290,19 @@ export function mergeMessageDelta(
         limit: 40,
         query: '',
         filter: 'all',
+        identityFilter,
         deliveryStatus: null
       };
     return {
       snapshot: {
         mailbox: nextMailbox,
         mailboxPages: { ...(snapshot.mailboxPages ?? {}), archive: nextPage },
-        metrics: result.metrics
+        metrics: metricsApplied ? result.metrics : snapshot.metrics
       },
       selectedMessageId: options.preferredMessageId ?? options.currentSelectedMessageId,
-      section
+      section,
+      messageApplied: true,
+      metricsApplied
     };
   }
 
@@ -255,14 +317,16 @@ export function mergeMessageDelta(
     snapshot: {
       mailbox: nextMailbox,
       mailboxPages: snapshot.mailboxPages,
-      metrics: result.metrics
+      metrics: metricsApplied ? result.metrics : snapshot.metrics
     },
     selectedMessageId: selectNextMessage(
       nextMailbox,
       section,
       options.preferredMessageId ?? options.currentSelectedMessageId
     ),
-    section
+    section,
+    messageApplied: true,
+    metricsApplied
   };
 }
 

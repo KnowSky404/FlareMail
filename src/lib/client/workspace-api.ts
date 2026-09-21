@@ -7,7 +7,9 @@ import type {
   LoginInput,
   MailFolder,
   MailboxMutationAction,
+  MailboxMutationScope,
   MailboxMutationResult,
+  MailboxMetricsScope,
   MailMessage,
   MailboxPage,
   MessagePatch,
@@ -33,13 +35,19 @@ export type MessageResponse = {
   ok: boolean;
   message: MailMessage;
   metrics: WorkspacePayload['metrics'];
+  metricsScope: MailboxMetricsScope;
   bodyRevision?: string | null;
   html?: string;
   attachments?: NonNullable<ComposeInput['attachments']>;
   attachmentRevision?: number;
   error?: string;
 };
-export type DeleteResponse = { removedId: string; folder: MailFolder; metrics: WorkspacePayload['metrics'] };
+export type DeleteResponse = {
+  removedId: string;
+  folder: MailFolder;
+  metrics: WorkspacePayload['metrics'];
+  metricsScope: MailboxMetricsScope;
+};
 export type RestoreTrashResponse = { restoredId: string; originalFolder: import('$lib/domain/mail').MailboxSection; idempotent: boolean; metrics: WorkspacePayload['metrics'] };
 export type PermanentDeleteResponse = { deletedId: string; idempotent: boolean; cleanupPending?: boolean; metrics: WorkspacePayload['metrics'] };
 export type DraftAttachmentResponse = {
@@ -239,10 +247,15 @@ export function updateMessageFlags(messageId: string, patch: MessagePatch) {
   );
 }
 
-export function mutateMailbox(action: MailboxMutationAction, messageIds: string[], threadKeys: string[] = []) {
+export function mutateMailbox(
+  action: MailboxMutationAction,
+  messageIds: string[],
+  threadKeys: string[],
+  scope: MailboxMutationScope
+) {
   return requestJson<{ result: MailboxMutationResult }>('/api/workspace/mailbox/mutate', {
     method: 'POST',
-    body: JSON.stringify({ action, ids: messageIds, threadKeys })
+    body: JSON.stringify({ action, ids: messageIds, threadKeys, scope })
   });
 }
 

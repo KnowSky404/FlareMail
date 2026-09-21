@@ -16,7 +16,8 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   if (!row) throw new ApiError(404, 'MESSAGE_NOT_FOUND', '邮件不存在。');
   return apiSuccess(event, {
     message: { ...mapInboundRow(row, session.profile), body: '' },
-    metrics: await getMailboxMetrics(env.DB, session.userId)
+    metrics: await getMailboxMetrics(env.DB, session.userId),
+    metricsScope: { identityFilter: null }
   });
 });
 

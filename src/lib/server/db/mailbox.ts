@@ -17,6 +17,8 @@ export interface MailboxRepositoryQuery {
   filter: MailboxFilter;
   identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
+  /** Optional thread anchors used by a bounded bulk-operation preview/resolution. */
+  threadKeys?: string[];
 }
 
 export interface WorkspaceMessagePageRow extends WorkspaceMessageRow {
@@ -117,6 +119,10 @@ export async function listWorkspaceMessagePage(
   if (input.deliveryStatus) {
     conditions.push('ds.status = ?');
     bindings.push(input.deliveryStatus);
+  }
+  if (input.threadKeys?.length) {
+    conditions.push(`m.thread_key IN (${input.threadKeys.map(() => '?').join(', ')})`);
+    bindings.push(...input.threadKeys);
   }
   bindings.push(input.limit);
 

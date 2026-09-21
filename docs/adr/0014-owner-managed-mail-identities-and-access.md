@@ -93,9 +93,14 @@ login or profile email.
 
 Inbox, sent mail, drafts, search, counts, page cursors, and bulk operations use
 one owner-scoped `domain:<id>` or `address:<id>` filter on the server. The
-unfiltered view remains the unified Owner mailbox. Historical records without
-a reliable managed identity remain readable and searchable in that unified
-view; deletion does not erase their history.
+unfiltered view remains the unified Owner mailbox. Bulk actions default to the
+explicitly selected loaded messages; a filtered-thread expansion repeats the
+active query and unread/starred filter and is bounded to that identity and
+section. Expanding a thread across all Owner addresses and mailbox sections is
+a separate explicit choice. Trash remains an Owner-global view and clears the
+identity filter on entry. Historical records without a reliable managed
+identity remain readable and searchable in that unified view; deletion does
+not erase their history.
 
 Every outbound draft/send stores the authorized sender address ID and immutable
 From name/email and body/signature payload. New mail uses an explicitly ready

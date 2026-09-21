@@ -324,22 +324,53 @@ bounded repair workflow; a download never performs bulk repair.
 
 ```json
 {
-  "action": "archive|unarchive|read|unread|star|unstar",
-  "ids": ["optional-message-id"],
-  "threadKeys": ["optional-owned-thread-key"]
+  "action": "archive|unarchive|read|unread|star|unstar|trash",
+  "ids": ["selected-message-id"],
+  "scope": {
+    "section": "inbox|sent|archive",
+    "identityFilter": null,
+    "threadScope": "selected"
+  }
 }
 ```
 
-The route deduplicates direct IDs and thread keys, resolves thread keys on the
-server, and applies a maximum of 100 resolved message IDs. Every target is
-ownership-checked before any write. Unknown, cross-owner, mixed-folder, or
-partially invalid requests fail without a partial mutation.
+`scope` is required; old clients that omit it receive `MAILBOX_SCOPE_REQUIRED`.
+Every explicit ID is checked against the authenticated Owner and declared
+section/address filter by the server before any write. `identityFilter` is
+`null`, `{ "kind": "domain", "id": "..." }`, or
+`{ "kind": "address", "id": "..." }`. A foreign identity, section, Owner,
+or selected message outside that scope is rejected without a partial mutation.
 
-The write is one D1 `batch()` transaction. Read/star actions preserve the
-message's persisted folder. Archive and unarchive only operate on inbox-owned
-rows and change `archived_at`; they never rewrite `folder` to manufacture an
-archive folder. The response returns affected summaries, movement information,
-updated metrics, and the server-resolved IDs.
+The client selects only currently loaded rows. “Select all” means all rows
+loaded in the current page that match the active search, unread, or starred
+filter; it does not mean every result in `searchTotal`. A normal selected-message
+operation (`threadScope: "selected"`) changes only the IDs in `ids` and must
+not include `threadKeys`. A filtered-thread operation explicitly includes the
+selected thread anchors and repeats the current `query` and `filter`; the server
+checks each anchor belongs to an explicit ID and resolves only messages in
+those threads that match that query, section, address
+filter, and unread/starred filter. This can include matching messages outside
+the loaded page, but never other search results. An Owner-wide thread operation
+uses `threadScope: "owner"` and is an explicit expansion across the Owner's
+addresses and inbox/archive/sent sections. Archive and unarchive still affect
+only inbox rows; drafts are not bulk-thread targets.
+
+All IDs are resolved and capped at 100 before the transaction. Oversized or
+partially invalid requests fail before any write. The write is one D1
+`batch()` transaction. Archive and unarchive only operate on inbox-owned rows
+and change `archived_at`; they never rewrite `folder` to manufacture an archive
+folder.
+
+The response returns affected summaries, movement information, the resolved
+scope, and metrics with an explicit `metricsScope.identityFilter`. A null
+metrics identity is Owner-global; a domain/address value is scoped to that
+identity and is not narrowed to the selected page or search. Clients discard
+metrics from a different identity scope and refresh when a message delta does
+not fit the current page.
+
+Trash has no identity filter: entering it clears the current identity filter,
+and its list/empty operation is Owner-global. A bulk `trash` action from an
+inbox/sent/archive view is still scoped to the declared identity and section.
 
 ## Mailbox search
 

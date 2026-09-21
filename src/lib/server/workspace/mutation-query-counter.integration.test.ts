@@ -46,8 +46,8 @@ describe('mutation query budget', () => {
     const smallResult = await patchWorkspaceMessage(small.env, small.session, 'message-0', { starred: true });
     const largeResult = await patchWorkspaceMessage(large.env, large.session, 'message-0', { starred: true });
     expect(small.DB.queryCount).toBe(large.DB.queryCount);
-    expect(Object.keys(smallResult ?? {})).toEqual(['message', 'metrics']);
-    expect(Object.keys(largeResult ?? {})).toEqual(['message', 'metrics']);
+    expect(Object.keys(smallResult ?? {})).toEqual(['message', 'metrics', 'metricsScope']);
+    expect(Object.keys(largeResult ?? {})).toEqual(['message', 'metrics', 'metricsScope']);
     expect(JSON.stringify(smallResult)).not.toContain('message-1');
   });
 

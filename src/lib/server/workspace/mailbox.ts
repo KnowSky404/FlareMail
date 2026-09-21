@@ -34,6 +34,8 @@ import type {
   MailboxMessageSummary,
   MailboxMovement,
   MailboxMutationAction,
+  MailboxMutationScope,
+  MailboxMutationSection,
   MailboxMutationResult,
   MailboxPage,
   MailboxSection,
@@ -63,11 +65,54 @@ export interface WorkspaceSnapshotOptions {
 }
 
 const maxMailboxMutationIds = 100;
+const mailboxMutationFilters = new Set<MailboxFilter>(['all', 'unread', 'starred']);
+const mailboxMutationDeliveryStatuses = new Set<DeliveryStatus>([
+  'draft', 'queued', 'submitting', 'submitted', 'sent', 'delivered', 'delayed',
+  'bounced', 'failed', 'complained', 'suppressed'
+]);
 
 export interface WorkspaceMailboxMutationInput {
   action: MailboxMutationAction;
   messageIds: string[];
   threadKeys?: string[];
+  scope: MailboxMutationScope;
+}
+
+const mailboxMutationSections = new Set<MailboxMutationSection>(['inbox', 'sent', 'archive']);
+const mailboxThreadScopes = new Set(['selected', 'filtered', 'owner']);
+
+function isValidIdentityFilter(value: unknown): value is NonNullable<MailboxMutationScope['identityFilter']> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) &&
+    ('kind' in value) && (value.kind === 'domain' || value.kind === 'address') &&
+    ('id' in value) && typeof value.id === 'string' && /^[A-Za-z0-9:._-]{1,128}$/u.test(value.id);
+}
+
+async function resolveFilteredMailboxThreadIds(
+  db: D1Database,
+  userId: string,
+  scope: MailboxMutationScope,
+  threadKeys: string[]
+) {
+  const queryText = scope.query ?? '';
+  const repositoryQuery = {
+    folder: scope.section === 'sent' ? 'sent' as const : 'inbox' as const,
+    section: scope.section,
+    limit: maxMailboxMutationIds + 1,
+    query: queryText,
+    search: queryText ? parseMailSearchQuery(queryText) : null,
+    filter: scope.filter ?? 'all',
+    identityFilter: scope.identityFilter,
+    deliveryStatus: scope.deliveryStatus ?? null,
+    threadKeys
+  };
+  const workspacePage = await listWorkspaceMessagePage(db, userId, repositoryQuery);
+  const workspaceIds = (workspacePage.results ?? []).map((row) => row.id);
+  if (scope.section === 'sent') return workspaceIds;
+  const inboundPage = await listInboundMessageSummaryPage(db, userId, repositoryQuery);
+  return [...new Set([
+    ...workspaceIds,
+    ...(inboundPage.results ?? []).map((row) => `email:${row.email_id}`)
+  ])];
 }
 
 export async function mutateWorkspaceMailbox(
@@ -75,28 +120,98 @@ export async function mutateWorkspaceMailbox(
   workspace: WorkspaceContext,
   input: WorkspaceMailboxMutationInput
 ): Promise<MailboxMutationResult> {
+  const suppliedScope = input.scope as MailboxMutationScope | undefined;
+  if (!suppliedScope || typeof suppliedScope !== 'object' ||
+    !mailboxMutationSections.has(suppliedScope.section) ||
+    !Object.prototype.hasOwnProperty.call(suppliedScope, 'identityFilter')) {
+    throw new ApiError(400, 'MAILBOX_SCOPE_REQUIRED', '批量操作必须声明当前邮件分区和地址筛选范围。');
+  }
+  if (!mailboxThreadScopes.has(suppliedScope.threadScope)) {
+    throw new ApiError(400, 'MAILBOX_THREAD_SCOPE_REQUIRED', '批量操作必须明确选择已选邮件、当前筛选会话或整个 Owner 会话。');
+  }
+  if (suppliedScope.identityFilter !== null && !isValidIdentityFilter(suppliedScope.identityFilter)) {
+    throw new ApiError(400, 'INVALID_MAILBOX_SCOPE', '批量操作的地址筛选范围无效。');
+  }
   const directIds = [...new Set(input.messageIds.map((id) => id.trim()).filter(Boolean))];
   const threadKeys = [...new Set((input.threadKeys ?? []).map((key) => key.trim()).filter(Boolean))];
-  const resolvedIds = threadKeys.length
-    ? await resolveOwnedMailboxThreadMessageIds(env.DB, workspace.userId, threadKeys, input.action === 'trash')
+  if (directIds.length > maxMailboxMutationIds || threadKeys.length > maxMailboxMutationIds) {
+    throw new ApiError(400, 'MAILBOX_SELECTION_TOO_LARGE', `一次最多操作 ${maxMailboxMutationIds} 封邮件。`);
+  }
+  if (suppliedScope.threadScope === 'selected' && threadKeys.length) {
+    throw new ApiError(400, 'INVALID_MAILBOX_THREAD_SELECTION', '仅操作已选邮件时不能同时提交会话范围。');
+  }
+  if ((suppliedScope.threadScope === 'filtered' || suppliedScope.threadScope === 'owner') && !threadKeys.length) {
+    throw new ApiError(400, 'MAILBOX_THREAD_SELECTION_REQUIRED', '会话操作必须提交当前范围内已选邮件对应的会话。');
+  }
+  if (suppliedScope.threadScope === 'filtered' && (
+    typeof suppliedScope.query !== 'string' || suppliedScope.query.length > 200 ||
+    !mailboxMutationFilters.has(suppliedScope.filter as MailboxFilter) ||
+    (suppliedScope.deliveryStatus !== undefined && suppliedScope.deliveryStatus !== null &&
+      !mailboxMutationDeliveryStatuses.has(suppliedScope.deliveryStatus))
+  )) {
+    throw new ApiError(400, 'INVALID_MAILBOX_FILTER_SCOPE', '当前筛选会话的搜索或筛选范围无效。');
+  }
+
+  const scope: MailboxMutationScope = {
+    section: suppliedScope.section,
+    identityFilter: suppliedScope.identityFilter,
+    threadScope: suppliedScope.threadScope,
+    ...(suppliedScope.threadScope === 'filtered' ? {
+      query: suppliedScope.query,
+      filter: suppliedScope.filter,
+      deliveryStatus: suppliedScope.deliveryStatus ?? null
+    } : {})
+  };
+  if (scope.identityFilter && !(await mailboxIdentityFilterExists(env.DB, workspace.userId, scope.identityFilter))) {
+    throw new ApiError(404, 'MAIL_IDENTITY_NOT_FOUND', '所选邮件身份不存在或不属于当前工作区。');
+  }
+
+  const directRows = directIds.length
+    ? await listOwnedMailboxMutationRows(env.DB, workspace.userId, directIds, scope)
     : [];
-  const messageIds = [...new Set([...directIds, ...resolvedIds])];
+  if (directRows.length !== directIds.length || directIds.some((id) => !directRows.some((row) => row.id === id))) {
+    throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
+  }
+  if (threadKeys.length) {
+    const selectedThreadKeys = new Set(directRows.map((row) => row.thread_key).filter((key): key is string => Boolean(key)));
+    if (threadKeys.some((key) => !selectedThreadKeys.has(key))) {
+      throw new ApiError(400, 'INVALID_MAILBOX_THREAD_SELECTION', '线程必须来自当前声明范围内已选的邮件。');
+    }
+  }
+
+  const resolvedIds = scope.threadScope === 'filtered'
+    ? await resolveFilteredMailboxThreadIds(env.DB, workspace.userId, scope, threadKeys)
+    : scope.threadScope === 'owner'
+      ? await resolveOwnedMailboxThreadMessageIds(
+      env.DB,
+      workspace.userId,
+      threadKeys,
+      input.action,
+      maxMailboxMutationIds
+    )
+      : [];
+  const selectedWithoutThread = directRows.filter((row) => !row.thread_key).map((row) => row.id);
+  const messageIds = [...new Set([
+    ...(scope.threadScope === 'filtered' ? selectedWithoutThread : directIds),
+    ...resolvedIds
+  ])];
   if (messageIds.length === 0) throw new ApiError(400, 'MAILBOX_SELECTION_EMPTY', '请选择至少一封邮件。');
   if (messageIds.length > maxMailboxMutationIds) {
     throw new ApiError(400, 'MAILBOX_SELECTION_TOO_LARGE', `一次最多操作 ${maxMailboxMutationIds} 封邮件。`);
   }
 
-  const rows = await listOwnedMailboxMutationRows(env.DB, workspace.userId, messageIds);
+  const writeScope = scope.threadScope === 'owner' ? null : scope;
+  const rows = await listOwnedMailboxMutationRows(env.DB, workspace.userId, messageIds, writeScope);
   const owned = new Map(rows.map((row) => [row.id, row]));
   if (rows.length !== messageIds.length || messageIds.some((id) => !owned.has(id))) {
-    throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于当前账号。');
+    throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
   }
   if ((input.action === 'archive' || input.action === 'unarchive') && rows.some((row) => row.folder !== 'inbox')) {
     throw new ApiError(400, 'MAILBOX_ACTION_INVALID', '只有收件箱邮件支持归档操作。');
   }
 
   const timestamp = new Date().toISOString();
-  const statements = buildMailboxMutationStatements(env.DB, workspace.userId, messageIds, input.action, timestamp);
+  const statements = buildMailboxMutationStatements(env.DB, workspace.userId, messageIds, input.action, timestamp, writeScope);
   await env.DB.batch(statements);
   const summaries: MailboxMessageSummary[] = rows.map((row) => ({
     id: row.id,
@@ -114,7 +229,9 @@ export async function mutateWorkspaceMailbox(
   }
   return {
     summaries,
-    metrics: await getMailboxMetrics(env.DB, workspace.userId),
+    metrics: await getMailboxMetrics(env.DB, workspace.userId, scope.identityFilter),
+    metricsScope: { identityFilter: scope.identityFilter },
+    scope,
     movement
   };
 }
@@ -266,6 +383,8 @@ interface MailboxSummaryQuery {
   search: MailSearchQuery | null;
   filter: MailboxFilter;
   identityFilter: MailboxPage['identityFilter'];
+  deliveryStatus?: DeliveryStatus | null;
+  threadKeys?: string[];
 }
 
 async function listInboundMessageSummaryPage(
@@ -300,6 +419,7 @@ async function listInboundMessageSummaryPage(
     conditions.push('workspace_search_fts MATCH ?');
     bindings.push(searchPlan.expression);
   }
+  if (input.deliveryStatus) conditions.push('1 = 0');
   if (input.search) {
     for (const value of input.search.filters.is) {
       if (value === 'unread') conditions.push('COALESCE(s.is_read, 0) = 0');
@@ -321,6 +441,10 @@ async function listInboundMessageSummaryPage(
   if (input.timestamp && input.cursorId) {
     conditions.push(`(e."timestamp" < ? OR (e."timestamp" = ? AND ('email:' || e.id) < ?))`);
     bindings.push(input.timestamp, input.timestamp, input.cursorId);
+  }
+  if (input.threadKeys?.length) {
+    conditions.push(`e.thread_key IN (${input.threadKeys.map(() => '?').join(', ')})`);
+    bindings.push(...input.threadKeys);
   }
   bindings.push(input.limit);
 

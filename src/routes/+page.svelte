@@ -43,6 +43,7 @@
     selectionCandidates,
     workspaceViewStateFromSnapshot,
     type MailFilter,
+    type MessageDelta,
     type WorkspaceSection
   } from '$lib/client/mailbox-controller';
   import { LatestRequest } from '$lib/client/latest-request';
@@ -127,6 +128,8 @@
       : error instanceof Error
         ? error.message
         : fallback;
+  const sameIdentityScope = (left: MailboxIdentityFilter | null | undefined, right: MailboxIdentityFilter | null | undefined) =>
+    (left?.kind ?? null) === (right?.kind ?? null) && (left?.id ?? null) === (right?.id ?? null);
   const serverWorkspace = $derived(data.workspace);
 
   const runtimeLabel = $derived(
@@ -154,6 +157,7 @@
   let activeSection = $state<AppSection>('inbox');
   let selectedMessageId = $state<string | null>(null);
   let selectedMessageIds = $state<string[]>([]);
+  let bulkThreadScope = $state<'selected' | 'filtered' | 'owner'>('selected');
   let bulkSelectInput = $state<HTMLInputElement>();
   let searchQuery = $state('');
   let mailFilter = $state<MailFilter>('all');
@@ -398,6 +402,9 @@
       ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
       : visibleMessages.map((message) => message.id));
   const bulkSelectedVisibleCount = $derived(bulkSelectableIds.filter((id) => selectedMessageIds.includes(id)).length);
+  const bulkSelectedThreadCount = $derived(visibleThreads.filter((thread) =>
+    Boolean(thread.sectionLatestMessage.threadKey) && selectedMessageIds.includes(thread.sectionLatestMessage.id)
+  ).length);
   const bulkAllSelected = $derived(bulkSelectableIds.length > 0 && bulkSelectedVisibleCount === bulkSelectableIds.length);
   const bulkSomeSelected = $derived(bulkSelectedVisibleCount > 0 && !bulkAllSelected);
 
@@ -567,13 +574,17 @@
     composeLastSavedSignature = serializeComposeInput(nextInput);
   };
 
-  function applyMessageDelta(result: { message: MailMessage; metrics: WorkspaceMetrics }, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
+  function applyMessageDelta(result: MessageDelta, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
     const merged = mergeMessageDelta(
       { mailbox, mailboxPages, metrics },
       result,
       {
         currentSection: activeSection,
         currentSelectedMessageId: selectedMessageId,
+        identityFilter: mailIdentityFilter,
+        identityAddresses: mailIdentityOptions.addresses.map(({ id, domainId }) => ({ id, domainId })),
+        query: searchQuery,
+        filter: mailFilter,
         section: options?.section,
         preferredMessageId: options?.preferredMessageId,
         removeDraftId: options?.removeDraftId
@@ -596,6 +607,9 @@
       mobileDetailOpen = options.section !== 'profile' && Boolean(selectedMessageId);
       updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined,
         identityFilter: options.clearMailView ? null : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
+    }
+    if (options?.clearMailView || !merged.messageApplied || !merged.metricsApplied) {
+      scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter);
     }
   }
 
@@ -824,6 +838,7 @@
   function setSection(section: AppSection, syncUrl = true) {
     clearMailboxRefreshTimer();
     selectedMessageIds = [];
+    bulkThreadScope = 'selected';
     activeSection = section;
     searchQuery = '';
     mailFilter = 'all';
@@ -853,10 +868,11 @@
     }
 
     if (section === 'trash') {
+      mailIdentityFilter = null;
       selectedMessageId = trashItems.some((item) => item.id === selectedMessageId)
         ? selectedMessageId
         : trashItems[0]?.id ?? null;
-      if (syncUrl) updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
+      if (syncUrl) updateWorkspaceUrl({ section, query: '', filter: 'all', identityFilter: null, messageId: null });
       if (authenticated) void trashController.load();
       return;
     }
@@ -896,6 +912,7 @@
     searchQuery = query;
     selectedMessageId = null;
     selectedMessageIds = [];
+    bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query, messageId: null }, true);
     scheduleMailboxRefresh(activeSection, query, mailFilter);
@@ -905,6 +922,7 @@
     mailFilter = filter;
     selectedMessageId = null;
     selectedMessageIds = [];
+    bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ filter, messageId: null });
     scheduleMailboxRefresh(activeSection, searchQuery, filter, 0);
@@ -914,6 +932,7 @@
     mailIdentityFilter = identityFilter;
     selectedMessageId = null;
     selectedMessageIds = [];
+    bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ identityFilter, messageId: null });
     scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, identityFilter);
@@ -925,6 +944,7 @@
     mailIdentityFilter = null;
     selectedMessageId = null;
     selectedMessageIds = [];
+    bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query: '', filter: 'all', identityFilter: null, messageId: null }, true);
     scheduleMailboxRefresh(activeSection, '', 'all', 0, null);
@@ -986,6 +1006,7 @@
     const currentMessages = merged.mailboxPages?.[page.folder]?.messages ?? [];
     if (activeSection === page.folder) {
       selectedMessageIds = reconcileBulkSelection(selectedMessageIds, currentMessages);
+      if (selectedMessageIds.length === 0) bulkThreadScope = 'selected';
     }
     if (
       activeSection === page.folder &&
@@ -999,6 +1020,7 @@
     selectedMessageIds = selectedMessageIds.includes(message.id)
       ? selectedMessageIds.filter((id) => id !== message.id)
       : [...selectedMessageIds, message.id];
+    bulkThreadScope = 'selected';
   }
 
   function selectAllVisible() {
@@ -1006,10 +1028,11 @@
     selectedMessageIds = bulkAllSelected
       ? selectedMessageIds.filter((id) => !ids.includes(id))
       : [...new Set([...selectedMessageIds, ...ids])];
+    bulkThreadScope = 'selected';
   }
 
   async function handleBulkMutation(action: import('$lib/domain/mail').MailboxMutationAction) {
-    if (!selectedMessageIds.length) return;
+    if (!selectedMessageIds.length || !['inbox', 'sent', 'archive'].includes(activeSection)) return;
     pending = true;
     try {
       const selected = [...visibleThreads.flatMap((thread) => [thread.sectionLatestMessage]), ...visibleMessages]
@@ -1017,13 +1040,25 @@
       const validSelectedIds = selected.map((message) => message.id);
       if (!validSelectedIds.length) {
         selectedMessageIds = [];
+        bulkThreadScope = 'selected';
         return;
       }
-      const threadKeys = selected.map((message) => message.threadKey).filter((key): key is string => Boolean(key));
-      const result = await mutateMailbox(action, validSelectedIds, threadKeys);
-      metrics = result.result.metrics;
+      const selectedThreadKeys = selected.map((message) => message.threadKey).filter((key): key is string => Boolean(key));
+      const threadScope = bulkThreadScope !== 'selected' && selectedThreadKeys.length ? bulkThreadScope : 'selected';
+      const threadKeys = threadScope === 'selected' ? [] : selectedThreadKeys;
+      const result = await mutateMailbox(action, validSelectedIds, threadKeys, {
+        section: activeSection === 'archive' ? 'archive' : activeSection === 'sent' ? 'sent' : 'inbox',
+        identityFilter: mailIdentityFilter,
+        threadScope,
+        ...(threadScope === 'filtered' ? { query: searchQuery, filter: mailFilter } : {})
+      });
+      const metricsScope = result.result.metricsScope.identityFilter;
+      if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
+        metrics = result.result.metrics;
+      }
       if (action === 'trash') trashLoaded = false;
       selectedMessageIds = [];
+      bulkThreadScope = 'selected';
       await refreshWorkspace();
       workspaceSync?.publish({ type: 'mailbox-refresh' });
       notify(
@@ -1634,7 +1669,7 @@
         result.folder,
         activeSection,
         selectedMessageId,
-        result.metrics
+        sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter) ? result.metrics : undefined
       );
       mailbox = removed.snapshot.mailbox;
       mailboxPages = removed.snapshot.mailboxPages;
@@ -1642,6 +1677,9 @@
       runtimeOperationError = false;
       trashLoaded = false;
       selectedMessageId = removed.selectedMessageId;
+      if (!sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter)) {
+        scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter);
+      }
       selectedMessageIds = selectedMessageIds.filter((id) => id !== result.removedId);
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
@@ -2090,6 +2128,22 @@
                       </span>
                       {#if bulkSelectedVisibleCount > 0}
                         <div class="bulk-actions">
+                          {#if bulkSelectedThreadCount > 0}
+                            <label class="inline-flex min-h-8 items-center gap-1.5 text-xs text-[var(--fm-text-muted)]" title={t('mail.threadScopeDescription')}>
+                              <span class="sr-only">{t('mail.threadScope')}</span>
+                              <select
+                                class="min-h-8 max-w-48 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 text-xs text-[var(--fm-text)]"
+                                aria-label={t('mail.threadScope')}
+                                value={bulkThreadScope}
+                                onchange={(event) => (bulkThreadScope = event.currentTarget.value as 'selected' | 'filtered' | 'owner')}
+                              >
+                                <option value="selected">{t('mail.threadScopeSelected')}</option>
+                                <option value="filtered">{t('mail.threadScopeFiltered')}</option>
+                                <option value="owner">{t('mail.threadScopeOwner')}</option>
+                              </select>
+                              <span class="sr-only">{t('mail.threadScopeDescription')}</span>
+                            </label>
+                          {/if}
                           {#if activeSection === 'archive'}
                             <IconButton ariaLabel={t('mail.moveToInbox')} title={t('mail.moveToInbox')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('unarchive')}><Inbox class="size-4" aria-hidden="true" /></IconButton>
                           {:else if activeSection === 'inbox'}
