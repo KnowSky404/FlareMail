@@ -61,13 +61,28 @@ The server-only Cloudflare client uses the configured zone and Worker names
 with the Email Routing Rules API. Its token is a distinct Worker Secret with
 `Email Routing Rules Read` and `Email Routing Rules Edit` (write) permissions
 for the configured zone(s). It is never returned to a browser, written to D1,
-or logged. Exact
-literal `to` rules route to the app's Worker. A matching existing Worker rule
-can be explicitly imported; conflicting rules are reported and left alone.
-Cloudflare and D1 are not transactional, so operations persist provisioning,
-active, deleting, deleted, or error state and support reconciliation/retry.
-They do not call the destination-address forwarding API or modify external
-catch-all rules.
+or logged. Exact literal `to` rules route to the app's Worker. Managed-rule
+ownership requires the saved rule ID, API source, exact FlareMail marker,
+enabled literal recipient matcher, one Worker action, and the exact configured
+Worker target. Deletion re-reads the zone immediately before deleting the
+saved ID and reconciles the result before reporting completion. Cloudflare's
+documented DELETE route is ID-based and exposes no conditional version
+precondition; this narrows but cannot eliminate a change made between the
+final read and DELETE. A matching existing Worker rule can be explicitly
+imported; imported and conflicting rules are preserved by normal delete and
+retry operations.
+
+Create, check, enable, disable, delete, restore, and retry share the existing
+per-address expiring operation lease. Writes compare the lease token and the
+snapshot lifecycle/routing fields. A check that loses its lease reports the
+address as busy and drops its stale result. Checks do not change send
+permission or the default sender, and a successful route check does not turn
+receiving back on for a disabled address. A confirmed deleted address stays a
+tombstone when the managed route is absent; restoring it requires a terminal,
+reconciled deletion and a fresh route check. Cloudflare and D1 are not
+transactional, so ambiguous outcomes remain retryable and every retry reads
+the current rule before another destructive request. Operations do not call
+the destination-address forwarding API or modify external catch-all rules.
 
 Unknown recipients default to reject. `collect` is an explicit domain policy
 that accepts an unregistered recipient only after a recent check proves that

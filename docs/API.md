@@ -67,14 +67,30 @@ Worker, API origin, or Cloudflare endpoint.
   configured zone's exact rules and catch-all, and checks the domain-level
   Resend sending status. A matching Worker rule may be explicitly imported;
   a duplicate or same-name rule to another target is a conflict and is never
-  overwritten automatically.
+  overwritten automatically. Address results may be `busy` while another
+  address operation owns its lease; that check result is discarded for that
+  address. `deleted_absent` is a completed tombstone result, while
+  `imported_preserved` is an expected preserved-rule result.
 - `POST /api/workspace/mail-identities/:addressId` supports `disable`,
   `enable`, `import`, `restore`, `retry`, `enable_send`, `disable_send`, and
   `make_default`. Receive lifecycle and sending permission are separate.
 - `DELETE /api/workspace/mail-identities/:addressId` requires
   `{ "confirm": "delete" }`. It closes local send/receive access and records a
   tombstone before remote rule cleanup. It does not delete historical mail,
-  drafts, or R2 content. Restoring the same identity is an explicit action.
+  drafts, or R2 content. Before removing a FlareMail-owned rule it verifies the
+  saved ID, API source, exact management marker, enabled literal recipient
+  matcher, single Worker action, and full configured Worker target, then reads
+  the rule set again immediately before DELETE. Imported rules are preserved.
+  A rule changed externally returns a conflict and is left alone. Restore is
+  allowed only after deletion is reconciled and no address operation lease is
+  active; it verifies or recreates the route before enabling receiving. An
+  active operation or unresolved deletion returns `MAIL_ADDRESS_OPERATION_CONFLICT`.
+
+The [Cloudflare Email Routing Rules API](https://developers.cloudflare.com/api/resources/email_routing/subresources/rules/)
+documents deletion by rule ID without an ETag/version precondition. The final
+read narrows the external-change window but cannot make the Cloudflare request
+and D1 update atomic. Timeouts are reconciled with a read before a retry can
+issue another DELETE.
 
 The default unknown-recipient policy is `reject`. Optional `collect` is allowed
 only for a configured domain whose recent read-only check confirms its catch-all

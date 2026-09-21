@@ -37,6 +37,13 @@ export interface CloudflareEmailRoutingRule {
   actions: Array<{ type: string; value: string[] }>;
 }
 
+export interface ManagedWorkerRuleIdentity {
+  addressId: string;
+  email: string;
+  workerName: string;
+  ruleId?: string | null;
+}
+
 export interface CloudflareZoneInfo {
   id: string;
   name: string;
@@ -144,6 +151,27 @@ export function isExactWorkerEmailRule(
     rule.actions[0]?.type === 'worker' &&
     rule.actions[0]?.value.length === 1 &&
     rule.actions[0]?.value[0] === workerName;
+}
+
+/**
+ * The stable FlareMail ownership fingerprint for rules created by this app.
+ * A display name by itself is never sufficient to claim a Cloudflare rule.
+ */
+export function isFlareMailManagedWorkerRule(
+  rule: CloudflareEmailRoutingRule,
+  identity: ManagedWorkerRuleIdentity
+): boolean {
+  return rule.source === 'api' &&
+    rule.name === 'FlareMail managed address ' + identity.addressId &&
+    (identity.ruleId == null || rule.id === identity.ruleId) &&
+    isExactWorkerEmailRule(rule, identity.email, identity.workerName);
+}
+
+export function isExactRecipientRule(rule: CloudflareEmailRoutingRule, email: string): boolean {
+  return rule.matchers.length === 1 &&
+    rule.matchers[0]?.type === 'literal' &&
+    rule.matchers[0]?.field === 'to' &&
+    rule.matchers[0]?.value?.toLowerCase() === email.toLowerCase();
 }
 
 export class CloudflareEmailRoutingClient {

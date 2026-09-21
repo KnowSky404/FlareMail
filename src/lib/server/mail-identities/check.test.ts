@@ -5,11 +5,18 @@ import { resolve } from 'node:path';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import { checkManagedMailDomain, type ManagedMailDomainCheckDependencies } from './check';
+import { disableManagedMailAddress } from './routing';
 
 const schema = readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8');
 const ownerId = 'owner-0000-0000-0000-000000000001';
 const domainId = 'domain-0000-0000-0000-000000000001';
 const zoneId = 'a'.repeat(32);
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
 
 class SqliteD1Statement {
   private values: SQLQueryBindings[] = [];
@@ -67,9 +74,9 @@ function createFixture() {
     async batch(statements: SqliteD1Statement[]) {
       sqlite.exec('BEGIN');
       try {
-        for (const statement of statements) statement.runNow();
+        const results = statements.map((statement) => statement.runNow());
         sqlite.exec('COMMIT');
-        return [];
+        return results.map((result) => ({ success: true, meta: { changes: result.changes } }));
       } catch (error) {
         sqlite.exec('ROLLBACK');
         throw error;
@@ -82,7 +89,7 @@ function createFixture() {
     RESEND_API_KEY: 'resend-secret'
   } as CloudflareEnv;
   const selectAddress = (id: string) => sqlite.query(
-    'SELECT routing_state, routing_rule_id, routing_rule_source, routing_owner, receive_enabled, last_error_code FROM mail_addresses WHERE id = ?'
+    'SELECT lifecycle_status, routing_state, routing_rule_id, routing_rule_source, routing_owner, receive_enabled, send_enabled, operation_token, operation_expires_at, last_error_code FROM mail_addresses WHERE id = ?'
   ).get(id) as Record<string, unknown>;
   const selectDomain = () => sqlite.query(
     'SELECT cloudflare_account_id, catch_all_target, catch_all_checked_at, cloudflare_checked_at, resend_domain_id, resend_status, resend_sending_status FROM mail_domains WHERE id = ?'
@@ -106,7 +113,12 @@ function rule(
   };
 }
 
-function dependencies(rules: CloudflareEmailRoutingRule[], options: { cfError?: boolean } = {}) {
+function dependencies(rules: CloudflareEmailRoutingRule[], options: {
+  cfError?: boolean;
+  beforeList?: () => Promise<void>;
+  now?: () => string;
+  randomUUID?: () => string;
+} = {}) {
   const deps: ManagedMailDomainCheckDependencies = {
     cloudflareClient: {
       async getZone(zone) {
@@ -115,6 +127,7 @@ function dependencies(rules: CloudflareEmailRoutingRule[], options: { cfError?: 
       },
       async listRules() {
         if (options.cfError) throw new Error('private provider response');
+        await options.beforeList?.();
         return rules;
       },
       async getCatchAll() {
@@ -125,7 +138,8 @@ function dependencies(rules: CloudflareEmailRoutingRule[], options: { cfError?: 
       expect(exactDomain).toBe('mail.example.test');
       return { id: 'resend-domain-1', name: exactDomain, status: 'verified', verified: true, sendingEnabled: true };
     },
-    now: () => '2026-09-20T12:00:00.000Z'
+    now: options.now ?? (() => '2026-09-20T12:00:00.000Z'),
+    ...(options.randomUUID ? { randomUUID: options.randomUUID } : {})
   };
   return deps;
 }
@@ -160,7 +174,9 @@ describe('managed mail domain checks', () => {
     expect(fixture.selectAddress('address-imported-0000000000000002')).toMatchObject({ routing_state: 'imported', receive_enabled: 1, routing_owner: 'imported' });
     expect(fixture.selectAddress('address-importable-0000000000000003')).toMatchObject({ routing_state: 'pending', receive_enabled: 0 });
     expect(fixture.selectAddress('address-conflict-0000000000000004')).toMatchObject({ routing_state: 'error', receive_enabled: 0 });
-    expect(fixture.selectAddress('address-deleted-0000000000000006')).toMatchObject({ routing_state: 'deleting', receive_enabled: 0 });
+    expect(fixture.selectAddress('address-deleted-0000000000000006')).toMatchObject({
+      routing_state: 'error', receive_enabled: 0, last_error_code: 'cloudflare_deleted_address_route_present'
+    });
     expect(fixture.selectDomain()).toMatchObject({
       cloudflare_account_id: 'account-1',
       catch_all_target: 'this_worker',
@@ -179,6 +195,89 @@ describe('managed mail domain checks', () => {
     expect(result.resend.state).toBe('verified');
     expect(JSON.stringify(result)).not.toContain('private provider response');
     expect(fixture.selectDomain()).toMatchObject({ resend_status: 'verified', resend_sending_status: 'enabled' });
+    expect(fixture.selectAddress('address-managed-0000000000000001')).toMatchObject({
+      routing_state: 'unknown', receive_enabled: 0, operation_token: null
+    });
+    fixture.sqlite.close();
+  });
+
+  test('keeps a deleted tombstone terminal across repeated checks when its managed route is absent', async () => {
+    const fixture = createFixture();
+    const deps = dependencies([]);
+    const first = await checkManagedMailDomain(fixture.env, ownerId, domainId, deps);
+    expect(first.cloudflare.addresses.find((entry) => entry.addressId === 'address-deleted-0000000000000006'))
+      .toMatchObject({ status: 'deleted_absent' });
+    expect(fixture.selectAddress('address-deleted-0000000000000006')).toMatchObject({
+      lifecycle_status: 'deleted', routing_state: 'deleted', routing_rule_id: null, receive_enabled: 0
+    });
+
+    const second = await checkManagedMailDomain(fixture.env, ownerId, domainId, deps);
+    expect(second.cloudflare.addresses.find((entry) => entry.addressId === 'address-deleted-0000000000000006'))
+      .toMatchObject({ status: 'deleted_absent' });
+    expect(fixture.selectAddress('address-deleted-0000000000000006')).toMatchObject({
+      lifecycle_status: 'deleted', routing_state: 'deleted', last_error_code: null
+    });
+    fixture.sqlite.close();
+  });
+
+  test('recognizes a deleted imported rule as an expected preserved result', async () => {
+    const fixture = createFixture();
+    fixture.sqlite.query(`
+      UPDATE mail_addresses SET lifecycle_status = 'deleted', routing_state = 'imported', receive_enabled = 0
+      WHERE id = 'address-imported-0000000000000002'
+    `).run();
+    const rules = [rule('rule-imported', 'imported@mail.example.test', { source: 'wrangler' })];
+    const result = await checkManagedMailDomain(fixture.env, ownerId, domainId, dependencies(rules));
+    expect(result.cloudflare.addresses.find((entry) => entry.addressId === 'address-imported-0000000000000002'))
+      .toMatchObject({ status: 'imported_preserved' });
+    expect(fixture.selectAddress('address-imported-0000000000000002')).toMatchObject({
+      lifecycle_status: 'deleted', routing_state: 'imported', routing_owner: 'imported', receive_enabled: 0, last_error_code: null
+    });
+    fixture.sqlite.close();
+  });
+
+  test('does not re-enable receiving for a lifecycle-disabled address during a healthy route check', async () => {
+    const fixture = createFixture();
+    fixture.sqlite.query(`
+      UPDATE mail_addresses SET lifecycle_status = 'disabled', receive_enabled = 0
+      WHERE id = 'address-managed-0000000000000001'
+    `).run();
+    const rules = [rule('rule-managed', 'managed@mail.example.test', {
+      name: 'FlareMail managed address address-managed-0000000000000001'
+    })];
+    await checkManagedMailDomain(fixture.env, ownerId, domainId, dependencies(rules));
+    expect(fixture.selectAddress('address-managed-0000000000000001')).toMatchObject({
+      lifecycle_status: 'disabled', routing_state: 'active', receive_enabled: 0, send_enabled: 0
+    });
+    fixture.sqlite.close();
+  });
+
+  test('discards a late check result after a lease-expired disable takes over', async () => {
+    const fixture = createFixture();
+    let clock = Date.parse('2026-09-21T12:00:00.000Z');
+    const listStarted = deferred<void>();
+    const finishList = deferred<void>();
+    const rules = [rule('rule-managed', 'managed@mail.example.test', {
+      name: 'FlareMail managed address address-managed-0000000000000001'
+    })];
+    const check = checkManagedMailDomain(fixture.env, ownerId, domainId, dependencies(rules, {
+      now: () => new Date(clock).toISOString(),
+      async beforeList() {
+        listStarted.resolve();
+        await finishList.promise;
+      }
+    }));
+    await listStarted.promise;
+    clock += 6 * 60 * 1000;
+    await disableManagedMailAddress(fixture.env, ownerId, 'address-managed-0000000000000001', { now: () => new Date(clock) });
+    finishList.resolve();
+    const result = await check;
+
+    expect(result.cloudflare.addresses.find((entry) => entry.addressId === 'address-managed-0000000000000001'))
+      .toMatchObject({ status: 'busy' });
+    expect(fixture.selectAddress('address-managed-0000000000000001')).toMatchObject({
+      lifecycle_status: 'disabled', routing_state: 'unknown', receive_enabled: 0, send_enabled: 0, operation_token: null
+    });
     fixture.sqlite.close();
   });
 

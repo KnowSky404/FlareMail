@@ -2,7 +2,9 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import {
   CloudflareEmailRoutingClient,
   CloudflareEmailRoutingError,
+  isExactRecipientRule,
   isExactWorkerEmailRule,
+  isFlareMailManagedWorkerRule,
   type CloudflareCatchAll,
   type CloudflareEmailRoutingRule
 } from '$lib/server/cloudflare-email-routing';
@@ -17,12 +19,13 @@ export interface ManagedMailDomainCheckDependencies {
   cloudflareClient: CloudflareClient;
   resendLookup: ResendLookup;
   now?: () => string;
+  randomUUID?: () => string;
 }
 
 export type AddressRouteCheck = {
   addressId: string;
   email: string;
-  status: 'managed' | 'imported' | 'importable' | 'missing' | 'conflict' | 'duplicate' | 'deleted_route';
+  status: 'managed' | 'imported' | 'importable' | 'missing' | 'conflict' | 'duplicate' | 'deleted_route' | 'deleted_absent' | 'imported_preserved' | 'busy';
 };
 
 export interface ManagedMailDomainCheckResult {
@@ -48,6 +51,7 @@ export interface ManagedMailDomainCheckResult {
 }
 
 const isoNow = () => new Date().toISOString();
+const addressCheckLeaseMs = 5 * 60 * 1000;
 
 function catchAllTarget(catchAll: CloudflareCatchAll, workerName: string): ManagedMailDomainCheckResult['cloudflare']['catchAllTarget'] {
   if (!catchAll.enabled) return 'none';
@@ -59,19 +63,7 @@ function catchAllTarget(catchAll: CloudflareCatchAll, workerName: string): Manag
 }
 
 function exactRecipientRules(rules: CloudflareEmailRoutingRule[], email: string) {
-  return rules.filter((rule) => rule.matchers.length === 1 &&
-    rule.matchers[0]?.type === 'literal' &&
-    rule.matchers[0]?.field === 'to' &&
-    rule.matchers[0]?.value?.toLowerCase() === email.toLowerCase());
-}
-
-function hasFlareMailMarker(rule: CloudflareEmailRoutingRule, address: ManagedMailAddressRow) {
-  return rule.enabled &&
-    rule.source === 'api' &&
-    rule.name === 'FlareMail managed address ' + address.id &&
-    rule.actions.length === 1 &&
-    rule.actions[0]?.type === 'worker' &&
-    rule.actions[0]?.value.length === 1;
+  return rules.filter((rule) => isExactRecipientRule(rule, email));
 }
 
 function routeStatus(
@@ -80,7 +72,13 @@ function routeStatus(
   workerName: string
 ): AddressRouteCheck['status'] {
   const matches = exactRecipientRules(rules, address.email);
-  if (address.lifecycle_status === 'deleted') return matches.length ? 'deleted_route' : 'missing';
+  if (address.lifecycle_status === 'deleted') {
+    if (!matches.length) return 'deleted_absent';
+    if (matches.length === 1 && address.routing_owner === 'imported' &&
+      matches[0]?.id === address.routing_rule_id && matches[0]?.source === address.routing_rule_source &&
+      isExactWorkerEmailRule(matches[0]!, address.email, workerName)) return 'imported_preserved';
+    return 'deleted_route';
+  }
   if (matches.length > 1) return 'duplicate';
   const rule = matches[0];
   if (!rule) return 'missing';
@@ -88,7 +86,15 @@ function routeStatus(
   if (address.routing_owner === 'imported') {
     return rule.id === address.routing_rule_id && rule.source === address.routing_rule_source ? 'imported' : 'importable';
   }
-  if (address.routing_owner === 'flaremail' && hasFlareMailMarker(rule, address)) return 'managed';
+  if (address.routing_owner === 'flaremail') {
+    if (isFlareMailManagedWorkerRule(rule, {
+      addressId: address.id,
+      email: address.email,
+      workerName,
+      ruleId: address.routing_rule_id
+    })) return 'managed';
+    if (address.routing_rule_id) return 'conflict';
+  }
   return 'importable';
 }
 
@@ -99,6 +105,44 @@ function classifyCloudflareError(error: unknown) {
 
 function classifyResendError(error: unknown) {
   return error instanceof ResendDomainError ? 'resend_' + error.code : 'resend_check_failed';
+}
+
+function routeObservationUpdate(
+  db: D1Database,
+  address: ManagedMailAddressRow,
+  ownerUserId: string,
+  token: string,
+  timestamp: string,
+  setClause: string,
+  values: unknown[]
+) {
+  return db.prepare(
+    `UPDATE mail_addresses SET ${setClause} WHERE id = ? AND owner_user_id = ? AND operation_token = ? ` +
+    'AND operation_expires_at > ? AND lifecycle_status = ? AND routing_state = ? ' +
+    'AND routing_rule_id IS ? AND routing_rule_source IS ? AND routing_owner IS ?'
+  ).bind(
+    ...values,
+    address.id,
+    ownerUserId,
+    token,
+    timestamp,
+    address.lifecycle_status,
+    address.routing_state,
+    address.routing_rule_id,
+    address.routing_rule_source,
+    address.routing_owner
+  );
+}
+
+async function releaseAddressCheckLeases(
+  db: D1Database,
+  ownerUserId: string,
+  leases: Array<{ addressId: string; token: string }>
+) {
+  await Promise.all(leases.map(({ addressId, token }) => db.prepare(
+    'UPDATE mail_addresses SET operation_token = NULL, operation_expires_at = NULL ' +
+    'WHERE id = ? AND owner_user_id = ? AND operation_token = ?'
+  ).bind(addressId, ownerUserId, token).run()));
 }
 
 export async function checkManagedMailDomain(
@@ -135,6 +179,41 @@ export async function checkManagedMailDomain(
       'UPDATE mail_domains SET last_error_code = ?, last_error_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?'
     ).bind(result.cloudflare.errorCode, now(), now(), domain.id, ownerUserId).run();
   } else {
+    const addresses = (await listManagedMailAddresses(env.DB, ownerUserId))
+      .filter((address) => address.domain_id === domain.id);
+    const leaseAt = now();
+    const leaseExpiry = new Date(Date.parse(leaseAt) + addressCheckLeaseMs).toISOString();
+    const leases: Array<{ address: ManagedMailAddressRow; token: string }> = [];
+    const busyAddresses = new Set<string>();
+    for (const address of addresses) {
+      const leaseToken = (dependencies?.randomUUID ?? (() => crypto.randomUUID()))();
+      const acquired = await env.DB.prepare(
+        'UPDATE mail_addresses SET operation_token = ?, operation_expires_at = ?, updated_at = ? ' +
+        'WHERE id = ? AND owner_user_id = ? AND domain_id = ? AND lifecycle_status = ? AND routing_state = ? ' +
+        'AND routing_rule_id IS ? AND routing_rule_source IS ? AND routing_owner IS ? ' +
+        'AND receive_enabled = ? AND send_enabled = ? AND is_default_sender = ? ' +
+        'AND (operation_token IS NULL OR operation_expires_at <= ?)'
+      ).bind(
+        leaseToken,
+        leaseExpiry,
+        leaseAt,
+        address.id,
+        ownerUserId,
+        domain.id,
+        address.lifecycle_status,
+        address.routing_state,
+        address.routing_rule_id,
+        address.routing_rule_source,
+        address.routing_owner,
+        address.receive_enabled,
+        address.send_enabled,
+        address.is_default_sender,
+        leaseAt
+      ).run();
+      if (Number(acquired.meta?.changes ?? 0) === 1) leases.push({ address, token: leaseToken });
+      else busyAddresses.add(address.id);
+    }
+
     const checks = await Promise.allSettled([
       cloudflare.getZone(domain.cloudflare_zone_id),
       cloudflare.listRules(domain.cloudflare_zone_id),
@@ -146,6 +225,7 @@ export async function checkManagedMailDomain(
       await env.DB.prepare(
         'UPDATE mail_domains SET last_error_code = ?, last_error_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?'
       ).bind(result.cloudflare.errorCode, now(), now(), domain.id, ownerUserId).run();
+      await releaseAddressCheckLeases(env.DB, ownerUserId, leases.map(({ address, token: leaseToken }) => ({ addressId: address.id, token: leaseToken })));
     } else {
       const [zoneCheck, rulesCheck, catchAllCheck] = checks as [
         PromiseFulfilledResult<Awaited<ReturnType<CloudflareClient['getZone']>>>,
@@ -153,21 +233,28 @@ export async function checkManagedMailDomain(
         PromiseFulfilledResult<Awaited<ReturnType<CloudflareClient['getCatchAll']>>>
       ];
       const zone = zoneCheck.value;
-      const zoneName = normalizeMailDomain(zone.name);
-      const domainMatchesZone = domain.domain_name === zoneName || domain.domain_name.endsWith('.' + zoneName);
+      let zoneName: string | null = null;
+      try {
+        zoneName = normalizeMailDomain(zone.name);
+      } catch {
+        // Invalid provider data is a mapping conflict and must release the leases below.
+      }
+      const domainMatchesZone = Boolean(zoneName &&
+        (domain.domain_name === zoneName || domain.domain_name.endsWith('.' + zoneName)));
       const accountMatches = !domain.cloudflare_account_id || !zone.accountId || domain.cloudflare_account_id === zone.accountId;
-      if (zone.id !== domain.cloudflare_zone_id || !domainMatchesZone || !accountMatches) {
+      if (!zoneName || zone.id !== domain.cloudflare_zone_id || !domainMatchesZone || !accountMatches) {
         result.cloudflare.errorCode = 'cloudflare_zone_mapping_conflict';
         await env.DB.prepare(
           'UPDATE mail_domains SET last_error_code = ?, last_error_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?'
         ).bind(result.cloudflare.errorCode, now(), now(), domain.id, ownerUserId).run();
+        await releaseAddressCheckLeases(env.DB, ownerUserId, leases.map(({ address, token: leaseToken }) => ({ addressId: address.id, token: leaseToken })));
       } else {
         const timestamp = now();
-        const addresses = await listManagedMailAddresses(env.DB, ownerUserId);
-        const domainAddresses = addresses.filter((address) => address.domain_id === domain.id);
-        const routeChecks = domainAddresses.map((address) => ({
+        const leaseTokens = new Map(leases.map(({ address, token: leaseToken }) => [address.id, leaseToken]));
+        const routeChecks = addresses.map((address) => ({
           address,
-          status: routeStatus(rulesCheck.value, address, domain.worker_name)
+          token: leaseTokens.get(address.id),
+          status: busyAddresses.has(address.id) ? 'busy' as const : routeStatus(rulesCheck.value, address, domain.worker_name)
         }));
         const target = catchAllTarget(catchAllCheck.value, domain.worker_name);
         const statements = [
@@ -176,45 +263,89 @@ export async function checkManagedMailDomain(
             'catch_all_target = ?, catch_all_checked_at = ?, cloudflare_checked_at = ?, ' +
             'last_error_code = NULL, last_error_at = NULL, updated_at = ? WHERE id = ? AND owner_user_id = ?'
           ).bind(zone.accountId, target, timestamp, timestamp, timestamp, domain.id, ownerUserId),
-          ...routeChecks.map(({ address, status }) => {
+          ...routeChecks.flatMap(({ address, token: leaseToken, status }) => {
+            if (!leaseToken) return [];
             if (status === 'managed' || status === 'imported') {
-              return env.DB.prepare(
-                'UPDATE mail_addresses SET routing_state = ?, routing_rule_id = ?, routing_rule_source = ?, ' +
-                'routing_owner = ?, receive_enabled = CASE WHEN lifecycle_status = \'active\' THEN 1 ELSE 0 END, ' +
-                'last_error_code = NULL, last_error_at = NULL, updated_at = ? WHERE id = ? AND owner_user_id = ?'
-              ).bind(
-                status === 'imported' ? 'imported' : 'active',
-                exactRecipientRules(rulesCheck.value, address.email)[0]?.id ?? null,
-                exactRecipientRules(rulesCheck.value, address.email)[0]?.source ?? null,
-                status === 'imported' ? 'imported' : 'flaremail',
+              const rule = exactRecipientRules(rulesCheck.value, address.email)[0]!;
+              return [routeObservationUpdate(
+                env.DB,
+                address,
+                ownerUserId,
+                leaseToken,
                 timestamp,
-                address.id,
-                ownerUserId
-              );
+                'routing_state = ?, routing_rule_id = ?, routing_rule_source = ?, ' +
+                'routing_owner = ?, receive_enabled = CASE WHEN lifecycle_status = \'active\' THEN 1 ELSE 0 END, ' +
+                'last_error_code = NULL, last_error_at = NULL, operation_token = NULL, ' +
+                'operation_expires_at = NULL, updated_at = ?',
+                [
+                  status === 'imported' ? 'imported' : 'active',
+                  rule.id,
+                  rule.source,
+                  status === 'imported' ? 'imported' : 'flaremail',
+                  timestamp
+                ]
+              )];
+            }
+            if (status === 'deleted_absent') {
+              const imported = address.routing_owner === 'imported';
+              return [routeObservationUpdate(
+                env.DB,
+                address,
+                ownerUserId,
+                leaseToken,
+                timestamp,
+                'routing_state = ?, routing_rule_id = CASE WHEN ? = 1 THEN routing_rule_id ELSE NULL END, ' +
+                'routing_rule_source = CASE WHEN ? = 1 THEN routing_rule_source ELSE NULL END, ' +
+                'routing_owner = CASE WHEN ? = 1 THEN routing_owner ELSE NULL END, receive_enabled = 0, ' +
+                'last_error_code = NULL, last_error_at = NULL, operation_token = NULL, operation_expires_at = NULL, updated_at = ?',
+                [imported ? 'imported' : 'deleted', imported ? 1 : 0, imported ? 1 : 0, imported ? 1 : 0, timestamp]
+              )];
             }
             if (status === 'missing') {
-              const missingState = address.lifecycle_status === 'deleted'
-                ? 'deleting'
-                : address.routing_rule_id ? 'error' : 'pending';
-              return env.DB.prepare(
-                'UPDATE mail_addresses SET routing_state = ?, receive_enabled = 0, ' +
-                'last_error_code = CASE WHEN ? = \'error\' THEN \'cloudflare_route_missing\' ELSE NULL END, ' +
-                'last_error_at = CASE WHEN ? = \'error\' THEN ? ELSE NULL END, updated_at = ? ' +
-                'WHERE id = ? AND owner_user_id = ?'
-              ).bind(missingState, missingState, missingState, timestamp, timestamp, address.id, ownerUserId);
+              const missingState = address.routing_rule_id ? 'error' : 'pending';
+              const errorCode = missingState === 'error' ? 'cloudflare_route_missing' : null;
+              return [routeObservationUpdate(
+                env.DB,
+                address,
+                ownerUserId,
+                leaseToken,
+                timestamp,
+                'routing_state = ?, receive_enabled = 0, last_error_code = ?, ' +
+                'last_error_at = ?, operation_token = NULL, operation_expires_at = NULL, updated_at = ?',
+                [missingState, errorCode, errorCode ? timestamp : null, timestamp]
+              )];
             }
             const stateError = status === 'duplicate'
               ? 'cloudflare_duplicate_exact_rules'
               : status === 'deleted_route' ? 'cloudflare_deleted_address_route_present' :
                 status === 'conflict' ? 'cloudflare_external_rule_conflict' : null;
-            if (!stateError) return env.DB.prepare('SELECT 1').bind();
-            return env.DB.prepare(
-              'UPDATE mail_addresses SET routing_state = ?, receive_enabled = 0, last_error_code = ?, ' +
-              'last_error_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?'
-            ).bind(status === 'deleted_route' ? 'deleting' : 'error', stateError, timestamp, timestamp, address.id, ownerUserId);
+            if (!stateError) {
+              return [routeObservationUpdate(
+                env.DB,
+                address,
+                ownerUserId,
+                leaseToken,
+                timestamp,
+                'operation_token = NULL, operation_expires_at = NULL',
+                []
+              )];
+            }
+            return [routeObservationUpdate(
+              env.DB,
+              address,
+              ownerUserId,
+              leaseToken,
+              timestamp,
+              'routing_state = \'error\', receive_enabled = 0, last_error_code = ?, ' +
+              'last_error_at = ?, operation_token = NULL, operation_expires_at = NULL, updated_at = ?',
+              [stateError, timestamp, timestamp]
+            )];
           })
         ];
-        await env.DB.batch(statements);
+        const outcomes = await env.DB.batch(statements);
+        routeChecks.filter(({ token: leaseToken }) => Boolean(leaseToken)).forEach((check, index) => {
+          if (Number(outcomes[index + 1]?.meta?.changes ?? 0) !== 1) check.status = 'busy';
+        });
         result.cloudflare = {
           state: 'ready', errorCode: null, zoneName,
           catchAllEnabled: catchAllCheck.value.enabled, catchAllTarget: target,
