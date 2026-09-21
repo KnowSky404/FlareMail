@@ -3,7 +3,7 @@
 import app from '../build/_worker.js';
 import type { CloudflareEnv } from '../src/lib/server/cloudflare';
 import { handleInboundEmail } from '../src/lib/server/email';
-import { dispatchTelegramOutbox } from '../src/lib/server/telegram/dispatcher';
+import { scheduleMaintenance } from '../src/lib/server/scheduled';
 
 export default {
   fetch(request, env, ctx) {
@@ -15,6 +15,6 @@ export default {
   },
 
   scheduled(_controller, env, ctx) {
-    ctx.waitUntil(dispatchTelegramOutbox(env, { limit: 10, timeBudgetMs: 20_000, cleanup: true }));
+    scheduleMaintenance(env, ctx);
   }
 } satisfies ExportedHandler<CloudflareEnv>;

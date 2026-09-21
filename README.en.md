@@ -30,7 +30,7 @@ The repository is pinned to Bun `1.4.0`. The application preserves the existing 
 
 The repository contains no fixed login password. Use `scripts/bootstrap-admin.ts` with `FLAREMAIL_ADMIN_USERNAME` and environment variables in the current shell; an optional `FLAREMAIL_PROFILE_EMAIL` is profile data and grants no mail identity. Access-only initialization uses `bun run auth:bootstrap:access` and does not require a local password.
 
-Migrations `0023` and `0024` separate the stable Owner from local credentials and add managed domains/addresses plus message identity snapshots. Historical login/profile emails are not automatically granted send or receive rights. See the [architecture ADR](./docs/adr/0014-owner-managed-mail-identities-and-access.md) and [deployment guide](./DEPLOY.md).
+Migrations `0023`–`0025` separate the stable Owner from local credentials, add managed domains/addresses and message identity snapshots, and add independent Cloudflare/Resend health-check leases. Historical login/profile emails are not automatically granted send or receive rights. Scheduled checks reuse the Telegram Cron, select only due domains, preserve prior successful timestamps on provider errors, and report privately through `/api/readiness`. A previously verified explicit `collect` domain receives at most 24 additional hours of bounded collection grace after transient Cloudflare health errors; its successful timestamp is not extended. See the [architecture ADR](./docs/adr/0014-owner-managed-mail-identities-and-access.md) and [deployment guide](./DEPLOY.md).
 
 ## Local verification
 

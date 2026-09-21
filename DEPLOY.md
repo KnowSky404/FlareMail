@@ -78,7 +78,7 @@ bun run mail:identity:dry-run -- --domain example.com --json
 The report includes historical users and Owner mappings, envelope recipients,
 outbound and draft addresses, attachment/body and Telegram ownership, unowned
 records and conflicts. It does not change D1 or promote login/profile emails to
-managed addresses. Migrations `0023` and `0024` are additive; there is no
+managed addresses. Migrations `0023`–`0025` are additive; there is no
 generic down migration. Multiple historical users require an explicit
 `FLAREMAIL_OWNER_USER_ID` during bootstrap; do not merge their data implicitly.
 
@@ -127,13 +127,15 @@ checkpoint.
 After the Worker exists, attach the reviewed Custom Domain and create the
 Resend webhook for that public URL. Prepare a mode-0600 secrets file through
 the operator's secret manager outside the repository. It contains the two
-required Resend secrets and, when using the in-app address manager, the
-separate zone-scoped Email Routing Rules token:
+required Resend secrets and the read-only Email Routing health token. Add the
+separate Email Routing Rules management token when the in-app address manager
+can create or delete rules:
 
 ```json
 {
   "RESEND_API_KEY": "<value supplied by the secret manager>",
   "RESEND_WEBHOOK_SECRET": "<value copied from Resend>",
+  "CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN": "<read-only zone/routing token>",
   "CLOUDFLARE_EMAIL_ROUTING_TOKEN": "<zone-scoped Email Routing Rules token>"
 }
 ```
@@ -378,16 +380,24 @@ mail domain, its exact Cloudflare zone ID, account ID when needed, Worker name,
 and unknown-recipient policy. A subdomain is an independent mapping; do not
 infer its zone from the parent or enroll every zone visible to the API token.
 
-The secret `CLOUDFLARE_EMAIL_ROUTING_TOKEN` is separate from the Wrangler
-deployment token. On the selected zone(s), grant `Email Routing Rules Read`
-for list/catch-all checks and `Email Routing Rules Edit` for create/delete
-(the API endpoint reference labels that write permission `Email Routing Rules
-Write`). The client does not manage or verify destination addresses, so it
-does not need the account-level Email Routing Addresses permissions. Do not
-grant account-wide editing or reuse a deploy token. The token is never stored
-in D1 or returned to the UI. See the current [Cloudflare token permission
+`CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` is preferred for scheduled and manual
+checks. Scope it to the configured zones with `Zone Read` and `Email Routing
+Rules Read`. `CLOUDFLARE_EMAIL_ROUTING_TOKEN` is used for address create/delete
+operations and needs `Email Routing Rules Edit` (the current API endpoint
+reference labels the equivalent write permission `Email Routing Rules Write`).
+Both tokens are separate from the Wrangler deployment token. The client does
+not manage or verify destination addresses, so it does not need the
+account-level Email Routing Addresses permissions. If the read-only secret is
+omitted, checks fall back to the management token for compatibility. Do not
+grant account-wide editing or reuse a deploy token. Tokens are never stored in
+D1 or returned to the UI. See the current [Cloudflare token permission
 groups](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)
 and [Email Routing rule endpoint permissions](https://developers.cloudflare.com/api/resources/email_routing/subresources/rules/).
+
+The Resend API key used for domain status checks must have Full access under
+Resend's current API-key model; its alternative Sending access key can only
+send. Keep it as a deployment secret and review the provider's current key
+options before rotation. See [Resend API key permissions](https://resend.com/changelog/new-api-key-permissions).
 
 Use `bun run mail:domain:configure -- --remote` with
 `FLAREMAIL_MAIL_DOMAIN_NAME`, `FLAREMAIL_CLOUDFLARE_ZONE_ID`,
@@ -435,7 +445,7 @@ TELEGRAM_TIMEOUT_MS = "5000"
 value. `TELEGRAM_WEBHOOK_SECRET` is optional and only needed as an independent
 override. `wrangler.deploy.toml.example` includes
 `keep_vars = true` so future code deployments preserve Dashboard-managed
-variables. Apply the checkout's ordered migrations through schema version 24
+variables. Apply the checkout's ordered migrations through schema version 25
 (Telegram-specific migrations are 0019-0022) before the first enabled
 deployment. After deployment, log in to FlareMail and click
 **连接 / 更新 Webhook**; the page verifies `getMe` and registers only
@@ -555,8 +565,8 @@ and [Resend DMARC guidance](https://resend.com/docs/dashboard/domains/dmarc).
 
 ### 8. D1 migrations and pre-migration evidence
 
-At the current checkout, migrations `0001` through `0024` are present and
-`src/lib/server/db/schema-version.ts` declares schema version `24`. Treat this
+At the current checkout, migrations `0001` through `0025` are present and
+`src/lib/server/db/schema-version.ts` declares schema version `25`. Treat this
 as a checked-in fact for this release, not a permanent promise: derive the
 latest migration and schema version from the checkout before every release.
 
@@ -790,10 +800,11 @@ reviewed D1, R2, Resend, Custom Domain and webhook configuration:
    values in the operator shell. Run `bun run mail:domain:configure -- --remote`
    only after the reviewed remote D1 change is approved. The script writes one
    explicit domain mapping; it does not discover or enroll other zones.
-4. Add `CLOUDFLARE_EMAIL_ROUTING_TOKEN` as a Worker Secret. It must be a
-   separate token with `Email Routing Rules Read` and `Email Routing Rules
-   Edit` (write) on the configured zone. Never reuse the Wrangler deployment
-   token.
+4. Add `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` as a read-only Worker Secret with
+   `Zone Read` and `Email Routing Rules Read` on configured zones. If the
+   in-app address manager can create/delete rules, add
+   `CLOUDFLARE_EMAIL_ROUTING_TOKEN` separately with `Email Routing Rules Edit`
+   (write). Never reuse the Wrangler deployment token.
 5. Log in to FlareMail and use Profile → Mail identities to add each address.
    The Worker creates an exact literal `to` rule targeting the configured
    Worker email handler. A pre-existing matching Worker rule may be imported

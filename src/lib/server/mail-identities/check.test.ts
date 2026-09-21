@@ -170,8 +170,8 @@ describe('managed mail domain checks', () => {
       ]
     });
     expect(result.resend).toMatchObject({ state: 'verified', sendingEnabled: true });
-    expect(fixture.selectAddress('address-managed-0000000000000001')).toMatchObject({ routing_state: 'active', receive_enabled: 1, routing_owner: 'flaremail' });
-    expect(fixture.selectAddress('address-imported-0000000000000002')).toMatchObject({ routing_state: 'imported', receive_enabled: 1, routing_owner: 'imported' });
+    expect(fixture.selectAddress('address-managed-0000000000000001')).toMatchObject({ routing_state: 'active', receive_enabled: 0, routing_owner: 'flaremail' });
+    expect(fixture.selectAddress('address-imported-0000000000000002')).toMatchObject({ routing_state: 'imported', receive_enabled: 0, routing_owner: 'imported' });
     expect(fixture.selectAddress('address-importable-0000000000000003')).toMatchObject({ routing_state: 'pending', receive_enabled: 0 });
     expect(fixture.selectAddress('address-conflict-0000000000000004')).toMatchObject({ routing_state: 'error', receive_enabled: 0 });
     expect(fixture.selectAddress('address-deleted-0000000000000006')).toMatchObject({
@@ -185,6 +185,43 @@ describe('managed mail domain checks', () => {
       resend_status: 'verified',
       resend_sending_status: 'enabled'
     });
+    fixture.sqlite.close();
+  });
+
+  test('route observations preserve the Owner receive switches for active addresses', async () => {
+    const fixture = createFixture();
+    fixture.sqlite.query(`UPDATE mail_addresses SET receive_enabled = 1 WHERE id IN (?, ?)`)
+      .run('address-managed-0000000000000001', 'address-imported-0000000000000002');
+    await checkManagedMailDomain(fixture.env, ownerId, domainId, dependencies([
+      rule('rule-managed', 'managed@mail.example.test', { name: 'FlareMail managed address address-managed-0000000000000001' }),
+      rule('rule-imported', 'imported@mail.example.test', { source: 'wrangler' })
+    ]));
+    expect(fixture.selectAddress('address-managed-0000000000000001')).toMatchObject({ routing_state: 'active', receive_enabled: 1 });
+    expect(fixture.selectAddress('address-imported-0000000000000002')).toMatchObject({ routing_state: 'imported', receive_enabled: 1 });
+    fixture.sqlite.close();
+  });
+
+  test('a repeated manual check does not issue provider reads while the current lease is held', async () => {
+    const fixture = createFixture();
+    let release!: () => void;
+    let entered!: () => void;
+    const blocking = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    let cloudflareCalls = 0;
+    let resendCalls = 0;
+    const deps = dependencies([], { beforeList: async () => { cloudflareCalls += 1; entered(); await blocking; } });
+    const originalLookup = deps.resendLookup;
+    deps.resendLookup = async (...args) => { resendCalls += 1; return originalLookup(...args); };
+    const first = checkManagedMailDomain(fixture.env, ownerId, domainId, deps);
+    await reached;
+    const second = await checkManagedMailDomain(fixture.env, ownerId, domainId, deps);
+    expect(second.cloudflare.errorCode).toBe('cloudflare_check_in_progress');
+    expect(second.resend.errorCode).toBe('resend_check_in_progress');
+    expect(cloudflareCalls).toBe(1);
+    expect(resendCalls).toBe(0);
+    release();
+    await first;
+    expect(resendCalls).toBe(1);
     fixture.sqlite.close();
   });
 

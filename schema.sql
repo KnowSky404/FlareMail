@@ -101,6 +101,18 @@ CREATE TABLE mail_domains (
     CHECK (resend_sending_status IN ('unknown', 'enabled', 'disabled')),
   resend_checked_at TEXT,
   cloudflare_checked_at TEXT,
+  cloudflare_next_check_at TEXT,
+  cloudflare_check_token TEXT,
+  cloudflare_check_expires_at TEXT,
+  cloudflare_error_code TEXT CHECK (cloudflare_error_code IS NULL OR length(cloudflare_error_code) <= 64),
+  cloudflare_error_at TEXT,
+  cloudflare_failure_count INTEGER NOT NULL DEFAULT 0 CHECK (cloudflare_failure_count >= 0),
+  resend_next_check_at TEXT,
+  resend_check_token TEXT,
+  resend_check_expires_at TEXT,
+  resend_error_code TEXT CHECK (resend_error_code IS NULL OR length(resend_error_code) <= 64),
+  resend_error_at TEXT,
+  resend_failure_count INTEGER NOT NULL DEFAULT 0 CHECK (resend_failure_count >= 0),
   last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) <= 64),
   last_error_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -145,6 +157,10 @@ CREATE TABLE mail_addresses (
 
 CREATE INDEX idx_mail_domains_owner_enabled ON mail_domains(owner_user_id, enabled, domain_name);
 CREATE INDEX idx_mail_domains_zone ON mail_domains(cloudflare_zone_id, domain_name);
+CREATE INDEX idx_mail_domains_cloudflare_health_due
+  ON mail_domains(cloudflare_next_check_at, cloudflare_check_expires_at, id);
+CREATE INDEX idx_mail_domains_resend_health_due
+  ON mail_domains(resend_next_check_at, resend_check_expires_at, id);
 CREATE INDEX idx_mail_addresses_owner_lifecycle
   ON mail_addresses(owner_user_id, lifecycle_status, domain_id, email);
 CREATE INDEX idx_mail_addresses_domain_lifecycle

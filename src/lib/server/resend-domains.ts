@@ -21,6 +21,7 @@ export interface ResendDomainStatus {
 interface FetchOptions {
   fetcher?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   timeoutMs?: number;
+  deadlineAt?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -29,7 +30,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function requestJson(apiKey: string, path: string, options: FetchOptions): Promise<unknown> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const requestTimeoutMs = options.deadlineAt === undefined
+    ? (options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    : Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, options.deadlineAt - Date.now());
+  if (requestTimeoutMs <= 0) throw new ResendDomainError('timeout');
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   try {
     let response: Response;
     try {

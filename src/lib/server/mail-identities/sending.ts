@@ -6,9 +6,8 @@ import {
   type ManagedMailDomainRow
 } from '$lib/server/db/mail-identities';
 import { isValidEmail } from '$lib/domain/mail';
+import { isMailHealthFresh } from '$lib/domain/mail/health';
 import { ApiError } from '$lib/server/http/api';
-
-const maxResendCheckAgeMs = 24 * 60 * 60 * 1000;
 
 export type MailAddressSendingAction = 'enable_send' | 'disable_send' | 'make_default';
 
@@ -16,13 +15,10 @@ function assertDomainSendReady(domain: ManagedMailDomainRow | null): asserts dom
   if (!domain || !domain.enabled) {
     throw new ApiError(409, 'MAIL_DOMAIN_DISABLED', '此邮件域名已停用，不能启用发信。', undefined, undefined, false);
   }
-  const checkedAt = domain.resend_checked_at ? Date.parse(domain.resend_checked_at) : Number.NaN;
   if (
     domain.resend_status !== 'verified' ||
     domain.resend_sending_status !== 'enabled' ||
-    !Number.isFinite(checkedAt) ||
-    checkedAt > Date.now() ||
-    Date.now() - checkedAt > maxResendCheckAgeMs
+    !isMailHealthFresh(domain.resend_checked_at)
   ) {
     throw new ApiError(
       409,

@@ -37,8 +37,8 @@ function applyMigrations(database: Database) {
   }
 }
 
-async function health(database: Database) {
-  return GET(event({ APP_ENV: 'test', DB: new D1(database), BUCKET: {} }));
+async function health(database: Database, configuration: Record<string, unknown> = {}) {
+  return GET(event({ APP_ENV: 'test', DB: new D1(database), BUCKET: {}, ...configuration }));
 }
 
 describe('/api/readiness', () => {
@@ -68,6 +68,32 @@ describe('/api/readiness', () => {
     expect(await response.json()).toEqual(expect.objectContaining({ ok: true, version: 'development' }));
     expect((database.query(`SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = 'flaremail'`).get() as { schema_version: number }).schema_version)
       .toBe(FLAREMAIL_SCHEMA_VERSION);
+  });
+
+  test('exposes provider-specific health only through the authenticated readiness endpoint', async () => {
+    const database = new Database(':memory:');
+    applyMigrations(database);
+    database.query(`
+      INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name)
+      VALUES ('domain-1', 'owner-1', 'mail.example.test', ?, 'flaremail-worker')
+    `).run('a'.repeat(32));
+    const response = await health(database, {
+      CLOUDFLARE_EMAIL_ROUTING_TOKEN: 'private-cloudflare-token',
+      RESEND_API_KEY: 'private-resend-key'
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json() as { mailHealth: Array<Record<string, unknown>> };
+    expect(payload.mailHealth[0]).toMatchObject({
+      domainId: 'domain-1',
+      domainName: 'mail.example.test',
+      cloudflare: { state: 'stale', checkedAt: null, catchAllCheckedAt: null, errorCode: null },
+      resend: { state: 'stale', checkedAt: null, errorCode: null, status: 'unknown' }
+    });
+    expect(JSON.stringify(payload)).not.toContain('private-cloudflare-token');
+    expect(JSON.stringify(payload)).not.toContain('private-resend-key');
+    const publicHealth = await (await import('../health/+server')).GET(event({}));
+    expect(await publicHealth.json() as unknown).toEqual({ ok: true });
+    database.close();
   });
 
   test.each([FLAREMAIL_SCHEMA_VERSION - 1, FLAREMAIL_SCHEMA_VERSION + 1])(

@@ -123,6 +123,32 @@ describe('trusted inbound address resolution', () => {
     db.close();
   });
 
+  test('allows only explicitly collected unknown recipients through a bounded transient-check grace', async () => {
+    const db = makeDatabase();
+    const lastSuccess = '2026-09-19T12:00:00.000Z';
+    db.query(`
+      UPDATE mail_domains SET unknown_recipient_policy = 'collect', catch_all_target = 'this_worker',
+        catch_all_checked_at = ?, cloudflare_error_code = 'cloudflare_timeout',
+        cloudflare_error_at = '2026-09-20T12:00:00.000Z'
+    `).run(lastSuccess);
+
+    const withinGrace = Date.parse('2026-09-21T11:59:00.000Z');
+    expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinGrace))
+      .toMatchObject({ accepted: true, recipientStatus: 'unregistered' });
+    const pastGrace = Date.parse('2026-09-21T12:00:01.000Z');
+    expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', pastGrace))
+      .toEqual({ accepted: false, reason: 'address_unavailable' });
+
+    db.query(`UPDATE mail_domains SET cloudflare_error_code = 'cloudflare_permission_denied'`).run();
+    expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinGrace))
+      .toEqual({ accepted: false, reason: 'address_unavailable' });
+
+    insertAddress(db, { id: 'tombstone', email: 'old@one.example.test', lifecycle: 'deleted', receiving: 0 });
+    expect(await resolveInboundRecipient(new D1(db), 'old@one.example.test', withinGrace))
+      .toEqual({ accepted: false, reason: 'address_unavailable' });
+    db.close();
+  });
+
   test('fails closed on invalid recipient and a missing stable Owner mapping', async () => {
     const db = makeDatabase();
     expect(await resolveInboundRecipient(new D1(db), 'invalid-address'))

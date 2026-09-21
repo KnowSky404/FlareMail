@@ -56,7 +56,8 @@ the actual envelope destination independently from the message's To header.
 configured domains and addresses. Domain enrollment is an operator-controlled
 configuration step (`bun run mail:domain:configure`) that records the exact
 domain-to-zone and Worker mapping; the browser cannot choose an arbitrary zone,
-Worker, API origin, or Cloudflare endpoint.
+Worker, API origin, or Cloudflare endpoint. The response also includes boolean
+provider-configuration flags; it never returns a token or key.
 
 - `POST /api/workspace/mail-identities` creates an address in an already
   configured domain. The Worker creates an exact Email Routing rule and stores
@@ -65,12 +66,16 @@ Worker, API origin, or Cloudflare endpoint.
   error for a later check/retry.
 - `POST /api/workspace/mail-identities/domains/:domainId/check` reads that
   configured zone's exact rules and catch-all, and checks the domain-level
-  Resend sending status. A matching Worker rule may be explicitly imported;
-  a duplicate or same-name rule to another target is a conflict and is never
-  overwritten automatically. Address results may be `busy` while another
-  address operation owns its lease; that check result is discarded for that
-  address. `deleted_absent` is a completed tombstone result, while
-  `imported_preserved` is an expected preserved-rule result.
+  Resend sending status. The two provider reads have separate expiring leases;
+  a concurrent click or scheduled read returns an in-progress result instead
+  of starting a duplicate request. The check has bounded provider timeouts.
+  A matching Worker rule may be explicitly imported; a duplicate or same-name
+  rule to another target is a conflict and is never overwritten automatically.
+  Address results may be `busy` while another address operation owns its lease;
+  that check result is discarded for that address. Route observations never
+  change an address's `receive_enabled` preference. `deleted_absent` is a
+  completed tombstone result, while `imported_preserved` is an expected
+  preserved-rule result.
 - `POST /api/workspace/mail-identities/:addressId` supports `disable`,
   `enable`, `import`, `restore`, `retry`, `enable_send`, `disable_send`, and
   `make_default`. Receive lifecycle and sending permission are separate.
@@ -93,12 +98,55 @@ and D1 update atomic. Timeouts are reconciled with a read before a retry can
 issue another DELETE.
 
 The default unknown-recipient policy is `reject`. Optional `collect` is allowed
-only for a configured domain whose recent read-only check confirms its catch-all
+only for a configured domain whose read-only check confirms its catch-all
 targets this Worker; collected messages retain the actual envelope address and
-do not create a sendable identity. A previously disabled/deleted explicit
-address is rejected before catch-all collection. Deleting this application's
-exact rule cannot block an external Worker or forwarding catch-all that also
-matches the domain.
+do not create a sendable identity. A healthy catch-all observation is normally
+fresh for 24 hours. If the last check then fails with a transient Cloudflare
+network, timeout, rate-limit, or upstream error, an already-confirmed explicit
+`collect` domain may keep collecting for one additional bounded 24-hour grace.
+This does not update the success timestamp. Permission/configuration errors,
+missing credentials, an observed target mismatch, disabled domains, and
+disabled/deleted explicit addresses do not receive that grace. Unknown domains
+are never globally accepted. A previously disabled/deleted explicit address
+is rejected before catch-all collection. Deleting this application's exact
+rule cannot block an external Worker or forwarding catch-all that also matches
+the domain.
+
+The current [Email Routing Worker handler contract](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/)
+documents `message.setReject()` for an explicit refusal but does not promise
+automatic redelivery when a handler throws. FlareMail therefore does not rely
+on throw-to-retry as a delivery guarantee. Inbound storage or D1 failures still
+throw rather than being converted to a permanent reject; their redelivery
+behavior must be verified against the deployed Cloudflare account separately.
+
+## Scheduled provider health
+
+The existing one-minute Worker Cron remains active for Telegram's durable
+outbox. Mail health checks run in an independently caught scheduled task. Each
+provider selects only due rows through indexed next-check fields and an
+independent expiring D1 lease; one invocation checks at most one due domain per
+provider. Cloudflare reads are capped at ten rules pages and a 12-second
+provider deadline; Resend reads have a 10-second total deadline. No scheduler
+path calls the Cloudflare create/delete API or changes address lifecycle,
+send, or receive preferences.
+
+Healthy provider checks schedule the next attempt 16–20 hours later with stable
+per-domain jitter. Checks that observe a non-ready domain or route schedule a
+six-hour review. Retryable API errors use jittered exponential backoff capped
+at 20 hours; permission/configuration errors retry after six hours. Provider
+success timestamps never advance on a timeout, 403, 429, invalid response, or
+unknown result. A real Resend state such as `pending`, `failed`, `missing`, or
+sending-disabled is stored as an observation with its actual check time and a
+degraded state. Cloudflare and Resend timestamps/errors do not block one another.
+Mail health refresh uses `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` when configured
+and falls back to `CLOUDFLARE_EMAIL_ROUTING_TOKEN` for existing deployments.
+The former needs read-only zone/routing access; address create/delete
+operations still require the latter's edit permission.
+
+`GET /api/readiness` is authenticated and includes per-domain provider state
+(`fresh`, `stale`, `refreshing`, `degraded`, or `not_configured`), last success,
+next scheduled check, last failure, safe error code, and catch-all observation
+time. Public `GET /api/health` remains only `{ "ok": true }`.
 
 ## Response and runtime errors
 
@@ -129,8 +177,10 @@ do not turn a storage or schema failure into the login page.
 `{ "ok": true }`; it does not read bindings or disclose deployment state.
 `GET /api/readiness` is private and requires a valid workspace session. It
 checks runtime configuration, the exact required schema version/tables, and
-reports safe cleanup-queue counts. Failures return a typed safe error and
-correlation ID without configuration values or schema internals.
+reports safe cleanup-queue counts and mail-domain health metadata. It never
+returns provider credentials, zone IDs, message or address records. Failures
+return a typed safe error and correlation ID without configuration values or
+schema internals.
 
 ## Telegram notification API
 

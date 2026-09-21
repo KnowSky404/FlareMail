@@ -1,4 +1,10 @@
 import type { MailboxIdentityFilter } from '$lib/domain/mail';
+import {
+  isMailHealthFresh,
+  MAIL_HEALTH_MAX_AGE_MS,
+  MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS,
+  TRANSIENT_CLOUDFLARE_HEALTH_ERRORS
+} from '$lib/domain/mail/health';
 
 export type InboundRecipientResolution =
   | {
@@ -22,6 +28,8 @@ interface InboundRecipientRow {
   unknown_recipient_policy: 'reject' | 'collect';
   catch_all_target: 'unknown' | 'this_worker' | 'external' | 'drop' | 'none';
   catch_all_checked_at: string | null;
+  cloudflare_error_code: string | null;
+  cloudflare_error_at: string | null;
   address_id: string | null;
   address_domain_id: string | null;
   address_owner_user_id: string | null;
@@ -29,8 +37,6 @@ interface InboundRecipientRow {
   receive_enabled: number | null;
   routing_state: 'pending' | 'provisioning' | 'active' | 'deleting' | 'imported' | 'unknown' | 'error' | 'deleted' | null;
 }
-
-const maxCatchAllCheckAgeMs = 24 * 60 * 60 * 1000;
 
 export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, rawRecipient: string, now = Date.now()): Promise<InboundRecipientResolution> {
   const recipient = rawRecipient.trim().toLowerCase();
@@ -52,6 +58,8 @@ export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, r
       d.unknown_recipient_policy,
       d.catch_all_target,
       d.catch_all_checked_at,
+      d.cloudflare_error_code,
+      d.cloudflare_error_at,
       a.id AS address_id,
       a.domain_id AS address_domain_id,
       a.owner_user_id AS address_owner_user_id,
@@ -91,9 +99,17 @@ export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, r
     };
   }
 
-  const checkedAt = row.catch_all_checked_at ? Date.parse(row.catch_all_checked_at) : NaN;
-  const catchAllWasRecentlyVerified = Number.isFinite(checkedAt) && now - checkedAt <= maxCatchAllCheckAgeMs && checkedAt <= now;
-  if (row.unknown_recipient_policy === 'collect' && row.catch_all_target === 'this_worker' && catchAllWasRecentlyVerified) {
+  const checkedAt = row.catch_all_checked_at ? Date.parse(row.catch_all_checked_at) : Number.NaN;
+  const errorAt = row.cloudflare_error_at ? Date.parse(row.cloudflare_error_at) : Number.NaN;
+  const catchAllWasRecentlyVerified = isMailHealthFresh(row.catch_all_checked_at, now);
+  const transientFailureGrace = Number.isFinite(checkedAt) && checkedAt <= now &&
+    now - checkedAt <= MAIL_HEALTH_MAX_AGE_MS + MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS &&
+    Number.isFinite(errorAt) && errorAt >= checkedAt && errorAt <= now &&
+    TRANSIENT_CLOUDFLARE_HEALTH_ERRORS.has(row.cloudflare_error_code ?? '');
+  if (
+    row.unknown_recipient_policy === 'collect' && row.catch_all_target === 'this_worker' &&
+    (catchAllWasRecentlyVerified || transientFailureGrace)
+  ) {
     return {
       accepted: true,
       recipient,
@@ -122,6 +138,18 @@ export interface ManagedMailDomainRow {
   resend_sending_status: 'unknown' | 'enabled' | 'disabled';
   resend_checked_at: string | null;
   cloudflare_checked_at: string | null;
+  cloudflare_next_check_at: string | null;
+  cloudflare_check_token: string | null;
+  cloudflare_check_expires_at: string | null;
+  cloudflare_error_code: string | null;
+  cloudflare_error_at: string | null;
+  cloudflare_failure_count: number;
+  resend_next_check_at: string | null;
+  resend_check_token: string | null;
+  resend_check_expires_at: string | null;
+  resend_error_code: string | null;
+  resend_error_at: string | null;
+  resend_failure_count: number;
   last_error_code: string | null;
   last_error_at: string | null;
   created_at: string;
@@ -216,8 +244,7 @@ export async function listMailboxIdentityOptions(db: Pick<D1Database, 'prepare'>
   return {
     domains: (domains.results ?? []).map(({ id, domain_name }) => ({ id, domainName: domain_name })),
     addresses: (addresses.results ?? []).map((row) => {
-      const checkedAt = row.resend_checked_at ? Date.parse(row.resend_checked_at) : Number.NaN;
-      const recentCheck = Number.isFinite(checkedAt) && checkedAt <= now && now - checkedAt <= maxCatchAllCheckAgeMs;
+      const recentCheck = isMailHealthFresh(row.resend_checked_at, now);
       return {
         id: row.id,
         domainId: row.domain_id,

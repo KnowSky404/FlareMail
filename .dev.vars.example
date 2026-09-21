@@ -21,9 +21,11 @@ APP_BASE_URL=http://127.0.0.1:8787
 # TELEGRAM_BOT_TOKEN=replace-with-local-secret
 # Optional independent override; otherwise FlareMail derives it from the Bot Token.
 # TELEGRAM_WEBHOOK_SECRET=optional-webhook-secret
-# Optional server-only Email Routing Rules API token, scoped to the explicitly
-# configured zone(s) with Email Routing Rules Read and Edit (write). Never use
-# the deployment token here.
+# Read-only token used by scheduled/manual health checks; scope it to the
+# configured zones with Zone Read and Email Routing Rules Read.
+# CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN=
+# Management token for address rule create/delete; scope it to configured
+# zones with Email Routing Rules Edit. Never use the deployment token here.
 # CLOUDFLARE_EMAIL_ROUTING_TOKEN=
 # Domain configuration script inputs (set in the shell only when configuring):
 # FLAREMAIL_MAIL_DOMAIN_NAME=example.test

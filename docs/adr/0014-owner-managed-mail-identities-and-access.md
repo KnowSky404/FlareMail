@@ -10,7 +10,7 @@ FlareMail is one person's mail workspace. Login identity, profile contact data,
 and mail addresses have different lifecycles and must not grant one another
 ownership or send permission. A single Worker continues to serve SvelteKit
 HTTP/API requests, Email Routing `email()` events, and scheduled Telegram
-outbox work.
+outbox work plus bounded mail-domain health checks.
 
 ## Decisions
 
@@ -155,6 +155,42 @@ the trusted JWT settings, then change `AUTH_MODE`. Returning to local mode
 requires an explicit deployment config change and local credential bootstrap;
 the stable Owner and mail identities do not change. Mode changes do not copy an
 Access email into the profile or create mail addresses.
+
+### Mail health refresh and route observations
+
+Migration 0025 adds independent Cloudflare and Resend next-check times, expiring
+leases, errors, failure times, and retry counters to `mail_domains`. The
+existing one-minute scheduled entry remains for Telegram, while an independently
+caught task checks only due provider/domain rows, at most one per provider in
+one invocation. Provider refresh uses read-only APIs and never creates or
+deletes a Cloudflare rule. A separate `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` is
+preferred; `CLOUDFLARE_EMAIL_ROUTING_TOKEN` remains the management credential
+for address rule mutations and serves as a compatibility fallback for checks.
+
+A healthy provider check schedules another check 16–20 hours later. A valid
+observation of a non-ready domain or route schedules a six-hour review;
+retryable API failures back off up to 20 hours and permission/configuration
+failures retry after six hours. Failed or unknown provider responses do not change the last
+successful check timestamp. The shared 24-hour freshness rule gates sending
+and `collect`; a previously verified explicit `collect` domain may use one
+additional 24-hour window only after a transient Cloudflare network, timeout,
+rate-limit, or upstream error. This bounded path does not advance the verified
+timestamp, and it never applies to unknown domains, observed target mismatches,
+missing credentials, disabled domains, or tombstoned addresses.
+
+The Email Routing handler reference documents explicit rejection but does not
+promise handler-throw redelivery. FlareMail therefore does not present throws
+as a retry guarantee. Existing managed recipients resolve independently of
+optional provider-health failures. Route checks update observed routing state
+without changing an Owner's `receive_enabled` preference; transient read
+failures leave both values untouched. Manual and scheduled checks share the
+provider lease, timeout, and success/error timestamp contract.
+
+Private `/api/readiness` returns per-domain provider state, last successful
+observation, next due time, last error time and safe error code. Public
+`/api/health` remains a minimal liveness response. Current Resend API keys offer
+Full access or Sending access; domain status reads use the deployment's
+`RESEND_API_KEY`, whose domain-read operation requires the full-access class.
 
 ## Consequences
 

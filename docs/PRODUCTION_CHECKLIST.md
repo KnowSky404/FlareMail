@@ -45,7 +45,8 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] `DB`, `BUCKET` and `ASSETS` bindings point to the reviewed production
   resources. A preview R2 bucket is not required by the production config.
 - [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Wrangler
-  secrets; record only presence, never values.
+  secrets; record only presence, never values. Domain status checks require
+  Full access under Resend's current key model; Sending access is send-only.
 - [ ] The chosen managed sender address belongs to its exact From domain, and
   that domain's recent Resend check reports `verified` and sending `enabled`.
   `OUTBOUND_FROM_EMAIL` / `MAIL_FROM` are reviewed only for system auto-replies
@@ -55,10 +56,11 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] Every receiving address is explicitly configured under its exact mail
   domain and Cloudflare zone, has an active exact Worker rule, and is enabled
   in D1. Mail identity ownership does not depend on a login or profile email.
-- [ ] `CLOUDFLARE_EMAIL_ROUTING_TOKEN` is a separate Secret scoped to the
-  configured zones with `Email Routing Rules Read` and `Email Routing Rules
-  Edit` (write); no deployment token or destination-address permissions are
-  reused.
+- [ ] `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` is scoped to configured zones with
+  `Zone Read` and `Email Routing Rules Read`. When in-app address create/delete
+  is enabled, `CLOUDFLARE_EMAIL_ROUTING_TOKEN` is a separate secret with
+  `Email Routing Rules Edit` (write). No deployment token or
+  destination-address permissions are reused.
 - [ ] `AUTH_MODE` is explicitly selected. In `cloudflare-access` mode, the
   issuer, AUD, JWKS URL, single allowed `sub`, and stable Owner ID match the
   Cloudflare Access application and controlled bootstrap record.
@@ -94,13 +96,13 @@ recipient addresses or full R2 keys into shared evidence.
   bun x wrangler d1 migrations list flaremail-db --remote --config wrangler.deploy.toml
   ```
 
-- [ ] Before applying `0023`/`0024` to an existing database, a reviewed local
+- [ ] Before applying `0023`–`0025` to an existing database, a reviewed local
   copy was inspected with `bun run mail:identity:dry-run -- --domain <domain>
   --json`. The report and conflict decisions are retained without bodies or
   secrets; no unowned mail is implicitly assigned.
 
 - [ ] The checkout's latest migration filename and schema version are recorded
-  (currently migrations `0001` through `0024` and schema version `24`); the
+  (currently migrations `0001` through `0025` and schema version `25`); the
   repository's `schema-version.ts` and preflight output were checked rather
   than relying on an old number.
 - [ ] Every unapplied migration is approved and applied in numeric order:
@@ -162,7 +164,7 @@ recipient addresses or full R2 keys into shared evidence.
   `email.failed`, `email.complained`, and `email.suppressed`. `email.opened`
   and `email.clicked` are timeline-only events in the current code.
 - [ ] The Resend secrets and, when managed address mutations are enabled, the
-  separate zone-scoped `CLOUDFLARE_EMAIL_ROUTING_TOKEN` were uploaded with the
+  separate zone-scoped Cloudflare read and management tokens were uploaded with the
   final code using
   `bun x wrangler deploy --secrets-file <secure-outside-repo-path>` so
   code/config/bindings/secrets form one reviewed release. If the fallback
@@ -171,7 +173,8 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] `GET https://<PUBLIC_HOST>/api/health` returns HTTP 200 as a minimal
   public liveness check; it is not evidence of configuration or D1 readiness.
 - [ ] An authenticated Owner request to `/api/readiness` reports ready without
-  exposing configuration values or schema details.
+  exposing configuration values or schema details, and includes provider
+  health state without credentials.
 - [ ] Email Routing **Destination Addresses** contains an operator-controlled
   mailbox whose verification email was completed. This is Cloudflare's setup
   destination, not the incoming FlareMail recipient.
@@ -221,7 +224,7 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] Production D1/R2 binding names, Resend webhook endpoint/event set,
   Email Routing rule and secret-present status are recorded without values.
 - [ ] If Telegram is enabled, the checkout's current schema version (currently
-  24) and Telegram migrations 0019-0022 are applied,
+  25) and Telegram migrations 0019-0022 are applied,
   including the account-delete cleanup trigger, challenge provenance, and privacy snapshot. `APP_BASE_URL` is a credential-free HTTPS origin, the Bot Token is present only as a secret, any webhook-secret override is also secret-only, and the one-Bot webhook is reviewed with `getMe`/`getWebhookInfo`.
 - [ ] Normal code rollback will deploy the previous Worker while preserving
   append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.

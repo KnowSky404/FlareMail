@@ -126,7 +126,8 @@ describe('versioned D1 migrations', () => {
       '0021_telegram_challenge_provenance.sql',
       '0022_telegram_delivery_privacy_snapshot.sql',
       '0023_owner_principal_auth.sql',
-      '0024_managed_mail_identities.sql'
+      '0024_managed_mail_identities.sql',
+      '0025_mail_domain_health_refresh.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -159,6 +160,9 @@ describe('versioned D1 migrations', () => {
       'id', 'owner_user_id', 'domain_name', 'cloudflare_zone_id', 'cloudflare_account_id', 'worker_name',
       'enabled', 'unknown_recipient_policy', 'catch_all_target', 'catch_all_checked_at', 'resend_domain_id',
       'resend_status', 'resend_sending_status', 'resend_checked_at', 'cloudflare_checked_at',
+      'cloudflare_next_check_at', 'cloudflare_check_token', 'cloudflare_check_expires_at', 'cloudflare_error_code',
+      'cloudflare_error_at', 'cloudflare_failure_count', 'resend_next_check_at', 'resend_check_token',
+      'resend_check_expires_at', 'resend_error_code', 'resend_error_at', 'resend_failure_count',
       'last_error_code', 'last_error_at', 'created_at', 'updated_at'
     ]));
     expect(tableColumns(db, 'mail_addresses')).toEqual(new Set([
@@ -251,7 +255,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 24 }
+      { schema_name: 'flaremail', schema_version: 25 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())

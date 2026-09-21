@@ -61,6 +61,8 @@ interface ClientOptions {
   token: string;
   fetcher?: CloudflareFetcher;
   timeoutMs?: number;
+  maxRulePages?: number;
+  deadlineAt?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -177,16 +179,22 @@ export function isExactRecipientRule(rule: CloudflareEmailRoutingRule, email: st
 export class CloudflareEmailRoutingClient {
   private readonly fetcher: CloudflareFetcher;
   private readonly timeoutMs: number;
+  private readonly maxRulePages: number;
+  private readonly deadlineAt: number | null;
 
   constructor(private readonly options: ClientOptions) {
     if (!options.token.trim()) throw new CloudflareEmailRoutingError('token_missing');
     this.fetcher = options.fetcher ?? fetch;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxRulePages = Math.max(1, Math.min(MAX_RULE_PAGES, options.maxRulePages ?? MAX_RULE_PAGES));
+    this.deadlineAt = options.deadlineAt ?? null;
   }
 
   private async request(path: string, method = 'GET', body?: Record<string, unknown>): Promise<unknown> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeRemaining = this.deadlineAt === null ? this.timeoutMs : Math.min(this.timeoutMs, this.deadlineAt - Date.now());
+    if (timeRemaining <= 0) throw new CloudflareEmailRoutingError('timeout');
+    const timeout = setTimeout(() => controller.abort(), timeRemaining);
     let response: Response;
     let text: string;
     try {
@@ -241,7 +249,7 @@ export class CloudflareEmailRoutingClient {
     let page = 1;
     let pages: number | null = null;
     while (true) {
-      if (page > MAX_RULE_PAGES) throw new CloudflareEmailRoutingError('too_many_rules');
+      if (page > this.maxRulePages) throw new CloudflareEmailRoutingError('too_many_rules');
       const suffix = '?page=' + page + '&per_page=100';
       const envelope = await this.request('/zones/' + encodeURIComponent(zoneId) + '/email/routing/rules' + suffix);
       const record = parseApiEnvelope(envelope);

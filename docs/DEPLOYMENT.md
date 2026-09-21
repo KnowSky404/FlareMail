@@ -30,7 +30,7 @@ Telegram setup and the full threat/data boundary are documented in
 [TELEGRAM.md](./TELEGRAM.md). For maintenance, treat these as separate
 checks from the existing Resend and Email Routing checks:
 
-- verify the checkout's current ordered migrations (currently through 0024)
+- verify the checkout's current ordered migrations (currently through 0025)
   and schema metadata before enabling the global switch;
 - inspect only safe Bot API metadata with `getMe` and `getWebhookInfo`;
 - confirm the exact HTTPS webhook has no Access/WAF authentication challenge

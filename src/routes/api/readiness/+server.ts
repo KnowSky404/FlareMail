@@ -1,6 +1,8 @@
 import { json } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { validateEnvironment } from '$lib/server/config/env';
+import { mailHealthState } from '$lib/domain/mail/health';
+import { listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { getRequestId, withApiHandler } from '$lib/server/http/api';
 import { requireWorkspaceSession } from '$lib/server/workspace-api';
@@ -38,7 +40,7 @@ const REQUIRED_TABLES = [
   'workspace_telegram_delivery_limits'
 ] as const;
 export const GET: RequestHandler = withApiHandler(async (event) => {
-  requireWorkspaceSession(event);
+  const session = requireWorkspaceSession(event);
   const requestId = getRequestId(event);
   const { platform } = event;
   const env = platform?.env as CloudflareEnv | undefined;
@@ -55,6 +57,9 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   let schemaReady = false;
   let schemaCode: 'D1_UNAVAILABLE' | 'SCHEMA_NOT_READY' = 'D1_UNAVAILABLE';
   let cleanupQueue: { pending: number; processing: number; retryable: number; manualReview: number; staleProcessing: number } | undefined;
+  let mailHealth: Array<Record<string, unknown>> | undefined;
+  const now = new Date();
+  const nowMs = now.getTime();
 
   if (env?.DB) {
     try {
@@ -83,6 +88,43 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
           manualReview: Number(queue?.manual_review ?? 0),
           staleProcessing: Number(queue?.stale_processing ?? 0)
         };
+        const domains = await listManagedMailDomains(env.DB, session.userId);
+        mailHealth = domains.map((domain) => ({
+          domainId: domain.id,
+          domainName: domain.domain_name,
+          enabled: Boolean(domain.enabled),
+          unknownRecipientPolicy: domain.unknown_recipient_policy,
+          catchAllTarget: domain.catch_all_target,
+          cloudflare: {
+            state: mailHealthState({
+              configured: Boolean(env?.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env?.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
+              checkedAt: domain.cloudflare_checked_at,
+              leaseExpiresAt: domain.cloudflare_check_expires_at,
+              errorCode: domain.cloudflare_error_code,
+              nowMs
+            }),
+            checkedAt: domain.cloudflare_checked_at,
+            catchAllCheckedAt: domain.catch_all_checked_at,
+            nextCheckAt: domain.cloudflare_next_check_at,
+            lastFailureAt: domain.cloudflare_error_at,
+            errorCode: domain.cloudflare_error_code
+          },
+          resend: {
+            state: mailHealthState({
+              configured: Boolean(env?.RESEND_API_KEY?.trim()),
+              checkedAt: domain.resend_checked_at,
+              leaseExpiresAt: domain.resend_check_expires_at,
+              errorCode: domain.resend_error_code,
+              nowMs
+            }),
+            checkedAt: domain.resend_checked_at,
+            nextCheckAt: domain.resend_next_check_at,
+            lastFailureAt: domain.resend_error_at,
+            errorCode: domain.resend_error_code,
+            status: domain.resend_status,
+            sendingStatus: domain.resend_sending_status
+          }
+        }));
       }
     } catch {
       schemaReady = false;
@@ -101,9 +143,10 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   return json({
     ok,
     version: env?.APP_VERSION ?? 'development',
-    timestamp: new Date().toISOString(),
+    timestamp: now.toISOString(),
     requestId,
     ...(cleanupQueue && schemaReady ? { cleanupQueue } : {}),
+    ...(mailHealth && schemaReady ? { mailHealth } : {}),
     ...(ok ? {} : {
       error: {
         code: errorCode,

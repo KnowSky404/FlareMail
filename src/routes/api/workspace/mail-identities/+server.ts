@@ -12,7 +12,14 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     listManagedMailDomains(env.DB, session.userId),
     listManagedMailAddresses(env.DB, session.userId)
   ]);
-  return apiSuccess(event, { domains, addresses });
+  return apiSuccess(event, {
+    domains,
+    addresses,
+    providerConfiguration: {
+      cloudflare: Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
+      resend: Boolean(env.RESEND_API_KEY?.trim())
+    }
+  });
 });
 
 export const POST: RequestHandler = withApiHandler(async (event) => {

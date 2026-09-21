@@ -7,6 +7,7 @@
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import { requestJson } from '$lib/client/api';
+  import { isMailHealthFresh, mailHealthState } from '$lib/domain/mail/health';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type MailDomain = {
@@ -19,6 +20,14 @@
     resend_sending_status: 'unknown' | 'enabled' | 'disabled';
     resend_checked_at: string | null;
     cloudflare_checked_at: string | null;
+    cloudflare_check_expires_at: string | null;
+    cloudflare_next_check_at: string | null;
+    cloudflare_error_code: string | null;
+    resend_check_expires_at: string | null;
+    resend_next_check_at: string | null;
+    resend_error_code: string | null;
+    cloudflare_configured: boolean;
+    resend_configured: boolean;
     last_error_code: string | null;
   };
 
@@ -91,15 +100,23 @@
     loading = true;
     errorMessage = '';
     try {
-      const result = await requestJson<{ domains: MailDomain[]; addresses: MailAddress[] }>('/api/workspace/mail-identities');
-      domains = result.domains;
-      addresses = result.addresses;
+      const loaded = await requestJson<{
+        domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[];
+        addresses: MailAddress[];
+        providerConfiguration: { cloudflare: boolean; resend: boolean };
+      }>('/api/workspace/mail-identities');
+      domains = loaded.domains.map((domain) => ({
+        ...domain,
+        cloudflare_configured: loaded.providerConfiguration.cloudflare,
+        resend_configured: loaded.providerConfiguration.resend
+      }));
+      const loadedDomains = domains;
+      addresses = loaded.addresses;
       onOptionsChange?.({
-        domains: result.domains.map(({ id, domain_name }) => ({ id, domainName: domain_name })),
-        addresses: result.addresses.map((address) => {
-          const domain = result.domains.find((item) => item.id === address.domain_id);
-          const checkedAt = domain?.resend_checked_at ? Date.parse(domain.resend_checked_at) : Number.NaN;
-          const recentCheck = Number.isFinite(checkedAt) && checkedAt <= Date.now() && Date.now() - checkedAt <= 24 * 60 * 60 * 1000;
+        domains: loadedDomains.map(({ id, domain_name }) => ({ id, domainName: domain_name })),
+        addresses: loaded.addresses.map((address) => {
+          const domain = loadedDomains.find((item) => item.id === address.domain_id);
+          const recentCheck = isMailHealthFresh(domain?.resend_checked_at);
           return {
             id: address.id,
             domainId: address.domain_id,
@@ -258,11 +275,28 @@
     return t('settings.resendUnknown');
   }
 
+  function healthLabel(domain: MailDomain, provider: 'cloudflare' | 'resend') {
+    const isCloudflare = provider === 'cloudflare';
+    const state = mailHealthState({
+      configured: isCloudflare ? domain.cloudflare_configured : domain.resend_configured,
+      checkedAt: isCloudflare ? domain.cloudflare_checked_at : domain.resend_checked_at,
+      leaseExpiresAt: isCloudflare ? domain.cloudflare_check_expires_at : domain.resend_check_expires_at,
+      errorCode: isCloudflare ? domain.cloudflare_error_code : domain.resend_error_code
+    });
+    if (state === 'fresh') return t('settings.mailHealthFresh');
+    if (state === 'refreshing') return t('settings.mailHealthRefreshing');
+    if (state === 'degraded') return t('settings.mailHealthDegraded');
+    if (state === 'not_configured') return t('settings.mailHealthNotConfigured');
+    return isCloudflare && !domain.cloudflare_checked_at ? t('settings.statusNotChecked') : t('settings.mailHealthStale');
+  }
+
+  function nextHealthCheck(domain: MailDomain, provider: 'cloudflare' | 'resend') {
+    return provider === 'cloudflare' ? domain.cloudflare_next_check_at : domain.resend_next_check_at;
+  }
+
   function canSendFrom(address: MailAddress) {
     const domain = domains.find((item) => item.id === address.domain_id);
-    const checkedAt = domain?.resend_checked_at ? Date.parse(domain.resend_checked_at) : Number.NaN;
-    const now = Date.now();
-    const recentCheck = Number.isFinite(checkedAt) && checkedAt <= now && now - checkedAt <= 24 * 60 * 60 * 1000;
+    const recentCheck = isMailHealthFresh(domain?.resend_checked_at);
     return Boolean(address.lifecycle_status === 'active' && address.send_enabled && domain?.enabled &&
       domain.resend_status === 'verified' && domain.resend_sending_status === 'enabled' && recentCheck);
   }
@@ -320,8 +354,14 @@
             </Button>
           </header>
           <dl class="domain-status">
-            <div><dt>Cloudflare</dt><dd>{check?.cloudflare.state === 'ready' ? t('settings.statusChecked') : domain.cloudflare_checked_at ? t('settings.statusNeedsCheck') : t('settings.statusNotChecked')}</dd></div>
-            <div><dt>Resend</dt><dd>{resendLabel(domain)}</dd></div>
+            <div>
+              <dt>Cloudflare</dt>
+              <dd>{healthLabel(domain, 'cloudflare')}{#if nextHealthCheck(domain, 'cloudflare')}<small>{t('settings.mailHealthNextCheck')}: {nextHealthCheck(domain, 'cloudflare')}</small>{/if}</dd>
+            </div>
+            <div>
+              <dt>Resend</dt>
+              <dd>{resendLabel(domain)} · {healthLabel(domain, 'resend')}{#if nextHealthCheck(domain, 'resend')}<small>{t('settings.mailHealthNextCheck')}: {nextHealthCheck(domain, 'resend')}</small>{/if}</dd>
+            </div>
             <div><dt>{t('settings.send')}</dt><dd>{domain.resend_sending_status === 'enabled' ? t('settings.ready') : t('settings.notReady')}</dd></div>
             <div><dt>{t('settings.unknownRecipients')}</dt><dd>{domain.unknown_recipient_policy === 'collect' ? t('settings.unknownCollect') : t('settings.unknownReject')}</dd></div>
           </dl>
