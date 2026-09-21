@@ -40,9 +40,10 @@
 | `bun run test:a11y` | mobile 2 pass/1 skip；narrow 1 pass/2 skip；0 fail |
 | Access 过期 + sender 截图用例 | 当前代码 Chromium desktop 2 pass；截图保存在 `/tmp/flaremail-auth-expired-desktop.png`、`/tmp/flaremail-sender-exact-address-desktop.png` |
 | `bun run deploy:dry-run` | build 成功，Wrangler 以 `--dry-run` 结束；没有上传 |
+| `bun run release:preflight` | 干净工作树下 `RESULT PASS`；Git、Bun、配置/绑定/schema、FTS/健康/附件/投递、依赖安装与审计、check、typegen、build 均通过；本地只读 |
 
 ## 尚未进行的生产验收
 
 本地合成响应不能证明真实 Access 边缘策略已启用或生产会话实际返回预期 401；不能证明真实 Cloudflare Email Routing 规则、Cron 调度、Resend 域名权限/发送、生产 D1 migration、邮件送达或 Telegram 通知。也没有真实 iOS Safari/WebKit 设备测试。获授权后按 `docs/PRODUCTION_CHECKLIST.md` 与 `DEPLOY.md` 分阶段核对；不要把 Worker dry-run 或 fake provider 结果记为生产/送达证据。
 
-`bun run release:preflight` 将在本文件提交后、干净工作树上运行；结果会补记在后续验收证据提交中。
+`release:preflight` 在实现与文档提交后从干净工作树运行，结果如上。本次仍没有生产部署或远端写入。
