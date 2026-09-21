@@ -58,8 +58,8 @@ function createFixture() {
   const insertAddress = sqlite.query(`
     INSERT INTO mail_addresses (
       id, owner_user_id, domain_id, email, local_part, lifecycle_status,
-      routing_state, routing_rule_id, routing_rule_source, routing_owner, receive_enabled
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      routing_state, routing_rule_id, routing_rule_source, routing_owner, receive_enabled, delete_route_policy
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
   `);
   insertAddress.run('address-managed-0000000000000001', ownerId, domainId, 'managed@mail.example.test', 'managed', 'active', 'unknown', 'rule-managed', 'api', 'flaremail', 0);
   insertAddress.run('address-imported-0000000000000002', ownerId, domainId, 'imported@mail.example.test', 'imported', 'active', 'unknown', 'rule-imported', 'wrangler', 'imported', 0);
@@ -89,7 +89,7 @@ function createFixture() {
     RESEND_API_KEY: 'resend-secret'
   } as CloudflareEnv;
   const selectAddress = (id: string) => sqlite.query(
-    'SELECT lifecycle_status, routing_state, routing_rule_id, routing_rule_source, routing_owner, receive_enabled, send_enabled, operation_token, operation_expires_at, last_error_code FROM mail_addresses WHERE id = ?'
+    'SELECT lifecycle_status, routing_state, routing_rule_id, routing_rule_source, routing_owner, receive_enabled, send_enabled, delete_route_policy, operation_token, operation_expires_at, last_error_code FROM mail_addresses WHERE id = ?'
   ).get(id) as Record<string, unknown>;
   const selectDomain = () => sqlite.query(
     'SELECT cloudflare_account_id, catch_all_target, catch_all_checked_at, cloudflare_checked_at, resend_domain_id, resend_status, resend_sending_status FROM mail_domains WHERE id = ?'

@@ -26,7 +26,7 @@ export interface ManagedMailDomainCheckDependencies {
 export type AddressRouteCheck = {
   addressId: string;
   email: string;
-  status: 'managed' | 'imported' | 'importable' | 'missing' | 'conflict' | 'duplicate' | 'deleted_route' | 'deleted_absent' | 'imported_preserved' | 'busy';
+  status: 'managed' | 'imported' | 'importable' | 'missing' | 'conflict' | 'duplicate' | 'deleted_route' | 'deleted_absent' | 'imported_preserved' | 'reject_route_preserved' | 'busy';
 };
 
 export interface ManagedMailDomainCheckResult {
@@ -131,6 +131,13 @@ function routeStatus(
   const matches = exactRecipientRules(rules, address.email);
   if (address.lifecycle_status === 'deleted') {
     if (!matches.length) return 'deleted_absent';
+    if (matches.length === 1 && address.delete_route_policy === 'retain_reject_route' && address.routing_owner === 'flaremail' &&
+      isFlareMailManagedWorkerRule(matches[0]!, {
+        addressId: address.id,
+        email: address.email,
+        workerName,
+        ruleId: address.routing_rule_id
+      })) return 'reject_route_preserved';
     if (matches.length === 1 && address.routing_owner === 'imported' &&
       matches[0]?.id === address.routing_rule_id && matches[0]?.source === address.routing_rule_source &&
       isExactWorkerEmailRule(matches[0]!, address.email, workerName)) return 'imported_preserved';

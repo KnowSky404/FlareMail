@@ -147,6 +147,9 @@ CREATE TABLE mail_addresses (
   is_default_sender INTEGER NOT NULL DEFAULT 0 CHECK (is_default_sender IN (0, 1)),
   operation_token TEXT,
   operation_expires_at TEXT,
+  delete_route_policy TEXT CHECK (delete_route_policy IS NULL OR delete_route_policy IN (
+    'remove_owned_route', 'retain_reject_route', 'preserve_imported_route'
+  )),
   last_error_code TEXT CHECK (last_error_code IS NULL OR length(last_error_code) <= 64),
   last_error_at TEXT,
   deleted_at TEXT,

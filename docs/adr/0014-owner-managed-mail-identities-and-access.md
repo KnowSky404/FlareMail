@@ -77,12 +77,22 @@ per-address expiring operation lease. Writes compare the lease token and the
 snapshot lifecycle/routing fields. A check that loses its lease reports the
 address as busy and drops its stale result. Checks do not change send
 permission or the default sender, and a successful route check does not turn
-receiving back on for a disabled address. A confirmed deleted address stays a
-tombstone when the managed route is absent; restoring it requires a terminal,
-reconciled deletion and a fresh route check. Cloudflare and D1 are not
-transactional, so ambiguous outcomes remain retryable and every retry reads
-the current rule before another destructive request. Operations do not call
-the destination-address forwarding API or modify external catch-all rules.
+receiving back on for a disabled address. Migration 0026 records the explicit
+address deletion policy. An authenticated read-only preview shows the exact
+route observation, catch-all state/freshness, local lifecycle and retained
+history before the user confirms. DELETE still performs its own immediate
+provider reads; the preview is not an authorization token. `remove_owned_route`
+removes only the verified FlareMail rule, while `retain_reject_route` keeps the
+verified exact Worker rule so the deleted tombstone rejects that recipient
+before catch-all collection. `preserve_imported_route` is limited to imported
+rules and never mutates them; if the provider could not verify one, the result
+does not claim that the remote rule was observed. A deleted address stays a
+tombstone after either terminal outcome, and a deliberately retained rule is
+reported as an expected observation rather than cleanup work. Restore requires
+a terminal, reconciled deletion and a fresh route check. Cloudflare and D1 are
+not transactional, so ambiguous outcomes remain retryable and every retry
+reads the current rule before another destructive request. Operations do not
+call the destination-address forwarding API or modify external catch-all rules.
 
 Unknown recipients default to reject. `collect` is an explicit domain policy
 that accepts an unregistered recipient only after a recent check proves that
@@ -132,8 +142,9 @@ and address; it never silently falls back to another default sender.
 ## Data migration and recovery
 
 Migrations `0023_owner_principal_auth.sql` and
-`0024_managed_mail_identities.sql` append to the published sequence and advance
-the current schema to 24. They do not rebuild user/message/R2 ownership or
+`0024_managed_mail_identities.sql` append to the published sequence; migrations
+0025 and 0026 add provider refresh state and explicit address deletion policy.
+The current schema is version 26. They do not rebuild user/message/R2 ownership or
 promote login/profile addresses into managed identities. Historical recipient
 mapping remains explicit. Before an existing database is migrated, take a
 verified D1 backup/Time Travel bookmark and run the local-only

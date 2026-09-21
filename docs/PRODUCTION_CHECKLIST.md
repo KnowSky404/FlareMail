@@ -96,13 +96,13 @@ recipient addresses or full R2 keys into shared evidence.
   bun x wrangler d1 migrations list flaremail-db --remote --config wrangler.deploy.toml
   ```
 
-- [ ] Before applying `0023`–`0025` to an existing database, a reviewed local
+- [ ] Before applying `0023`–`0026` to an existing database, a reviewed local
   copy was inspected with `bun run mail:identity:dry-run -- --domain <domain>
   --json`. The report and conflict decisions are retained without bodies or
   secrets; no unowned mail is implicitly assigned.
 
 - [ ] The checkout's latest migration filename and schema version are recorded
-  (currently migrations `0001` through `0025` and schema version `25`); the
+  (currently migrations `0001` through `0026` and schema version `26`); the
   repository's `schema-version.ts` and preflight output were checked rather
   than relying on an old number.
 - [ ] Every unapplied migration is approved and applied in numeric order:
@@ -194,6 +194,11 @@ recipient addresses or full R2 keys into shared evidence.
   existing catch-all were checked for priority and target. External catch-all
   rules were not changed; the operator understands that deleting an app-owned
   exact rule cannot block delivery through an external catch-all.
+- [ ] Address deletion review used the authenticated live preview, checked its
+  route observation and catch-all freshness, and selected either removal of a
+  verified FlareMail rule or retention as the deleted tombstone's rejection
+  entry point. Imported rules remain unchanged; no choice is described as
+  blocking a separate external catch-all.
 
 ## Production smoke
 
@@ -224,7 +229,7 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] Production D1/R2 binding names, Resend webhook endpoint/event set,
   Email Routing rule and secret-present status are recorded without values.
 - [ ] If Telegram is enabled, the checkout's current schema version (currently
-  25) and Telegram migrations 0019-0022 are applied,
+  26) and Telegram migrations 0019-0022 are applied,
   including the account-delete cleanup trigger, challenge provenance, and privacy snapshot. `APP_BASE_URL` is a credential-free HTTPS origin, the Bot Token is present only as a secret, any webhook-secret override is also secret-only, and the one-Bot webhook is reviewed with `getMe`/`getWebhookInfo`.
 - [ ] Normal code rollback will deploy the previous Worker while preserving
   append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.

@@ -174,6 +174,7 @@ export interface ManagedMailAddressRow {
   is_default_sender: number;
   operation_token: string | null;
   operation_expires_at: string | null;
+  delete_route_policy: 'remove_owned_route' | 'retain_reject_route' | 'preserve_imported_route' | null;
   last_error_code: string | null;
   last_error_at: string | null;
   deleted_at: string | null;

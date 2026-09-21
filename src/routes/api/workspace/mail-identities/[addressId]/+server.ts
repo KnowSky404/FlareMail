@@ -8,6 +8,7 @@ import {
   restoreManagedMailAddress,
   retryManagedMailAddress
 } from '$lib/server/mail-identities/routing';
+import type { MailAddressDeletePolicy } from '$lib/server/mail-identities/routing';
 import { updateManagedMailAddressSending, type MailAddressSendingAction } from '$lib/server/mail-identities/sending';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 
@@ -47,12 +48,17 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
 export const DELETE: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
   const addressId = addressIdFromRoute(event.params.addressId);
-  const input = await readJsonBody<{ confirm?: unknown }>(event, { maxBytes: 1024 });
+  const input = await readJsonBody<{ confirm?: unknown; policy?: unknown }>(event, { maxBytes: 1024 });
   if (typeof input.confirm !== 'string' || input.confirm.trim().toLowerCase() !== 'delete') {
     throw new ApiError(400, 'MAIL_ADDRESS_DELETE_CONFIRMATION_REQUIRED', '删除邮件地址需要显式确认。', undefined, undefined, false);
   }
+  if (input.policy !== undefined && !['remove_owned_route', 'retain_reject_route', 'preserve_imported_route'].includes(String(input.policy))) {
+    throw new ApiError(400, 'MAIL_ADDRESS_DELETE_POLICY_INVALID', '邮件地址删除策略无效。', undefined, { reason: 'invalid_policy' }, false);
+  }
   const env = getRequestEnv(event);
   if (!env?.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂不可用。');
-  const result = await deleteManagedMailAddress(env, session.userId, addressId);
+  const result = await deleteManagedMailAddress(
+    env, session.userId, addressId, undefined, input.policy as MailAddressDeletePolicy | undefined
+  );
   return apiSuccess(event, result);
 });

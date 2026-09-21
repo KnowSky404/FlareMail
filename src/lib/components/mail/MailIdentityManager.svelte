@@ -5,7 +5,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
-  import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import Dialog from '$lib/components/ui/Dialog.svelte';
   import { requestJson } from '$lib/client/api';
   import { isMailHealthFresh, mailHealthState } from '$lib/domain/mail/health';
   import { useLocale } from '$lib/i18n/runtime.svelte';
@@ -43,10 +43,26 @@
     lifecycle_status: 'active' | 'disabled' | 'deleted';
     routing_state: 'pending' | 'provisioning' | 'active' | 'deleting' | 'imported' | 'unknown' | 'error' | 'deleted';
     routing_owner: 'flaremail' | 'imported' | null;
+    delete_route_policy: 'remove_owned_route' | 'retain_reject_route' | 'preserve_imported_route' | null;
     last_error_code: string | null;
   };
 
-  type RouteStatus = 'managed' | 'imported' | 'importable' | 'missing' | 'conflict' | 'duplicate' | 'deleted_route';
+  type RouteStatus = 'managed' | 'imported' | 'importable' | 'missing' | 'conflict' | 'duplicate' | 'deleted_route' | 'deleted_absent' | 'imported_preserved' | 'reject_route_preserved';
+  type DeletePolicy = 'remove_owned_route' | 'retain_reject_route' | 'preserve_imported_route';
+  type DeletePreview = {
+    previewedAt: string;
+    expiresAt: string;
+    historyRetained: true;
+    cloudflare: {
+      state: 'verified' | 'unavailable';
+      errorCode: string | null;
+      route: { observation: 'managed_worker' | 'imported_worker' | 'absent' | 'external_rule' | 'conflict' | 'unknown'; source: 'api' | 'wrangler' | null; ruleId: string | null };
+      catchAll: { target: MailDomain['catch_all_target']; checkedAt: string | null; fresh: boolean; live: boolean };
+    };
+    policies: Record<DeletePolicy, { available: boolean; action: string | null }>;
+    recommendedPolicy: DeletePolicy | null;
+    canConfirm: boolean;
+  };
   type DomainCheck = {
     cloudflare: {
       state: 'ready' | 'error';
@@ -85,6 +101,10 @@
   let errorMessage = $state('');
   let notice = $state('');
   let deleteTarget = $state<MailAddress | null>(null);
+  let deletePreview = $state<DeletePreview | null>(null);
+  let deletePreviewLoading = $state(false);
+  let deletePreviewError = $state('');
+  let deletePolicy = $state<DeletePolicy>('remove_owned_route');
 
   const addressByDomain = $derived.by(() => {
     const grouped = new Map<string, MailAddress[]>();
@@ -223,16 +243,27 @@
   async function deleteAddress() {
     const address = deleteTarget;
     if (!address) return;
+    if (!deletePreview || Date.parse(deletePreview.expiresAt) <= Date.now()) {
+      await openDeletePreview(address);
+      return;
+    }
+    if (!deletePreview.canConfirm || !deletePreview.policies[deletePolicy].available) return;
     pendingAction = `${address.id}:delete`;
     errorMessage = '';
     notice = '';
     try {
-      await requestJson(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, {
+      const result = await requestJson<{ remoteRuleStatus: string }>(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, {
         method: 'DELETE',
-        body: JSON.stringify({ confirm: 'delete' })
+        body: JSON.stringify({ confirm: 'delete', policy: deletePolicy })
       });
       deleteTarget = null;
-      notice = t('settings.mailAddressDeleted');
+      notice = result.remoteRuleStatus === 'retained_for_rejection'
+        ? t('settings.deleteAddressRouteRetained')
+        : result.remoteRuleStatus === 'preserved_unverified'
+          ? t('settings.deleteAddressImportedPreserved')
+          : result.remoteRuleStatus === 'removed'
+            ? t('settings.deleteAddressRuleRemoved')
+            : t('settings.mailAddressDeleted');
       await load();
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
@@ -245,11 +276,65 @@
     }
   }
 
+  async function openDeletePreview(address: MailAddress) {
+    deleteTarget = address;
+    deletePreview = null;
+    deletePreviewError = '';
+    deletePreviewLoading = true;
+    try {
+      const result = await requestJson<{ preview: DeletePreview }>(
+        `/api/workspace/mail-identities/${encodeURIComponent(address.id)}/delete-preview`
+      );
+      deletePreview = result.preview;
+      deletePolicy = result.preview.recommendedPolicy ?? (address.routing_owner === 'imported'
+        ? 'preserve_imported_route' : 'remove_owned_route');
+    } catch (error) {
+      deletePreviewError = error instanceof Error ? error.message : t('settings.deletePreviewUnavailable');
+      onError?.(error);
+    } finally {
+      deletePreviewLoading = false;
+    }
+  }
+
+  function closeDeletePreview() {
+    if (pendingAction.endsWith(':delete')) return;
+    deleteTarget = null;
+    deletePreview = null;
+    deletePreviewError = '';
+  }
+
+  function deleteRouteLabel(preview: DeletePreview) {
+    const labels: Record<DeletePreview['cloudflare']['route']['observation'], string> = {
+      managed_worker: t('settings.deletePreviewManagedRoute'),
+      imported_worker: t('settings.deletePreviewImportedRoute'),
+      absent: t('settings.deletePreviewNoRoute'),
+      external_rule: t('settings.deletePreviewExternalRoute'),
+      conflict: t('settings.deletePreviewRouteConflict'),
+      unknown: t('settings.deletePreviewRouteUnknown')
+    };
+    return labels[preview.cloudflare.route.observation];
+  }
+
+  function deleteCatchAllLabel(preview: DeletePreview) {
+    const labels: Record<MailDomain['catch_all_target'], string> = {
+      unknown: t('settings.catchAllUnknown'), this_worker: t('settings.catchAllWorker'),
+      external: t('settings.catchAllExternal'), drop: t('settings.catchAllDrop'), none: t('settings.catchAllDisabled')
+    };
+    return labels[preview.cloudflare.catchAll.target];
+  }
+
+  function canConfirmDelete() {
+    return Boolean(deletePreview?.canConfirm && deletePreview.policies[deletePolicy].available &&
+      Date.parse(deletePreview.expiresAt) > Date.now() && !deletePreviewLoading && !pendingAction.endsWith(':delete'));
+  }
+
   function statusLabel(status: RouteStatus | MailAddress['routing_state']) {
     const labels: Record<string, string> = {
       managed: t('settings.routeManaged'), imported: t('settings.routeImported'), importable: t('settings.routeImportable'),
       missing: t('settings.routeMissing'), conflict: t('settings.routeConflict'), duplicate: t('settings.routeDuplicate'),
-      deleted_route: t('settings.routeStillPresent'), pending: t('settings.routePending'), provisioning: t('settings.routeProvisioning'),
+      deleted_route: t('settings.routeStillPresent'), reject_route_preserved: t('settings.deletedRejectRoutePreserved'),
+      deleted_absent: t('settings.deletedRouteAbsent'), imported_preserved: t('settings.importedRuleRetained'),
+      pending: t('settings.routePending'), provisioning: t('settings.routeProvisioning'),
       active: t('settings.routeActive'), deleting: t('settings.routeDeleting'), unknown: t('settings.routeUnknown'), error: t('settings.routeError'), deleted: t('settings.routeDeleted')
     };
     return labels[status] ?? status;
@@ -301,16 +386,6 @@
       domain.resend_status === 'verified' && domain.resend_sending_status === 'enabled' && recentCheck);
   }
 
-  function deleteDescription(address: MailAddress) {
-    const domain = domains.find((item) => item.id === address.domain_id);
-    const externalRisk = domain && (checks[domain.id]?.cloudflare.catchAllTarget ?? domain.catch_all_target) === 'external';
-    const importedRoute = address.routing_owner === 'imported';
-    return [
-      t('settings.mailAddressHistoryRetained'),
-      importedRoute ? t('settings.importedRuleRetained') : '',
-      externalRisk ? t('settings.externalCatchAllDeleteRisk') : ''
-    ].filter(Boolean).join(' ');
-  }
 </script>
 
 <Panel title={t('settings.mailIdentities')} description={t('settings.mailIdentitiesDescription')}>
@@ -416,7 +491,7 @@
                       <Button size="sm" variant="ghost" loading={pendingAction === `${address.id}:retry`} onclick={() => void runAction(address, 'retry')}><RotateCw size={14} aria-hidden="true" /> {t('settings.retryRouting')}</Button>
                     {/if}
                     {#if address.lifecycle_status !== 'deleted'}
-                      <Button size="sm" variant="ghost" ariaLabel={t('settings.deleteAddress')} onclick={() => (deleteTarget = address)}><Trash2 size={14} aria-hidden="true" /><span class="sr-only">{t('settings.deleteAddress')}</span></Button>
+                      <Button size="sm" variant="ghost" ariaLabel={t('settings.deleteAddress')} onclick={() => void openDeletePreview(address)}><Trash2 size={14} aria-hidden="true" /><span class="sr-only">{t('settings.deleteAddress')}</span></Button>
                     {/if}
                   </div>
                 </li>
@@ -431,17 +506,63 @@
 </Panel>
 
 {#if deleteTarget}
-  <ConfirmDialog
+  <Dialog
     open
     id="delete-mail-address"
     title={t('settings.deleteAddressTitle')}
-    description={deleteDescription(deleteTarget)}
-    confirmLabel={t('settings.deleteAddress')}
-    cancelLabel={t('common.cancel')}
-    pending={pendingAction === `${deleteTarget.id}:delete`}
-    onConfirm={deleteAddress}
-    onCancel={() => (deleteTarget = null)}
-  />
+    description={t('settings.deletePreviewDescription', { email: deleteTarget.email })}
+    size="lg"
+    dismissible={!pendingAction.endsWith(':delete')}
+    closeOnBackdrop={!pendingAction.endsWith(':delete')}
+    onClose={closeDeletePreview}
+  >
+    {#snippet children()}
+      {#if deletePreviewLoading}
+        <p role="status" class="preview-note">{t('settings.deletePreviewLoading')}</p>
+      {:else if deletePreviewError}
+        <p role="alert" class="preview-warning">{deletePreviewError}</p>
+      {:else if deletePreview}
+        <div class="delete-preview">
+          <p>{t('settings.mailAddressHistoryRetained')}</p>
+          <dl>
+            <div><dt>{t('settings.deletePreviewRoute')}</dt><dd>{deleteRouteLabel(deletePreview)}</dd></div>
+            <div><dt>{t('settings.catchAll')}</dt><dd>{deleteCatchAllLabel(deletePreview)} · {deletePreview.cloudflare.catchAll.live ? t('settings.deletePreviewLive') : deletePreview.cloudflare.catchAll.fresh ? t('settings.deletePreviewCachedFresh') : t('settings.deletePreviewStale')}</dd></div>
+            {#if deletePreview.cloudflare.catchAll.checkedAt}<div><dt>{t('settings.deletePreviewCheckedAt')}</dt><dd>{deletePreview.cloudflare.catchAll.checkedAt}</dd></div>{/if}
+          </dl>
+          {#if deletePreview.cloudflare.catchAll.target === 'external' || !deletePreview.cloudflare.catchAll.fresh || !deletePreview.cloudflare.catchAll.live}
+            <p class="preview-warning">{t('settings.deletePreviewCatchAllWarning')}</p>
+          {/if}
+          {#if deletePreview.cloudflare.errorCode}<p class="preview-note">{t('settings.deletePreviewProviderIssue', { code: deletePreview.cloudflare.errorCode })}</p>{/if}
+          {#if deletePreview.policies.retain_reject_route.available || deletePreview.policies.remove_owned_route.available}
+            <fieldset>
+              <legend>{t('settings.deletePreviewPolicy')}</legend>
+              {#if deletePreview.policies.retain_reject_route.available}
+                <label><input type="radio" name="mail-address-delete-policy" value="retain_reject_route" bind:group={deletePolicy} />
+                  <span><strong>{t('settings.deletePolicyRetainLabel')}</strong><small>{t('settings.deletePolicyRetainDescription')}</small></span>
+                </label>
+              {/if}
+              {#if deletePreview.policies.remove_owned_route.available}
+                <label><input type="radio" name="mail-address-delete-policy" value="remove_owned_route" bind:group={deletePolicy} />
+                  <span><strong>{t('settings.deletePolicyRemoveLabel')}</strong><small>{t('settings.deletePolicyRemoveDescription')}</small></span>
+                </label>
+              {/if}
+            </fieldset>
+          {:else if deletePreview.policies.preserve_imported_route.available}
+            <p>{t('settings.deletePolicyImportedDescription')}</p>
+          {:else}
+            <p class="preview-warning">{t('settings.deletePreviewCannotConfirm')}</p>
+          {/if}
+          {#if deletePreview.cloudflare.catchAll.target === 'external'}
+            <p class="preview-warning">{t('settings.externalCatchAllDeleteRisk')}</p>
+          {/if}
+        </div>
+      {/if}
+    {/snippet}
+    {#snippet footer()}
+      <Button variant="ghost" disabled={pendingAction.endsWith(':delete')} onclick={closeDeletePreview}>{t('common.cancel')}</Button>
+      <Button variant="danger" loading={pendingAction.endsWith(':delete')} disabled={!canConfirmDelete()} onclick={deleteAddress}>{t('settings.deleteAddress')}</Button>
+    {/snippet}
+  </Dialog>
 {/if}
 
 <style>
@@ -482,6 +603,17 @@
   .pill.danger { color: var(--fm-danger); }
   .address-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
   .safe-error { margin: 4px 0 0; font-size: 11px; }
+  .delete-preview { display: grid; gap: var(--space-3); color: var(--fm-text-secondary); font-size: 13px; }
+  .delete-preview dl { display: grid; gap: var(--space-2); }
+  .delete-preview dl > div { display: grid; grid-template-columns: minmax(7rem, 1fr) 2fr; gap: var(--space-2); }
+  .delete-preview dt { color: var(--fm-text-muted); }
+  .delete-preview dd { min-width: 0; overflow-wrap: anywhere; color: var(--fm-text); }
+  .delete-preview fieldset { display: grid; gap: var(--space-2); border: 1px solid var(--fm-border); border-radius: var(--radius-md); padding: var(--space-3); }
+  .delete-preview legend { padding: 0 var(--space-1); font-weight: 600; color: var(--fm-text); }
+  .delete-preview label { display: flex; align-items: flex-start; gap: var(--space-2); cursor: pointer; }
+  .delete-preview label span { display: grid; gap: 2px; }
+  .delete-preview label small, .preview-note { color: var(--fm-text-muted); }
+  .preview-warning { color: var(--fm-danger); }
   @media (max-width: 720px) {
     .create-grid { grid-template-columns: minmax(0, 1fr); }
     .signature-field { grid-column: auto; }

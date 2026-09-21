@@ -127,7 +127,8 @@ describe('versioned D1 migrations', () => {
       '0022_telegram_delivery_privacy_snapshot.sql',
       '0023_owner_principal_auth.sql',
       '0024_managed_mail_identities.sql',
-      '0025_mail_domain_health_refresh.sql'
+      '0025_mail_domain_health_refresh.sql',
+      '0026_mail_address_delete_policy.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -168,7 +169,7 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'mail_addresses')).toEqual(new Set([
       'id', 'owner_user_id', 'domain_id', 'email', 'local_part', 'display_name', 'signature', 'receive_enabled',
       'send_enabled', 'lifecycle_status', 'routing_state', 'routing_rule_id', 'routing_rule_source',
-      'routing_owner', 'is_default_sender', 'operation_token', 'operation_expires_at', 'last_error_code',
+      'routing_owner', 'is_default_sender', 'operation_token', 'operation_expires_at', 'delete_route_policy', 'last_error_code',
       'last_error_at', 'deleted_at', 'created_at', 'updated_at'
     ]));
     expect(tableColumns(db, 'workspace_drafts')).toEqual(
@@ -255,7 +256,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 25 }
+      { schema_name: 'flaremail', schema_version: 26 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())

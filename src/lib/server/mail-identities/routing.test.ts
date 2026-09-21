@@ -11,6 +11,7 @@ import {
 import {
   createManagedMailAddress,
   deleteManagedMailAddress,
+  previewManagedMailAddressDeletion,
   restoreManagedMailAddress,
   retryManagedMailAddress,
   type MailIdentityRoutingDependencies
@@ -52,11 +53,12 @@ class SqliteD1Statement {
     return { results: this.database.query(this.sql).all(...this.values) as T[] };
   }
 
-  async run() {
+  runNow() {
     if (this.shouldFail(this.sql)) throw new Error('synthetic D1 write failure');
     const result = this.database.query(this.sql).run(...this.values);
     return { success: true, meta: { changes: result.changes } };
   }
+  async run() { return this.runNow(); }
 }
 
 function createFixture(options: { failFinishOnce?: boolean; imported?: boolean } = {}) {
@@ -82,6 +84,12 @@ function createFixture(options: { failFinishOnce?: boolean; imported?: boolean }
         failFinish = false;
         return true;
       });
+    },
+    async batch(statements: D1PreparedStatement[]) {
+      const results = sqlite.transaction(() => statements.map((statement) =>
+        (statement as unknown as SqliteD1Statement).runNow()
+      ))();
+      return results;
     }
   } as unknown as D1Database;
   const env = { DB: db, CLOUDFLARE_EMAIL_ROUTING_TOKEN: 'test-token' } as CloudflareEnv;
@@ -91,7 +99,7 @@ function createFixture(options: { failFinishOnce?: boolean; imported?: boolean }
     state() {
       return sqlite.query(`
         SELECT lifecycle_status, routing_state, routing_rule_id, routing_rule_source, routing_owner,
-          receive_enabled, send_enabled, operation_token, operation_expires_at, last_error_code
+          receive_enabled, send_enabled, operation_token, operation_expires_at, delete_route_policy, last_error_code
         FROM mail_addresses WHERE id = ?
       `).get(addressId) as Record<string, unknown>;
     }
@@ -227,9 +235,108 @@ describe('managed route deletion ownership', () => {
     const fixture = createFixture({ imported: true });
     const provider = harness([managedRule({ id: 'rule-imported', source: 'wrangler', name: '' })]);
     const result = await deleteAddress(fixture, provider);
-    expect(result.remoteRulePreserved).toBe(true);
+    expect(result.remoteRulePreserved).toBeNull();
+    expect(result.remoteRuleStatus).toBe('preserved_unverified');
     expect(provider.calls).toEqual([]);
     expect(fixture.state()).toMatchObject({ lifecycle_status: 'deleted', routing_state: 'imported', routing_owner: 'imported' });
+    fixture.sqlite.close();
+  });
+
+  test('previews the live route and external catch-all without changing either provider or D1', async () => {
+    const fixture = createFixture();
+    const provider = harness([managedRule()]);
+    const preview = await previewManagedMailAddressDeletion(fixture.env, ownerId, addressId, {
+      ...provider.dependencies,
+      previewCloudflareClient: () => ({
+        async getZone(id) { expect(id).toBe(zoneId); return { id: zoneId, name: 'example.test', accountId: 'account-1' }; },
+        async listRules(id) { expect(id).toBe(zoneId); provider.calls.push('preview-list'); return provider.rules; },
+        async getCatchAll(id) { expect(id).toBe(zoneId); return { enabled: true, actions: [{ type: 'forward', value: ['outside@example.net'] }] }; }
+      }),
+      now: () => new Date('2026-09-21T11:00:00.000Z')
+    });
+
+    expect(preview).toMatchObject({
+      historyRetained: true,
+      cloudflare: {
+        state: 'verified',
+        route: { observation: 'managed_worker', ruleId: 'rule-managed' },
+        catchAll: { target: 'external', fresh: true, live: true }
+      },
+      policies: {
+        remove_owned_route: { available: true, action: 'remove_verified_owned_rule' },
+        retain_reject_route: { available: true, action: 'keep_verified_worker_rule_for_tombstone_rejection' }
+      },
+      recommendedPolicy: 'retain_reject_route',
+      canConfirm: true
+    });
+    expect(provider.calls).toEqual(['preview-list']);
+    expect(fixture.state()).toMatchObject({ lifecycle_status: 'active', routing_state: 'active', receive_enabled: 1 });
+    fixture.sqlite.close();
+  });
+
+  test('can retain a verified FlareMail rule as a tombstone rejection route', async () => {
+    const fixture = createFixture();
+    const provider = harness([managedRule()]);
+    const result = await deleteManagedMailAddress(
+      fixture.env, ownerId, addressId, provider.dependencies, 'retain_reject_route'
+    );
+
+    expect(provider.calls).toEqual(['list', 'list']);
+    expect(fixture.state()).toMatchObject({
+      lifecycle_status: 'deleted', routing_state: 'active', routing_owner: 'flaremail',
+      routing_rule_id: 'rule-managed', receive_enabled: 0, send_enabled: 0,
+      delete_route_policy: 'retain_reject_route', last_error_code: null
+    });
+    expect(result).toMatchObject({
+      historyRetained: true,
+      deleteRoutePolicy: 'retain_reject_route',
+      remoteRulePreserved: true,
+      remoteRuleStatus: 'retained_for_rejection'
+    });
+    expect(provider.rules).toHaveLength(1);
+    fixture.sqlite.close();
+  });
+
+  test('restores a retained reject route without clearing its lease early or creating a duplicate', async () => {
+    const fixture = createFixture();
+    const provider = harness([managedRule()]);
+    await deleteManagedMailAddress(fixture.env, ownerId, addressId, provider.dependencies, 'retain_reject_route');
+
+    const restored = await restoreManagedMailAddress(fixture.env, ownerId, addressId, provider.dependencies);
+    expect(provider.calls).toEqual(['list', 'list', 'list']);
+    expect(restored).toMatchObject({
+      lifecycle_status: 'active', routing_state: 'active', routing_owner: 'flaremail',
+      receive_enabled: 1, delete_route_policy: null
+    });
+    expect(provider.rules).toHaveLength(1);
+    fixture.sqlite.close();
+  });
+
+  test('keeps the deleted reject-route outcome stable during a read-only route check', async () => {
+    const fixture = createFixture();
+    const provider = harness([managedRule()]);
+    await deleteManagedMailAddress(fixture.env, ownerId, addressId, provider.dependencies, 'retain_reject_route');
+
+    const checked = await import('./check').then(({ checkManagedMailDomain }) =>
+      checkManagedMailDomain(fixture.env, ownerId, domainId, {
+        cloudflareClient: {
+          async getZone(id) { expect(id).toBe(zoneId); return { id: zoneId, name: 'example.test', accountId: null }; },
+          async listRules(id) { expect(id).toBe(zoneId); return provider.rules; },
+          async getCatchAll() { return { enabled: false, actions: [] }; }
+        },
+        async resendLookup() { return null; },
+        now: () => '2026-09-21T10:01:00.000Z',
+        randomUUID: (() => { let count = 0; return () => 'check-operation-' + (++count); })()
+      })
+    );
+
+    expect(checked.cloudflare.addresses).toContainEqual({
+      addressId, email, status: 'reject_route_preserved'
+    });
+    expect(fixture.state()).toMatchObject({
+      lifecycle_status: 'deleted', routing_state: 'active', routing_owner: 'flaremail',
+      receive_enabled: 0, delete_route_policy: 'retain_reject_route', last_error_code: null
+    });
     fixture.sqlite.close();
   });
 

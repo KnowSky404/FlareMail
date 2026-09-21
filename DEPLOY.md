@@ -78,7 +78,7 @@ bun run mail:identity:dry-run -- --domain example.com --json
 The report includes historical users and Owner mappings, envelope recipients,
 outbound and draft addresses, attachment/body and Telegram ownership, unowned
 records and conflicts. It does not change D1 or promote login/profile emails to
-managed addresses. Migrations `0023`–`0025` are additive; there is no
+managed addresses. Migrations `0023`–`0026` are additive; there is no
 generic down migration. Multiple historical users require an explicit
 `FLAREMAIL_OWNER_USER_ID` during bootstrap; do not merge their data implicitly.
 
@@ -421,10 +421,14 @@ The default unknown-address policy is reject. `collect` may be selected only
 when a recent check proves the existing catch-all targets this Worker. A
 collected unknown address cannot send. Disabled/deleted explicit addresses are
 rejected before catch-all handling. Do not edit, enable, or remove an external
-catch-all. Deleting this application's precise rule does not stop delivery
-through a separate external catch-all; the UI reports that boundary. To
-restore an address, use its explicit restore action; the deleted row is never
-silently revived by synchronization.
+catch-all. Before deleting an address, review the authenticated route/catch-all
+preview and choose whether to remove the verified FlareMail rule or retain it
+as the tombstone's explicit rejection entry point. Removing this application's
+precise rule does not stop delivery through a separate external catch-all; the
+UI reports that boundary. Imported rules are never modified, and unavailable
+provider state is not reported as verified preservation. To restore an
+address, use its explicit restore action; the deleted row is never silently
+revived by synchronization.
 
 ### Telegram notification channel (optional, additive)
 
@@ -445,7 +449,7 @@ TELEGRAM_TIMEOUT_MS = "5000"
 value. `TELEGRAM_WEBHOOK_SECRET` is optional and only needed as an independent
 override. `wrangler.deploy.toml.example` includes
 `keep_vars = true` so future code deployments preserve Dashboard-managed
-variables. Apply the checkout's ordered migrations through schema version 25
+variables. Apply the checkout's ordered migrations through schema version 26
 (Telegram-specific migrations are 0019-0022) before the first enabled
 deployment. After deployment, log in to FlareMail and click
 **连接 / 更新 Webhook**; the page verifies `getMe` and registers only
@@ -565,8 +569,8 @@ and [Resend DMARC guidance](https://resend.com/docs/dashboard/domains/dmarc).
 
 ### 8. D1 migrations and pre-migration evidence
 
-At the current checkout, migrations `0001` through `0025` are present and
-`src/lib/server/db/schema-version.ts` declares schema version `25`. Treat this
+At the current checkout, migrations `0001` through `0026` are present and
+`src/lib/server/db/schema-version.ts` declares schema version `26`. Treat this
 as a checked-in fact for this release, not a permanent promise: derive the
 latest migration and schema version from the checkout before every release.
 
@@ -810,11 +814,11 @@ reviewed D1, R2, Resend, Custom Domain and webhook configuration:
    Worker email handler. A pre-existing matching Worker rule may be imported
    after a read-only check. A rule to another Worker or a forward destination
    is reported as a conflict and is not taken over.
-6. Review the exact address rule, domain-level catch-all status, and policy in
-   the UI. Do not enable or modify an external catch-all. Deleting an exact
-   FlareMail rule cannot intercept mail that an external catch-all still
-   receives. Send the controlled inbound smoke message only after the exact
-   address is active and receive-enabled.
+6. Review the exact address rule, domain-level catch-all status and freshness,
+   and address deletion policy in the UI. Do not enable or modify an external
+   catch-all. Removing an exact FlareMail rule cannot intercept mail that an
+   external catch-all still receives. Send the controlled inbound smoke
+   message only after the exact address is active and receive-enabled.
 
 See [Cloudflare Email Routing destination addresses](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/)
 and [Cloudflare route emails to a Worker](https://developers.cloudflare.com/email-service/get-started/route-emails/).

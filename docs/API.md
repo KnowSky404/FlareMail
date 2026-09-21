@@ -59,6 +59,12 @@ domain-to-zone and Worker mapping; the browser cannot choose an arbitrary zone,
 Worker, API origin, or Cloudflare endpoint. The response also includes boolean
 provider-configuration flags; it never returns a token or key.
 
+- `GET /api/workspace/mail-identities/:addressId/delete-preview` is an
+  authenticated, read-only snapshot of the exact-address rule, catch-all target
+  and freshness, local lifecycle, and history-retention effect. Its 60-second
+  UI expiry is advisory; DELETE independently re-reads the configured zone and
+  exact rule before any remote mutation. Unknown or stale provider state is
+  shown as such and never enables removal of an unverified managed rule.
 - `POST /api/workspace/mail-identities` creates an address in an already
   configured domain. The Worker creates an exact Email Routing rule and stores
   the returned rule ID. Repeated or concurrent requests reconcile the same
@@ -80,16 +86,25 @@ provider-configuration flags; it never returns a token or key.
   `enable`, `import`, `restore`, `retry`, `enable_send`, `disable_send`, and
   `make_default`. Receive lifecycle and sending permission are separate.
 - `DELETE /api/workspace/mail-identities/:addressId` requires
-  `{ "confirm": "delete" }`. It closes local send/receive access and records a
-  tombstone before remote rule cleanup. It does not delete historical mail,
-  drafts, or R2 content. Before removing a FlareMail-owned rule it verifies the
-  saved ID, API source, exact management marker, enabled literal recipient
-  matcher, single Worker action, and full configured Worker target, then reads
-  the rule set again immediately before DELETE. Imported rules are preserved.
-  A rule changed externally returns a conflict and is left alone. Restore is
-  allowed only after deletion is reconciled and no address operation lease is
-  active; it verifies or recreates the route before enabling receiving. An
-  active operation or unresolved deletion returns `MAIL_ADDRESS_OPERATION_CONFLICT`.
+  `{ "confirm": "delete" }`. Optional `policy` is `remove_owned_route`,
+  `retain_reject_route`, or (for explicitly imported routes only)
+  `preserve_imported_route`; older clients may omit it and use the
+  persisted/default behavior. The request closes local send/receive access
+  and records a tombstone before remote rule cleanup. It does not delete
+  historical mail, drafts, or R2 content. Before removing a FlareMail-owned
+  rule it verifies the saved ID, API source, exact management marker, enabled
+  literal recipient matcher, single Worker action, and full configured Worker
+  target, then reads the rule set again immediately before DELETE. The preview
+  recommends retaining a verified FlareMail route: the address becomes a
+  deleted tombstone and inbound handling rejects it before catch-all
+  collection, while the precise route remains in place. Removing the rule may
+  still leave delivery through a separate external catch-all. Imported rules
+  are never changed, and unverified imported state is reported as unverified
+  rather than as confirmed preservation. A rule changed externally returns a
+  conflict and is left alone. Restore is allowed only after deletion is
+  reconciled and no address operation lease is active; it verifies or
+  recreates the route before enabling receiving. An active operation or
+  unresolved deletion returns `MAIL_ADDRESS_OPERATION_CONFLICT`.
 
 The [Cloudflare Email Routing Rules API](https://developers.cloudflare.com/api/resources/email_routing/subresources/rules/)
 documents deletion by rule ID without an ETag/version precondition. The final
@@ -110,7 +125,9 @@ disabled/deleted explicit addresses do not receive that grace. Unknown domains
 are never globally accepted. A previously disabled/deleted explicit address
 is rejected before catch-all collection. Deleting this application's exact
 rule cannot block an external Worker or forwarding catch-all that also matches
-the domain.
+the domain. `reject_route_preserved` is an expected terminal observation for a
+deleted address whose exact FlareMail route was deliberately retained; checks
+do not enqueue cleanup or reactivate the address.
 
 The current [Email Routing Worker handler contract](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/)
 documents `message.setReject()` for an explicit refusal but does not promise
