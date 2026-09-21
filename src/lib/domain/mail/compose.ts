@@ -9,8 +9,10 @@ import {
 } from './addresses';
 import type {
   ComposeInput,
+  ComposeMode,
   DraftMessageInput,
   MailAttachmentSummary,
+  MailboxIdentityFilter,
   MailMessage,
   SentMessageInput,
   UserProfile
@@ -71,6 +73,24 @@ function sharedRfcFields(input: { messageId?: string | null; inReplyTo?: string 
     inReplyTo: canonicalMessageId(input.inReplyTo),
     references
   };
+}
+
+/** Keep explicit draft/reply identities stable; an address filter only guides new/forward defaults. */
+export function selectInitialComposeSenderAddressId(
+  addresses: ReadonlyArray<{ id: string; isDefaultSender: boolean; sendReady: boolean }>,
+  mode: ComposeMode,
+  identityFilter: MailboxIdentityFilter | null,
+  explicitSenderAddressId: string | null | undefined
+): string | null {
+  if (explicitSenderAddressId !== undefined) return explicitSenderAddressId;
+  if (mode !== 'new' && mode !== 'forward') return null;
+
+  if (identityFilter?.kind === 'address') {
+    const filteredAddress = addresses.find((address) => address.id === identityFilter.id);
+    if (filteredAddress?.sendReady) return filteredAddress.id;
+  }
+
+  return addresses.find((address) => address.isDefaultSender && address.sendReady)?.id ?? null;
 }
 
 /** Build a new draft without any provider or framework dependencies. */

@@ -3,9 +3,26 @@
   import type { PageData } from './$types';
   import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
+  import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
   import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
   import { ClientApiError } from '$lib/client/api';
-  import { fetchDeliveryDetail, fetchInboundDetail, fetchMessageBody, fetchWorkspaceMessage, updateMessageFlags } from '$lib/client/workspace-api';
+  import {
+    fetchDeliveryDetail,
+    fetchInboundDetail,
+    fetchMessageBody,
+    fetchWorkspaceMessage,
+    fetchWorkspaceSession,
+    updateMessageFlags
+  } from '$lib/client/workspace-api';
+  import {
+    AUTH_EXPIRED_EVENT,
+    clearClientAuthExpired,
+    createAuthSessionChannel,
+    isClientAuthExpired,
+    markClientAuthExpired,
+    openReauthenticationTab,
+    type AuthExpirySource
+  } from '$lib/client/auth-session';
   import { createWorkspaceSync } from '$lib/client/workspace-sync';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -27,7 +44,14 @@
   let deliveryDetailPending = $state(false);
   let mutationPending = $state(false);
   let mutationError = $state('');
-  let pending = $derived(inboundDetailPending || workspaceBodyPending || deliveryDetailPending || mutationPending);
+  let authExpired = $state(false);
+  let authRecoveryPending = $state(false);
+  let authRecoveryError = $state('');
+  let authSessionSync: ReturnType<typeof createAuthSessionChannel> | null = null;
+  let activeController: AbortController | null = null;
+  let mounted = false;
+  let authRecoveryPromise: Promise<boolean> | null = null;
+  let pending = $derived(authExpired || inboundDetailPending || workspaceBodyPending || deliveryDetailPending || mutationPending);
 
   const errorMessage = (value: unknown, fallback: string) =>
     value instanceof ClientApiError && i18n.locale === 'en'
@@ -57,9 +81,98 @@
       const result = await fetchWorkspaceMessage(message.id);
       messageOverride = result.message;
     } catch (error) {
+      if (error instanceof ClientApiError && error.code === 'AUTH_SESSION_EXPIRED') return;
       if (error instanceof ClientApiError && [401, 403, 404].includes(error.status)) {
         window.location.assign(data.backHref);
       }
+    }
+  }
+
+  function enterAuthExpired(source: AuthExpirySource) {
+    if (authExpired) return;
+    authExpired = true;
+    authRecoveryError = '';
+    activeController?.abort();
+    activeController = null;
+    if (source !== 'other-tab') authSessionSync?.publish({ type: 'expired' });
+  }
+
+  async function reloadReaderContent(signal: AbortSignal) {
+    const fresh = await fetchWorkspaceMessage(message.id, signal);
+    if (signal.aborted || !mounted) return;
+    messageOverride = fresh.message;
+
+    if (fresh.message.source === 'inbound') {
+      inboundDetailPending = true;
+      try {
+        const result = await fetchInboundDetail(fresh.message.id, signal);
+        if (!signal.aborted && mounted) {
+          inboundDetail = result.detail;
+          inboundDetailError = '';
+        }
+      } finally {
+        if (!signal.aborted && mounted) inboundDetailPending = false;
+      }
+      return;
+    }
+
+    workspaceBodyPending = true;
+    try {
+      const result = await fetchMessageBody(fresh.message.id, signal);
+      if (!signal.aborted && mounted) {
+        workspaceBody = result.body;
+        workspaceAttachments = result.attachments;
+        workspaceBodyError = '';
+      }
+    } finally {
+      if (!signal.aborted && mounted) workspaceBodyPending = false;
+    }
+
+    if (fresh.message.folder === 'sent') {
+      deliveryDetailPending = true;
+      try {
+        const result = await fetchDeliveryDetail(fresh.message.id, signal);
+        if (!signal.aborted && mounted) {
+          deliveryDetail = result.detail;
+          deliveryDetailError = '';
+        }
+      } finally {
+        if (!signal.aborted && mounted) deliveryDetailPending = false;
+      }
+    }
+  }
+
+  async function recoverExpiredSession(): Promise<boolean> {
+    if (!authExpired) return true;
+    if (authRecoveryPromise) return authRecoveryPromise;
+    authRecoveryPending = true;
+    authRecoveryError = '';
+    const operation = (async () => {
+      try {
+        const result = await fetchWorkspaceSession({ allowAfterAuthExpiry: true });
+        if (!result.authenticated || !result.workspace) {
+          authRecoveryError = t('auth.sessionNotRestored');
+          return false;
+        }
+        clearClientAuthExpired();
+        authExpired = false;
+        authSessionSync?.publish({ type: 'authenticated' });
+        const controller = new AbortController();
+        activeController = controller;
+        await reloadReaderContent(controller.signal);
+        return !controller.signal.aborted;
+      } catch (error) {
+        authRecoveryError = errorMessage(error, t('auth.recoveryFailed'));
+        return false;
+      } finally {
+        authRecoveryPending = false;
+      }
+    })();
+    authRecoveryPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (authRecoveryPromise === operation) authRecoveryPromise = null;
     }
   }
 
@@ -70,16 +183,33 @@
   }
 
   onMount(() => {
+    mounted = true;
     const controller = new AbortController();
+    activeController = controller;
+    authSessionSync = createAuthSessionChannel((message) => {
+      if (message.type === 'expired') markClientAuthExpired('other-tab');
+      else if (authExpired) void recoverExpiredSession();
+    });
+    const handleAuthExpired = (event: Event) => {
+      const source = (event as CustomEvent<{ source?: AuthExpirySource }>).detail?.source;
+      enterAuthExpired(source ?? 'worker-session');
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    if (isClientAuthExpired()) enterAuthExpired('worker-session');
+    else authSessionSync.publish({ type: 'authenticated' });
+
     sync = createWorkspaceSync((event) => {
       if (event.type === 'session-ended') {
         window.location.assign(data.backHref);
         return;
       }
-      if (event.id === message.id) void refreshMessageFromWorkspace();
+      if (event.type === 'mail-identity-options-changed') return;
+      if (event.id === message.id && !authExpired) void refreshMessageFromWorkspace();
     });
 
-    if (message.source === 'inbound') {
+    if (authExpired) {
+      // Keep server-rendered metadata visible while the user reauthenticates.
+    } else if (message.source === 'inbound') {
       inboundDetailPending = true;
       void fetchInboundDetail(message.id, controller.signal)
         .then((result) => {
@@ -123,8 +253,13 @@
 
     return () => {
       controller.abort();
+      mounted = false;
+      activeController = null;
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
       sync?.close();
       sync = null;
+      authSessionSync?.close();
+      authSessionSync = null;
     };
   });
 </script>
@@ -145,6 +280,15 @@
         <span class="text-xs text-[var(--fm-text-muted)]">{t('reader.standalone')}</span>
       </div>
     </header>
+
+    {#if authExpired}
+      <AuthExpiredNotice
+        busy={authRecoveryPending}
+        error={authRecoveryError}
+        onOpenSignIn={() => openReauthenticationTab()}
+        onRetry={recoverExpiredSession}
+      />
+    {/if}
 
     <main class="fm-reader-body min-h-0 flex-1 overflow-hidden pt-3 sm:pt-6">
       {#if mutationError}

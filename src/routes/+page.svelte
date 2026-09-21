@@ -18,8 +18,18 @@
   import ReaderDialog from '$lib/components/ui/ReaderDialog.svelte';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
+  import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
   import { DropdownMenu, IconButton } from '$lib/components/ui';
   import { ClientApiError } from '$lib/client/api';
+  import {
+    AUTH_EXPIRED_EVENT,
+    clearClientAuthExpired,
+    createAuthSessionChannel,
+    isClientAuthExpired,
+    markClientAuthExpired,
+    openReauthenticationTab,
+    type AuthExpirySource
+  } from '$lib/client/auth-session';
   import {
     ComposeAutosaveController,
     composeInputFromSavedDraft,
@@ -59,6 +69,7 @@
     fetchWorkspaceMessage,
     fetchMessageBody,
     fetchTrash,
+    fetchWorkspaceSession,
     permanentlyDeleteTrashItem,
     persistDraft,
     restoreTrashItem,
@@ -94,6 +105,7 @@
     createReplyComposeInput,
     hasDistinctReplyAllRecipients,
     isInboundMessageId,
+    selectInitialComposeSenderAddressId,
     serializeAddressList,
     type DeliveryDetail,
     type ComposeInput,
@@ -143,6 +155,10 @@
   );
 
   let authenticated = $state(false);
+  let authExpired = $state(false);
+  let authRecoveryPending = $state(false);
+  let authRecoveryError = $state('');
+  let authRecoverySaveRequired = $state(false);
   let profile = $state<UserProfile>(cloneProfile());
   let mailbox = $state<MailboxState>(cloneMailbox());
   let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, archiveCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
@@ -206,6 +222,8 @@
   let mailboxLoading = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaceSync: WorkspaceSyncController | null = null;
+  let authSessionSync: ReturnType<typeof createAuthSessionChannel> | null = null;
+  let authRecoveryPromise: Promise<boolean> | null = null;
   let composeSavePromise: Promise<void> | null = null;
   const composeAutosave = new ComposeAutosaveController();
   const listWidthRange = layoutPreferenceRange();
@@ -272,6 +290,7 @@
   } = {}) => toastController.push({ tone, message, ...options });
 
   const notifyError = (error: unknown, fallback: string) => {
+    if (authExpired || isClientAuthExpired()) return;
     if (!(error instanceof ClientApiError) || error.status >= 500) runtimeOperationError = true;
     notify(
       displayError(error, fallback),
@@ -279,6 +298,34 @@
       { requestId: error instanceof ClientApiError ? error.requestId : undefined }
     );
   };
+
+  function enterAuthExpired(source: AuthExpirySource) {
+    if (authExpired) return;
+    authExpired = true;
+    authRecoveryError = '';
+    const composeInput = composeLiveInput ? withCurrentComposePersistence(composeLiveInput) : null;
+    const hasUnsavedCompose = Boolean(
+      composeOpen && composeTouched && composeInput && hasComposeContent(composeInput) &&
+      serializeComposeInput(composeInput) !== composeLastSavedSignature
+    );
+    if (hasUnsavedCompose) {
+      authRecoverySaveRequired = true;
+      composeAutosaveStatus = 'error';
+      composeAutosaveMessage = t('compose.authExpiredDraftPreserved');
+    }
+    clearComposeAutosaveTimer();
+    composeAutosave.reset();
+    composeAutosavePending = false;
+    composeClosePending = false;
+    clearMailboxRefreshTimer();
+    mailboxController.cancel();
+    trashController.cancel();
+    targetMessageRequest.cancel();
+    inboundDetailCache.cancel();
+    deliveryDetailCache.cancel();
+    workspaceBodyCache.cancel();
+    if (source !== 'other-tab') authSessionSync?.publish({ type: 'expired' });
+  }
 
   const urlState = $derived(readWorkspaceUrl(page.url));
   const urlSection = $derived(urlState.section);
@@ -320,6 +367,7 @@
     const section = activeSection;
     if (
       !authenticated ||
+      authExpired ||
       !targetId ||
       !isInboundMessageId(targetId) ||
       section === 'profile' ||
@@ -523,6 +571,7 @@
 
   $effect(() => {
     if (authenticated && activeSection === 'trash' && !trashLoaded && !trashLoading) {
+      if (authExpired) return;
       void trashController.load();
     }
   });
@@ -550,6 +599,7 @@
     composeAutosavePending = false;
     composeClosePending = false;
     composeSavePromise = null;
+    authRecoverySaveRequired = false;
     composeAutosaveStatus = 'idle';
     composeAutosaveMessage = t('compose.autosaveIdle');
     composeLastSavedSignature = '';
@@ -626,6 +676,7 @@
 
   $effect(() => {
     if (
+      !authExpired &&
       selectedMessage &&
       isInboundMessageId(selectedMessage.id) &&
       !inboundDetails[selectedMessage.id] &&
@@ -638,6 +689,7 @@
 
   $effect(() => {
     if (
+      !authExpired &&
       selectedMessage &&
       !isInboundMessageId(selectedMessage.id) &&
       !workspaceBodies[selectedMessage.id] &&
@@ -661,6 +713,8 @@
       pending ||
       composeAutosavePending ||
       composeClosePending ||
+      authExpired ||
+      authRecoverySaveRequired ||
       !hasComposeContent(input) ||
       signature === composeLastSavedSignature
     ) {
@@ -678,6 +732,7 @@
 
   $effect(() => {
     if (
+      !authExpired &&
       selectedMessage &&
       selectedMessage.folder === 'sent' &&
       selectedMessage.source === 'workspace' &&
@@ -765,6 +820,11 @@
     trashLoading = false;
     trashLoaded = false;
     trashError = '';
+    authExpired = false;
+    authRecoveryPending = false;
+    authRecoveryError = '';
+    authRecoverySaveRequired = false;
+    clearClientAuthExpired();
     emptyTrashConfirmOpen = false;
     resetComposeState();
     inboundDetailCache.reset();
@@ -778,7 +838,7 @@
   }
 
   async function loadInboundDetail(message: MailMessage, force = false) {
-    if (!isInboundMessageId(message.id)) {
+    if (authExpired || !isInboundMessageId(message.id)) {
       return false;
     }
     return inboundDetailCache.load(
@@ -789,7 +849,7 @@
   }
 
   async function loadDeliveryDetail(message: MailMessage, force = false) {
-    if (message.folder !== 'sent' || message.source !== 'workspace') {
+    if (authExpired || message.folder !== 'sent' || message.source !== 'workspace') {
       return false;
     }
     return deliveryDetailCache.load(
@@ -800,7 +860,7 @@
   }
 
   async function loadWorkspaceBody(message: MailMessage, force = false) {
-    if (isInboundMessageId(message.id)) return false;
+    if (authExpired || isInboundMessageId(message.id)) return false;
     return workspaceBodyCache.load(
       message.id,
       async (signal) => await fetchMessageBody(message.id, signal),
@@ -863,7 +923,7 @@
       if (syncUrl) {
         updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
       }
-      if (authenticated) void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
+      if (authenticated && !authExpired) void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
       return;
     }
 
@@ -873,7 +933,7 @@
         ? selectedMessageId
         : trashItems[0]?.id ?? null;
       if (syncUrl) updateWorkspaceUrl({ section, query: '', filter: 'all', identityFilter: null, messageId: null });
-      if (authenticated) void trashController.load();
+      if (authenticated && !authExpired) void trashController.load();
       return;
     }
 
@@ -881,7 +941,7 @@
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
-    if (authenticated && section === 'drafts') void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
+    if (authenticated && !authExpired && section === 'drafts') void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
   }
 
   function clearMailboxRefreshTimer() {
@@ -899,10 +959,10 @@
     identityFilter: MailboxIdentityFilter | null = mailIdentityFilter
   ) {
     clearMailboxRefreshTimer();
-    if (!authenticated || folder === 'profile' || folder === 'trash') return;
+    if (!authenticated || authExpired || folder === 'profile' || folder === 'trash') return;
     mailboxRefreshTimer = setTimeout(() => {
       mailboxRefreshTimer = undefined;
-      if (authenticated && activeSection === folder) {
+      if (authenticated && !authExpired && activeSection === folder) {
         void mailboxController.refresh(folder, query, filter, identityFilter);
       }
     }, delayMs);
@@ -951,6 +1011,7 @@
   }
 
   async function refreshWorkspace(announce = true) {
+    if (!authenticated || authExpired) return;
     if (activeSection === 'trash') {
       const refreshed = await trashController.load();
       if (refreshed) {
@@ -971,6 +1032,59 @@
     }
   }
 
+  async function recoverExpiredSession(): Promise<boolean> {
+    if (!authExpired) return true;
+    if (authRecoveryPromise) return authRecoveryPromise;
+
+    authRecoveryPending = true;
+    authRecoveryError = '';
+    const operation = (async () => {
+      try {
+        const result = await fetchWorkspaceSession({ allowAfterAuthExpiry: true });
+        if (!result.authenticated || !result.workspace) {
+          authRecoveryError = t('auth.sessionNotRestored');
+          return false;
+        }
+
+        authRecoverySaveRequired = authRecoverySaveRequired || Boolean(
+          composeOpen && composeLiveInput && composeTouched && hasComposeContent(composeLiveInput) &&
+          serializeComposeInput(withCurrentComposePersistence(composeLiveInput)) !== composeLastSavedSignature
+        );
+        profile = cloneProfile(result.workspace.profile);
+        mailIdentityOptions = result.workspace.mailIdentityOptions;
+        authenticated = true;
+        clearClientAuthExpired();
+        authExpired = false;
+        if (composeOpen && authRecoverySaveRequired) {
+          composeAutosaveStatus = 'dirty';
+          composeAutosaveMessage = t('compose.authRecoveredDraftPaused');
+        }
+        authRecoveryError = '';
+        authSessionSync?.publish({ type: 'authenticated' });
+
+        void refreshWorkspace(false);
+        const current = selectedMessage;
+        if (current) {
+          if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
+          else void loadWorkspaceBody(current, true);
+          if (current.folder === 'sent' && current.source === 'workspace') void loadDeliveryDetail(current, true);
+        }
+        return true;
+      } catch (error) {
+        authRecoveryError = displayError(error, t('auth.recoveryFailed'));
+        return false;
+      } finally {
+        authRecoveryPending = false;
+      }
+    })();
+    authRecoveryPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (authRecoveryPromise === operation) authRecoveryPromise = null;
+    }
+  }
+
   function invalidateMessageCaches(messageId: string) {
     inboundDetailCache.invalidate(messageId);
     deliveryDetailCache.invalidate(messageId);
@@ -986,6 +1100,21 @@
       }), { replaceState: true, noScroll: true, keepFocus: false });
       return;
     }
+
+    if (event.type === 'mail-identity-options-changed') {
+      if (!authenticated || authExpired) return;
+      void fetchWorkspaceSession().then((result) => {
+        if (!result.authenticated || !result.workspace) {
+          markClientAuthExpired('worker-session');
+          return;
+        }
+        profile = cloneProfile(result.workspace.profile);
+        mailIdentityOptions = result.workspace.mailIdentityOptions;
+      }).catch((error) => notifyError(error, t('settings.mailIdentityLoadFailed')));
+      return;
+    }
+
+    if (!authenticated || authExpired) return;
 
     if (event.id) invalidateMessageCaches(event.id);
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
@@ -1085,15 +1214,17 @@
   });
 
   async function loadMoreMailbox() {
-    if (activeSection === 'profile' || activeSection === 'trash') return;
+    if (!authenticated || authExpired || activeSection === 'profile' || activeSection === 'trash') return;
     await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter);
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
-    const defaultSenderId = mailIdentityOptions.addresses.find((address) => address.isDefaultSender && address.sendReady)?.id ?? null;
-    const senderAddressId = initialInput?.senderAddressId !== undefined
-      ? initialInput.senderAddressId
-      : mode === 'new' || mode === 'forward' ? defaultSenderId : null;
+    const senderAddressId = selectInitialComposeSenderAddressId(
+      mailIdentityOptions.addresses,
+      mode,
+      mailIdentityFilter,
+      initialInput?.senderAddressId
+    );
     const nextInitialInput = { ...(initialInput ?? createEmptyComposeInput()), senderAddressId };
     clearComposeAutosaveTimer();
     composeAutosave.reset();
@@ -1103,6 +1234,7 @@
     composeSubmissionId = crypto.randomUUID();
     composeLiveInput = { ...nextInitialInput };
     composeTouched = false;
+    authRecoverySaveRequired = authExpired;
     composeAutosavePending = false;
     draftConflict = null;
     draftConflictLocalEditedAt = null;
@@ -1122,6 +1254,21 @@
         expectedUpdatedAt: composeLiveInput?.expectedUpdatedAt,
         bodyRevision: composeLiveInput?.bodyRevision
       });
+    }
+    if (authExpired) {
+      const input = composeLiveInput ? withCurrentComposePersistence(composeLiveInput) : null;
+      const hasUnsavedContent = Boolean(
+        input && hasComposeContent(input) && serializeComposeInput(input) !== composeLastSavedSignature
+      );
+      if (!hasUnsavedContent) {
+        resetComposeState();
+        notify(t('notify.composeClosed'), 'info');
+        return;
+      }
+      composeClosePending = false;
+      composeAutosaveStatus = 'error';
+      composeAutosaveMessage = t('compose.authExpiredDraftPreserved');
+      return;
     }
     composeClosePending = true;
     let savedBeforeClose = false;
@@ -1173,8 +1320,10 @@
           draftConflictLocalEditedAt = new Date().toISOString();
         }
         composeAutosaveStatus = 'error';
-        composeAutosaveMessage = displayError(error, t('compose.saveBeforeCloseFailed'));
-        notify(composeAutosaveMessage, 'error');
+        composeAutosaveMessage = authExpired
+          ? t('compose.authExpiredDraftPreserved')
+          : displayError(error, t('compose.saveBeforeCloseFailed'));
+        if (!authExpired) notify(composeAutosaveMessage, 'error');
         composeClosePending = false;
         return;
       } finally {
@@ -1209,6 +1358,10 @@
         resetUserScoped: true,
         syncUrl: true
       });
+      clearClientAuthExpired();
+      authExpired = false;
+      authRecoveryError = '';
+      authSessionSync?.publish({ type: 'authenticated' });
       notify(t('notify.loggedIn'), 'success');
     } catch (error) {
       loginError = displayError(error, t('auth.loginFailed'));
@@ -1263,6 +1416,7 @@
   }
 
   async function saveDraft(input: ComposeInput) {
+    if (authExpired) return;
     clearComposeAutosaveTimer();
     pending = true;
 
@@ -1293,7 +1447,7 @@
   async function performAutosaveDraft() {
     const liveInput = composeLiveInput;
 
-    if (!liveInput || !composeOpen || draftConflict) {
+    if (authExpired || authRecoverySaveRequired || !liveInput || !composeOpen || draftConflict) {
       return;
     }
 
@@ -1365,6 +1519,7 @@
   }
 
   async function prepareComposeAttachments(input: ComposeInput) {
+    if (authExpired) throw new ClientApiError(401, 'AUTH_SESSION_EXPIRED', t('auth.sessionExpiredTitle'));
     clearComposeAutosaveTimer();
     if (composeSavePromise) await composeSavePromise;
     composeAutosavePending = true;
@@ -1396,6 +1551,7 @@
   }
 
   async function sendMessage(input: ComposeInput) {
+    if (authExpired) return;
     clearComposeAutosaveTimer();
     pending = true;
 
@@ -1927,6 +2083,20 @@
     density = layout.density;
     document.documentElement.dataset.density = density;
     workspaceSync = createWorkspaceSync(handleWorkspaceSync);
+    authSessionSync = createAuthSessionChannel((message) => {
+      if (message.type === 'expired') {
+        markClientAuthExpired('other-tab');
+      } else if (authExpired) {
+        void recoverExpiredSession();
+      }
+    });
+    const handleAuthExpired = (event: Event) => {
+      const source = (event as CustomEvent<{ source?: AuthExpirySource }>).detail?.source;
+      enterAuthExpired(source ?? 'worker-session');
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    if (isClientAuthExpired()) enterAuthExpired('worker-session');
+    else if (authenticated) authSessionSync.publish({ type: 'authenticated' });
 
     const handleShortcut = (event: KeyboardEvent) => {
       if (!authenticated || composeOpen) return;
@@ -1963,8 +2133,11 @@
     return () => {
       document.removeEventListener('keydown', handleShortcut);
       window.removeEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
       workspaceSync?.close();
       workspaceSync = null;
+      authSessionSync?.close();
+      authSessionSync = null;
       stopListResize?.();
       document.body.classList.remove('fm-is-resizing');
       clearMailboxRefreshTimer();
@@ -1999,6 +2172,14 @@
     />
   {:else}
     <div class="fm-app-shell">
+      {#if authExpired}
+        <AuthExpiredNotice
+          busy={authRecoveryPending}
+          error={authRecoveryError}
+          onOpenSignIn={() => openReauthenticationTab()}
+          onRetry={recoverExpiredSession}
+        />
+      {/if}
       <AppTopbar
         bouncedCount={metrics.bouncedCount}
         complainedCount={metrics.complainedCount}
@@ -2071,7 +2252,10 @@
                   status={profileStatus}
                   statusError={profileStatusError}
                   onSave={saveProfile}
-                  onIdentitiesChanged={(options) => (mailIdentityOptions = options)}
+                  onIdentitiesChanged={(options) => {
+                    mailIdentityOptions = options;
+                    workspaceSync?.publish({ type: 'mail-identity-options-changed' });
+                  }}
                 />
               </div>
             {:else}
@@ -2311,6 +2495,7 @@
         initialInput={composeInitialInput}
         mode={composeMode}
         pending={composeBusy}
+        {authExpired}
         {profile}
         senderAddresses={mailIdentityOptions.addresses}
         onClose={closeCompose}
@@ -2328,6 +2513,14 @@
 
           composeLiveInput = nextInput;
           composeTouched = true;
+
+          if (authExpired) {
+            authRecoverySaveRequired = true;
+            composeAutosaveStatus = 'error';
+            composeAutosaveMessage = t('compose.authExpiredDraftPreserved');
+            return;
+          }
+          if (authRecoverySaveRequired) authRecoverySaveRequired = false;
 
           if (!hasComposeContent(nextInput)) {
             composeAutosaveStatus = 'idle';

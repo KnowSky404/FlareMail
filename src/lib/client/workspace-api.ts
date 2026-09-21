@@ -1,5 +1,13 @@
-import { requestJson } from './api';
-import { ClientApiError } from './api';
+import {
+  ClientApiError,
+  isAccessLoginUrl,
+  isJsonContentType,
+  isHtmlContentType,
+  requestJson,
+  requestNetworkError,
+  type RequestJsonPolicy
+} from './api';
+import { isClientAuthExpired, markClientAuthExpired } from './auth-session';
 import type {
   ComposeInput,
   DeliveryDetail,
@@ -66,25 +74,41 @@ async function sha256Hex(file: File) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+type AttachmentUploadErrorPayload = {
+  error?: { code?: string; message?: string; details?: Record<string, unknown> };
+  requestId?: string;
+};
+
 function uploadError(xhr: XMLHttpRequest) {
-  try {
-    const payload = (xhr.response && typeof xhr.response === 'object'
-      ? xhr.response
-      : JSON.parse(xhr.responseText)) as {
-      error?: { code?: string; message?: string; details?: Record<string, unknown> };
-      requestId?: string;
-    };
-    return new ClientApiError(
-      xhr.status,
-      payload.error?.code ?? 'ATTACHMENT_UPLOAD_FAILED',
-      payload.error?.message ?? '附件上传失败。',
-      payload.requestId,
-      undefined,
-      payload.error?.details
-    );
-  } catch {
-    return new ClientApiError(xhr.status, 'ATTACHMENT_UPLOAD_FAILED', '附件上传失败。');
+  const contentType = (() => {
+    try { return xhr.getResponseHeader('content-type'); } catch { return null; }
+  })();
+  const accessLoginRedirect = isAccessLoginUrl(xhr.responseURL) && isHtmlContentType(contentType);
+  if (accessLoginRedirect || (xhr.status === 401 && !isJsonContentType(contentType))) {
+    markClientAuthExpired(accessLoginRedirect ? 'access-login-redirect' : 'access-edge');
+    return new ClientApiError(401, 'AUTH_SESSION_EXPIRED', '登录状态已失效。当前编辑内容仍保留；请重新认证后手动继续。');
   }
+
+  let payload: AttachmentUploadErrorPayload | null = null;
+  try {
+    if (xhr.response && typeof xhr.response === 'object') payload = xhr.response as AttachmentUploadErrorPayload;
+  } catch {
+    payload = null;
+  }
+
+  if (xhr.status === 401 && ['ACCESS_REQUIRED', 'AUTHENTICATION_REQUIRED'].includes(payload?.error?.code ?? '')) {
+    markClientAuthExpired('worker-session');
+    return new ClientApiError(401, 'AUTH_SESSION_EXPIRED', '登录状态已失效。当前编辑内容仍保留；请重新认证后手动继续。');
+  }
+
+  return new ClientApiError(
+    xhr.status,
+    payload?.error?.code ?? 'ATTACHMENT_UPLOAD_FAILED',
+    payload?.error?.message ?? '附件上传失败。',
+    payload?.requestId,
+    undefined,
+    payload?.error?.details
+  );
 }
 
 /** XHR is used only because fetch does not expose browser upload progress. */
@@ -98,6 +122,9 @@ export function uploadDraftAttachment(
   let xhr: XMLHttpRequest | null = null;
   let cancelled = false;
   const promise = (async () => {
+    if (isClientAuthExpired()) {
+      throw new ClientApiError(401, 'AUTH_SESSION_EXPIRED', '登录状态已失效。当前编辑内容仍保留；请重新认证后手动继续。');
+    }
     const checksum = await sha256Hex(file);
     if (cancelled) throw new ClientApiError(499, 'ATTACHMENT_UPLOAD_CANCELLED', '附件上传已取消。');
     const params = new URLSearchParams({
@@ -110,6 +137,7 @@ export function uploadDraftAttachment(
       xhr.open('PUT', `/api/workspace/drafts/${encodeURIComponent(draftId)}/attachments/${encodeURIComponent(attachmentId)}?${params}`);
       xhr.responseType = 'json';
       xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+      xhr.setRequestHeader('x-requested-with', 'XMLHttpRequest');
       xhr.setRequestHeader('x-flaremail-sha256', checksum);
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) onProgress(Math.min(99, Math.round(event.loaded / event.total * 100)));
@@ -121,7 +149,7 @@ export function uploadDraftAttachment(
           resolve(payload.data);
         } else if (xhr) reject(uploadError(xhr));
       };
-      xhr.onerror = () => reject(new ClientApiError(0, 'ATTACHMENT_UPLOAD_NETWORK', '附件上传网络失败。'));
+      xhr.onerror = () => reject(requestNetworkError());
       xhr.onabort = () => reject(new ClientApiError(499, 'ATTACHMENT_UPLOAD_CANCELLED', '附件上传已取消。'));
       xhr.send(file);
     });
@@ -205,6 +233,10 @@ export function createSession(input: LoginInput) {
     method: 'POST',
     body: JSON.stringify(input)
   });
+}
+
+export function fetchWorkspaceSession(policy: RequestJsonPolicy = {}) {
+  return requestJson<SessionResponse>('/api/workspace/session', {}, policy);
 }
 
 export function deleteSession() {

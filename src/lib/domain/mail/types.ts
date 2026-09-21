@@ -291,10 +291,24 @@ export interface WorkspaceSnapshot extends WorkspacePayload {
       lifecycleStatus: 'active' | 'disabled' | 'deleted';
       sendEnabled: boolean;
       isDefaultSender: boolean;
+      domainEnabled: boolean;
+      resendStatus: 'unknown' | 'pending' | 'verified' | 'failed';
+      resendSendingStatus: 'unknown' | 'enabled' | 'disabled';
+      resendCheckedAt: string | null;
+      resendCheckFailed: boolean;
       sendReady: boolean;
     }>;
   };
 }
+
+export type MailSenderSendBlockReason =
+  | 'address_deleted'
+  | 'address_disabled'
+  | 'domain_disabled'
+  | 'provider_unverified'
+  | 'provider_sending_disabled'
+  | 'provider_check_stale'
+  | 'provider_check_failed';
 
 export interface MailboxMessageSummary {
   id: string;

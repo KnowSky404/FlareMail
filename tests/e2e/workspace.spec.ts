@@ -455,6 +455,25 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   )));
 });
 
+test('keeps a reply-all sender tied to the selected delivery after changing identity filter', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'A mobile full-screen compose dialog covers the mailbox identity filter.');
+  await login(page);
+  const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
+  await item.getByRole('button', { name: /E2E HTML Safety/u }).first().click();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await detail.getByRole('button', { name: '回复全部', exact: true }).click();
+  const replyAllDialog = page.getByRole('dialog', { name: '回复邮件' });
+  await expect(replyAllDialog.getByLabel('发件地址')).toHaveValue('00000000-0000-4000-8000-000000000021');
+
+  const identityFilter = page.locator('#mail-identity-filter');
+  await identityFilter.selectOption('address:00000000-0000-4000-8000-000000000022');
+  await expect(identityFilter).toHaveValue('address:00000000-0000-4000-8000-000000000022');
+  await expect(replyAllDialog.getByLabel('发件地址')).toHaveValue('00000000-0000-4000-8000-000000000021');
+  await expect(replyAllDialog.getByRole('button', { name: '移除抄送 observer@flaremail.test' })).toBeVisible();
+  await expect(replyAllDialog.getByRole('button', { name: '移除抄送 team@flaremail.test' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('uses global service metrics and exposes typed API errors with a request ID', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop topbar exposes the service summary.');
   await login(page);
@@ -784,6 +803,91 @@ test('sends through the local fake provider and applies a signed delivered webho
   await expect(detail.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(detail.getByRole('list', { name: '投递事件列表' })).toContainText('已送达');
   await assertNoConsoleErrors(consoleErrors);
+});
+
+test('defaults new mail from the exact address filter and keeps domain views on the global default', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const identityFilter = page.locator('#mail-identity-filter');
+  await expect(identityFilter).toBeEnabled();
+
+  await identityFilter.selectOption('address:00000000-0000-4000-8000-000000000022');
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  let composeDialog = page.getByRole('dialog', { name: '新邮件' });
+  await expect(composeDialog.getByLabel('发件地址')).toHaveValue('00000000-0000-4000-8000-000000000022');
+  if (testInfo.project.name === 'desktop') {
+    await page.screenshot({ path: join(tmpdir(), 'flaremail-sender-exact-address-desktop.png'), fullPage: false });
+  }
+  await composeDialog.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(composeDialog).toBeHidden();
+
+  await identityFilter.selectOption('domain:00000000-0000-4000-8000-000000000011');
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  composeDialog = page.getByRole('dialog', { name: '新邮件' });
+  await expect(composeDialog.getByLabel('发件地址')).toHaveValue('00000000-0000-4000-8000-000000000021');
+  await composeDialog.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(composeDialog).toBeHidden();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('recovers a local Access-style edge 401 in another tab without losing or replaying a compose edit', async ({ page, context, consoleErrors }, testInfo) => {
+  let expireNextSessionGet = false;
+  let ajaxHeader: string | undefined;
+  const draftWrites: Array<{ body?: string; subject?: string }> = [];
+  await page.route('**/api/workspace/session', async (route) => {
+    if (expireNextSessionGet && route.request().method() === 'GET') {
+      expireNextSessionGet = false;
+      ajaxHeader = route.request().headers()['x-requested-with'];
+      await route.fulfill({ status: 401, contentType: 'text/html', body: '<html>Access session expired</html>' });
+      return;
+    }
+    await route.continue();
+  });
+  page.on('request', (request) => {
+    if (request.url().endsWith('/api/workspace/drafts') && request.method() === 'POST') {
+      draftWrites.push(request.postDataJSON() as { body?: string; subject?: string });
+    }
+  });
+
+  await login(page);
+  await page.clock.install();
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  const composeDialog = page.getByRole('dialog', { name: '新邮件' });
+  await composeDialog.getByLabel('收件人').fill('access-recovery@flaremail.test');
+  await composeDialog.getByRole('textbox', { name: '主题', exact: true }).fill('Preserve this compose buffer');
+  await composeDialog.getByRole('textbox', { name: '正文', exact: true }).fill('Draft text before session expiry');
+
+  expireNextSessionGet = true;
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mail-identity-options-changed', nonce: 'e2e-auth-expiry', at: Date.now() });
+    channel.close();
+  });
+  const expiredHeading = page.getByRole('heading', { name: '登录状态已过期' });
+  await expect(expiredHeading).toBeVisible();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-auth-expired-${testInfo.project.name}.png`), fullPage: false });
+  expect(ajaxHeader).toBe('XMLHttpRequest');
+  await composeDialog.getByRole('textbox', { name: '正文', exact: true }).fill('Latest edit kept in the expired tab');
+  await expect(composeDialog.getByRole('button', { name: '保存草稿', exact: true })).toBeDisabled();
+  await expect(composeDialog.getByRole('button', { name: '发送邮件', exact: true })).toBeDisabled();
+  await page.clock.runFor(5_000);
+  expect(draftWrites).toHaveLength(0);
+
+  await context.clearCookies();
+  const reauthenticatedTab = await context.newPage();
+  await login(reauthenticatedTab);
+  await expect(expiredHeading).toBeHidden({ timeout: 10_000 });
+  await expect(composeDialog.getByRole('textbox', { name: '正文', exact: true })).toHaveValue('Latest edit kept in the expired tab');
+  await page.clock.runFor(5_000);
+  expect(draftWrites).toHaveLength(0);
+
+  await composeDialog.getByRole('button', { name: '保存草稿', exact: true }).click();
+  await expect(composeDialog).toBeHidden();
+  expect(draftWrites).toHaveLength(1);
+  expect(draftWrites[0]).toMatchObject({ subject: 'Preserve this compose buffer', body: 'Latest edit kept in the expired tab' });
+  const expectedEdgeUnauthorized = consoleErrors.filter((message) => message.includes('401 (Unauthorized)'));
+  expect(expectedEdgeUnauthorized).toHaveLength(1);
+  await assertNoConsoleErrors(consoleErrors.filter((message) => !message.includes('401 (Unauthorized)')));
+  await reauthenticatedTab.close();
 });
 
 test('supports mobile detail drill-in and back navigation', async ({ page, consoleErrors }, testInfo) => {

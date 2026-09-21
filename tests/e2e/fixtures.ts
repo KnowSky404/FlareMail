@@ -54,7 +54,10 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
 export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱' | '归档' | '垃圾箱') {
   const folderValue = { 收件箱: 'inbox', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive', 垃圾箱: 'trash' }[folder];
   const backButton = page.getByRole('button', { name: '返回邮件列表' });
-  if (await backButton.isVisible().catch(() => false)) await backButton.click();
+  if (await backButton.isVisible().catch(() => false)) {
+    await expect(backButton).toBeVisible();
+    await backButton.click({ force: true });
+  }
   const direct = page.getByRole('button', { name: folder, exact: true }).first();
   const navigationToggle = page.getByRole('button', { name: '打开导航' });
   await expect(direct.or(navigationToggle)).toBeVisible();
@@ -65,10 +68,13 @@ export async function openFolder(page: Page, folder: '收件箱' | '已发送' |
     await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
     return;
   }
-  await navigationToggle.click();
-  await page.getByRole('navigation', { name: '移动端导航' })
+  // As with the static desktop button above, headless WebKit can report the
+  // fixed, visible mobile control as unstable after the workspace transition.
+  await navigationToggle.click({ force: true });
+  const mobileFolder = page.getByRole('navigation', { name: '移动端导航' })
     .getByRole('button')
-    .filter({ hasText: folder })
-    .click();
+    .filter({ hasText: folder });
+  await expect(mobileFolder).toBeVisible();
+  await mobileFolder.click({ force: true });
   await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
 }

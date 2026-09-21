@@ -98,6 +98,13 @@ export class DetailCacheController<T> {
     this.emit();
   }
 
+  cancel() {
+    if (!this.pendingId) return;
+    this.request.cancel();
+    this.pendingId = null;
+    this.emit();
+  }
+
   reset() {
     this.request.cancel();
     this.values = {};

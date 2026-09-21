@@ -7,7 +7,9 @@
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
   import { requestJson } from '$lib/client/api';
-  import { isMailHealthFresh, mailHealthState } from '$lib/domain/mail/health';
+  import { mailHealthState } from '$lib/domain/mail/health';
+  import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
+  import type { WorkspaceSnapshot } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type MailDomain = {
@@ -80,13 +82,7 @@
     onOptionsChange
   }: {
     onError?: (error: unknown) => void;
-    onOptionsChange?: (options: {
-      domains: Array<{ id: string; domainName: string }>;
-      addresses: Array<{
-        id: string; domainId: string; email: string; displayName: string; lifecycleStatus: 'active' | 'disabled' | 'deleted';
-        sendEnabled: boolean; isDefaultSender: boolean; sendReady: boolean;
-      }>;
-    }) => void;
+    onOptionsChange?: (options: WorkspaceSnapshot['mailIdentityOptions']) => void;
   } = $props();
   const { t } = useLocale();
   let domains = $state<MailDomain[]>([]);
@@ -134,19 +130,26 @@
       addresses = loaded.addresses;
       onOptionsChange?.({
         domains: loadedDomains.map(({ id, domain_name }) => ({ id, domainName: domain_name })),
-        addresses: loaded.addresses.map((address) => {
-          const domain = loadedDomains.find((item) => item.id === address.domain_id);
-          const recentCheck = isMailHealthFresh(domain?.resend_checked_at);
+      addresses: loaded.addresses.map((address) => {
+        const domain = loadedDomains.find((item) => item.id === address.domain_id);
+          const readiness = {
+            lifecycleStatus: address.lifecycle_status,
+            sendEnabled: address.send_enabled === 1,
+            domainEnabled: Boolean(domain?.enabled),
+            resendStatus: domain?.resend_status ?? 'unknown',
+            resendSendingStatus: domain?.resend_sending_status ?? 'unknown',
+            resendCheckedAt: domain?.resend_checked_at ?? null,
+            resendCheckFailed: Boolean(domain?.resend_error_code)
+          } satisfies Omit<WorkspaceSnapshot['mailIdentityOptions']['addresses'][number],
+            'id' | 'domainId' | 'email' | 'displayName' | 'isDefaultSender' | 'sendReady'>;
           return {
             id: address.id,
             domainId: address.domain_id,
             email: address.email,
             displayName: address.display_name,
-            lifecycleStatus: address.lifecycle_status,
-            sendEnabled: address.send_enabled === 1,
             isDefaultSender: address.is_default_sender === 1,
-            sendReady: Boolean(domain?.enabled && address.send_enabled && address.lifecycle_status === 'active' &&
-              domain.resend_status === 'verified' && domain.resend_sending_status === 'enabled' && recentCheck)
+            ...readiness,
+            sendReady: mailSenderSendBlockReason(readiness) === null
           };
         })
       });
@@ -381,9 +384,15 @@
 
   function canSendFrom(address: MailAddress) {
     const domain = domains.find((item) => item.id === address.domain_id);
-    const recentCheck = isMailHealthFresh(domain?.resend_checked_at);
-    return Boolean(address.lifecycle_status === 'active' && address.send_enabled && domain?.enabled &&
-      domain.resend_status === 'verified' && domain.resend_sending_status === 'enabled' && recentCheck);
+    return mailSenderSendBlockReason({
+      lifecycleStatus: address.lifecycle_status,
+      sendEnabled: address.send_enabled === 1,
+      domainEnabled: Boolean(domain?.enabled),
+      resendStatus: domain?.resend_status ?? 'unknown',
+      resendSendingStatus: domain?.resend_sending_status ?? 'unknown',
+      resendCheckedAt: domain?.resend_checked_at ?? null,
+      resendCheckFailed: Boolean(domain?.resend_error_code)
+    }) === null;
   }
 
 </script>

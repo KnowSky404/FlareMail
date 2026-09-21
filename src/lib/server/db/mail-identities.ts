@@ -5,6 +5,7 @@ import {
   MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS,
   TRANSIENT_CLOUDFLARE_HEALTH_ERRORS
 } from '$lib/domain/mail/health';
+import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
 
 export type InboundRecipientResolution =
   | {
@@ -230,7 +231,8 @@ export async function listMailboxIdentityOptions(db: Pick<D1Database, 'prepare'>
       .bind(ownerUserId).all<{ id: string; domain_name: string }>(),
     db.prepare(`
       SELECT a.id, a.domain_id, a.email, a.display_name, a.lifecycle_status, a.send_enabled, a.is_default_sender,
-        d.enabled AS domain_enabled, d.resend_status, d.resend_sending_status, d.resend_checked_at
+        d.enabled AS domain_enabled, d.resend_status, d.resend_sending_status, d.resend_checked_at,
+        d.resend_error_code
       FROM mail_addresses AS a
       JOIN mail_domains AS d ON d.id = a.domain_id AND d.owner_user_id = a.owner_user_id
       WHERE a.owner_user_id = ? ORDER BY a.email COLLATE NOCASE, a.id
@@ -239,23 +241,29 @@ export async function listMailboxIdentityOptions(db: Pick<D1Database, 'prepare'>
       lifecycle_status: ManagedMailAddressRow['lifecycle_status']; send_enabled: number; is_default_sender: number;
       domain_enabled: number; resend_status: ManagedMailDomainRow['resend_status'];
       resend_sending_status: ManagedMailDomainRow['resend_sending_status']; resend_checked_at: string | null;
+      resend_error_code: string | null;
     }>()
   ]);
-  const now = Date.now();
   return {
     domains: (domains.results ?? []).map(({ id, domain_name }) => ({ id, domainName: domain_name })),
     addresses: (addresses.results ?? []).map((row) => {
-      const recentCheck = isMailHealthFresh(row.resend_checked_at, now);
+      const readiness = {
+        lifecycleStatus: row.lifecycle_status,
+        sendEnabled: row.send_enabled === 1,
+        domainEnabled: row.domain_enabled === 1,
+        resendStatus: row.resend_status,
+        resendSendingStatus: row.resend_sending_status,
+        resendCheckedAt: row.resend_checked_at,
+        resendCheckFailed: row.resend_error_code !== null
+      } as const;
       return {
         id: row.id,
         domainId: row.domain_id,
         email: row.email,
         displayName: row.display_name,
-        lifecycleStatus: row.lifecycle_status,
-        sendEnabled: row.send_enabled === 1,
         isDefaultSender: row.is_default_sender === 1,
-        sendReady: row.lifecycle_status === 'active' && row.send_enabled === 1 && row.domain_enabled === 1 &&
-          row.resend_status === 'verified' && row.resend_sending_status === 'enabled' && recentCheck
+        ...readiness,
+        sendReady: mailSenderSendBlockReason(readiness) === null
       };
     })
   };
