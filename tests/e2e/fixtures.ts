@@ -57,6 +57,8 @@ export async function openFolder(page: Page, folder: '收件箱' | '已发送' |
   if (await backButton.isVisible().catch(() => false)) {
     await expect(backButton).toBeVisible();
     await backButton.click({ force: true });
+    await expect(backButton).toBeHidden();
+    await expect(page).not.toHaveURL(/message=/u);
   }
   const direct = page.getByRole('button', { name: folder, exact: true }).first();
   const navigationToggle = page.getByRole('button', { name: '打开导航' });
