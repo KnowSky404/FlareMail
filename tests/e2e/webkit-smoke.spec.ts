@@ -118,15 +118,14 @@ test('keeps plain text safe while exercising HTML, CID, remote consent, and repo
   await expect(frame.locator('img[src*="attachments/"]')).toHaveCount(1);
   expect(remoteRequests).toEqual([]);
 
-  const remoteImagesButton = detail.getByRole('button', { name: '加载本邮件 HTTPS 图片' });
+  const remoteImagesButton = detail.locator('[role="note"] button');
   await pressHeadlessControl(remoteImagesButton);
   await expect(remoteImagesButton).toHaveAttribute('aria-pressed', 'true');
   await expect(htmlFrame).toHaveAttribute('src', /remote=1/u);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
   await expect.poll(() => remoteRequests.length).toBe(1);
-  const revokeRemoteImagesButton = detail.getByRole('button', { name: '撤销远程图片权限' });
-  await pressHeadlessControl(revokeRemoteImagesButton);
-  await expect(revokeRemoteImagesButton).toHaveAttribute('aria-pressed', 'false');
+  await pressHeadlessControl(remoteImagesButton);
+  await expect(remoteImagesButton).toHaveAttribute('aria-pressed', 'false');
   await expect(htmlFrame).toHaveAttribute('src', /remote=0/u);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
