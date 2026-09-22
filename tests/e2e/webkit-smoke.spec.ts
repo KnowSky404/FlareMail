@@ -92,7 +92,7 @@ test('keeps plain text safe while exercising HTML, CID, remote consent, and repo
   const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
   const messageButton = item.getByRole('button', { name: /E2E HTML Safety/u }).first();
   await expect(messageButton).toBeVisible();
-  await messageButton.click({ force: true });
+  await pressHeadlessControl(messageButton);
   const detail = page.getByRole('region', { name: '邮件详情' });
   const technicalDetails = detail.getByText('技术详情', { exact: true });
   await expect(technicalDetails).toBeVisible();
@@ -178,7 +178,7 @@ test('opens the compose attachment modal and restores an autosaved draft', async
   await expect(dialog.getByRole('status').filter({ hasText: /已自动保存于/u })).toBeVisible({ timeout: 12_000 });
   const cancelCompose = dialog.getByRole('button', { name: '取消', exact: true });
   await expect(cancelCompose).toBeVisible();
-  await cancelCompose.click({ force: true });
+  await pressHeadlessControl(cancelCompose);
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('button', { name: '写邮件', exact: true }).filter({ visible: true }).first()).toBeFocused();
 
