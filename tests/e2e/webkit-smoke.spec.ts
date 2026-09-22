@@ -15,6 +15,13 @@ async function clickHeadlessControl(locator: Locator) {
   await locator.click({ force: true });
 }
 
+async function pressHeadlessControl(locator: Locator) {
+  await expect(locator).toBeVisible();
+  await expect(locator).toBeEnabled();
+  await locator.focus();
+  await locator.press('Enter');
+}
+
 async function createSmokeDraft(page: Page, subject: string) {
   const result = await page.evaluate(async (nextSubject) => {
     const response = await fetch('/api/workspace/drafts', {
@@ -111,15 +118,21 @@ test('keeps plain text safe while exercising HTML, CID, remote consent, and repo
   await expect(frame.locator('img[src*="attachments/"]')).toHaveCount(1);
   expect(remoteRequests).toEqual([]);
 
-  await clickHeadlessControl(detail.getByRole('button', { name: '加载本邮件 HTTPS 图片' }));
+  const remoteImagesButton = detail.getByRole('button', { name: '加载本邮件 HTTPS 图片' });
+  await pressHeadlessControl(remoteImagesButton);
+  await expect(remoteImagesButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(htmlFrame).toHaveAttribute('src', /remote=1/u);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
   await expect.poll(() => remoteRequests.length).toBe(1);
-  await clickHeadlessControl(detail.getByRole('button', { name: '撤销远程图片权限' }));
+  const revokeRemoteImagesButton = detail.getByRole('button', { name: '撤销远程图片权限' });
+  await pressHeadlessControl(revokeRemoteImagesButton);
+  await expect(revokeRemoteImagesButton).toHaveAttribute('aria-pressed', 'false');
+  await expect(htmlFrame).toHaveAttribute('src', /remote=0/u);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent('download');
   await clickHeadlessControl(detail.getByRole('region', { name: '邮件正文' }).getByRole('button', { name: '更多邮件操作' }));
-  await clickHeadlessControl(detail.getByRole('menuitem', { name: '下载显示问题报告', exact: true }));
+  await pressHeadlessControl(detail.getByRole('menuitem', { name: '下载显示问题报告', exact: true }));
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^flaremail-html-display-email_e2e-html-inbox-message\.json$/u);
   const path = await download.path();
