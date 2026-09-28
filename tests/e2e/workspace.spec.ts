@@ -3,7 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -376,6 +376,45 @@ test('opens dedicated domain and address management views with a domain-scoped c
   await navigation.getByRole('button', { name: '域名', exact: true }).click();
   await expect(page).toHaveURL(/folder=settings.*view=domains/u);
   await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('preserves an unsaved profile edit across another tab identity refresh', async ({ page, context, consoleErrors }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings');
+  const name = page.getByLabel('显示姓名');
+  const company = page.getByLabel('公司名称');
+  await expect(name).toBeVisible();
+  await name.fill('  Unsaved E2E Name  ');
+
+  const otherTab = await context.newPage();
+  await otherTab.goto('/');
+  const refreshSession = async (route: Route) => {
+    const response = await route.fetch();
+    const payload = await response.json() as { data: { workspace: { profile: { company: string } } } };
+    payload.data.workspace.profile.company = 'Synced Company';
+    await route.fulfill({ response, json: payload });
+  };
+  await page.route('**/api/workspace/session', refreshSession);
+  const refreshedSession = page.waitForResponse((response) =>
+    response.url().endsWith('/api/workspace/session') && response.request().method() === 'GET'
+  );
+  await otherTab.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mail-identity-options-changed', nonce: crypto.randomUUID(), at: Date.now() });
+    channel.close();
+  });
+  await refreshedSession;
+  await expect(company).toHaveValue('Synced Company');
+  await expect(name).toHaveValue('  Unsaved E2E Name  ');
+  await page.unroute('**/api/workspace/session', refreshSession);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-profile-draft-sync-${testInfo.project.name}.png`), fullPage: false });
+
+  await page.getByRole('button', { name: '保存设置' }).click();
+  await expect(name).toHaveValue('Unsaved E2E Name');
+  await page.reload();
+  await expect(name).toHaveValue('Unsaved E2E Name');
+  await otherTab.close();
   await assertNoConsoleErrors(consoleErrors);
 });
 

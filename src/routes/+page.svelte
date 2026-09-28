@@ -1580,10 +1580,12 @@
       runtimeOperationError = false;
       profileStatus = t('notify.profileSaved');
       notify(t('notify.profileUpdated'), 'success');
+      return profile;
     } catch (error) {
       profileStatusError = true;
       profileStatus = displayError(error, t('notify.saveFailed'));
       notifyError(error, t('notify.profileSaveFailed'));
+      return null;
     } finally {
       pending = false;
     }

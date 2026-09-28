@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
@@ -13,6 +13,7 @@
   import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
   import { formatNumber } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
+  import { mergeProfileDraft } from '$lib/client/profile-draft';
 
   const createProfileDraft = (profile: UserProfile): UserProfile => ({ ...profile });
 
@@ -49,7 +50,7 @@
     status?: string;
     statusError?: boolean;
     pending?: boolean;
-    onSave: (next: UserProfile) => void | Promise<void>;
+    onSave: (next: UserProfile) => Promise<UserProfile | null>;
     onOpenDomains?: () => void;
     onOpenAddresses?: () => void;
   } = $props();
@@ -67,6 +68,7 @@
     })
   );
   let themePreference = $state<ThemePreference>('system');
+  let lastServerProfile: UserProfile | null = null;
   const i18n = useLocale();
   const { t } = i18n;
 
@@ -75,12 +77,22 @@
   });
 
   $effect(() => {
-    nextProfile = createProfileDraft(profile);
+    const incoming = profile;
+    untrack(() => {
+      nextProfile = lastServerProfile
+        ? mergeProfileDraft(lastServerProfile, incoming, nextProfile)
+        : createProfileDraft(incoming);
+      lastServerProfile = createProfileDraft(incoming);
+    });
   });
 
-  function submit(event: SubmitEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault();
-    void onSave(nextProfile);
+    const saved = await onSave(createProfileDraft(nextProfile));
+    if (saved) {
+      nextProfile = createProfileDraft(saved);
+      lastServerProfile = createProfileDraft(saved);
+    }
   }
 </script>
 
