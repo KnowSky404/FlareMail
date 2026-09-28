@@ -2271,6 +2271,44 @@ test('supports mobile detail drill-in and back navigation', async ({ page, conso
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('uses shared decorative avatars across account, mailbox, and reading views', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name === 'narrow', 'Desktop and 390 px mobile cover the avatar scale.');
+  await login(page);
+  if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
+  const accountAvatar = page.locator('.topbar .fm-avatar');
+  if (testInfo.project.name === 'desktop') {
+    await expect(accountAvatar).toBeVisible();
+    await expect(accountAvatar).toHaveText('E2');
+    await expect(accountAvatar).toHaveAttribute('aria-hidden', 'true');
+    expect((await accountAvatar.boundingBox())?.width).toBe(28);
+  } else {
+    await expect(accountAvatar).toBeHidden();
+  }
+
+  const inboxItem = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  const listAvatar = inboxItem.locator('.fm-avatar');
+  await expect(listAvatar).toHaveText('E');
+  await expect(listAvatar).toHaveAttribute('aria-hidden', 'true');
+  expect((await listAvatar.boundingBox())?.width).toBe(36);
+  await inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const senderAvatar = detail.locator('.message-sender .fm-avatar');
+  await expect(senderAvatar).toHaveText('E');
+  await expect(senderAvatar).toHaveAttribute('aria-hidden', 'true');
+  expect((await senderAvatar.boundingBox())?.width).toBe(40);
+  const dismissNotice = page.getByRole('button', { name: '关闭通知' });
+  if (await dismissNotice.isVisible()) await dismissNotice.click();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-shared-avatar-${testInfo.project.name}.png`), fullPage: false });
+  await assertNoHorizontalOverflow(page);
+
+  await openFolder(page, '草稿箱');
+  const draftAvatar = page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' }).locator('.fm-avatar');
+  await expect(draftAvatar.locator('svg')).toBeVisible();
+  await expect(draftAvatar).toHaveAttribute('aria-hidden', 'true');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('keeps the active mobile folder title when reading across folders', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'The compact detail header is mobile-only.');
   await login(page);

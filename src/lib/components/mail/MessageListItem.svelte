@@ -9,7 +9,7 @@
     Star,
     XCircle
   } from '@lucide/svelte';
-  import { IconButton, StatusBadge } from '$lib/components/ui';
+  import { Avatar, IconButton, StatusBadge } from '$lib/components/ui';
   import { formatNumber, translateCount } from '$lib/i18n';
   import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
@@ -175,9 +175,11 @@
       <span class="grid size-2 shrink-0 place-items-center" aria-hidden="true">
         {#if isUnread}<span class="size-2 rounded-full bg-[var(--fm-primary)]"></span>{/if}
       </span>
-      <span class="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--fm-primary-soft)] text-xs font-semibold text-[var(--fm-primary)]">
-        {#if isDraft}<FileText class="size-4" aria-hidden="true" />{:else}{counterpart.trim().slice(0, 1).toUpperCase() || '?'}{/if}
-      </span>
+      {#if isDraft}
+        <Avatar name={counterpart}><FileText class="size-4" aria-hidden="true" /></Avatar>
+      {:else}
+        <Avatar name={counterpart} />
+      {/if}
       <span class="min-w-0 flex-1 self-stretch py-0.5">
         <span class="flex min-w-0 items-center gap-2">
           <span class={`min-w-0 flex-1 truncate text-[13px] ${isUnread ? 'font-bold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>{counterpart}</span>

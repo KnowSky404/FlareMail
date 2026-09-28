@@ -19,7 +19,7 @@
     type DeliveryDetail,
     type MailMessage
   } from '$lib/domain/mail';
-  import { ConfirmDialog, DropdownMenu, IconButton, StatusBadge } from '$lib/components/ui';
+  import { Avatar, ConfirmDialog, DropdownMenu, IconButton, StatusBadge } from '$lib/components/ui';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
@@ -265,9 +265,7 @@
 
     <div class="message-sender px-4 pb-3 pt-2 sm:px-5 sm:pb-3 sm:pt-3">
       <div class="flex items-start gap-3">
-        <div class="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--fm-primary-soft)] text-sm font-semibold text-[var(--fm-primary)]" aria-hidden="true">
-          {(senderName || senderEmail || '?').slice(0, 1).toUpperCase()}
-        </div>
+        <Avatar name={senderName || senderEmail || '?'} size="lg" />
         <div class="min-w-0 flex-1">
           <div class="message-sender-identity flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span class="font-medium text-[var(--fm-text)]">{senderName || senderEmail || t('mail.unknownContact')}</span>

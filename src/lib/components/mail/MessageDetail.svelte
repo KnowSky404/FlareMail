@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
-  import { EmptyState } from '$lib/components/ui';
+  import { Avatar, EmptyState } from '$lib/components/ui';
   import AttachmentList from './AttachmentList.svelte';
   import DeliveryTimeline from './DeliveryTimeline.svelte';
   import MessageBody from './MessageBody.svelte';
@@ -198,7 +198,7 @@
               {#each threadMessages as threadMessage (threadMessage.id)}
                 <li>
                   <button class="fm-touch-target flex min-h-14 w-full items-center gap-3 rounded-[var(--radius-md)] border border-transparent px-3 py-2 text-left hover:bg-[var(--fm-surface-hover)]" class:bg-[var(--fm-surface-selected)]={threadMessage.id === message.id} type="button" onclick={() => onSelectThreadMessage?.(threadMessage)} aria-current={threadMessage.id === message.id ? 'true' : undefined}>
-                    <span class="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--fm-surface-subtle)] text-xs font-semibold text-[var(--fm-text-secondary)]" aria-hidden="true">{(threadMessage.fromName || threadMessage.fromEmail || '?').slice(0, 1).toUpperCase()}</span>
+                    <Avatar name={threadMessage.fromName || threadMessage.fromEmail || '?'} size="sm" tone="neutral" />
                     <span class="min-w-0 flex-1"><span class="block truncate text-xs font-medium text-[var(--fm-text)]">{threadMessage.preview || threadMessage.subject || t('mail.noSubject')}</span><span class="mt-0.5 block text-[11px] text-[var(--fm-text-muted)]">{folderLabel(threadMessage.folder)}</span></span>
                     <time class="shrink-0 text-[11px] text-[var(--fm-text-muted)]" datetime={threadMessage.sentAt}>{new Intl.DateTimeFormat(i18n.locale, { month: 'short', day: 'numeric' }).format(new Date(threadMessage.sentAt))}</time>
                   </button>

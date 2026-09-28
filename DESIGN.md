@@ -360,6 +360,7 @@ font-family:
   - compact/default；
   - loading/disabled。
 - `IconButton`
+- `Avatar`：28/32/36/40 px 尺寸和主色/中性色变体统一供账号、列表、线程与详情使用；附近已有姓名时头像是装饰内容，不重复读出首字母。
 - `TextField`
 - `TextArea`
 - `Select`

@@ -8,7 +8,7 @@
   import Sun from '@lucide/svelte/icons/sun';
   import type { UserProfile } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
-  import { DropdownMenu } from '$lib/components/ui';
+  import { Avatar, DropdownMenu } from '$lib/components/ui';
   import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
   import BrandMark from './BrandMark.svelte';
   import ServiceStatusMenu from './ServiceStatusMenu.svelte';
@@ -231,7 +231,7 @@
       }}
     >
       {#snippet trigger()}
-        <span class="account-avatar" aria-hidden="true">{initials}</span>
+        <Avatar name={profile.name} {initials} size="xs" />
         <span class="account-trigger-label">{profile.name || profile.email}</span>
       {/snippet}
       {#snippet children()}
@@ -375,19 +375,6 @@
   :global(.account-trigger:hover),
   .workspace:hover {
     background: var(--fm-surface-hover);
-  }
-
-  .account-avatar {
-    display: grid;
-    width: 28px;
-    height: 28px;
-    flex: 0 0 auto;
-    place-items: center;
-    border-radius: 999px;
-    color: var(--fm-primary);
-    background: var(--fm-primary-soft);
-    font-size: 11px;
-    font-weight: 800;
   }
 
   .account-trigger-label {
