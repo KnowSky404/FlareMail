@@ -2425,9 +2425,10 @@ test('keeps one responsive search entry, three desktop topbar actions, and a vis
 
   const topbar = page.locator('.topbar');
   const mobileBar = page.locator('.mobile-bar');
-  const widths = [1366, 1280, 1024, 1023, 901, 900, 768, 480, 390, 320];
+  const widths = [1920, 1440, 1366, 1280, 1024, 1023, 901, 900, 768, 480, 390, 320];
   for (const width of widths) {
-    await page.setViewportSize({ width, height: width <= 900 ? 844 : 768 });
+    const height = width === 1920 ? 1080 : width === 1440 ? 900 : width <= 900 ? 844 : 768;
+    await page.setViewportSize({ width, height });
     if (width >= 901) {
       await expect(topbar).toBeVisible();
       await expect(topbar.locator('.actions > *')).toHaveCount(3);
@@ -2471,6 +2472,12 @@ test('keeps one responsive search entry, three desktop topbar actions, and a vis
   expect(metrics.detailHeaderHeight).toBeLessThan(180);
   expect(metrics.visibleBodyHeight).toBeGreaterThanOrEqual(metrics.viewportHeight * 0.6);
   await page.screenshot({ path: join(tmpdir(), `flaremail-responsive-reading-${testInfo.project.name}.png`), fullPage: false });
+  for (const { width, height } of [{ width: 1920, height: 1080 }, { width: 1440, height: 900 }]) {
+    await page.setViewportSize({ width, height });
+    await expect(detail.locator('.message-plain-body')).toBeVisible();
+    await assertNoHorizontalOverflow(page);
+    await page.screenshot({ path: join(tmpdir(), `flaremail-responsive-reading-${width}-${testInfo.project.name}.png`), fullPage: false });
+  }
   await assertNoConsoleErrors(consoleErrors);
 });
 
