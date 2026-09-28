@@ -120,7 +120,6 @@
   <MessageHeader
     {message}
     {deliveryDetail}
-    {inboundDetail}
     {rawDownloadHref}
     {pending}
     {inboundDetailPending}

@@ -208,6 +208,9 @@ const zhCN = {
   'mail.attachmentSummary': '{count} 个附件 · {size}',
   'mail.attachmentSummary.one': '{count} 个附件 · {size}',
   'mail.attachmentSummary.other': '{count} 个附件 · {size}',
+  'mail.moreLabels': '另外 {count} 个标签',
+  'mail.moreLabels.one': '另外 {count} 个标签',
+  'mail.moreLabels.other': '另外 {count} 个标签',
   'mail.flagUpdateError': '邮件状态更新失败：{error}',
   'mail.statusDraft': '草稿',
   'mail.statusQueued': '排队中',
@@ -798,6 +801,7 @@ export type PluralMessageKey =
   | 'mail.threadCount'
   | 'mail.threadCounterpart'
   | 'mail.attachmentSummary'
+  | 'mail.moreLabels'
   | 'mail.filteredHeaders'
   | 'compose.forwardAttachmentMessage'
   | 'notify.trashEmptied';
@@ -1012,6 +1016,9 @@ const en = {
   'mail.attachmentSummary': '{count} attachments · {size}',
   'mail.attachmentSummary.one': '{count} attachment · {size}',
   'mail.attachmentSummary.other': '{count} attachments · {size}',
+  'mail.moreLabels': 'Show {count} more labels',
+  'mail.moreLabels.one': 'Show {count} more label',
+  'mail.moreLabels.other': 'Show {count} more labels',
   'mail.flagUpdateError': 'Unable to update message state: {error}',
   'mail.statusDraft': 'Draft',
   'mail.statusQueued': 'Queued',

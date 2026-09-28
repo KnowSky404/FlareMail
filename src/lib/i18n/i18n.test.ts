@@ -55,6 +55,9 @@ describe('message catalogs and formatters', () => {
     expect(translateCount('en', 'mail.threadCounterpart', 1, { name: 'Ada' })).toBe('Ada and 1 other');
     expect(translateCount('en', 'mail.threadCounterpart', 2, { name: 'Ada' })).toBe('Ada and 2 others');
     expect(translateCount('zh-CN', 'mail.threadCounterpart', 1, { name: 'Ada' })).toBe('Ada 和另外 1 位联系人');
+    expect(translateCount('en', 'mail.moreLabels', 1)).toBe('Show 1 more label');
+    expect(translateCount('en', 'mail.moreLabels', 35)).toBe('Show 35 more labels');
+    expect(translateCount('zh-CN', 'mail.moreLabels', 35)).toBe('另外 35 个标签');
     expect(interpolate('Hello, {name}!', { name: 'Ada' })).toBe('Hello, Ada!');
     expect(translate('en', 'missing.key' as MessageKey)).toBe('missing.key');
     expect(translate('invalid' as 'en', 'common.language')).toBe('语言');

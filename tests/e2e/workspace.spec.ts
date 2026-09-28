@@ -1466,6 +1466,71 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   )));
 });
 
+test('keeps reading space when a message has many labels', async ({ page, consoleErrors }, testInfo) => {
+  test.setTimeout(90_000);
+  await login(page);
+  let createdIds: string[] = [];
+  try {
+    const seeded = await page.evaluate(async () => {
+      const ids: string[] = [];
+      try {
+        for (let index = 0; index < 36; index += 1) {
+          const name = `E2E Header Stress ${String(index).padStart(2, '0')}`;
+          const created = await fetch('/api/workspace/labels', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+          });
+          if (!created.ok) throw new Error(`Create label ${index}: HTTP ${created.status}`);
+          const payload = await created.json() as { data: { label: { id: string } } };
+          const id = payload.data.label.id;
+          ids.push(id);
+          const applied = await fetch(`/api/workspace/labels/${encodeURIComponent(id)}/messages`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'inbound', id: 'e2e-html-inbox-message' })
+          });
+          if (!applied.ok) throw new Error(`Apply label ${index}: HTTP ${applied.status}`);
+        }
+        return { ids, error: null };
+      } catch (error) {
+        return { ids, error: error instanceof Error ? error.message : String(error) };
+      }
+    });
+    createdIds = seeded.ids;
+    expect(seeded.error).toBeNull();
+    await page.reload();
+    const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
+    await item.getByRole('button', { name: /E2E HTML Safety/u }).first().click();
+    const detail = page.getByRole('region', { name: '邮件详情' });
+    await expect(detail.locator('.message-header-labels').getByText(/^E2E Header Stress /u)).toHaveCount(36);
+    await expect(detail.getByRole('button', { name: '纯文本' })).toBeInViewport();
+    const moreLabels = detail.locator('summary').filter({ hasText: /另外 \d+ 个标签/u });
+    await expect(moreLabels).toBeVisible();
+    await moreLabels.click();
+    await expect(detail.getByText('E2E Header Stress 35', { exact: true })).toBeVisible();
+    await moreLabels.click();
+    await page.screenshot({ path: join(tmpdir(), `flaremail-many-labels-${testInfo.project.name}.png`), fullPage: false });
+    const reading = await detail.evaluate((element) => ({
+      scrollHeight: element.querySelector<HTMLElement>('.fm-detail-scroll')?.clientHeight ?? 0,
+      viewportHeight: window.innerHeight,
+      pageScrollY: window.scrollY
+    }));
+    expect(reading.scrollHeight).toBeGreaterThanOrEqual(reading.viewportHeight * 0.55);
+    expect(reading.pageScrollY).toBe(0);
+    await assertNoHorizontalOverflow(page);
+  } finally {
+    if (createdIds.length) {
+      await page.evaluate(async (ids) => {
+        for (let index = 0; index < ids.length; index += 6) {
+          await Promise.all(ids.slice(index, index + 6).map((id) => fetch(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'DELETE' })));
+        }
+      }, createdIds);
+    }
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('keeps a reply-all sender tied to the selected delivery after changing identity filter', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'A mobile full-screen compose dialog covers the mailbox identity filter.');
   await login(page);
@@ -2270,21 +2335,21 @@ test('keeps one responsive search entry, three desktop topbar actions, and a vis
   const metrics = await detail.evaluate((element) => {
     const scroll = element.querySelector<HTMLElement>('.fm-detail-scroll');
     const body = element.querySelector<HTMLElement>('.message-plain-body');
-    const labels = element.querySelector<HTMLElement>('.message-header-labels');
     const detailRect = element.getBoundingClientRect();
     const scrollRect = scroll?.getBoundingClientRect();
     const viewportTop = Math.max(0, detailRect.top, scrollRect?.top ?? 0);
     const viewportBottom = Math.min(window.innerHeight, detailRect.bottom, scrollRect?.bottom ?? 0);
     return {
       bodyTop: body?.getBoundingClientRect().top ?? null,
-      labelsHeight: labels?.getBoundingClientRect().height ?? 0,
+      scrollTop: scrollRect?.top ?? null,
       detailHeaderHeight: scrollRect ? scrollRect.top - detailRect.top : null,
       visibleBodyHeight: Math.max(0, viewportBottom - viewportTop),
       viewportHeight: window.innerHeight
     };
   });
   expect(metrics.bodyTop).not.toBeNull();
-  expect(metrics.bodyTop! - metrics.labelsHeight).toBeLessThanOrEqual(220);
+  expect(metrics.scrollTop).not.toBeNull();
+  expect(metrics.bodyTop! - metrics.scrollTop!).toBeLessThanOrEqual(100);
   expect(metrics.detailHeaderHeight).toBeLessThan(180);
   expect(metrics.visibleBodyHeight).toBeGreaterThanOrEqual(metrics.viewportHeight * 0.6);
   await page.screenshot({ path: join(tmpdir(), `flaremail-responsive-reading-${testInfo.project.name}.png`), fullPage: false });

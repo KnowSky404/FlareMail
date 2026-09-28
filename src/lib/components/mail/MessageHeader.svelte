@@ -17,17 +17,14 @@
   } from '@lucide/svelte';
   import {
     type DeliveryDetail,
-    type InboundMessageDetail,
     type MailMessage
   } from '$lib/domain/mail';
   import { ConfirmDialog, DropdownMenu, IconButton, StatusBadge } from '$lib/components/ui';
-  import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     message = null,
     deliveryDetail = null,
-    inboundDetail = null,
     rawDownloadHref = null,
     pending = false,
     inboundDetailPending = false,
@@ -54,7 +51,6 @@
   }: {
     message?: MailMessage | null;
     deliveryDetail?: DeliveryDetail | null;
-    inboundDetail?: InboundMessageDetail | null;
     rawDownloadHref?: string | null;
     pending?: boolean;
     inboundDetailPending?: boolean;
@@ -97,12 +93,6 @@
 
   const formatCompactDate = (value: string) =>
     new Intl.DateTimeFormat(i18n.locale, { month: 'short', day: 'numeric' }).format(new Date(value));
-
-  const formatBytes = (value: number) => {
-    if (value < 1024) return `${formatNumber(value, i18n.locale)} B`;
-    if (value < 1024 * 1024) return `${formatNumber(value / 1024, i18n.locale, { maximumFractionDigits: 1 })} KB`;
-    return `${formatNumber(value / (1024 * 1024), i18n.locale, { maximumFractionDigits: 1 })} MB`;
-  };
 
   const safeHref = (value: string | null | undefined) => {
     if (!value) return null;
@@ -269,21 +259,9 @@
         <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatCompactDate(message.sentAt)}</time>
       </div>
 
-      <div class="message-header-labels mt-2 flex flex-wrap items-center gap-2">
-        {#if message.folder === 'sent' && deliveryStatus}
-          <span class="inline-flex sm:hidden"><StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge></span>
-        {/if}
-        {#if message.labels.length}
-          {#each message.labels as label}<span class="rounded-full bg-[var(--fm-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--fm-text-secondary)]">{label}</span>{/each}
-        {/if}
-        {#each message.userLabels ?? [] as userLabel (userLabel.id)}
-          <span class="rounded-full border border-[var(--fm-primary)]/25 bg-[var(--fm-primary-soft)] px-2 py-0.5 text-[11px] text-[var(--fm-primary)]">{userLabel.name}</span>
-        {/each}
-        {#if inboundDetail}
-          <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.attachmentSummary', inboundDetail.attachments.length, { size: formatBytes(inboundDetail.rawSize) })}</span>
-        {/if}
-      </div>
-
+      {#if message.folder === 'sent' && deliveryStatus}
+        <div class="mt-2 sm:hidden"><StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge></div>
+      {/if}
     </div>
   </header>
 {:else}

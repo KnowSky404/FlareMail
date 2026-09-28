@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ChevronDown } from '@lucide/svelte';
   import { parseAddressList, serializeAddressList, type InboundMessageDetail, type MailMessage } from '$lib/domain/mail';
-  import { translateCount } from '$lib/i18n';
+  import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let { message, inboundDetail = null }: { message: MailMessage; inboundDetail?: InboundMessageDetail | null } = $props();
@@ -17,9 +17,47 @@
     : serializeAddressList(message.toAddresses ?? [{ name: message.toName, email: message.toEmail }]));
   const ccSummary = $derived(serializeAddressList(message.ccAddresses ?? parseAddressList(message.cc ?? '')));
   const bccSummary = $derived(serializeAddressList(message.bccAddresses ?? parseAddressList(message.bcc ?? '')));
+  const labels = $derived([
+    ...message.labels.map((name, index) => ({ id: `system-${index}`, name, user: false })),
+    ...(message.userLabels ?? []).map((label) => ({ id: label.id, name: label.name, user: true }))
+  ]);
+  const visibleLabels = $derived(labels.slice(0, 3));
+  const extraLabels = $derived(labels.slice(3));
+
+  const formatBytes = (value: number) => {
+    if (value < 1024) return `${formatNumber(value, i18n.locale)} B`;
+    if (value < 1024 * 1024) return `${formatNumber(value / 1024, i18n.locale, { maximumFractionDigits: 1 })} KB`;
+    return `${formatNumber(value / (1024 * 1024), i18n.locale, { maximumFractionDigits: 1 })} MB`;
+  };
 </script>
 
 <div class="border-b border-[var(--fm-border)] px-4 py-2 text-xs text-[var(--fm-text-muted)] sm:px-6 lg:px-8">
+  {#if labels.length || inboundDetail}
+    <div class="message-header-labels flex flex-wrap items-center gap-2 pb-2">
+      {#each visibleLabels as label (label.id)}
+        <span class={label.user
+          ? 'rounded-full border border-[var(--fm-primary)]/25 bg-[var(--fm-primary-soft)] px-2 py-0.5 text-[11px] text-[var(--fm-primary)]'
+          : 'rounded-full bg-[var(--fm-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--fm-text-secondary)]'}>{label.name}</span>
+      {/each}
+      {#if inboundDetail}
+        <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.attachmentSummary', inboundDetail.attachments.length, { size: formatBytes(inboundDetail.rawSize) })}</span>
+      {/if}
+    </div>
+    {#if extraLabels.length}
+      <details class="mb-1">
+        <summary class="fm-touch-target inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
+          <span>{translateCount(i18n.locale, 'mail.moreLabels', extraLabels.length)}</span><ChevronDown class="size-3" aria-hidden="true" />
+        </summary>
+        <div class="message-header-labels mt-2 flex flex-wrap gap-2">
+          {#each extraLabels as label (label.id)}
+            <span class={label.user
+              ? 'rounded-full border border-[var(--fm-primary)]/25 bg-[var(--fm-primary-soft)] px-2 py-0.5 text-[11px] text-[var(--fm-primary)]'
+              : 'rounded-full bg-[var(--fm-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--fm-text-secondary)]'}>{label.name}</span>
+          {/each}
+        </div>
+      </details>
+    {/if}
+  {/if}
   <details>
     <summary class="fm-touch-target inline-flex cursor-pointer list-none items-center gap-1 hover:text-[var(--fm-text)]">
       <span>{t('mail.contactDetails', { label: counterpartLabel })}</span><ChevronDown class="size-3" aria-hidden="true" />
@@ -34,7 +72,7 @@
       {/if}
       {#if ccSummary}<dt>{t('mail.cc')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{ccSummary}</dd>{/if}
       {#if bccSummary}<dt>{t('mail.bcc')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{bccSummary}</dd>{/if}
-      {#if message.messageId}<dt>{t('mail.messageId')}</dt><dd class="truncate font-mono text-[var(--fm-text-secondary)]">{message.messageId}</dd>{/if}
+      {#if message.messageId}<dt>{t('mail.messageId')}</dt><dd class="break-all font-mono text-[var(--fm-text-secondary)]">{message.messageId}</dd>{/if}
     </dl>
   </details>
   {#if inboundDetail}
