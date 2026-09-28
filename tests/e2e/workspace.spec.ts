@@ -2743,3 +2743,54 @@ test('has an accessible Telegram settings panel on mobile', async ({ page, conso
   await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors);
 });
+
+test('renders a representative multi-domain message with two attachments for visual review', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(!['desktop', 'mobile'].includes(testInfo.project.name), 'The concept comparison uses desktop and 390 px mobile.');
+  test.setTimeout(90_000);
+  if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
+  await login(page);
+
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  const compose = page.getByRole('dialog', { name: '新邮件' });
+  await compose.getByLabel('发件地址').selectOption('00000000-0000-4000-8000-000000000023');
+  await compose.getByLabel('收件人').fill('reviewer@flaremail.test');
+  const subject = '多域名邮箱发布检查清单';
+  const body = [
+    '你好，',
+    '这是一封只在隔离本地环境中发送的多域名邮箱检查邮件。请确认以下事项：',
+    '1. 收件箱、归档和已发送邮件在不同地址筛选下仍保持准确。',
+    '2. 回复与转发保留原有发件身份，附件下载只对当前 Owner 开放。',
+    '3. 桌面和手机阅读区能完整显示正文、两个附件及邮件信息。',
+    '如有问题，请在发布前记录复现步骤。',
+    'FlareMail 本地验收'
+  ].join('\n\n');
+  await compose.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
+  await compose.getByRole('textbox', { name: '正文', exact: true }).fill(body);
+  await compose.getByLabel('选择附件').setInputFiles([
+    { name: 'domain-review.csv', mimeType: 'text/csv', buffer: Buffer.from('domain,status\nflaremail.test,ready\nexample.test,ready\n') },
+    { name: 'release-notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Synthetic local release notes for visual QA.\n') }
+  ]);
+  await expect(compose.getByRole('list', { name: '待发送附件' }).getByRole('listitem')).toHaveCount(2, { timeout: 15_000 });
+  await expect(compose.getByRole('list', { name: '附件上传状态' })).toHaveCount(0);
+  await compose.getByRole('button', { name: '发送邮件' }).click();
+
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
+  await expect(detail.locator('.message-plain-body')).toContainText('FlareMail 本地验收');
+  const attachments = detail.getByRole('list', { name: '邮件附件列表' });
+  await expect(attachments.getByRole('listitem')).toHaveCount(2);
+  await expect(attachments.getByRole('link', { name: '下载附件 domain-review.csv' })).toBeVisible();
+  await expect(attachments.getByRole('link', { name: '下载附件 release-notes.txt' })).toBeVisible();
+  await expect(page.locator('#send-status-announcement')).toContainText('已提交到 fake');
+  await expect(page.locator('.toast-region .toast.success')).toHaveCount(0);
+  await expect(detail.getByText('已提交至投递服务').filter({ visible: true }).first()).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  const violations = (await new AxeBuilder({ page }).include('main').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations;
+  expect(violations.flatMap(({ id, nodes }) => nodes.map(({ target }) => `${id}: ${target.join(', ')}`))).toEqual([]);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-rich-detail-${testInfo.project.name}.png`), fullPage: false });
+  if (testInfo.project.name === 'mobile') {
+    await attachments.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(tmpdir(), 'flaremail-rich-detail-attachments-mobile.png'), fullPage: false });
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});

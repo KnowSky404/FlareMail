@@ -96,7 +96,7 @@
   import { createWorkspaceSync, type WorkspaceSyncController } from '$lib/client/workspace-sync';
   import { LOCALE_CHANGE_EVENT } from '$lib/client/locale-preferences';
   import { useLocale } from '$lib/i18n/runtime.svelte';
-  import { formatDate, formatNumber, translateCount } from '$lib/i18n';
+  import { formatNumber, translateCount } from '$lib/i18n';
   import {
     DEFAULT_LAYOUT_PREFERENCES,
     clampListWidth,
@@ -251,6 +251,7 @@
   let workspaceBodyErrors = $state<Record<string, string>>({});
   let workspaceBodyPendingId = $state<string | null>(null);
   let toastMessages = $state<ToastMessage[]>([]);
+  let sendAnnouncement = $state('');
   let runtimeOperationError = $state(false);
   let loginError = $state('');
   let profileStatus = $state('');
@@ -914,6 +915,7 @@
     profileStatusError = false;
     loginError = '';
     runtimeOperationError = false;
+    sendAnnouncement = '';
     workspaceSnapshotController.reset();
   }
 
@@ -1804,6 +1806,7 @@
   async function sendMessage(input: ComposeInput) {
     if (authExpired) return;
     clearComposeAutosaveTimer();
+    sendAnnouncement = '';
     pending = true;
 
     try {
@@ -1827,16 +1830,14 @@
       });
       const deliveryMessage =
         result.message.deliveryResultKind === 'accepted' && (input.draftId ?? composeDraftId)
-          ? t('notify.draftSubmitted', { provider: result.message.deliveryProvider ?? t('notify.deliveryService'), email: result.message.toEmail })
+          ? t('notify.draftSubmitted', { provider: result.message.deliveryProvider ?? t('notify.deliveryService') })
           : result.message.deliveryResultKind === 'accepted'
-            ? t('notify.deliverySubmitted', { email: result.message.toEmail, provider: result.message.deliveryProvider ?? t('notify.deliveryService') })
+            ? t('notify.deliverySubmitted', { provider: result.message.deliveryProvider ?? t('notify.deliveryService') })
             : describeDeliveryState(result.message);
-      const deliveryReceipt = result.message.deliveryResultKind === 'accepted' && result.message.deliveryProviderMessageId
-        ? t('notify.providerMessageId', { id: result.message.deliveryProviderMessageId, date: formatDate(result.message.sentAt, i18n.locale, { dateStyle: 'medium', timeStyle: 'short' }) })
-        : '';
       const deliveryTone: ToastTone = result.message.deliveryResultKind === 'accepted' ? 'success' : 'warning';
       resetComposeState();
-      notify(`${deliveryMessage}${deliveryReceipt}`, deliveryTone, { persistent: deliveryTone === 'warning' });
+      if (deliveryTone === 'success') sendAnnouncement = deliveryMessage;
+      else notify(deliveryMessage, deliveryTone, { persistent: true });
       workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
     } catch (error) {
       notifyError(error, t('notify.sendFailed'));
@@ -2922,6 +2923,7 @@
     />
   {/if}
 
+  <div id="send-status-announcement" class="sr-only" role="status" aria-live="polite">{sendAnnouncement}</div>
   <ToastRegion
     messages={toastMessages}
     aboveActions={composeOpen}
