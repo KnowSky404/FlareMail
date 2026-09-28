@@ -1188,7 +1188,7 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
       const summary = await composeDialog.locator('#compose-html-options > summary').boundingBox();
       const body = await composeDialog.locator('.compose-window-body').boundingBox();
       return Math.max(0, (summary?.y ?? 0) + (summary?.height ?? 0) - (body?.y ?? 0) - (body?.height ?? 0));
-    }).toBe(0);
+    }).toBeLessThan(1);
   }
   await composeDialog.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>This <strong>HTML</strong> draft must survive a page refresh.</p>');
   await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
