@@ -59,6 +59,7 @@
     type WorkspaceSection
   } from '$lib/client/mailbox-controller';
   import { LatestRequest } from '$lib/client/latest-request';
+  import { selectedVisibleMessages } from '$lib/client/mailbox-selection';
   import {
     createSession,
     deleteMessage,
@@ -486,16 +487,16 @@
     : visibleThreads.length
       ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
       : visibleMessages.map((message) => message.id));
-  const bulkSelectedMessages = $derived.by(() => [...visibleThreads.map((thread) => thread.sectionLatestMessage), ...visibleMessages]
-    .filter((message, index, all) => selectedMessageIds.includes(message.id) && all.findIndex((candidate) => candidate.id === message.id) === index));
+  const selectedMessageIdSet = $derived(new Set(selectedMessageIds));
+  const bulkSelectedMessages = $derived(selectedVisibleMessages(visibleThreads, visibleMessages, selectedMessageIdSet));
   const bulkHasDraftSelection = $derived(bulkSelectedMessages.some((message) => message.folder === 'drafts'));
   const bulkCanMutateMessages = $derived(bulkSelectedMessages.length > 0 && !bulkHasDraftSelection);
   const bulkInboxOnly = $derived(bulkCanMutateMessages && bulkSelectedMessages.every((message) => message.folder === 'inbox'));
   const bulkHasUnarchivedInbox = $derived(bulkInboxOnly && bulkSelectedMessages.some((message) => !message.archivedAt));
   const bulkHasArchivedInbox = $derived(bulkInboxOnly && bulkSelectedMessages.some((message) => Boolean(message.archivedAt)));
-  const bulkSelectedVisibleCount = $derived(bulkSelectableIds.filter((id) => selectedMessageIds.includes(id)).length);
+  const bulkSelectedVisibleCount = $derived(bulkSelectableIds.filter((id) => selectedMessageIdSet.has(id)).length);
   const bulkSelectedThreadCount = $derived(visibleThreads.filter((thread) =>
-    Boolean(thread.sectionLatestMessage.threadKey) && selectedMessageIds.includes(thread.sectionLatestMessage.id)
+    Boolean(thread.sectionLatestMessage.threadKey) && selectedMessageIdSet.has(thread.sectionLatestMessage.id)
   ).length);
   const bulkAllSelected = $derived(bulkSelectableIds.length > 0 && bulkSelectedVisibleCount === bulkSelectableIds.length);
   const bulkSomeSelected = $derived(bulkSelectedVisibleCount > 0 && !bulkAllSelected);
@@ -2653,7 +2654,7 @@
                     onRefresh={refreshWorkspace}
                     onLoadMore={loadMoreMailbox}
                     selectable={activeSection !== 'drafts' && activeSection !== 'trash'}
-                    selectedMessageIds={selectedMessageIds}
+                    selectedMessageIds={selectedMessageIdSet}
                     onToggleSelect={toggleBulkSelection}
                   />
                 </section>

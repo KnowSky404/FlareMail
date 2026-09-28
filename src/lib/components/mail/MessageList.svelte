@@ -31,7 +31,7 @@
     onClearFilters,
     onLoadMore,
     selectable = false,
-    selectedMessageIds = [],
+    selectedMessageIds = new Set<string>(),
     onToggleSelect
   }: {
     activeSection: AppSection;
@@ -54,7 +54,7 @@
     onClearFilters?: () => void;
     onLoadMore?: () => void | Promise<void>;
     selectable?: boolean;
-    selectedMessageIds?: string[];
+    selectedMessageIds?: ReadonlySet<string>;
     onToggleSelect?: (message: MailMessage) => void;
   } = $props();
 
@@ -163,7 +163,7 @@
             onSelect={(message) => handleSelect({ kind: 'thread', value: item.value })}
             onToggleStar={onToggleStar}
             {selectable}
-            selectedForBulk={selectedMessageIds.includes(item.value.sectionLatestMessage.id)}
+            selectedForBulk={selectedMessageIds.has(item.value.sectionLatestMessage.id)}
             onToggleSelect={onToggleSelect}
           />
         {:else}
@@ -174,7 +174,7 @@
             onSelect={(message) => handleSelect({ kind: 'message', value: message })}
             onToggleStar={onToggleStar}
             {selectable}
-            selectedForBulk={selectedMessageIds.includes(item.value.id)}
+            selectedForBulk={selectedMessageIds.has(item.value.id)}
             onToggleSelect={onToggleSelect}
           />
         {/if}
