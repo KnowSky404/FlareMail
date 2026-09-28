@@ -774,21 +774,28 @@ test('announces list selection, star, attachment and delivery states', async ({ 
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('runs advanced owner-scoped FTS search with highlighted persisted results', async ({ page, consoleErrors }) => {
+test('runs advanced owner-scoped FTS search with highlighted persisted results', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
-  const query = 'from:html-sender@flaremail.test subject:"E2E HTML Safety" has:attachment';
+  const query = 'from:html-sender@flaremail.test subject:"E2E HTML Safety" date:2026-08-13 attachment:yes';
   await page.getByLabel('搜索邮件').fill(query);
   const result = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
   await expect(result).toBeVisible();
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toHaveCount(0);
   await expect(page.getByText('1 个结果', { exact: true })).toBeVisible();
-  await expect(result).toContainText('发件人 · 主题 · 附件');
+  await expect(result).toContainText('发件人 · 主题 · 附件 · 日期');
   await expect(result.locator('mark')).not.toHaveCount(0);
   await expect(page).toHaveURL(/q=from%3Ahtml-sender/u);
+  if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: `/tmp/flaremail-search-date-attachment-${testInfo.project.name}.png`, fullPage: false });
 
   await page.reload();
   await expect(page.getByLabel('搜索邮件')).toHaveValue(query);
   await expect(result).toBeVisible();
+  await page.getByLabel('搜索邮件').fill('subject:"E2E Inbox Welcome" date:2026-08-13 attachment:no');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await expect(result).toHaveCount(0);
+  await expect(page.getByText('1 个结果', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '清除搜索' }).click();
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
   await assertNoConsoleErrors(consoleErrors);

@@ -215,6 +215,15 @@ describe('D1 mailbox pages', () => {
     expect(sent.messages.find(({ id }) => id === 'sent-1')?.hasAttachments).toBe(true);
     const drafts = await loadMailboxPage(env, workspace, query('drafts'));
     expect(drafts.messages.find(({ id }) => id === 'draft-1')?.hasAttachments).toBe(true);
+
+    const datedAttachments = await loadMailboxPage(env, workspace, query('inbox', { query: 'date:2026-08-13 attachment:yes' }));
+    expect(datedAttachments.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'inbox-z']);
+    expect(datedAttachments.searchHitFields).toEqual(['attachment', 'date']);
+    const withoutAttachments = await loadMailboxPage(env, workspace, query('inbox', { query: 'date:2026-08-13 attachment:no' }));
+    expect(withoutAttachments.messages.map(({ id }) => id)).toEqual(['inbox-a']);
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'date:2026-08-12 attachment:yes' }))).messages).toEqual([]);
+    expect((await loadMailboxPage(env, workspace, query('sent', { query: 'date:2026-08-13 attachment:yes' }))).messages.map(({ id }) => id)).toEqual(['sent-1']);
+    expect((await loadMailboxPage(env, workspace, query('drafts', { query: 'date:2026-08-13 attachment:yes' }))).messages.map(({ id }) => id)).toEqual(['draft-1']);
   });
 
   test('persists Owner labels across all mail sources with bounded cross-folder pagination', async () => {

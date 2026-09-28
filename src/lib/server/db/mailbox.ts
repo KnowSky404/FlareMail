@@ -100,8 +100,8 @@ export async function listWorkspaceMessagePage(
       if (value === 'starred') conditions.push('m.is_starred = 1');
       if (value === 'archived') conditions.push("m.folder = 'inbox'");
     }
-    if (input.search.filters.hasAttachment) {
-      conditions.push('EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = m.user_id AND search_attachment.message_id = m.id)');
+    if (input.search.filters.hasAttachment !== null) {
+      conditions.push(`${input.search.filters.hasAttachment ? '' : 'NOT '}EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = m.user_id AND search_attachment.message_id = m.id AND search_attachment.relation_type IN ('inbound', 'message'))`);
     }
     for (const value of input.search.filters.after) {
       conditions.push('m.sent_at >= ?');
@@ -206,8 +206,8 @@ export async function listDraftPage(
       if (value === 'unread' || value === 'archived') conditions.push('1 = 0');
       if (value === 'starred') conditions.push('d.is_starred = 1');
     }
-    if (input.search.filters.hasAttachment) {
-      conditions.push('EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = d.user_id AND search_attachment.message_id = d.id)');
+    if (input.search.filters.hasAttachment !== null) {
+      conditions.push(`${input.search.filters.hasAttachment ? '' : 'NOT '}EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = d.user_id AND search_attachment.message_id = d.id AND search_attachment.relation_type = 'draft')`);
     }
     for (const value of input.search.filters.after) {
       conditions.push('d.updated_at >= ?');

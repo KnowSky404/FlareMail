@@ -16,12 +16,22 @@ describe('parseMailSearchQuery', () => {
 
   test('supports quoted values and escaped punctuation without producing query syntax', () => {
     expect(parseMailSearchQuery('subject:"hello \\"world\\"" from:foo\\:bar hello\\ world')).toEqual({
-      terms: ['hello world'], filters: { from: ['foo:bar'], to: [], cc: [], subject: ['hello "world"'], is: [], hasAttachment: false, after: [], before: [], status: [], label: [] }
+      terms: ['hello world'], filters: { from: ['foo:bar'], to: [], cc: [], subject: ['hello "world"'], is: [], hasAttachment: null, after: [], before: [], status: [], label: [] }
     });
   });
 
+  test('supports exact UTC date and positive or negative attachment filters', () => {
+    expect(parseMailSearchQuery('date:2026-12-31 attachment:no')).toMatchObject({
+      filters: { after: ['2026-12-31'], before: ['2027-01-01'], hasAttachment: false }
+    });
+    expect(parseMailSearchQuery('date:9999-12-31 attachment:yes')).toMatchObject({
+      filters: { after: ['9999-12-31'], before: [], hasAttachment: true }
+    });
+    expect(parseMailSearchQuery('attachment:yes has:attachment').filters.hasAttachment).toBe(true);
+  });
+
   test('rejects malformed and unsafe syntax with stable typed codes', () => {
-    for (const [query, code] of [['foo:bar', 'unknown_operator'], ['from:', 'missing_value'], ['is:read', 'invalid_value'], ['after:2026-02-30', 'invalid_date'], ['status:ok', 'invalid_status'], ['has:file', 'invalid_value'], ['"unterminated', 'malformed_quotes']] as const) {
+    for (const [query, code] of [['foo:bar', 'unknown_operator'], ['from:', 'missing_value'], ['is:read', 'invalid_value'], ['after:2026-02-30', 'invalid_date'], ['date:2026-02-30', 'invalid_date'], ['attachment:maybe', 'invalid_value'], ['attachment:yes attachment:no', 'invalid_value'], ['has:attachment attachment:no', 'invalid_value'], ['status:ok', 'invalid_status'], ['has:file', 'invalid_value'], ['"unterminated', 'malformed_quotes']] as const) {
       expect(errorCode(query)).toBe(code);
     }
     expect(errorCode('before:2026-01-01; DROP TABLE mail')).toBe('invalid_date');

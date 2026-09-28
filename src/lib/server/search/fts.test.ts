@@ -33,5 +33,9 @@ describe('safe FTS5 search compiler', () => {
       expression: null,
       hitFields: ['state', 'attachment', 'date']
     });
+    expect(buildFtsSearchPlan(parseMailSearchQuery('date:2026-08-13 attachment:no'))).toEqual({
+      expression: null,
+      hitFields: ['attachment', 'date']
+    });
   });
 });

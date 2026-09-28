@@ -57,5 +57,5 @@
       <X class="size-4" aria-hidden="true" />
     </IconButton>
   {/if}
-  <span class="sr-only" id={`${id}-hint`}>{t('mail.searchPlaceholder')}</span>
+  <span class="sr-only" id={`${id}-hint`}>{t('mail.searchSyntaxHint')}</span>
 </div>

@@ -133,6 +133,12 @@ bun run test:e2e:webkit
 
 概念稿中的邮件正文、收件地址与本地 E2E 夹具不同；截图中的登录成功 toast 是本地测试状态，不是写信窗口的常驻内容。这次修复不代表完整移动写信视觉验收、真实触屏设备或屏幕阅读器验收。
 
+### 日期与附件搜索复核（2026-09-28）
+
+目标流程为登录、在收件箱输入 `from:`/`subject:`/`date:`/`attachment:yes` 组合条件、核对带附件结果与命中字段、刷新确认查询状态恢复，再输入 `attachment:no` 核对无附件结果并清除搜索。`date:` 指 UTC 当天；D1 集成测试覆盖收件、入站、已发送、草稿，以及同 ID 错误附件关系类型和其他 Owner 的附件不会误命中。隔离本地 Chromium desktop/mobile 目标用例各 `1 passed`，浏览器控制台错误检查通过。当前会话没有 Browser plugin，因此使用仓库 Playwright/Chromium 回退；截图为 `/tmp/flaremail-search-date-attachment-desktop.png`（1505×1045）和 `/tmp/flaremail-search-date-attachment-mobile.png`（390×844 CSS px），均已与桌面概念稿 `docs/design-concepts/flaremail-desktop-workspace.png` 一起用图像查看工具检查。
+
+五点 fidelity 对照：三栏与移动单栏框架未变；搜索结果行的状态与选中态沿用当前实现；带附件结果仍仅显示夹具实际存在的一张附件卡；概念稿的双搜索位置继续由当前单一真实搜索输入承担，长查询在聚焦输入框内横向滚动，桌面和手机视口的页面横向溢出断言均通过；合成邮件内容与更紧凑的列表密度仍不同于概念稿。因此本项只证明搜索交互与当前设计的一致性，不是像素级或完整视觉签收。性能 trace 仍待用户稍后启用 `chrome-devtools` MCP；不涉及生产 D1、Worker 或真实邮件。
+
 ## 证据边界
 
 - D1、R2、邮件、Telegram API 和登录账号均为本地合成 fixture；没有执行远程 migration、部署、真实邮件发送、真实 Telegram 请求或 push。

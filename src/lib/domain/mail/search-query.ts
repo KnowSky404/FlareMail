@@ -16,7 +16,8 @@ export interface MailSearchQuery {
     cc: string[];
     subject: string[];
     is: SearchIsFilter[];
-    hasAttachment: boolean;
+    /** null means no attachment filter; false explicitly excludes attachments. */
+    hasAttachment: boolean | null;
     after: string[];
     before: string[];
     status: DeliveryStatus[];
@@ -46,7 +47,7 @@ export class SearchQueryParseError extends Error {
   }
 }
 
-const operators = new Set(['from', 'to', 'cc', 'subject', 'is', 'has', 'after', 'before', 'status', 'label']);
+const operators = new Set(['from', 'to', 'cc', 'subject', 'is', 'has', 'attachment', 'after', 'before', 'date', 'status', 'label']);
 const isValues = new Set<SearchIsFilter>(['unread', 'starred', 'archived', 'trash']);
 const deliveryStatuses = new Set<DeliveryStatus>([
   'draft', 'queued', 'submitting', 'submitted', 'sent', 'delivered', 'delayed',
@@ -107,12 +108,18 @@ function validDate(value: string): boolean {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day;
 }
 
+function nextUtcDate(value: string): string | null {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.getUTCFullYear() > 9999 ? null : date.toISOString().slice(0, 10);
+}
+
 /** Parse the provider-independent search language into a safe, data-only AST. */
 export function parseMailSearchQuery(input: string): MailSearchQuery {
   if (new TextEncoder().encode(input).byteLength > SEARCH_QUERY_LIMITS.maxUtf8Bytes) fail('input_too_large');
   const terms: string[] = [];
   const filters: MailSearchQuery['filters'] = {
-    from: [], to: [], cc: [], subject: [], is: [], hasAttachment: false,
+    from: [], to: [], cc: [], subject: [], is: [], hasAttachment: null,
     after: [], before: [], status: [], label: []
   };
 
@@ -128,13 +135,24 @@ export function parseMailSearchQuery(input: string): MailSearchQuery {
     if (value.length === 0) fail('missing_value', token.position);
     if (operator === 'has') {
       if (value !== 'attachment') fail('invalid_value', token.position);
+      if (filters.hasAttachment === false) fail('invalid_value', token.position);
       filters.hasAttachment = true;
+    } else if (operator === 'attachment') {
+      if (value !== 'yes' && value !== 'no') fail('invalid_value', token.position);
+      const hasAttachment = value === 'yes';
+      if (filters.hasAttachment !== null && filters.hasAttachment !== hasAttachment) fail('invalid_value', token.position);
+      filters.hasAttachment = hasAttachment;
     } else if (operator === 'is') {
       if (!isValues.has(value as SearchIsFilter)) fail('invalid_value', token.position);
       addUnique(filters.is, value as SearchIsFilter);
     } else if (operator === 'after' || operator === 'before') {
       if (!validDate(value)) fail('invalid_date', token.position);
       addUnique(filters[operator], value);
+    } else if (operator === 'date') {
+      if (!validDate(value)) fail('invalid_date', token.position);
+      addUnique(filters.after, value);
+      const nextDate = nextUtcDate(value);
+      if (nextDate) addUnique(filters.before, nextDate);
     } else if (operator === 'status') {
       if (!deliveryStatuses.has(value as DeliveryStatus)) fail('invalid_status', token.position);
       addUnique(filters.status, value as DeliveryStatus);

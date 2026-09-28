@@ -46,7 +46,7 @@ export function buildFtsSearchPlan(search: MailSearchQuery): FtsSearchPlan {
     hitFields.add(field);
   }
   if (search.filters.is.length) hitFields.add('state');
-  if (search.filters.hasAttachment) hitFields.add('attachment');
+  if (search.filters.hasAttachment !== null) hitFields.add('attachment');
   if (search.filters.after.length || search.filters.before.length) hitFields.add('date');
   if (search.filters.status.length) hitFields.add('status');
 

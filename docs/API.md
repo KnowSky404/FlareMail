@@ -505,8 +505,10 @@ inbox/sent/archive view is still scoped to the declared identity and section.
 `GET /api/workspace/mailbox` accepts `q`/`query` and executes the normalized
 query through the owner-scoped D1 FTS5 projection. Free text and the following
 operators are supported: `from:`, `to:`, `cc:`, `subject:`, `is:unread`,
-`is:starred`, `is:archived`, `is:trash`, `has:attachment`, `after:YYYY-MM-DD`,
-`before:YYYY-MM-DD`, `status:` and `label:`. Quotes group spaces. Unknown
+`is:starred`, `is:archived`, `is:trash`, `has:attachment`, `attachment:yes|no`,
+`date:YYYY-MM-DD` (the exact UTC day), `after:YYYY-MM-DD`,
+`before:YYYY-MM-DD`, `status:` and `label:`. `has:attachment` is an alias for
+`attachment:yes`; contradictory attachment filters are rejected. Quotes group spaces. Unknown
 operators, malformed quotes, dates and statuses return
 `INVALID_SEARCH_QUERY`; no user input is interpolated as SQL or as an FTS
 column name.

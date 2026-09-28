@@ -511,8 +511,8 @@ async function listInboundMessageSummaryPage(
       if (value === 'unread') conditions.push('COALESCE(s.is_read, 0) = 0');
       if (value === 'starred') conditions.push('COALESCE(s.is_starred, 0) = 1');
     }
-    if (input.search.filters.hasAttachment) {
-      conditions.push('EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = e.owner_user_id AND search_attachment.message_id = e.id)');
+    if (input.search.filters.hasAttachment !== null) {
+      conditions.push(`${input.search.filters.hasAttachment ? '' : 'NOT '}EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = e.owner_user_id AND search_attachment.message_id = e.id AND search_attachment.relation_type = 'inbound')`);
     }
     for (const value of input.search.filters.after) {
       conditions.push('e."timestamp" >= ?');
