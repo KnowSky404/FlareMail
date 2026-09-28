@@ -47,6 +47,7 @@
   const isStarred = $derived(Boolean(itemMessage?.starred));
   const itemSubject = $derived(thread?.subject || itemMessage?.subject || t('mail.noSubject'));
   const itemPreview = $derived(itemMessage?.searchSnippet || thread?.preview || itemMessage?.preview || '');
+  const userLabels = $derived(itemMessage?.userLabels ?? []);
   const itemCount = $derived(thread?.messageCount ?? 1);
   const formattedItemCount = $derived(formatNumber(itemCount, i18n.locale));
 
@@ -119,6 +120,7 @@
     itemSubject,
     itemCount > 1 ? translateCount(i18n.locale, 'mail.threadCount', itemCount) : '',
     activeSection === 'starred' || activeSection === 'label' ? starredSourceLabel : '',
+    userLabels.length ? `${t('mail.label')}: ${userLabels.map((label) => label.name).join(', ')}` : '',
     itemMessage?.hasAttachments || itemMessage?.labels.includes('attachment') ? t('mail.hasAttachment') : '',
     activeSection === 'sent' && itemMessage?.deliveryStatus
       ? `${t('mail.delivery')}: ${formatDelivery(itemMessage.deliveryStatus)}`
@@ -188,6 +190,10 @@
         <span class="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] leading-4 text-[var(--fm-text-muted)]">
           {#if activeSection === 'starred' || activeSection === 'label'}<span class="shrink-0 rounded bg-[var(--fm-surface-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--fm-text-secondary)]">{starredSourceLabel}</span>{/if}
           {#if isDraft && activeSection !== 'starred' && activeSection !== 'label'}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">{t('mail.draft')}</span>{/if}
+          {#if activeSection !== 'label' && userLabels.length}
+            <span class="max-w-28 shrink-0 truncate rounded bg-[var(--fm-primary-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--fm-primary)]" title={userLabels[0].name}>{userLabels[0].name}</span>
+            {#if userLabels.length > 1}<span class="shrink-0 text-[10px] font-medium text-[var(--fm-text-muted)]" title={userLabels.slice(1).map((label) => label.name).join(', ')}>+{userLabels.length - 1}</span>{/if}
+          {/if}
           {#if itemMessage.hasAttachments || itemMessage.labels.includes('attachment')}<Paperclip class="size-3 shrink-0" aria-label={t('mail.hasAttachment')} />{/if}
           {#if itemMessage.searchHitFields?.length}
             <span class="shrink-0 rounded bg-[var(--fm-primary-soft)] px-1 py-0.5 text-[10px] font-medium text-[var(--fm-primary)]">

@@ -119,7 +119,7 @@ test('keeps the mobile search clear icon inside its field', async ({ page, conso
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('creates, applies, navigates, renames and deletes a persistent label', async ({ page, consoleErrors }) => {
+test('creates, applies, navigates, renames and deletes a persistent label', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const mobile = page.viewportSize()!.width < 901;
   if (mobile) await page.getByRole('button', { name: '打开导航' }).click();
@@ -139,12 +139,18 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
 
   if (mobile) {
     await page.getByRole('button', { name: '返回邮件列表' }).click();
+  }
+  await expect(inboxItem.getByText('E2E Follow Up', { exact: true })).toBeVisible();
+  await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /标签: E2E Follow Up/u);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-label-chip-${testInfo.project.name}.png`), fullPage: false });
+  if (mobile) {
     await page.getByRole('button', { name: '打开导航' }).click();
   }
   await page.getByRole('button', { name: 'E2E Follow Up', exact: true }).click();
   await expect(page).toHaveURL(/folder=label/u);
   await expect(page.getByRole('heading', { name: 'E2E Follow Up' })).toBeVisible();
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByText('E2E Follow Up', { exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'E2E Follow Up' })).toBeVisible();
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
