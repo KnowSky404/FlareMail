@@ -56,11 +56,11 @@
   {:else if attachments.length === 0}
     <p class="mt-3 text-xs text-[var(--fm-text-muted)]">{emptyLabel ?? t('mail.noAttachments')}</p>
   {:else}
-    <ul class="mt-3 grid gap-2 sm:grid-cols-2" aria-label={t('mail.attachmentList')}>
+    <ul class="mt-3 grid gap-2" aria-label={t('mail.attachmentList')}>
       {#each attachments as attachment (attachment.id ?? `${attachment.filename}-${attachment.size}`)}
         {@const AttachmentIcon = iconFor(attachment.contentType)}
         {@const href = safeHref(attachment.downloadUrl)}
-        <li class="flex min-w-0 items-center gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-3">
+        <li class="flex min-w-0 items-center gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
           <span class="grid size-9 shrink-0 place-items-center rounded-[var(--radius-md)] bg-[var(--fm-surface)] text-[var(--fm-primary)]" aria-hidden="true"><AttachmentIcon class="size-4" /></span>
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm font-medium text-[var(--fm-text)]" title={attachment.filename}>{attachment.filename}</p>

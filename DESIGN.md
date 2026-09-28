@@ -50,7 +50,7 @@ Cloudflare Email Routing、D1、R2、Resend 等技术信息应放在状态详情
 
 - 常规应用文本使用 14 px。
 - 元数据和次级标签使用 12 px。
-- 邮件列表行高约 64–76 px。
+- 邮件列表行高：桌面标准模式约 88 px，手机约 76 px；紧凑模式约 60 px。
 - 用间距分组，但不要把每个区域都包成大卡片。
 - 禁止超大标题、空旷 Hero 区和编辑杂志式布局。
 
@@ -114,7 +114,7 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 
 视口宽度 `>= 901px`：
 
-- 全局顶部栏：48–52 px。
+- 桌面全局顶部栏：64 px；工作区高度须扣除同一尺寸 token，避免页尾溢出。
 - 主侧边栏：展开 232 px，用户可折叠为 64 px 图标栏。
 - 邮件列表栏：默认 440 px，可通过拖拽或键盘方向键调整到 280–480 px；已保存的个人宽度不随默认值更新而改变。
 - 邮件详情栏：占据剩余空间，实用最小宽度约 360 px；分栏由详情正文承担唯一纵向滚动。
@@ -482,6 +482,7 @@ Header：
 附件：
 
 - 文件名、类型、可读大小；
+- 阅读页按整行排列附件卡片，利用详情栏宽度容纳较长文件名；窄屏继续保持单列。
 - 明确下载按钮；
 - inline image 不默认信任；
 - 完成 loading 和 failure 状态。
@@ -724,7 +725,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 | 规范职责 | 当前路径 | 目标路径/改造边界 |
 | --- | --- | --- |
 | 文件夹标题、数量、搜索、筛选、刷新 | `src/lib/components/mail/MessageListPane.svelte` 内部标题区 | `src/lib/components/mail/FolderHeader.svelte`、`MailSearchBar.svelte`、`MailFilterBar.svelte`；状态放 Banner/状态菜单 |
-| 线程列表 | `src/lib/components/mail/MessageListPane.svelte` | `MessageList.svelte` + `MessageListItem.svelte`；行高 64–76 px，Skeleton/空/首次/错误/分页结束状态齐全 |
+| 线程列表 | `src/lib/components/mail/MessageListPane.svelte` | `MessageList.svelte` + `MessageListItem.svelte`；桌面标准行高约 88 px、手机约 76 px、紧凑约 60 px，Skeleton/空/首次/错误/分页结束状态齐全 |
 | 邮件详情编排 | `src/lib/components/mail/MessageDetailPane.svelte` | `MessageDetail.svelte` + `MessageHeader.svelte` + `MessageBody.svelte`；详情面板独立滚动，手机采用 drill-in 与返回 |
 | 附件、HTML 与原始邮件 | `MessageDetail.svelte`、`MessageBody.svelte`、`AttachmentList.svelte`、`src/routes/api/workspace/messages/[id]/**` | 已实现 plain-text 默认、安全 HTML iframe、CID capability 与 ownership 下载；类型化预览和批量下载仍按 11.5 的隔离与内存边界实施 |
 | 投递时间线 | `MessageDetailPane.svelte`、`src/routes/api/workspace/messages/[id]/delivery/+server.ts`、`src/lib/server/resend-webhook.ts` | `DeliveryTimeline.svelte`；展示 queued/submitted/sent/delivered/delayed/bounced/failed/complained/suppressed 及可选 opened/clicked，受理不得写成已送达 |

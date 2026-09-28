@@ -230,7 +230,7 @@
     display: grid;
     grid-template-columns: minmax(220px, 1fr) minmax(240px, 1.8fr) minmax(136px, 1fr);
     align-items: center;
-    height: 64px;
+    height: var(--fm-desktop-topbar-height);
     gap: var(--space-4);
     padding: 0 var(--space-4);
     border-bottom: 1px solid var(--fm-border);

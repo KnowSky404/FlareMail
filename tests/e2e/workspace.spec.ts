@@ -592,6 +592,13 @@ test('keeps readable default columns, persists the layout, and opens one focused
   await page.setViewportSize({ width: 1505, height: 1045 });
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
   await expect(page.locator('.topbar')).toHaveCSS('height', '64px');
+  const workspaceBounds = await page.locator('.fm-workspace-body').evaluate((body) => ({
+    bottom: body.getBoundingClientRect().bottom,
+    viewport: window.innerHeight,
+    pageHeight: document.documentElement.scrollHeight
+  }));
+  expect(workspaceBounds.bottom).toBeLessThanOrEqual(workspaceBounds.viewport + 1);
+  expect(workspaceBounds.pageHeight).toBeLessThanOrEqual(workspaceBounds.viewport + 1);
   await expect(page.locator('.topbar .account-trigger-label')).toBeHidden();
   const firstRowHeight = await page.locator('.mail-list-item').first().evaluate((item) => item.getBoundingClientRect().height);
   expect(firstRowHeight).toBeGreaterThanOrEqual(88);
@@ -613,6 +620,11 @@ test('keeps readable default columns, persists the layout, and opens one focused
     await assertNoHorizontalOverflow(page);
     if (width > 900) {
       await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
+      const bounds = await page.locator('.fm-workspace-body').evaluate((body) => ({
+        bottom: body.getBoundingClientRect().bottom,
+        viewport: window.innerHeight
+      }));
+      expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewport + 1);
     }
   }
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -754,9 +766,18 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   });
 
   await login(page);
+  if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
   const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
   await item.getByRole('button', { name: /E2E HTML Safety/u }).first().click();
   const detail = page.getByRole('region', { name: '邮件详情' });
+  const attachmentList = detail.getByRole('list', { name: '邮件附件列表' });
+  await expect(attachmentList.getByRole('listitem')).toHaveCount(1);
+  const attachmentWidths = await attachmentList.evaluate((list) => ({
+    list: list.getBoundingClientRect().width,
+    row: list.querySelector('li')?.getBoundingClientRect().width ?? 0
+  }));
+  expect(attachmentWidths.row).toBeGreaterThanOrEqual(attachmentWidths.list - 1);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-attachment-${testInfo.project.name}.png`), fullPage: false });
   await detail.getByText('技术详情', { exact: true }).click();
   await expect(detail).toContainText('Support <support@flaremail.test>');
   await expect(detail).toContainText('Observer <observer@flaremail.test>');

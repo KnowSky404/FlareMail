@@ -193,6 +193,7 @@ summary {
 @layer components {
 
 .fm-app-shell {
+  --fm-desktop-topbar-height: 64px;
   min-height: 100dvh;
   background: var(--fm-canvas);
 }
@@ -222,7 +223,7 @@ summary {
 .fm-workspace-body {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
-  height: calc(100dvh - 50px);
+  height: calc(100dvh - var(--fm-desktop-topbar-height));
   min-height: 0;
 }
 
