@@ -2240,18 +2240,27 @@ test('supports mobile detail drill-in and back navigation', async ({ page, conso
   await expect(detail.locator('header').first().getByText('收件箱', { exact: true })).toBeVisible();
   const geometry = await detail.locator('header').first().evaluate((header) => {
     const bounds = (selector: string) => header.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+    const visibleActions = [...header.querySelectorAll<HTMLElement>('.message-primary-actions')]
+      .find((navigation) => getComputedStyle(navigation).display !== 'none');
     return {
       chrome: bounds('.message-header-tools')?.bottom ?? 0,
       subject: bounds('.message-subject')?.top ?? 0,
       subjectBottom: bounds('.message-subject')?.bottom ?? 0,
       sender: bounds('.message-sender')?.top ?? 0,
       senderBottom: bounds('.message-sender')?.bottom ?? 0,
-      actions: bounds('.message-primary-actions')?.top ?? 0
+      actions: visibleActions?.getBoundingClientRect().top ?? 0
     };
   });
   expect(geometry.subject).toBeGreaterThanOrEqual(geometry.chrome - 1);
   expect(geometry.sender).toBeGreaterThanOrEqual(geometry.subjectBottom - 1);
   expect(geometry.actions).toBeGreaterThanOrEqual(geometry.senderBottom - 1);
+  const actionsFollowSender = await detail.locator('header').first().evaluate((header) => {
+    const sender = header.querySelector('.message-sender');
+    const actions = [...header.querySelectorAll<HTMLElement>('nav.message-primary-actions')]
+      .find((navigation) => getComputedStyle(navigation).display !== 'none');
+    return Boolean(sender && actions && (sender.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING));
+  });
+  expect(actionsFollowSender, 'mobile reading order should follow the visible sender-before-actions layout').toBe(true);
   await expect(detail.getByRole('navigation', { name: '邮件操作' }).getByRole('button', { name: '回复', exact: true })).toContainText('回复');
   const dismissNotice = page.getByRole('button', { name: '关闭通知' });
   if (await dismissNotice.isVisible()) await dismissNotice.click();

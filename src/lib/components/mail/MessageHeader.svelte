@@ -160,6 +160,29 @@
 </script>
 
 {#if message}
+  {#snippet primaryActions(mobile: boolean)}
+    {#if hasPrimaryActions}
+      <nav class:message-primary-actions-mobile={mobile} class:message-primary-actions-desktop={!mobile} class="message-primary-actions flex shrink-0 items-center gap-1" aria-label={t('mail.actions')}>
+        {#if trashMode}
+          {#if onRestore}<IconButton ariaLabel={t('mail.restore')} title={t('mail.restore')} variant="primary" size="sm" onclick={() => onRestore?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.restore')}</span></IconButton>{/if}
+          {#if onPermanentDelete}<IconButton ariaLabel={t('mail.permanentDelete')} title={t('mail.permanentDelete')} variant="danger" size="sm" onclick={() => (removeConfirmOpen = true)} disabled={pending}><Trash2 class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.permanentDelete')}</span></IconButton>{/if}
+        {:else if message.folder !== 'drafts'}
+          {#if onReply}<IconButton ariaLabel={t('mail.reply')} title={t('mail.reply')} variant="primary" size="sm" onclick={() => onReply?.(message)} disabled={pending}><Reply class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.reply')}</span></IconButton>{/if}
+          {#if onReplyAll}
+            <IconButton ariaLabel={t('mail.replyAll')} title={t('mail.replyAll')} variant="outline" size="sm" onclick={() => onReplyAll?.(message)} disabled={pending}><ReplyAll class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.replyAll')}</span></IconButton>
+          {/if}
+        {/if}
+        {#if !trashMode}
+          {#if message.folder !== 'drafts' && onForward}
+            <IconButton ariaLabel={t('mail.forward')} title={t('mail.forward')} variant="outline" size="sm" onclick={() => onForward?.(message)} disabled={pending}><Forward class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.forward')}</span></IconButton>
+          {/if}
+          {#if message.folder !== 'drafts' && onToggleRead}
+            <IconButton ariaLabel={message.read ? t('mail.markUnread') : t('mail.markRead')} title={message.read ? t('mail.markUnread') : t('mail.markRead')} size="sm" containerClass="sm:!hidden" class="sm:!hidden" onclick={() => onToggleRead?.(message)} disabled={pending}><Mail class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{message.read ? t('mail.markUnread') : t('mail.markRead')}</span></IconButton>
+          {/if}
+        {/if}
+      </nav>
+    {/if}
+  {/snippet}
   <header class="message-detail-header flex-none border-b border-[var(--fm-border)] bg-[var(--fm-surface)]">
     <div class="message-header-row flex min-h-12 items-center gap-1 border-b border-[var(--fm-border)] px-3 py-1 sm:px-5">
       {#if showBack}
@@ -237,25 +260,7 @@
           </IconButton>
         {/if}
       </div>
-      {#if hasPrimaryActions}<nav class="message-primary-actions flex shrink-0 items-center gap-1" aria-label={t('mail.actions')}>
-        {#if trashMode}
-          {#if onRestore}<IconButton ariaLabel={t('mail.restore')} title={t('mail.restore')} variant="primary" size="sm" onclick={() => onRestore?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.restore')}</span></IconButton>{/if}
-          {#if onPermanentDelete}<IconButton ariaLabel={t('mail.permanentDelete')} title={t('mail.permanentDelete')} variant="danger" size="sm" onclick={() => (removeConfirmOpen = true)} disabled={pending}><Trash2 class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.permanentDelete')}</span></IconButton>{/if}
-        {:else if message.folder !== 'drafts'}
-          {#if onReply}<IconButton ariaLabel={t('mail.reply')} title={t('mail.reply')} variant="primary" size="sm" onclick={() => onReply?.(message)} disabled={pending}><Reply class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.reply')}</span></IconButton>{/if}
-          {#if onReplyAll}
-            <IconButton ariaLabel={t('mail.replyAll')} title={t('mail.replyAll')} variant="outline" size="sm" onclick={() => onReplyAll?.(message)} disabled={pending}><ReplyAll class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.replyAll')}</span></IconButton>
-          {/if}
-        {/if}
-        {#if !trashMode}
-          {#if message.folder !== 'drafts' && onForward}
-            <IconButton ariaLabel={t('mail.forward')} title={t('mail.forward')} variant="outline" size="sm" onclick={() => onForward?.(message)} disabled={pending}><Forward class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{t('mail.forward')}</span></IconButton>
-          {/if}
-          {#if message.folder !== 'drafts' && onToggleRead}
-            <IconButton ariaLabel={message.read ? t('mail.markUnread') : t('mail.markRead')} title={message.read ? t('mail.markUnread') : t('mail.markRead')} size="sm" containerClass="sm:!hidden" class="sm:!hidden" onclick={() => onToggleRead?.(message)} disabled={pending}><Mail class="size-4" aria-hidden="true" /><span class="fm-mobile-action-label">{message.read ? t('mail.markUnread') : t('mail.markRead')}</span></IconButton>
-          {/if}
-        {/if}
-      </nav>{/if}
+      {@render primaryActions(false)}
     </div>
 
     <div class="message-sender px-4 pb-3 pt-2 sm:px-5 sm:pb-3 sm:pt-3">
@@ -276,6 +281,7 @@
         <div class="mt-2 sm:hidden"><StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge></div>
       {/if}
     </div>
+    {@render primaryActions(true)}
   </header>
 {:else}
   <header class="flex-none border-b border-[var(--fm-border)] px-5 py-4"><h1 class="text-base font-semibold text-[var(--fm-text)]">{t('mail.detail')}</h1></header>
@@ -301,6 +307,7 @@
 <style>
   .fm-mobile-action-label { display: none; }
   .mobile-folder-label { display: none; }
+  .message-primary-actions-mobile { display: none; }
 
   .subject-collapsed {
     display: -webkit-box;
@@ -374,6 +381,7 @@
     .message-sender { grid-column: 1 / -1; grid-row: 3; padding: var(--space-2) var(--space-4) var(--space-4); }
     .message-sender-identity { flex-direction: column; align-items: flex-start; }
     .message-primary-actions { grid-column: 1 / -1; grid-row: 4; display: flex; width: 100%; gap: 0; border-top: 1px solid var(--fm-border); padding: var(--space-1) var(--space-4); }
+    .message-primary-actions-desktop { display: none; }
     :global(.message-primary-actions > span) { display: flex; flex: 1 1 0; min-width: 0; }
     :global(.message-primary-actions > span + span) { border-left: 1px solid var(--fm-border); }
     :global(.message-primary-actions > span > button) { display: flex; width: 100%; min-height: 60px; flex-direction: column; gap: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fm-primary); aspect-ratio: auto; }
