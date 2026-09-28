@@ -50,6 +50,44 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('shows one persistent label across inbox, inbound, sent and drafts', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const created = await page.evaluate(async () => {
+    const response = await fetch('/api/workspace/labels', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'E2E Across Folders' })
+    });
+    return { ok: response.ok, payload: await response.json() };
+  });
+  expect(created.ok, JSON.stringify(created.payload)).toBe(true);
+  const labelId = (created.payload as { data: { label: { id: string } } }).data.label.id;
+  for (const target of [
+    { kind: 'workspace', id: 'e2e-inbox-message' },
+    { kind: 'inbound', id: 'e2e-html-inbox-message' },
+    { kind: 'workspace', id: 'e2e-sent-message' },
+    { kind: 'draft', id: 'e2e-draft-1' }
+  ]) {
+    const applied = await page.evaluate(async ({ id, message }) => {
+      const response = await fetch(`/api/workspace/labels/${id}/messages`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(message)
+      });
+      return { ok: response.ok, payload: await response.json() };
+    }, { id: labelId, message: target });
+    expect(applied.ok, JSON.stringify(applied.payload)).toBe(true);
+  }
+
+  await page.goto(`/?folder=label&label=${encodeURIComponent(labelId)}`);
+  await expect(page.getByRole('heading', { name: 'E2E Across Folders' })).toBeVisible();
+  for (const subject of ['E2E Inbox Welcome', 'E2E HTML Safety', 'E2E Seeded Sent', 'E2E Existing Concurrent']) {
+    await expect(page.getByRole('listitem').filter({ hasText: subject })).toBeVisible();
+  }
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'E2E Across Folders' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-labels-${testInfo.project.name}.png`), fullPage: false });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('shows a server-paginated global Starred view across inbox and sent', async ({ page, consoleErrors }) => {
   await login(page);
   for (const id of ['e2e-inbox-message', 'e2e-sent-message']) {
