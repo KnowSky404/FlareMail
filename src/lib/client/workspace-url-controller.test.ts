@@ -24,6 +24,15 @@ describe('workspace URL controller', () => {
       .toEqual({ section: 'trash', managementView: 'settings', managementDomainId: null, query: '', filter: 'all', identityFilter: null, messageId: null });
   });
 
+  test('preserves a global Starred deep link and its address scope', () => {
+    const url = updateWorkspaceUrl(new URL('https://flaremail.example/?folder=inbox'), {
+      section: 'starred', query: 'subject:notice', identityFilter: { kind: 'domain', id: 'domain-1' }
+    });
+    expect(readWorkspaceUrl(url)).toMatchObject({
+      section: 'starred', query: 'subject:notice', identityFilter: { kind: 'domain', id: 'domain-1' }
+    });
+  });
+
   test('keeps domain and address management deep links separate from mailbox folders', () => {
     const domainUrl = updateWorkspaceUrl(new URL('https://flaremail.example/?folder=inbox'), {
       section: 'profile', managementView: 'domains', query: '', filter: 'all', identityFilter: null, messageId: null

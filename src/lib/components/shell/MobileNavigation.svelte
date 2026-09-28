@@ -2,6 +2,7 @@
   import FileText from '@lucide/svelte/icons/file-text';
   import Archive from '@lucide/svelte/icons/archive';
   import Inbox from '@lucide/svelte/icons/inbox';
+  import Star from '@lucide/svelte/icons/star';
   import Menu from '@lucide/svelte/icons/menu';
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
@@ -21,6 +22,7 @@
   let {
     activeSection,
     inboxCount,
+    starredCount,
     draftCount,
     trashCount,
     managementView = 'settings',
@@ -31,6 +33,7 @@
   }: {
     activeSection: AppSection;
     inboxCount: number;
+    starredCount: number;
     draftCount: number;
     trashCount: number;
     managementView?: 'settings' | 'domains' | 'addresses';
@@ -46,6 +49,7 @@
 
   const labels = $derived<Record<AppSection, string>>({
     inbox: t('shell.inbox'),
+    starred: t('shell.starred'),
     sent: t('shell.sent'),
     drafts: t('shell.drafts'),
     archive: t('shell.archive'),
@@ -54,6 +58,7 @@
   });
 
   const formattedInboxCount = $derived(inboxCount ? formatNumber(inboxCount, i18n.locale) : '');
+  const formattedStarredCount = $derived(starredCount ? formatNumber(starredCount, i18n.locale) : '');
   const formattedDraftCount = $derived(draftCount ? formatNumber(draftCount, i18n.locale) : '');
   const formattedTrashCount = $derived(trashCount ? formatNumber(trashCount, i18n.locale) : '');
 
@@ -83,6 +88,9 @@
     <nav class="mobile-nav-list" aria-label={t('shell.mobileNavigation')}>
       <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
         <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span><small>{formattedInboxCount}</small>
+      </button>
+      <button class:active={activeSection === 'starred'} type="button" onclick={() => select('starred')}>
+        <Star size={19} aria-hidden="true" /><span>{t('shell.starred')}</span><small>{formattedStarredCount}</small>
       </button>
       <button class:active={activeSection === 'drafts'} type="button" onclick={() => select('drafts')}>
         <FileText size={19} aria-hidden="true" /><span>{t('shell.drafts')}</span><small>{formattedDraftCount}</small>

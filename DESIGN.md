@@ -33,6 +33,7 @@ FlareMail 必须保持独立产品身份。不得复制 Cloudflare 源代码、�
 主导航：
 
 - 收件箱
+- 星标邮件
 - 草稿箱
 - 已发送
 - 归档
@@ -175,6 +176,7 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 - 独立阅读地址为 `/messages/[id]`。服务端只按当前 session 查询邮件元数据，正文和附件仍通过现有 owner-scoped API 读取；页面响应使用 `private, no-store`，返回工作台时只保留 folder、message、q 和受支持的 filter 参数。
 - 语言优先级为显式 locale cookie、跟随浏览器的 locale cookie、`localStorage` 和 `Accept-Language`，最后回退到简体中文；切换器也可选择跟随浏览器，用户内容（主题、地址、正文和附件文件名）不翻译。
 - 域名、邮箱地址和设置是三个独立的导航状态。前两者使用 `folder=settings&view=domains|addresses` 深链，不改变现有邮箱文件夹契约；从域名卡片创建地址时额外保留 `domain` 参数，刷新后仍预选目标域名。域名概览展示按供应商区分的健康状态和关联地址，地址页集中展示创建与管理操作。
+- 星标邮件使用 `folder=starred` 独立深链和服务端分页，不等同于当前文件夹的 `filter=starred`。它合并 Owner 范围内未删除的收件、归档、已发送和草稿，保留域名/地址筛选、搜索与游标绑定；混合文件夹批量操作暂不在此视图开放，单封邮件操作仍按原邮件权限执行。
 
 ## 5. 布局与间距 Token
 

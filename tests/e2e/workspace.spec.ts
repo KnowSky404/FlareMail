@@ -9,6 +9,44 @@ test.describe.configure({ mode: 'serial' });
 
 const webhookSecretBytes = new TextEncoder().encode('FlareMail E2E webhook secret 2026');
 
+test('shows a server-paginated global Starred view across inbox and sent', async ({ page, consoleErrors }) => {
+  await login(page);
+  for (const id of ['e2e-inbox-message', 'e2e-sent-message']) {
+    const response = await page.evaluate(async (messageId) => {
+      const result = await fetch(`/api/workspace/messages/${messageId}/flags`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starred: true })
+      });
+      return { ok: result.ok, body: await result.text() };
+    }, id);
+    expect(response.ok, response.body).toBe(true);
+  }
+  await openFolder(page, '星标邮件');
+  await expect(page.getByRole('heading', { name: '星标邮件', exact: true })).toBeVisible();
+  const inbox = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  const sent = page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' });
+  await expect(inbox).toBeVisible();
+  await expect(sent).toBeVisible();
+  const response = await page.request.get('/api/workspace/mailbox?folder=starred&limit=1');
+  expect(response.ok()).toBe(true);
+  const first = await response.json() as { data: { page: { folder: string; nextCursor: string | null; hasMore: boolean } } };
+  expect(first.data.page).toMatchObject({ folder: 'starred', hasMore: true });
+  expect(first.data.page.nextCursor).toBeTruthy();
+  await sent.getByRole('button', { name: '取消星标' }).click();
+  await expect(sent).toBeHidden();
+  await page.reload();
+  await expect(inbox).toBeVisible();
+  await expect(sent).toBeHidden();
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+  const cleanup = await page.evaluate(async () => {
+    const response = await fetch('/api/workspace/messages/e2e-inbox-message/flags', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starred: false })
+    });
+    return response.ok;
+  });
+  expect(cleanup).toBe(true);
+});
+
 async function signWebhook(id: string, timestamp: number, body: string) {
   const key = await crypto.subtle.importKey('raw', webhookSecretBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}.${timestamp}.${body}`));

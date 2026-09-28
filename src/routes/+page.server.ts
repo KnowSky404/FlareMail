@@ -8,7 +8,7 @@ import { telegramConfigurationSummary } from '$lib/server/telegram/config';
 import { classifyRuntimeError, runtimeUnavailableState } from '$lib/server/http/api';
 import type { RuntimeState } from '$lib/domain/runtime-state';
 
-const mailFolders: MailboxSection[] = ['inbox', 'sent', 'drafts', 'archive'];
+const mailFolders: MailboxSection[] = ['inbox', 'sent', 'drafts', 'archive', 'starred'];
 
 function safeRuntimeDiagnostics(env: CloudflareEnv) {
   const provider = env.OUTBOUND_PROVIDER?.trim().toLowerCase() ?? '';

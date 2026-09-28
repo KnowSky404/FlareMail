@@ -51,8 +51,8 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
   expect(consoleErrors, `browser console errors: ${consoleErrors.join('\n')}`).toEqual([]);
 }
 
-export async function openFolder(page: Page, folder: '收件箱' | '已发送' | '草稿箱' | '归档' | '垃圾箱') {
-  const folderValue = { 收件箱: 'inbox', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive', 垃圾箱: 'trash' }[folder];
+export async function openFolder(page: Page, folder: '收件箱' | '星标邮件' | '已发送' | '草稿箱' | '归档' | '垃圾箱') {
+  const folderValue = { 收件箱: 'inbox', 星标邮件: 'starred', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive', 垃圾箱: 'trash' }[folder];
   const backButton = page.getByRole('button', { name: '返回邮件列表' });
   if (await backButton.isVisible().catch(() => false)) {
     await expect(backButton).toBeVisible();

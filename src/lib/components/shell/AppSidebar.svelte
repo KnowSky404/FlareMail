@@ -2,6 +2,7 @@
   import FileText from '@lucide/svelte/icons/file-text';
   import Archive from '@lucide/svelte/icons/archive';
   import Inbox from '@lucide/svelte/icons/inbox';
+  import Star from '@lucide/svelte/icons/star';
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
@@ -27,6 +28,7 @@
   let {
     activeSection,
     inboxCount,
+    starredCount,
     sentCount,
     draftCount,
     trashCount,
@@ -40,6 +42,7 @@
   }: {
     activeSection: AppSection;
     inboxCount: number;
+    starredCount: number;
     sentCount: number;
     draftCount: number;
     trashCount: number;
@@ -57,6 +60,7 @@
 
   const navigation = $derived<NavigationItem[]>([
     { id: 'inbox', label: t('shell.inbox'), count: inboxCount, icon: Inbox },
+    { id: 'starred', label: t('shell.starred'), count: starredCount, icon: Star },
     { id: 'drafts', label: t('shell.drafts'), count: draftCount, icon: FileText },
     { id: 'sent', label: t('shell.sent'), count: sentCount, icon: Send },
     { id: 'archive', label: t('shell.archive'), count: 0, icon: Archive },

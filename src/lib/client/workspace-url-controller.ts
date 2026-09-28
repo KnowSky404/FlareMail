@@ -23,7 +23,7 @@ export type WorkspaceUrlUpdates = {
 
 export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
-  const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
+  const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'starred' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
   const filter = url.searchParams.get('filter');
   const view = url.searchParams.get('view');
   const managementDomainId = url.searchParams.get('domain');

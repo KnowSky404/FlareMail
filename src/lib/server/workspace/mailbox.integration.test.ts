@@ -194,6 +194,41 @@ function insertCrossAddressThread(database: Database) {
 }
 
 describe('D1 mailbox pages', () => {
+  test('paginates global Starred across inbound, archived, sent and drafts without leaking other owners', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      UPDATE workspace_messages SET archived_at = '2026-08-13T12:05:00.000Z' WHERE id = 'inbox-z';
+      UPDATE workspace_messages SET is_starred = 1 WHERE id = 'sent-1';
+      INSERT INTO workspace_email_states (id, user_id, email_message_id, is_read, is_starred, created_at, updated_at)
+        VALUES ('incoming-state', 'user-1', 'incoming-1', 0, 1, '2026-08-13T13:00:00.000Z', '2026-08-13T13:00:00.000Z');
+      INSERT INTO workspace_messages
+        (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, is_starred)
+        VALUES ('foreign-star', 'user-2', 'sent', 'Other', 'other@example.test', 'Other', 'other@example.test',
+          'Private', 'private', 'private', '2026-08-13T14:00:00.000Z', 1);
+    `);
+
+    const first = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('folder=starred&limit=2')));
+    expect(first.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'inbox-z']);
+    expect(first.metrics?.starredCount).toBe(4);
+    expect(first.hasMore).toBe(true);
+    const second = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams({
+      folder: 'starred', limit: '2', cursor: first.nextCursor!
+    })));
+    expect(second.messages.map(({ id }) => id)).toEqual(['draft-1', 'sent-1']);
+    expect(second.hasMore).toBe(false);
+    expect(() => parseMailboxQuery(new URLSearchParams({ folder: 'inbox', cursor: first.nextCursor! }))).toThrow();
+
+    const archived = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('folder=starred&q=is%3Aarchived')));
+    expect(archived.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+    const trashed = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('folder=starred&q=is%3Atrash')));
+    expect(trashed.messages).toEqual([]);
+    const searched = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('folder=starred&q=subject%3Aalert')));
+    expect(searched.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'draft-1']);
+    expect(searched.searchTotal).toBe(2);
+    const unread = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('folder=starred&filter=unread')));
+    expect(unread.messages.map(({ id }) => id)).toEqual(['email:incoming-1', 'inbox-z']);
+  });
+
   test('filters inbound, sent, drafts, search, metrics, options and cursors by owned domain and address', async () => {
     const { env, workspace, database } = fixture();
     database.exec(`
@@ -218,6 +253,9 @@ describe('D1 mailbox pages', () => {
     expect(loaded.workspace.mailIdentityOptions.addresses).toHaveLength(3);
     expect(loaded.workspace.mailboxPages.inbox?.messages.map(({ id }) => id).sort()).toEqual(['inbox-a', 'inbox-z']);
     expect(loaded.workspace.metrics).toMatchObject({ inboxCount: 2, archiveCount: 0, unreadCount: 1, starredCount: 1 });
+    const scopedStarred = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('folder=starred&identity=domain%3Adomain-a')));
+    expect(scopedStarred.messages.map(({ id }) => id)).toEqual(['inbox-z']);
+    expect(scopedStarred.metrics?.starredCount).toBe(1);
 
     const sent = await loadMailboxPage(env, workspace, query('sent', { identityFilter: { kind: 'domain', id: 'domain-a' } }));
     expect(sent.messages.map(({ id }) => id)).toEqual(['sent-1']);

@@ -38,7 +38,7 @@ export function buildD1LikeSearchPattern(query: string): string {
 
 export interface MailboxCursor {
   version: 2;
-  folder: MailFolder;
+  folder: MailFolder | 'starred';
   section?: MailboxSection;
   timestamp: string;
   id: string;
@@ -56,7 +56,7 @@ export interface MailboxCursorContext {
 }
 
 export interface MailboxQuery {
-  folder: MailFolder;
+  folder: MailFolder | 'starred';
   section?: MailboxSection;
   cursor: MailboxCursor | null;
   limit: number;
@@ -102,7 +102,7 @@ export function encodeMailboxCursor(cursor: Omit<MailboxCursor, 'version'>): str
 
 export function decodeMailboxCursor(
   value: string,
-  folder: MailFolder,
+  folder: MailFolder | 'starred',
   section: MailboxSection = folder,
   expected: MailboxCursorContext
 ): MailboxCursor {
@@ -144,18 +144,21 @@ export function decodeMailboxCursor(
 export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   const folderValue = params.get('folder') ?? 'inbox';
   const sectionValue = params.get('section') ?? folderValue;
-  if (folderValue !== 'archive' && !folders.has(folderValue as MailFolder)) {
+  if (folderValue !== 'archive' && folderValue !== 'starred' && !folders.has(folderValue as MailFolder)) {
     throw new ApiError(400, 'INVALID_FOLDER', '邮件文件夹无效。', {
       folder: ['仅支持 inbox、sent 或 drafts。']
     });
   }
   const section = sectionValue as MailboxSection;
-  if (!['inbox', 'sent', 'drafts', 'archive'].includes(section)) {
+  if (!['inbox', 'sent', 'drafts', 'archive', 'starred'].includes(section)) {
     throw new ApiError(400, 'INVALID_SECTION', '邮件分区无效。');
   }
-  const folder = section === 'archive' ? 'inbox' : folderValue as MailFolder;
+  const folder = section === 'archive' ? 'inbox' : folderValue as MailFolder | 'starred';
   if (section === 'archive' && folderValue !== 'archive' && folderValue !== 'inbox') {
     throw new ApiError(400, 'INVALID_SECTION', '归档分区必须使用 inbox 或 archive 查询。');
+  }
+  if ((section === 'starred') !== (folderValue === 'starred')) {
+    throw new ApiError(400, 'INVALID_SECTION', '星标分区必须使用 starred 查询。');
   }
 
   const filterValue = params.get('filter') ?? 'all';

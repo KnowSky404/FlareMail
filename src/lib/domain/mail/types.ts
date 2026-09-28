@@ -9,10 +9,10 @@ import type { MailAddress, MailAddressInput } from './addresses';
  */
 
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
-/** A persisted mail folder plus the user-facing archive section. */
-export type MailboxSection = MailFolder | 'archive';
+/** Persisted folders plus cross-folder and archive views. */
+export type MailboxSection = MailFolder | 'archive' | 'starred';
 export type MailboxIdentityFilter = { kind: 'domain' | 'address'; id: string };
-export type MailboxMutationSection = Exclude<MailboxSection, 'drafts'>;
+export type MailboxMutationSection = Exclude<MailboxSection, 'drafts' | 'starred'>;
 export type MailboxThreadScope = 'selected' | 'filtered' | 'owner';
 export interface MailboxMutationScope {
   section: MailboxMutationSection;

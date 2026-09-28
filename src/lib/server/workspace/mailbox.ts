@@ -302,10 +302,11 @@ export async function loadMailboxPage(
   knownMetrics?: WorkspaceMetrics
 ): Promise<MailboxPage> {
   const section = query.section ?? query.folder;
-  const persistedFolder: MailFolder = query.folder;
   if (query.identityFilter && !(await mailboxIdentityFilterExists(env.DB, workspace.userId, query.identityFilter))) {
     throw new ApiError(404, 'MAIL_IDENTITY_NOT_FOUND', '所选邮件身份不存在或不属于当前工作区。');
   }
+  if (section === 'starred') return loadStarredMailboxPage(env, workspace, query, knownMetrics);
+  const persistedFolder: MailFolder = query.folder as MailFolder;
   const repositoryQuery = {
     folder: persistedFolder,
     section,
@@ -374,6 +375,78 @@ export async function loadMailboxPage(
   };
 }
 
+/** Merge bounded, owner-scoped folder pages into one stable global Starred page. */
+async function loadStarredMailboxPage(
+  env: CloudflareEnv,
+  workspace: WorkspaceContext,
+  query: MailboxQuery,
+  knownMetrics?: WorkspaceMetrics
+): Promise<MailboxPage> {
+  const searchHitFields = query.search ? buildFtsSearchPlan(query.search).hitFields : [];
+  const metricsPromise = query.cursor
+    ? Promise.resolve<WorkspaceMetrics | undefined>(undefined)
+    : knownMetrics ? Promise.resolve(knownMetrics) : getMailboxMetrics(env.DB, workspace.userId, query.identityFilter);
+  const empty = query.search?.filters.is.includes('trash') ?? false;
+  const archivedOnly = query.search?.filters.is.includes('archived') ?? false;
+  const common = {
+    timestamp: query.cursor?.timestamp,
+    cursorId: query.cursor?.id,
+    limit: query.limit + 1,
+    query: query.query,
+    search: query.search,
+    filter: query.filter,
+    starredOnly: true,
+    identityFilter: query.identityFilter,
+    deliveryStatus: null
+  };
+  const [inbox, archive, sent, drafts, inbound, inboundArchive] = empty
+    ? [[], [], [], [], [], []] as const
+    : await Promise.all([
+      archivedOnly ? Promise.resolve([]) : listWorkspaceMessagePage(env.DB, workspace.userId, { ...common, folder: 'inbox', section: 'inbox' }).then((page) => page.results ?? []),
+      listWorkspaceMessagePage(env.DB, workspace.userId, { ...common, folder: 'inbox', section: 'archive' }).then((page) => page.results ?? []),
+      listWorkspaceMessagePage(env.DB, workspace.userId, { ...common, folder: 'sent', section: 'sent' }).then((page) => page.results ?? []),
+      listDraftPage(env.DB, workspace.userId, { ...common, folder: 'drafts', section: 'drafts' }).then((page) => page.results ?? []),
+      archivedOnly ? Promise.resolve([]) : listInboundMessageSummaryPage(env.DB, workspace.userId, { ...common, section: 'inbox' }).then((page) => page.results ?? []),
+      listInboundMessageSummaryPage(env.DB, workspace.userId, { ...common, section: 'archive' }).then((page) => page.results ?? [])
+    ]);
+  const messages = sortMessages([
+    ...inbox.map((row) => mapWorkspaceMessageRow(row, undefined, searchHitFields)),
+    ...archive.map((row) => mapWorkspaceMessageRow(row, undefined, searchHitFields)),
+    ...sent.map((row) => mapWorkspaceMessageRow(row, mapPageDeliveryStatus(row), searchHitFields)),
+    ...drafts.map((row) => mapDraftRow(row, workspace.profile, searchHitFields)),
+    ...inbound.map((row) => ({ ...mapInboundRow(row, workspace.profile, searchHitFields), body: '' })),
+    ...inboundArchive.map((row) => ({ ...mapInboundRow(row, workspace.profile, searchHitFields), body: '' }))
+  ]);
+  const hasMore = messages.length > query.limit;
+  const visible = messages.slice(0, query.limit);
+  const last = visible.at(-1);
+  const metrics = await metricsPromise;
+  const searchTotal = [inbox, archive, sent, drafts, inbound, inboundArchive]
+    .reduce((total, rows) => total + Number(rows[0]?.search_total ?? 0), 0);
+  return {
+    folder: 'starred',
+    messages: visible,
+    nextCursor: hasMore && last ? encodeMailboxCursor({
+      folder: 'starred',
+      section: 'starred',
+      timestamp: last.sentAt,
+      id: last.id,
+      query: query.query,
+      filter: query.filter,
+      identityFilter: query.identityFilter,
+      deliveryStatus: null
+    }) : null,
+    hasMore,
+    limit: query.limit,
+    query: query.query,
+    filter: query.filter,
+    identityFilter: query.identityFilter,
+    deliveryStatus: null,
+    ...(query.search && !query.cursor ? { searchTotal, searchHitFields } : {}),
+    ...(metrics ? { metrics } : {})
+  };
+}
+
 interface MailboxSummaryQuery {
   section?: MailboxSection;
   timestamp?: string;
@@ -382,6 +455,7 @@ interface MailboxSummaryQuery {
   query: string;
   search: MailSearchQuery | null;
   filter: MailboxFilter;
+  starredOnly?: boolean;
   identityFilter: MailboxPage['identityFilter'];
   deliveryStatus?: DeliveryStatus | null;
   threadKeys?: string[];
@@ -407,6 +481,7 @@ async function listInboundMessageSummaryPage(
         ? 'COALESCE(s.is_starred, 0) = 1'
         : '1 = 1'
   ];
+  if (input.starredOnly) conditions.push('COALESCE(s.is_starred, 0) = 1');
   const bindings: unknown[] = [userId];
   if (input.identityFilter?.kind === 'address') {
     conditions.push('e.mail_address_id = ?');
@@ -483,7 +558,7 @@ export async function loadWorkspaceSnapshot(
 ): Promise<{ workspace: WorkspaceSnapshot }> {
   const normalized = typeof options === 'number' ? { limit: options } : options;
   const activeFolder = normalized.activeFolder ?? 'inbox';
-  const persistedFolder: MailFolder = activeFolder === 'archive' ? 'inbox' : activeFolder;
+  const persistedFolder = activeFolder === 'archive' ? 'inbox' : activeFolder;
   const identityFilter = normalized.identityFilter ?? null;
   const [metrics, mailIdentityOptions] = await Promise.all([
     getMailboxMetrics(env.DB, workspace.userId, identityFilter),
@@ -501,7 +576,7 @@ export async function loadWorkspaceSnapshot(
     deliveryStatus: normalized.deliveryStatus ?? null
   }, metrics);
   const mailbox: MailboxState = { inbox: [], sent: [], drafts: [] };
-  mailbox[persistedFolder] = page.messages;
+  if (persistedFolder !== 'starred') mailbox[persistedFolder] = page.messages;
   const mailboxPages: Partial<Record<MailboxSection, MailboxPage>> = { [activeFolder]: page };
   const snapshot: WorkspaceSnapshot = {
     profile: workspace.profile,

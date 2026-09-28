@@ -15,6 +15,8 @@ export interface MailboxRepositoryQuery {
   query: string;
   search: MailSearchQuery | null;
   filter: MailboxFilter;
+  /** Cross-folder Starred view still applies the unread filter when selected. */
+  starredOnly?: boolean;
   identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
   /** Optional thread anchors used by a bounded bulk-operation preview/resolution. */
@@ -83,6 +85,7 @@ export async function listWorkspaceMessagePage(
       input.folder === 'inbox' && input.section === 'archive' ? 'm.archived_at IS NOT NULL' :
       input.folder === 'inbox' ? 'm.archived_at IS NULL' : '1 = 1',
     flagPredicate(input.filter, 'm.is_read', 'm.is_starred'),
+    input.starredOnly ? 'm.is_starred = 1' : '1 = 1',
     identityPredicate('m', input.folder === 'sent' ? 'sender_address_id' : 'recipient_address_id')
   ];
   const bindings: unknown[] = [userId, input.folder];
@@ -181,6 +184,7 @@ export async function listDraftPage(
     'd.user_id = ?',
     wantsTrash ? 'd.deleted_at IS NOT NULL' : 'd.deleted_at IS NULL',
     input.filter === 'starred' ? 'd.is_starred = 1' : '1 = 1',
+    input.starredOnly ? 'd.is_starred = 1' : '1 = 1',
     identityPredicate('d', 'sender_address_id')
   ];
   const bindings: unknown[] = [userId];

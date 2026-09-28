@@ -139,7 +139,7 @@ export function selectNextMessage(
     return list.find((message) => message.id === preferredMessageId)?.id ?? list[0]?.id ?? null;
   }
 
-  if (section === 'archive') return preferredMessageId;
+  if (section === 'archive' || section === 'starred') return preferredMessageId;
 
   const threads = buildMailThreads(nextMailbox, section);
   const preferredThread = preferredMessageId
@@ -194,7 +194,7 @@ export function mergeMailboxPage(snapshot: MailboxSnapshot, page: MailboxPage, a
       : {}),
     messages: sortMailboxMessages([...byId.values()])
   };
-  const nextMailbox = page.folder === 'archive'
+  const nextMailbox = page.folder === 'archive' || page.folder === 'starred'
     ? snapshot.mailbox
     : {
       ...snapshot.mailbox,
@@ -239,7 +239,7 @@ export function mergeMessageDelta(
   const pageMatchesCurrentScope = !targetPage || sameIdentityFilter(targetPage.identityFilter, identityFilter);
   const query = targetPage?.query ?? (section === options.currentSection ? options.query ?? '' : '');
   const filter = targetPage?.filter ?? (section === options.currentSection ? options.filter ?? 'all' : 'all');
-  const canMergeMessage = identityMatches && pageMatchesCurrentScope && !query.trim() && filter === 'all';
+  const canMergeMessage = section !== 'starred' && identityMatches && pageMatchesCurrentScope && !query.trim() && filter === 'all';
 
   if (options.removeDraftId && snapshot.mailboxPages?.drafts) {
     const draftsPage = snapshot.mailboxPages.drafts;
@@ -339,7 +339,7 @@ export function removeMessage(
   metrics?: WorkspaceMetrics
 ) {
   const nextMailbox = cloneMailbox(snapshot.mailbox);
-  if (folder !== 'archive') nextMailbox[folder] = nextMailbox[folder].filter((message) => message.id !== removedId);
+  if (folder !== 'archive' && folder !== 'starred') nextMailbox[folder] = nextMailbox[folder].filter((message) => message.id !== removedId);
   const section = currentSection === 'profile' ? folder : currentSection;
   const currentPage = snapshot.mailboxPages?.[folder];
   return {

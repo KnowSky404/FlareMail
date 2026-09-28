@@ -425,8 +425,8 @@
       ? trashItems.map((item) => item.message)
       : activeSection === 'drafts'
       ? mailbox.drafts
-      : activeSection === 'archive'
-        ? mailboxPages?.archive?.messages ?? []
+      : activeSection === 'archive' || activeSection === 'starred'
+        ? mailboxPages?.[activeSection]?.messages ?? []
         : []
   );
   const activeThreads = $derived(
@@ -456,7 +456,7 @@
       return matchesFilter;
     })
   );
-  const bulkSelectableIds = $derived.by(() => activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile'
+  const bulkSelectableIds = $derived.by(() => activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile' || activeSection === 'starred'
     ? []
     : visibleThreads.length
       ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
@@ -472,7 +472,7 @@
     if (bulkSelectInput) bulkSelectInput.indeterminate = bulkSomeSelected;
   });
   const selectedThread = $derived.by(() => {
-    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile') {
+    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile' || activeSection === 'starred') {
       return null;
     }
 
@@ -487,7 +487,7 @@
   });
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
-    if (activeSection === 'drafts' || activeSection === 'trash') {
+    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred') {
       const list = visibleMessages;
 
       if (!list.length) {
@@ -952,11 +952,13 @@
       return;
     }
 
-    selectedMessageId = selectNextMessage(mailbox, section, selectedMessageId);
+    selectedMessageId = section === 'starred'
+      ? mailboxPages?.starred?.messages.find((message) => message.id === selectedMessageId)?.id ?? mailboxPages?.starred?.messages[0]?.id ?? null
+      : selectNextMessage(mailbox, section, selectedMessageId);
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
-    if (authenticated && !authExpired && section === 'drafts') void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
+    if (authenticated && !authExpired && (section === 'drafts' || section === 'starred')) void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
   }
 
   function setManagementView(view: 'domains' | 'addresses', domainId = '') {
@@ -1666,6 +1668,7 @@
         section: nextSection === activeSection ? undefined : nextSection,
         preferredMessageId: result.message.id
       });
+      if (activeSection === 'starred') await mailboxController.refresh('starred', searchQuery, mailFilter, mailIdentityFilter);
 
       if (nextBanner) {
         notify(nextBanner, 'success');
@@ -1860,6 +1863,7 @@
       if (!sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter)) {
         scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter);
       }
+      if (activeSection === 'starred') await refreshWorkspace(false);
       selectedMessageIds = selectedMessageIds.filter((id) => id !== result.removedId);
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
@@ -2234,6 +2238,7 @@
           {managementView}
           draftCount={metrics.draftsCount}
           inboxCount={metrics.inboxCount}
+          starredCount={metrics.starredCount}
           trashCount={metrics.trashCount}
           {pending}
           onCompose={() => {
@@ -2252,6 +2257,7 @@
             collapsed={sidebarCollapsed}
             draftCount={metrics.draftsCount}
             inboxCount={metrics.inboxCount}
+            starredCount={metrics.starredCount}
             trashCount={metrics.trashCount}
             {pending}
             sentCount={metrics.sentCount}
@@ -2315,6 +2321,7 @@
                       ? mailboxPages?.[activeSection]?.searchTotal ?? 0
                       : activeSection === 'inbox' ? metrics.inboxCount
                         : activeSection === 'archive' ? metrics.archiveCount
+                          : activeSection === 'starred' ? metrics.starredCount
                           : activeSection === 'sent' ? metrics.sentCount
                             : activeSection === 'drafts' ? metrics.draftsCount : activeMessages.length}
                     unreadCount={activeSection === 'inbox' ? unreadCount : 0}
@@ -2333,7 +2340,7 @@
                       <span class="text-xs text-[var(--fm-text-muted)]">{t('mail.trashRetention')}</span>
                       <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending || trashItems.length === 0} onclick={() => (emptyTrashConfirmOpen = true)}>{t('mail.emptyTrash')}</button>
                     </div>
-                  {:else if activeSection !== 'drafts'}
+                  {:else if activeSection !== 'drafts' && activeSection !== 'starred'}
                     <div class="bulk-toolbar" aria-label={t('mail.bulkActions')}>
                       <label class="bulk-select-control fm-touch-target" title={bulkAllSelected ? t('mail.clearSelection') : t('mail.selectPage')}>
                         <input
@@ -2410,7 +2417,7 @@
                     onClearFilters={clearMailFilters}
                     onRefresh={refreshWorkspace}
                     onLoadMore={loadMoreMailbox}
-                    selectable={activeSection !== 'drafts' && activeSection !== 'trash'}
+                    selectable={activeSection !== 'drafts' && activeSection !== 'trash' && activeSection !== 'starred'}
                     selectedMessageIds={selectedMessageIds}
                     onToggleSelect={toggleBulkSelection}
                   />

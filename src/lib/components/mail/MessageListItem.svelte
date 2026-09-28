@@ -74,6 +74,9 @@
         ? itemMessage?.toName || itemMessage?.toEmail || t('mail.recipientMissing')
         : itemMessage?.fromName || itemMessage?.fromEmail || t('mail.unknownSender'))
   );
+  const starredSourceLabel = $derived(itemMessage?.folder === 'drafts' ? t('shell.drafts')
+    : itemMessage?.folder === 'sent' ? t('shell.sent')
+    : itemMessage?.archivedAt ? t('shell.archive') : t('shell.inbox'));
 
   const formatDate = (value?: string) => {
     if (!value) return '';
@@ -142,7 +145,7 @@
       type="button"
       class="flex min-h-[72px] min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fm-focus)]"
       aria-current={selected ? 'true' : undefined}
-      aria-label={`${isUnread ? t('mail.unreadPrefix') : ''}${counterpart}, ${itemSubject}${itemCount > 1 ? `, ${translateCount(i18n.locale, 'mail.threadCount', itemCount)}` : ''}`}
+      aria-label={`${isUnread ? t('mail.unreadPrefix') : ''}${counterpart}, ${itemSubject}${itemCount > 1 ? `, ${translateCount(i18n.locale, 'mail.threadCount', itemCount)}` : ''}${activeSection === 'starred' ? `, ${starredSourceLabel}` : ''}`}
       onclick={handleSelect}
     >
       <span class="grid size-2 shrink-0 place-items-center" aria-hidden="true">
@@ -161,7 +164,8 @@
           {#if itemCount > 1}<span class="shrink-0 text-[11px] font-medium text-[var(--fm-text-muted)]">({formattedItemCount})</span>{/if}
         </span>
         <span class="mt-0.5 flex min-w-0 items-center gap-1 text-xs leading-4 text-[var(--fm-text-muted)]">
-          {#if isDraft}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">{t('mail.draft')}</span>{/if}
+          {#if activeSection === 'starred'}<span class="shrink-0 rounded bg-[var(--fm-surface-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--fm-text-secondary)]">{starredSourceLabel}</span>{/if}
+          {#if isDraft && activeSection !== 'starred'}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">{t('mail.draft')}</span>{/if}
           {#if itemMessage.labels.includes('attachment')}<Paperclip class="size-3 shrink-0" aria-label={t('mail.hasAttachment')} />{/if}
           {#if itemMessage.searchHitFields?.length}
             <span class="shrink-0 rounded bg-[var(--fm-primary-soft)] px-1 py-0.5 text-[10px] font-medium text-[var(--fm-primary)]">

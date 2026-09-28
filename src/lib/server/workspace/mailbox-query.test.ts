@@ -45,6 +45,19 @@ describe('mailbox query contract', () => {
     expect(() => decodeMailboxCursor('not-json', 'inbox', 'inbox', { query: '', filter: 'all', deliveryStatus: null })).toThrow(ApiError);
   });
 
+  test('requires the global Starred folder and binds its cursor to that view', () => {
+    const first = parseMailboxQuery(new URLSearchParams('folder=starred&filter=unread&limit=2'));
+    expect(first).toMatchObject({ folder: 'starred', section: 'starred', filter: 'unread' });
+    expect(() => parseMailboxQuery(new URLSearchParams('folder=inbox&section=starred'))).toThrow(ApiError);
+    expect(() => parseMailboxQuery(new URLSearchParams('folder=starred&section=inbox'))).toThrow(ApiError);
+    const cursor = encodeMailboxCursor({
+      folder: 'starred', section: 'starred', timestamp: '2026-08-13T12:00:00.000Z', id: 'email:1',
+      query: '', filter: 'unread', deliveryStatus: null
+    });
+    expect(parseMailboxQuery(new URLSearchParams({ folder: 'starred', filter: 'unread', cursor })).cursor?.id).toBe('email:1');
+    expect(() => parseMailboxQuery(new URLSearchParams({ folder: 'starred', filter: 'all', cursor }))).toThrow(ApiError);
+  });
+
   test('rejects a cursor reused with different search or filters', () => {
     const cursor = encodeMailboxCursor({
       folder: 'sent', timestamp: '2026-08-13T12:00:00.000Z', id: 'email:1',
