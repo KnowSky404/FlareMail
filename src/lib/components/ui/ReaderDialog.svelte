@@ -53,7 +53,10 @@
     if (!elements.length) return;
     const first = elements[0];
     const last = elements[elements.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (document.activeElement === readerElement) {
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    } else if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {
@@ -82,7 +85,7 @@
     if (!open || typeof document === 'undefined') return;
     restoreElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     makeBackgroundInert();
-    const frame = requestAnimationFrame(() => focusables()[0]?.focus());
+    const frame = requestAnimationFrame(() => readerElement?.focus());
     const releaseOverlay = registerOverlay(overlayToken);
     document.addEventListener('keydown', handleKeydown);
     return () => {
@@ -104,6 +107,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby={`${readerId}-title`}
+      tabindex="-1"
     >
       {#if showHeader}
         <header class="flex min-h-12 shrink-0 items-center gap-3 border-b border-[var(--fm-border)] px-3 sm:px-5">

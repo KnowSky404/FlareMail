@@ -722,6 +722,7 @@ test('opens an older inbound message from a cold deep link without selecting the
 
 test('keeps readable default columns, persists the layout, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop project covers the wide reading workspace controls.');
+  test.setTimeout(75_000);
   await login(page);
 
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-preference', '440');
@@ -787,15 +788,31 @@ test('keeps readable default columns, persists the layout, and opens one focused
   await page.keyboard.press('Enter');
   await expect(splitter).toHaveAttribute('aria-valuenow', '440');
 
+  await page.setViewportSize({ width: 1505, height: 1045 });
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
   await page.getByRole('region', { name: '邮件详情' }).getByRole('button', { name: '展开专注阅读' }).click();
   const reader = page.getByRole('dialog', { name: 'E2E Inbox Welcome' });
   await expect(reader).toBeVisible();
+  await expect(reader).toBeFocused();
+  await expect(reader).toHaveAttribute('aria-modal', 'true');
+  await expect(page.locator('.fm-workspace-shell')).toHaveAttribute('inert', '');
   await expect(reader.locator('h1', { hasText: 'E2E Inbox Welcome' })).toHaveCount(1);
   await expect(reader.getByRole('button', { name: '关闭专注阅读' })).toHaveCount(1);
+  await expect(page.locator('.toast-region .toast')).toHaveCount(0);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-focused-reader-desktop.png'), fullPage: false });
+  await page.keyboard.press('Shift+Tab');
+  expect(await reader.evaluate((element) => element.contains(document.activeElement) && document.activeElement !== element)).toBe(true);
   await reader.getByRole('button', { name: '关闭专注阅读' }).click();
   await expect(reader).toBeHidden();
+  const readerTrigger = page.getByRole('region', { name: '邮件详情' }).getByRole('button', { name: '展开专注阅读' });
+  await expect(readerTrigger).toBeFocused();
+  await expect(page.locator('.fm-workspace-shell')).not.toHaveAttribute('inert', '');
+  await readerTrigger.click();
+  await expect(reader).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(reader).toBeHidden();
+  await expect(readerTrigger).toBeFocused();
 
   await page.getByRole('button', { name: '显示偏好' }).click();
   const language = page.getByLabel('切换语言');
@@ -812,6 +829,52 @@ test('keeps readable default columns, persists the layout, and opens one focused
   await page.evaluate(() => localStorage.removeItem('flaremail-layout-v1'));
   await assertNoConsoleErrors(consoleErrors);
   await page.screenshot({ path: join(tmpdir(), `flaremail-reading-layout-${testInfo.project.name}.png`), fullPage: false });
+});
+
+test('keeps long messages readable in the focused reader across viewport sizes', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop project drives the reader viewport matrix.');
+  test.setTimeout(90_000);
+  await login(page);
+  const subject = `E2E Long Reader ${Date.now()}`;
+  const lastLine = 'End of the long reader fixture.';
+  const body = [...Array.from({ length: 90 }, (_, index) => `Paragraph ${index + 1}: A readable line with enough content to test wrapping and scrolling across viewport widths.`), lastLine].join('\n\n');
+  await createDraft(page, subject, body);
+  await openFolder(page, '草稿箱');
+  const item = page.getByRole('listitem').filter({ hasText: subject });
+  await expect(item).toBeVisible();
+  await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
+  const trigger = page.getByRole('region', { name: '邮件详情' }).getByRole('button', { name: '展开专注阅读' });
+  await trigger.click();
+  const reader = page.getByRole('dialog', { name: subject });
+  await expect(reader.locator('.message-plain-body')).toContainText(lastLine);
+  await expect(reader).toBeFocused();
+
+  for (const width of [1920, 1440, 1366, 768, 390]) {
+    await page.setViewportSize({ width, height: width <= 900 ? 844 : 900 });
+    await assertNoHorizontalOverflow(page);
+    const metrics = await reader.evaluate((element) => {
+      const scroll = element.querySelector<HTMLElement>('.fm-detail-scroll');
+      const body = element.querySelector<HTMLElement>('.message-plain-body');
+      if (!scroll || !body) return null;
+      const bodyWidth = body.getBoundingClientRect().width;
+      const scrollWidth = scroll.getBoundingClientRect().width;
+      const maxScroll = scroll.scrollHeight - scroll.clientHeight;
+      scroll.scrollTop = maxScroll;
+      return { bodyWidth, scrollWidth, maxScroll, actualScroll: scroll.scrollTop };
+    });
+    expect(metrics).not.toBeNull();
+    expect(metrics!.bodyWidth).toBeLessThanOrEqual(metrics!.scrollWidth);
+    expect(metrics!.maxScroll).toBeGreaterThan(0);
+    expect(metrics!.actualScroll).toBeGreaterThan(0);
+    await expect(reader.getByRole('button', { name: '关闭专注阅读' })).toBeVisible();
+    await expect(reader.getByRole('tooltip', { name: '加星' })).toBeHidden();
+    if (width === 390) await page.screenshot({ path: join(tmpdir(), 'flaremail-focused-reader-long-mobile.png'), fullPage: false });
+  }
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.keyboard.press('Escape');
+  await expect(reader).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await assertNoConsoleErrors(consoleErrors);
 });
 
 test('shows accessible tooltips for the collapsed sidebar including scrollable labels', async ({ page, consoleErrors }, testInfo) => {

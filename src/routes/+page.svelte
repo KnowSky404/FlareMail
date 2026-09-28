@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
   import type { PageData } from './$types';
   import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
@@ -2008,7 +2008,15 @@
   }
 
   function openReader() {
-    if (selectedMessage) readerOpen = true;
+    if (!selectedMessage) return;
+    toastController.dismissPassive();
+    readerOpen = true;
+  }
+
+  async function closeReader() {
+    readerOpen = false;
+    await tick();
+    document.getElementById('fm-open-reader-trigger')?.focus();
   }
 
   async function handleToggleStar(message: MailMessage) {
@@ -2701,7 +2709,7 @@
     </div>
 
     {#if readerOpen && selectedMessage}
-      <ReaderDialog id="reader-dialog" open showHeader={false} title={selectedMessage.subject || t('mail.noSubject')} onClose={() => (readerOpen = false)}>
+      <ReaderDialog id="reader-dialog" open showHeader={false} title={selectedMessage.subject || t('mail.noSubject')} onClose={() => void closeReader()}>
         <MessageDetail
           message={selectedMessage}
           deliveryDetail={selectedDeliveryDetail}
@@ -2733,7 +2741,7 @@
           onToggleRead={handleToggleRead}
           onToggleStar={handleToggleStar}
           onManageLabels={(message) => (labelTargetMessage = message)}
-          onCloseReader={() => (readerOpen = false)}
+          onCloseReader={() => void closeReader()}
           bodyView={selectedBodyView}
           allowRemoteImages={selectedRemoteImagesAllowed}
           readerMode

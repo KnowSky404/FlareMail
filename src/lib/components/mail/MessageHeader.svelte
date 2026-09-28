@@ -203,7 +203,7 @@
       </div>
       <div class="message-header-tools flex shrink-0 items-center gap-0.5">
         {#if !trashMode && onOpenReader}
-          <IconButton ariaLabel={t('mail.openReader')} title={t('mail.openReader')} size="sm" containerClass="!hidden sm:!inline-flex" class="hidden sm:inline-flex" onclick={() => onOpenReader?.(message)}>
+          <IconButton id="fm-open-reader-trigger" ariaLabel={t('mail.openReader')} title={t('mail.openReader')} size="sm" containerClass="!hidden sm:!inline-flex" class="hidden sm:inline-flex" onclick={() => onOpenReader?.(message)}>
             <Maximize2 class="size-4" aria-hidden="true" />
           </IconButton>
           {#if standaloneHref}

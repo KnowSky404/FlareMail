@@ -6,6 +6,7 @@
 
   let {
     children,
+    id,
     ariaLabel,
     title,
     variant = 'ghost',
@@ -23,6 +24,7 @@
     onclick
   }: {
     children?: Snippet;
+    id?: string;
     ariaLabel: string;
     title?: string;
     variant?: ButtonVariant;
@@ -44,6 +46,7 @@
 <Tooltip content={title ?? ariaLabel} side={tooltipSide} class={cn('shrink-0', containerClass)}>
   {#snippet trigger(tooltipId)}
     <button
+      {id}
       type="button"
       class={buttonClass(variant, size, `${touchTarget ? '' : '!min-h-0 !min-w-0'} aspect-square !px-0 ${className}`)}
       aria-label={ariaLabel}
