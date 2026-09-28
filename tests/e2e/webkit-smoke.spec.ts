@@ -170,16 +170,24 @@ test('opens the compose attachment modal and restores an autosaved draft', async
   await toInput.dispatchEvent('compositionend', { data: '张 三' });
   await toInput.press('Enter');
   await expect(dialog.getByRole('button', { name: '移除收件人 zhang@flaremail.test' })).toBeVisible();
-  const addCc = dialog.getByRole('button', { name: '添加抄送' });
-  await expect(addCc).toBeVisible();
-  await addCc.click({ force: true });
+  const addCcBcc = dialog.getByRole('button', { name: '抄送/密送' });
+  const combinedRecipients = await addCcBcc.isVisible();
+  if (combinedRecipients) {
+    await addCcBcc.click({ force: true });
+  } else {
+    const addCc = dialog.getByRole('button', { name: '添加抄送' });
+    await expect(addCc).toBeVisible();
+    await addCc.click({ force: true });
+  }
   const ccInput = page.getByLabel('抄送');
   await ccInput.fill('copy@flaremail.test');
   await ccInput.press('Enter');
   await expect(dialog.getByRole('button', { name: '移除抄送 copy@flaremail.test' })).toBeVisible();
-  const addBcc = dialog.getByRole('button', { name: '添加密送' });
-  await expect(addBcc).toBeVisible();
-  await addBcc.click({ force: true });
+  if (!combinedRecipients) {
+    const addBcc = dialog.getByRole('button', { name: '添加密送' });
+    await expect(addBcc).toBeVisible();
+    await addBcc.click({ force: true });
+  }
   const bccInput = page.getByLabel('密送');
   await bccInput.fill('blind@flaremail.test');
   await bccInput.press('Enter');

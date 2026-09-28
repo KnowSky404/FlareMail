@@ -6,7 +6,7 @@
     type MailAddress,
     type MailAddressInput
   } from '$lib/domain/mail';
-  import { Code2, Paperclip, RefreshCw, Trash2, Upload, X } from '@lucide/svelte';
+  import { ChevronDown, Code2, Paperclip, RefreshCw, Trash2, Upload, X } from '@lucide/svelte';
   import { Button, Dialog, IconButton, TextArea, TextField } from '$lib/components/ui';
   import ComposeWindow from './ComposeWindow.svelte';
   import RecipientChip from './RecipientChip.svelte';
@@ -255,6 +255,12 @@
         : autosaveStatus === 'saving'
           ? 'text-[var(--fm-warning)]'
           : 'text-[var(--fm-text-muted)]'
+  );
+  const mobileAutosaveStatus = $derived(
+    autosaveStatus === 'saved' ? t('compose.statusSaved')
+      : autosaveStatus === 'saving' ? t('compose.statusSaving')
+        : autosaveStatus === 'error' ? t('compose.statusError')
+          : autosaveStatus === 'dirty' ? t('compose.statusUnsaved') : ''
   );
 
   $effect(() => {
@@ -570,6 +576,11 @@
     void onClose(inputWithRecipientDrafts);
   }
 
+  function toggleHtmlOptions() {
+    showHtml = !showHtml;
+    if (showHtml) requestAnimationFrame(() => document.querySelector<HTMLElement>('#compose-html-options > summary')?.scrollIntoView({ block: 'nearest' }));
+  }
+
   function saveAndClose() {
     showCloseConfirm = false;
     void onClose(inputWithRecipientDrafts);
@@ -607,16 +618,18 @@
   id="compose-dialog"
   {title}
   description={profile.name || t('compose.workspaceIdentity')}
+  mobileStatus={mobileAutosaveStatus}
+  mobileStatusTone={autosaveTone}
   onClose={requestClose}
 >
-  <form class="flex min-h-[34rem] flex-col gap-3 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
-    <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)]">
+  <form class="compose-form flex min-h-[34rem] flex-col gap-3 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
+    <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)] max-sm:hidden">
       <span>{t('compose.workspaceIdentity')}：<strong class="font-medium text-[var(--fm-text)]">{profile.name || t('compose.workspaceIdentity')}</strong></span>
       <span class="hidden shrink-0 sm:inline">{t('compose.actualDelivery')}：{selectedSender?.email ?? t('compose.unconfigured')} · {t('compose.plainTextFallback')}</span>
     </div>
 
-    <div class="grid gap-3">
-      <div class="grid gap-2">
+    <div class="compose-fields grid gap-3">
+      <div class="compose-from grid gap-2">
         <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-from">{t('compose.senderAddress')}</label>
         <select
           id="compose-from"
@@ -632,19 +645,19 @@
             </option>
           {/each}
         </select>
-        <p id="compose-from-status" class={`text-xs ${selectedSenderBlockReason !== null ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-text-muted)]'}`} role="status">
+        <p id="compose-from-status" class={`text-xs ${selectedSenderBlockReason !== null ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-text-muted)]'} ${selectedSenderBlockReason === null && input.senderAddressId ? 'max-sm:sr-only' : ''}`} role="status">
           {senderStatusMessage}
         </p>
       </div>
 
-      <div class="grid gap-2">
+      <div class="compose-row compose-to grid gap-2">
         <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-to">{t('mail.to')}</label>
         <div class="relative">
-          <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
+          <div class="recipient-field flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.to ?? input.toEmail ?? '') as address (address.email)}
               <RecipientChip {address} field="to" onRemove={() => removeRecipient('to', address.email)} />
             {/each}
-            <input bind:this={toInput} id="compose-to" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" role="combobox" aria-autocomplete="list" aria-expanded={toSuggestionsOpen && toSuggestions.length > 0} aria-controls="compose-to-suggestions" aria-activedescendant={toSuggestionsOpen && toSuggestions.length > 0 ? `compose-to-suggestion-${activeToSuggestion}` : undefined} placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onfocus={() => (toSuggestionsOpen = true)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={handleToKeydown} onblur={() => commitRecipient('to')} />
+            <input bind:this={toInput} id="compose-to" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none max-sm:flex-[1_1_2rem] sm:min-h-0" role="combobox" aria-autocomplete="list" aria-expanded={toSuggestionsOpen && toSuggestions.length > 0} aria-controls="compose-to-suggestions" aria-activedescendant={toSuggestionsOpen && toSuggestions.length > 0 ? `compose-to-suggestion-${activeToSuggestion}` : undefined} placeholder={parseAddressList(input.to ?? input.toEmail ?? '').length ? '' : t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onfocus={() => (toSuggestionsOpen = true)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={handleToKeydown} onblur={() => commitRecipient('to')} />
           </div>
           {#if toSuggestionsOpen && toSuggestions.length > 0}
             <ul id="compose-to-suggestions" role="listbox" aria-label={t('compose.recipientSuggestions')} class="absolute left-0 right-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] p-1 shadow-[var(--fm-shadow-overlay)]">
@@ -658,10 +671,13 @@
       </div>
 
       {#if !showCc || !showBcc}
-        <div class="flex flex-wrap items-center gap-x-3">
+        <div class="compose-ccbcc flex flex-wrap items-center gap-x-3">
+          {#if !showCc && !showBcc}
+            <button class="fm-touch-target hidden min-h-11 w-full items-center justify-between text-sm text-[var(--fm-text-secondary)] max-sm:inline-flex" type="button" aria-expanded="false" onclick={() => { showCc = true; showBcc = true; }}>{t('compose.addCcBcc')}<ChevronDown class="size-4" aria-hidden="true" /></button>
+          {/if}
           {#if !showCc}
             <button
-              class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
+              class={`fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)] ${!showBcc ? 'max-sm:hidden' : ''}`}
               type="button"
               aria-expanded="false"
               onclick={() => (showCc = true)}
@@ -671,7 +687,7 @@
           {/if}
           {#if !showBcc}
             <button
-              class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
+              class={`fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)] ${!showCc ? 'max-sm:hidden' : ''}`}
               type="button"
               onclick={() => (showBcc = true)}
             >
@@ -682,9 +698,9 @@
       {/if}
 
       {#if showCc}
-        <div class="grid gap-2">
+        <div class="compose-row compose-cc grid gap-2">
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-cc">{t('mail.cc')}</label>
-          <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
+          <div class="recipient-field flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.cc ?? '') as address (address.email)}
               <RecipientChip {address} field="cc" onRemove={() => removeRecipient('cc', address.email)} />
             {/each}
@@ -695,9 +711,9 @@
       {/if}
 
       {#if showBcc}
-        <div class="grid gap-2">
+        <div class="compose-row compose-bcc grid gap-2">
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-bcc">{t('mail.bcc')}</label>
-          <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
+          <div class="recipient-field flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.bcc ?? '') as address (address.email)}
               <RecipientChip {address} field="bcc" onRemove={() => removeRecipient('bcc', address.email)} />
             {/each}
@@ -707,7 +723,7 @@
         </div>
       {/if}
 
-      <TextField
+      <div class="compose-subject"><TextField
         id="compose-subject"
         label={t('mail.subject')}
         required
@@ -715,10 +731,10 @@
         value={input.subject}
         error={fieldError('subject')}
         oninput={(event) => updateInput('subject', event.currentTarget.value)}
-      />
+      /></div>
     </div>
 
-    <TextArea
+    <div class="compose-body"><TextArea
       id="compose-body"
       label={t('compose.body')}
       required
@@ -728,7 +744,7 @@
       error={fieldError('body')}
       class="min-h-[18rem] flex-1 max-sm:min-h-[12rem]"
       oninput={(event) => updateInput('body', event.currentTarget.value)}
-    />
+    /></div>
 
     <details id="compose-html-options" class="compose-advanced" bind:open={showHtml}>
       <summary class="fm-touch-target flex cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2 text-xs font-medium text-[var(--fm-text-secondary)]">
@@ -830,22 +846,33 @@
   </form>
 
   {#snippet footer()}
-    <div class="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <Button variant="ghost" size="sm" disabled={authExpired || pending} onclick={() => onSaveDraft(inputWithRecipientDrafts)}>{t('compose.saveDraft')}</Button>
-        <span class={`truncate text-xs ${autosaveTone}`} role="status" aria-live="polite">{autosaveMessage}</span>
+    <div class="compose-footer-layout flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div class="compose-footer-meta flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <div class="hidden shrink-0 items-center max-sm:flex">
+          <div class="relative">
+            <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-mobile-attachment-count' : undefined} title={t('compose.attachFile')} tooltipSide="top" disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
+            {#if readyAttachmentCount}
+              <span class="pointer-events-none absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[var(--fm-primary)] text-[10px] font-semibold text-[var(--fm-text-inverse)]" aria-hidden="true">{readyAttachmentCount}</span>
+              <span id="compose-mobile-attachment-count" class="sr-only">{t('compose.addedAttachmentCount', { count: readyAttachmentCount })}</span>
+            {/if}
+          </div>
+          <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton>
+        </div>
+        <div class="max-sm:hidden"><Button variant="ghost" size="sm" disabled={authExpired || pending} onclick={() => onSaveDraft(inputWithRecipientDrafts)}>{t('compose.saveDraft')}</Button></div>
+        <span class={`min-w-0 truncate text-xs ${autosaveTone}`} role="status" aria-live="polite">{autosaveMessage}</span>
         <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> {t('compose.send')}</span>
       </div>
-      <div class="flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
-        <div class="relative shrink-0">
+      <div class="compose-footer-actions flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
+        <div class="relative shrink-0 max-sm:hidden">
           <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-footer-attachment-count' : undefined} title={t('compose.attachFile')} tooltipSide="top" disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
           {#if readyAttachmentCount}
             <span class="compose-attachment-count pointer-events-none absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[var(--fm-primary)] text-[10px] font-semibold text-[var(--fm-text-inverse)]" aria-hidden="true">{readyAttachmentCount}</span>
             <span id="compose-footer-attachment-count" class="sr-only" role="status" aria-live="polite">{t('compose.addedAttachmentCount', { count: readyAttachmentCount })}</span>
           {/if}
         </div>
-        <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={() => (showHtml = !showHtml)}><Code2 class="size-4" aria-hidden="true" /></IconButton>
+        <div class="max-sm:hidden"><IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton></div>
         <Button variant="outline" disabled={pending} onclick={requestClose}>{t('common.cancel')}</Button>
+        <div class="hidden max-sm:block"><Button variant="outline" disabled={authExpired || pending} onclick={() => onSaveDraft(inputWithRecipientDrafts)}>{t('compose.saveDraft')}</Button></div>
         <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(validation.value); }}>{t('compose.sendMail')}</Button>
       </div>
     </div>
@@ -916,5 +943,43 @@
       flex-direction: column;
       gap: 0.125rem;
     }
+  }
+
+  @media (max-width: 640px) {
+    .compose-form, .compose-fields { gap: 0; }
+    .compose-form > :global(section), .compose-advanced, .compose-form > :global(div[role="alert"]) { margin: var(--space-3); }
+    .compose-from, .compose-row {
+      display: grid;
+      grid-template-columns: 5.6rem minmax(0, 1fr);
+      align-items: center;
+      gap: 0;
+      min-height: 56px;
+      padding: 0 var(--space-3);
+      border-bottom: 1px solid var(--fm-border);
+    }
+    .compose-from > label, .compose-row > label { color: var(--fm-text-secondary); font-weight: 400; }
+    .compose-from > select { min-width: 0; border: 0; padding: 0 var(--space-1); background: transparent; font-size: 0.8125rem; }
+    .compose-from > p { grid-column: 1 / -1; padding-bottom: var(--space-2); }
+    .compose-from > p:global(.sr-only) { padding: 0; }
+    .compose-row > p { grid-column: 2; }
+    .recipient-field { min-width: 0; border: 0; padding: var(--space-1) 0; }
+    .recipient-field:focus-within { border-radius: var(--radius-sm); outline: 2px solid var(--fm-focus); outline-offset: -2px; }
+    .recipient-field :global(.recipient-chip) { max-width: calc(100% - 48px); }
+    .compose-form :global(.recipient-chip) { min-height: 44px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface-subtle); color: var(--fm-text); }
+    .compose-form :global(.recipient-chip button) { color: var(--fm-text-secondary); }
+    .compose-ccbcc { min-height: 52px; padding: 0 var(--space-3); border-bottom: 1px solid var(--fm-border); }
+    .compose-subject { padding: 0 var(--space-3); border-bottom: 1px solid var(--fm-border); }
+    .compose-subject :global(label) { display: grid; grid-template-columns: 5.6rem minmax(0, 1fr); align-items: center; gap: 0; min-height: 56px; }
+    .compose-subject :global(label > span:first-child) { color: var(--fm-text-secondary); font-size: 0.875rem; font-weight: 400; }
+    .compose-subject :global(input) { min-width: 0; border: 0; padding: 0 var(--space-1); background: transparent; }
+    .compose-subject :global(label > span:last-child:not(:first-child)) { grid-column: 2; }
+    .compose-body { flex: 1; min-height: max(18rem, calc(100dvh - 26rem)); padding: var(--space-3); }
+    .compose-body :global(textarea) { min-height: max(15rem, calc(100dvh - 30rem)); border: 0; padding: var(--space-2) 0; resize: vertical; }
+    .compose-body :global(label) { color: var(--fm-text-secondary); font-size: 0.875rem; font-weight: 400; }
+    .compose-footer-layout { gap: var(--space-2); padding-bottom: var(--space-2); }
+    .compose-footer-meta { justify-content: space-between; flex-wrap: nowrap; }
+    .compose-footer-meta > span[role="status"] { flex: 1; text-align: right; }
+    .compose-footer-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+    .compose-footer-actions > :global(button), .compose-footer-actions > div, .compose-footer-actions > div :global(button) { width: 100%; min-width: 0; min-height: 44px; padding-right: var(--space-1); padding-left: var(--space-1); }
   }
 </style>

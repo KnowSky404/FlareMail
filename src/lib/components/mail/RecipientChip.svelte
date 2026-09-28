@@ -19,7 +19,7 @@
   const removeLabel = $derived(t('compose.removeRecipient', { field: fieldLabel, email: address.email }));
 </script>
 
-<span class="inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] pl-2 pr-1 text-xs text-[var(--fm-primary)]">
+<span class="recipient-chip inline-flex max-w-full min-w-0 items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] pl-2 pr-1 text-xs text-[var(--fm-primary)]">
   <span class="min-w-0 truncate" title={address.email}>{address.name || address.email}</span>
   <IconButton
     ariaLabel={removeLabel}

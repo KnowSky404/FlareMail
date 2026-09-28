@@ -12,6 +12,8 @@
     id,
     title,
     description,
+    mobileStatus,
+    mobileStatusTone = 'text-[var(--fm-text-muted)]',
     children,
     footer,
     onClose
@@ -19,6 +21,8 @@
     id: string;
     title: string;
     description?: string;
+    mobileStatus?: string;
+    mobileStatusTone?: string;
     children?: Snippet;
     footer?: Snippet;
     onClose: () => void;
@@ -156,7 +160,7 @@
   onMount(() => {
     const restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     bounds = initialBounds();
-    const mobileMedia = window.matchMedia('(max-width: 600px)');
+    const mobileMedia = window.matchMedia('(max-width: 640px)');
     mobile = mobileMedia.matches;
     const frame = requestAnimationFrame(() => element?.querySelector<HTMLInputElement>('#compose-to')?.focus());
     const onViewportResize = () => { bounds = fitToViewport(bounds); };
@@ -189,6 +193,9 @@
   onkeydown={handleKeydown}
 >
   <div class="compose-window-header">
+    <div class="mobile-close">
+      <IconButton ariaLabel={t('common.close')} title={t('common.close')} size="sm" onclick={onClose}><X class="size-5" aria-hidden="true" /></IconButton>
+    </div>
     <button
       class={buttonClass('ghost', 'sm', 'resize-handle !min-w-8 !p-0 max-sm:!hidden')}
       type="button"
@@ -213,11 +220,12 @@
       onkeydown={moveByKeyboard}
       disabled={minimized || maximized}
     ><Move class="size-4" aria-hidden="true" /></button>
-    <div class="min-w-0 flex-1">
+    <div class="header-heading min-w-0 flex-1">
       <h2 id={`${id}-title`} class="truncate text-sm font-semibold text-[var(--fm-text)]">{title}</h2>
       {#if description && !minimized}<p id={`${id}-description`} class="truncate text-xs text-[var(--fm-text-muted)]">{description}</p>{/if}
+      {#if mobileStatus}<p class={`mobile-status truncate text-xs ${mobileStatusTone}`} aria-hidden="true">{mobileStatus}</p>{/if}
     </div>
-    <div class="flex shrink-0 items-center gap-1">
+    <div class="desktop-controls flex shrink-0 items-center gap-1">
       {#if minimized}
         <IconButton ariaLabel={t('compose.restoreWindow')} title={t('compose.restoreWindow')} size="sm" tooltipSide="top" onclick={toggleMinimized}><Square class="size-4" aria-hidden="true" /></IconButton>
       {:else}
@@ -258,15 +266,21 @@
     cursor: default;
   }
   .compose-window-header button { cursor: pointer; }
+  .mobile-close, .mobile-status { display: none; }
   .compose-window-header .resize-handle { cursor: nwse-resize; touch-action: none; }
   .compose-window-header .move-handle { cursor: move; touch-action: none; }
   .compose-window-body { min-height: 0; flex: 1; overflow: auto; padding: var(--space-4); }
   .compose-window-footer { flex: none; border-top: 1px solid var(--fm-border); padding: var(--space-3) var(--space-4); }
   .minimized .compose-window-header { border-bottom: 0; }
-  @media (max-width: 600px) {
+  @media (max-width: 640px) {
     .compose-window { inset: 0 !important; width: 100vw !important; height: 100dvh !important; border: 0; border-radius: 0; }
-    .compose-window-header { padding-top: calc(var(--space-2) + env(safe-area-inset-top)); cursor: default; touch-action: auto; }
-    .compose-window-body { padding: var(--space-3); }
+    .compose-window-header { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; min-height: 64px; padding: calc(var(--space-2) + env(safe-area-inset-top)) var(--space-3) var(--space-2); background: var(--fm-surface); cursor: default; touch-action: auto; }
+    .mobile-close, .mobile-status { display: block; }
+    .header-heading { text-align: center; }
+    .header-heading h2 { font-size: 1rem; }
+    .header-heading > p:not(.mobile-status) { display: none; }
+    .desktop-controls { display: none; }
+    .compose-window-body { padding: 0; }
     .compose-window-footer { padding: var(--space-2) var(--space-3); }
   }
 </style>

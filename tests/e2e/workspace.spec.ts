@@ -1126,52 +1126,81 @@ test('moves, resizes, minimizes, and maximizes the desktop compose window', asyn
 });
 
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
+  const isPhoneViewport = testInfo.project.name === 'mobile' || testInfo.project.name === 'narrow';
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
   const composeDialog = page.getByRole('dialog', { name: '新邮件' });
   await expect(composeDialog).toBeVisible();
-  await expect(composeDialog).toHaveAttribute('aria-modal', testInfo.project.name === 'mobile' ? 'true' : 'false');
+  await expect(composeDialog).toHaveAttribute('aria-modal', isPhoneViewport ? 'true' : 'false');
   await page.screenshot({ path: `/tmp/flaremail-compose-floating-${testInfo.project.name}.png` });
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await page.getByLabel('收件人').fill('html-sen');
   const suggestion = composeDialog.getByRole('listbox', { name: '最近联系人建议' })
     .getByRole('option', { name: /html-sender@flaremail\.test/u });
   await expect(suggestion).toBeVisible();
-  if (testInfo.project.name === 'mobile') {
+  if (isPhoneViewport) {
     const suggestionBounds = await suggestion.boundingBox();
     expect(suggestionBounds?.height).toBeGreaterThanOrEqual(44);
     expect(suggestionBounds?.width).toBeGreaterThanOrEqual(44);
-    await page.screenshot({ path: '/tmp/flaremail-compose-suggestion-mobile.png', fullPage: false });
+    await page.screenshot({ path: `/tmp/flaremail-compose-suggestion-${testInfo.project.name}.png`, fullPage: false });
   }
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);
   await page.getByLabel('收件人').press('Enter');
   const removeRecipient = composeDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' });
   await expect(removeRecipient).toBeVisible();
-  if (testInfo.project.name === 'mobile') {
+  if (isPhoneViewport) {
     const removeBounds = await removeRecipient.boundingBox();
     expect(removeBounds?.height).toBeGreaterThanOrEqual(44);
     expect(removeBounds?.width).toBeGreaterThanOrEqual(44);
-    const ccBounds = await composeDialog.getByRole('button', { name: '添加抄送' }).boundingBox();
-    const bccBounds = await composeDialog.getByRole('button', { name: '添加密送' }).boundingBox();
-    expect(ccBounds?.height).toBeGreaterThanOrEqual(44);
-    expect(bccBounds?.height).toBeGreaterThanOrEqual(44);
-    expect(ccBounds?.y).toBe(bccBounds?.y);
-    await page.screenshot({ path: '/tmp/flaremail-compose-recipient-mobile.png', fullPage: false });
+    const ccBcc = composeDialog.getByRole('button', { name: '抄送/密送' });
+    expect((await ccBcc.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    const subjectLabel = composeDialog.locator('.compose-subject span').first();
+    const subjectField = composeDialog.getByRole('textbox', { name: '主题', exact: true });
+    expect(Math.abs((await subjectLabel.boundingBox())!.y - (await subjectField.boundingBox())!.y)).toBeLessThan(20);
+    await page.screenshot({ path: `/tmp/flaremail-compose-recipient-${testInfo.project.name}.png`, fullPage: false });
   }
   await removeRecipient.focus();
   await expect(composeDialog.getByRole('tooltip', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
   expect(await composeDialog.locator('[role="tooltip"]:not([hidden])').count()).toBe(1);
-  if (testInfo.project.name === 'desktop' || testInfo.project.name === 'mobile') {
+  if (testInfo.project.name === 'desktop' || isPhoneViewport) {
     await page.screenshot({ path: `/tmp/flaremail-compose-recipient-tooltip-${testInfo.project.name}.png`, fullPage: false });
   }
   await removeRecipient.click();
   await page.getByLabel('收件人').fill('draft-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill('E2E autosaved draft');
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('This draft must survive a page refresh.');
+  if (isPhoneViewport) {
+    await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
+    await composeDialog.locator('.compose-window-body').evaluate((element) => { element.scrollTop = 0; });
+    const dismissToast = page.getByRole('button', { name: '关闭通知' }).first();
+    if (await dismissToast.isVisible()) await dismissToast.click();
+    await page.mouse.move(1, 600);
+    await page.screenshot({ path: `/tmp/flaremail-compose-layout-${testInfo.project.name}.png`, fullPage: false });
+    await composeDialog.getByRole('button', { name: '抄送/密送' }).click();
+    await expect(composeDialog.getByLabel('抄送', { exact: true })).toBeVisible();
+    await expect(composeDialog.getByLabel('密送', { exact: true })).toBeVisible();
+  }
   await composeDialog.getByRole('button', { name: 'HTML 写信选项' }).click();
+  if (isPhoneViewport) {
+    await expect(composeDialog.locator('#compose-html-options')).toHaveAttribute('open', '');
+    await expect.poll(async () => {
+      const summary = await composeDialog.locator('#compose-html-options > summary').boundingBox();
+      const body = await composeDialog.locator('.compose-window-body').boundingBox();
+      return Math.max(0, (summary?.y ?? 0) + (summary?.height ?? 0) - (body?.y ?? 0) - (body?.height ?? 0));
+    }).toBe(0);
+  }
   await composeDialog.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>This <strong>HTML</strong> draft must survive a page refresh.</p>');
   await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
+  if (isPhoneViewport) {
+    await expect(composeDialog.locator('.mobile-status')).toHaveText('已保存');
+    const cancel = await composeDialog.getByRole('button', { name: '取消', exact: true }).boundingBox();
+    const save = await composeDialog.getByRole('button', { name: '保存草稿', exact: true }).boundingBox();
+    const send = await composeDialog.getByRole('button', { name: '发送邮件', exact: true }).boundingBox();
+    expect(cancel?.y).toBe(save?.y);
+    expect(save?.y).toBe(send?.y);
+    expect((send?.y ?? 0) + (send?.height ?? 0)).toBeLessThanOrEqual(page.viewportSize()!.height - 2);
+  }
   await page.reload();
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   await openDraftEditor(page, 'E2E autosaved draft');
@@ -1231,10 +1260,13 @@ test('persists To CC and BCC chips as canonical recipient arrays', async ({ page
 
   await page.getByLabel('收件人').fill('"张 三" <ZHANG@flaremail.test>, second@flaremail.test');
   await page.getByLabel('收件人').press('Enter');
-  await page.getByRole('button', { name: '添加抄送', exact: true }).click();
+  const addCcBcc = page.getByRole('button', { name: '抄送/密送' });
+  const combinedRecipients = await addCcBcc.isVisible();
+  if (combinedRecipients) await addCcBcc.click();
+  else await page.getByRole('button', { name: '添加抄送', exact: true }).click();
   await page.getByLabel('抄送').fill('copy@flaremail.test; duplicate@flaremail.test');
   await page.getByLabel('抄送').press('Enter');
-  await page.getByRole('button', { name: '添加密送', exact: true }).click();
+  if (!combinedRecipients) await page.getByRole('button', { name: '添加密送', exact: true }).click();
   await page.getByLabel('密送').evaluate((input) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData('text/plain', 'blind@flaremail.test\nsecret@flaremail.test');
