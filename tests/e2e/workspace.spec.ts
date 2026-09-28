@@ -1093,6 +1093,9 @@ test('keeps readable default columns, persists the layout, and opens one focused
   await page.screenshot({ path: join(tmpdir(), 'flaremail-focused-reader-desktop.png'), fullPage: false });
   await page.keyboard.press('Shift+Tab');
   expect(await reader.evaluate((element) => element.contains(document.activeElement) && document.activeElement !== element)).toBe(true);
+  expect(await reader.evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.getClientRects().length > 0)).toBe(true);
+  await page.keyboard.press('Tab');
+  expect(await reader.evaluate((element) => element.contains(document.activeElement) && document.activeElement !== element)).toBe(true);
   await reader.getByRole('button', { name: '关闭专注阅读' }).click();
   await expect(reader).toBeHidden();
   const readerTrigger = page.getByRole('region', { name: '邮件详情' }).getByRole('button', { name: '展开专注阅读' });
@@ -2284,7 +2287,8 @@ test('uses shared decorative avatars across account, mailbox, and reading views'
   const accountAvatar = page.locator('.topbar .fm-avatar');
   if (testInfo.project.name === 'desktop') {
     await expect(accountAvatar).toBeVisible();
-    await expect(accountAvatar).toHaveText('E2');
+    const accountName = (await page.locator('.topbar .account-trigger-label').textContent())?.trim() ?? '';
+    await expect(accountAvatar).toHaveText(accountName.slice(0, 2).toUpperCase() || 'FM');
     await expect(accountAvatar).toHaveAttribute('aria-hidden', 'true');
     expect((await accountAvatar.boundingBox())?.width).toBe(28);
   } else {
@@ -2420,18 +2424,25 @@ test('keeps one responsive search entry, three desktop topbar actions, and a vis
   await login(page);
 
   const topbar = page.locator('.topbar');
+  const mobileBar = page.locator('.mobile-bar');
   const widths = [1366, 1280, 1024, 1023, 901, 900, 768, 480, 390, 320];
   for (const width of widths) {
     await page.setViewportSize({ width, height: width <= 900 ? 844 : 768 });
-    await expect(page.getByLabel('搜索邮件')).toHaveCount(1);
-    await assertNoHorizontalOverflow(page);
     if (width >= 901) {
       await expect(topbar).toBeVisible();
       await expect(topbar.locator('.actions > *')).toHaveCount(3);
     } else {
       await expect(topbar).toBeHidden();
-      await expect(page.locator('.mobile-bar')).toBeVisible();
+      const returnToList = page.getByRole('button', { name: '返回邮件列表' });
+      if (await returnToList.isVisible()) {
+        if (width <= 767) await expect(mobileBar).toBeHidden();
+        await returnToList.click();
+      }
+      await expect(mobileBar).toBeVisible();
     }
+    await expect(page.getByLabel('搜索邮件')).toHaveCount(1);
+    await expect(page.getByLabel('搜索邮件')).toBeVisible();
+    await assertNoHorizontalOverflow(page);
   }
 
   await page.setViewportSize({ width: 1366, height: 768 });

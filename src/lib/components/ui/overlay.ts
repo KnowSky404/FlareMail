@@ -29,3 +29,12 @@ export function registerOverlay(token: OverlayToken) {
 export function isTopOverlay(token: OverlayToken) {
   return overlayStack.at(-1) === token;
 }
+
+const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+export function renderedFocusables(root: HTMLElement | undefined): HTMLElement[] {
+  if (!root) return [];
+  return [...root.querySelectorAll<HTMLElement>(focusableSelector)].filter((element) =>
+    element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden' && !element.closest('[inert]')
+  );
+}

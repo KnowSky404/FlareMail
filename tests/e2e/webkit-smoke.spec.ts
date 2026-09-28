@@ -257,6 +257,9 @@ test('logs in, navigates, searches, opens a message, and returns', async ({ page
     await page.keyboard.press('Enter');
     const reader = page.getByRole('dialog', { name: 'E2E Inbox Welcome' });
     await expect(reader).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    expect(await reader.evaluate((element) => element.contains(document.activeElement) &&
+      document.activeElement instanceof HTMLElement && document.activeElement.getClientRects().length > 0)).toBe(true);
     await reader.getByRole('button', { name: '关闭专注阅读' }).focus();
     await page.keyboard.press('Enter');
     await expect(reader).toBeHidden();

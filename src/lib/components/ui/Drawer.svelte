@@ -2,7 +2,7 @@
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
   import { cn, focusRing } from './styles';
-  import { isTopOverlay, registerOverlay } from './overlay';
+  import { isTopOverlay, registerOverlay, renderedFocusables } from './overlay';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
@@ -46,7 +46,7 @@
   const widths = { sm: 'w-full max-w-sm', md: 'w-full max-w-md', lg: 'w-full max-w-2xl' };
   const positions = { left: 'left-0', right: 'right-0' };
 
-  function focusables() { return [...drawerElement?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') ?? []]; }
+  function focusables() { return renderedFocusables(drawerElement); }
   function handleKeydown(event: KeyboardEvent) {
     if (!isTopOverlay(overlayToken)) return;
     if (event.key === 'Escape' && dismissible) { event.preventDefault(); onClose?.(); return; }
