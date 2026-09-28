@@ -7,6 +7,7 @@ import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound'
 import { getWorkspaceMessageDeliveryDetail } from './delivery';
 import { saveWorkspaceDraft, DraftBodyReloadRequiredError, DraftConflictError } from './draft';
 import type { WorkspaceSession } from './shared';
+import { createMailLabel, setMailMessageLabel } from '$lib/server/db/labels';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -83,6 +84,18 @@ const setup = () => {
 };
 
 describe('outbound workspace persistence', () => {
+  test('transfers persisted labels when a draft is sent', async () => {
+    const { env, database, session } = setup();
+    const draft = await saveWorkspaceDraft(env, session, { toEmail: 'alice@example.net', subject: 'Labeled', body: 'Body' });
+    const label = await createMailLabel(env.DB, session.userId, 'Follow up');
+    await setMailMessageLabel(env.DB, session.userId, label.id, { kind: 'draft', id: draft.message.id }, true);
+    const sent = await sendWorkspaceMessage(env, session, {
+      draftId: draft.message.id, toEmail: 'alice@example.net', subject: 'Labeled', body: 'Body'
+    }, { gateway: new FakeOutboundGateway() });
+    expect(sent.message.id).toBe(draft.message.id);
+    expect(database.query(`SELECT message_kind, message_id FROM mail_message_labels WHERE owner_user_id = 'user-1'`).all())
+      .toEqual([{ message_kind: 'workspace', message_id: sent.message.id }]);
+  });
   test('persists before submission, returns submitted and deduplicates double-clicks', async () => {
     const { database, env, session } = setup();
     const gateway = new FakeOutboundGateway({ providerMessageId: 're_test_1' });

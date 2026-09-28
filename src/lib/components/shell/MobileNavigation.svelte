@@ -10,8 +10,10 @@
   import Globe2 from '@lucide/svelte/icons/globe-2';
   import AtSign from '@lucide/svelte/icons/at-sign';
   import Trash2 from '@lucide/svelte/icons/trash-2';
+  import Tag from '@lucide/svelte/icons/tag';
+  import Plus from '@lucide/svelte/icons/plus';
   import { Drawer } from '$lib/components/ui';
-  import type { MailboxSection } from '$lib/domain/mail';
+  import type { MailboxSection, MailUserLabel } from '$lib/domain/mail';
   import { formatNumber } from '$lib/i18n';
   import BrandMark from './BrandMark.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
@@ -27,7 +29,11 @@
     trashCount,
     managementView = 'settings',
     pending = false,
+    userLabels = [],
+    activeLabelId = null,
     onCompose,
+    onSelectLabel,
+    onCreateLabel,
     onSelectSection,
     onSelectManagementView
   }: {
@@ -38,7 +44,11 @@
     trashCount: number;
     managementView?: 'settings' | 'domains' | 'addresses';
     pending?: boolean;
+    userLabels?: MailUserLabel[];
+    activeLabelId?: string | null;
     onCompose: () => void;
+    onSelectLabel?: (id: string) => void;
+    onCreateLabel?: () => void;
     onSelectSection: (section: AppSection) => void;
     onSelectManagementView?: (view: 'domains' | 'addresses') => void;
   } = $props();
@@ -50,6 +60,7 @@
   const labels = $derived<Record<AppSection, string>>({
     inbox: t('shell.inbox'),
     starred: t('shell.starred'),
+    label: userLabels.find((item) => item.id === activeLabelId)?.name ?? t('shell.labels'),
     sent: t('shell.sent'),
     drafts: t('shell.drafts'),
     archive: t('shell.archive'),
@@ -69,6 +80,10 @@
 
   function selectManagement(view: 'domains' | 'addresses') {
     onSelectManagementView?.(view);
+    open = false;
+  }
+  function selectLabel(id: string) {
+    onSelectLabel?.(id);
     open = false;
   }
 </script>
@@ -104,6 +119,15 @@
       <button class:active={activeSection === 'trash'} type="button" onclick={() => select('trash')}>
         <Trash2 size={19} aria-hidden="true" /><span>{t('shell.trash')}</span><small>{formattedTrashCount}</small>
       </button>
+      <div class="flex items-center justify-between px-3 pt-2 text-xs font-semibold text-[var(--fm-text-muted)]">
+        <span>{t('shell.labels')}</span>
+        <button type="button" class="fm-touch-target grid size-9 place-items-center" aria-label={t('label.create')} onclick={() => { onCreateLabel?.(); open = false; }}><Plus size={18} aria-hidden="true" /></button>
+      </div>
+      {#each userLabels as userLabel (userLabel.id)}
+        <button class:active={activeSection === 'label' && activeLabelId === userLabel.id} type="button" onclick={() => selectLabel(userLabel.id)}>
+          <Tag size={19} aria-hidden="true" /><span>{userLabel.name}</span>
+        </button>
+      {/each}
       <button class:active={activeSection === 'profile' && managementView === 'domains'} type="button" onclick={() => selectManagement('domains')}>
         <Globe2 size={19} aria-hidden="true" /><span>{t('shell.domains')}</span>
       </button>

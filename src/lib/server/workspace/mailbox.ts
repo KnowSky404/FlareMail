@@ -1,6 +1,7 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError } from '$lib/server/http/api';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
+import { attachMailLabels, requireMailLabel } from '$lib/server/db/labels';
 import { listMailboxIdentityOptions, mailboxIdentityFilterExists } from '$lib/server/db/mail-identities';
 import { buildFtsSearchPlan } from '$lib/server/search/fts';
 import {
@@ -62,6 +63,7 @@ export interface WorkspaceSnapshotOptions {
   filter?: MailboxFilter;
   identityFilter?: MailboxPage['identityFilter'];
   deliveryStatus?: DeliveryStatus | null;
+  labelId?: string | null;
 }
 
 const maxMailboxMutationIds = 100;
@@ -305,7 +307,10 @@ export async function loadMailboxPage(
   if (query.identityFilter && !(await mailboxIdentityFilterExists(env.DB, workspace.userId, query.identityFilter))) {
     throw new ApiError(404, 'MAIL_IDENTITY_NOT_FOUND', '所选邮件身份不存在或不属于当前工作区。');
   }
-  if (section === 'starred') return loadStarredMailboxPage(env, workspace, query, knownMetrics);
+  if (section === 'starred' || section === 'label') {
+    if (section === 'label') await requireMailLabel(env.DB, workspace.userId, query.labelId!);
+    return loadCrossFolderMailboxPage(env, workspace, query, knownMetrics);
+  }
   const persistedFolder: MailFolder = query.folder as MailFolder;
   const repositoryQuery = {
     folder: persistedFolder,
@@ -349,6 +354,7 @@ export async function loadMailboxPage(
 
   const hasMore = messages.length > query.limit;
   const visible = messages.slice(0, query.limit);
+  await attachMailLabels(env.DB, workspace.userId, visible);
   const last = visible.at(-1);
   const metrics = await metricsPromise;
   return {
@@ -375,8 +381,8 @@ export async function loadMailboxPage(
   };
 }
 
-/** Merge bounded, owner-scoped folder pages into one stable global Starred page. */
-async function loadStarredMailboxPage(
+/** Merge bounded, owner-scoped folder pages into one stable global Starred or label page. */
+async function loadCrossFolderMailboxPage(
   env: CloudflareEnv,
   workspace: WorkspaceContext,
   query: MailboxQuery,
@@ -395,7 +401,8 @@ async function loadStarredMailboxPage(
     query: query.query,
     search: query.search,
     filter: query.filter,
-    starredOnly: true,
+    starredOnly: query.section === 'starred',
+    labelId: query.labelId,
     identityFilter: query.identityFilter,
     deliveryStatus: null
   };
@@ -419,22 +426,24 @@ async function loadStarredMailboxPage(
   ]);
   const hasMore = messages.length > query.limit;
   const visible = messages.slice(0, query.limit);
+  await attachMailLabels(env.DB, workspace.userId, visible);
   const last = visible.at(-1);
   const metrics = await metricsPromise;
   const searchTotal = [inbox, archive, sent, drafts, inbound, inboundArchive]
     .reduce((total, rows) => total + Number(rows[0]?.search_total ?? 0), 0);
   return {
-    folder: 'starred',
+    folder: query.section === 'label' ? 'label' : 'starred',
     messages: visible,
     nextCursor: hasMore && last ? encodeMailboxCursor({
-      folder: 'starred',
-      section: 'starred',
+      folder: query.section === 'label' ? 'label' : 'starred',
+      section: query.section === 'label' ? 'label' : 'starred',
       timestamp: last.sentAt,
       id: last.id,
       query: query.query,
       filter: query.filter,
       identityFilter: query.identityFilter,
-      deliveryStatus: null
+      deliveryStatus: null,
+      labelId: query.labelId
     }) : null,
     hasMore,
     limit: query.limit,
@@ -442,7 +451,8 @@ async function loadStarredMailboxPage(
     filter: query.filter,
     identityFilter: query.identityFilter,
     deliveryStatus: null,
-    ...(query.search && !query.cursor ? { searchTotal, searchHitFields } : {}),
+    labelId: query.labelId,
+    ...((query.search || query.section === 'label') && !query.cursor ? { searchTotal, searchHitFields } : {}),
     ...(metrics ? { metrics } : {})
   };
 }
@@ -456,6 +466,7 @@ interface MailboxSummaryQuery {
   search: MailSearchQuery | null;
   filter: MailboxFilter;
   starredOnly?: boolean;
+  labelId?: string | null;
   identityFilter: MailboxPage['identityFilter'];
   deliveryStatus?: DeliveryStatus | null;
   threadKeys?: string[];
@@ -521,6 +532,12 @@ async function listInboundMessageSummaryPage(
     conditions.push(`e.thread_key IN (${input.threadKeys.map(() => '?').join(', ')})`);
     bindings.push(...input.threadKeys);
   }
+  if (input.labelId) {
+    conditions.push(`EXISTS (SELECT 1 FROM mail_message_labels AS labeled
+      WHERE labeled.owner_user_id = e.owner_user_id AND labeled.label_id = ?
+        AND labeled.message_kind = 'inbound' AND labeled.message_id = e.id)`);
+    bindings.push(input.labelId);
+  }
   bindings.push(input.limit);
 
   const searchJoins = input.search ? `
@@ -544,7 +561,7 @@ async function listInboundMessageSummaryPage(
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = input.search
+  const pageSql = input.search || input.labelId
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows."timestamp" DESC, ('email:' || search_rows.email_id) DESC LIMIT ?`
     : `${pageSelect} ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC LIMIT ?`;
@@ -573,10 +590,11 @@ export async function loadWorkspaceSnapshot(
     search: normalized.query ? parseMailSearchQuery(normalized.query) : null,
     filter: normalized.filter ?? 'all',
     identityFilter,
-    deliveryStatus: normalized.deliveryStatus ?? null
+    deliveryStatus: normalized.deliveryStatus ?? null,
+    labelId: normalized.labelId ?? null
   }, metrics);
   const mailbox: MailboxState = { inbox: [], sent: [], drafts: [] };
-  if (persistedFolder !== 'starred') mailbox[persistedFolder] = page.messages;
+  if (persistedFolder !== 'starred' && persistedFolder !== 'label') mailbox[persistedFolder] = page.messages;
   const mailboxPages: Partial<Record<MailboxSection, MailboxPage>> = { [activeFolder]: page };
   const snapshot: WorkspaceSnapshot = {
     profile: workspace.profile,

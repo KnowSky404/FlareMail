@@ -29,6 +29,7 @@
     onReplyAll,
     onForward,
     onToggleStar,
+    onManageLabels,
     onToggleRead,
     onRemove,
     onRestore,
@@ -69,6 +70,7 @@
     onReplyAll?: (message: MailMessage) => void;
     onForward?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
+    onManageLabels?: (message: MailMessage) => void;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
     onRestore?: (message: MailMessage) => void | Promise<void>;
@@ -130,6 +132,7 @@
     {onReply}
     {onReplyAll}
     {onToggleStar}
+    {onManageLabels}
     {onToggleRead}
     {onRemove}
     {onRestore}

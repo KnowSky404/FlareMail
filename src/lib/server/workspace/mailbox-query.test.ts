@@ -58,6 +58,17 @@ describe('mailbox query contract', () => {
     expect(() => parseMailboxQuery(new URLSearchParams({ folder: 'starred', filter: 'all', cursor }))).toThrow(ApiError);
   });
 
+  test('requires a label ID and binds pagination to that exact label', () => {
+    expect(() => parseMailboxQuery(new URLSearchParams('folder=label'))).toThrow(ApiError);
+    expect(() => parseMailboxQuery(new URLSearchParams('folder=inbox&label=label-a'))).toThrow(ApiError);
+    const cursor = encodeMailboxCursor({
+      folder: 'label', section: 'label', labelId: 'label-a', timestamp: '2026-08-13T12:00:00.000Z',
+      id: 'email:1', query: '', filter: 'all', deliveryStatus: null
+    });
+    expect(parseMailboxQuery(new URLSearchParams({ folder: 'label', label: 'label-a', cursor })).cursor?.id).toBe('email:1');
+    expect(() => parseMailboxQuery(new URLSearchParams({ folder: 'label', label: 'label-b', cursor }))).toThrow(ApiError);
+  });
+
   test('rejects a cursor reused with different search or filters', () => {
     const cursor = encodeMailboxCursor({
       folder: 'sent', timestamp: '2026-08-13T12:00:00.000Z', id: 'email:1',

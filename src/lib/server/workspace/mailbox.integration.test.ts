@@ -7,6 +7,7 @@ import { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox } from '
 import { parseMailboxQuery } from './mailbox-query';
 import type { WorkspaceContext } from './shared';
 import { parseMailSearchQuery } from '$lib/domain/mail';
+import { createMailLabel, deleteMailLabel, listMailLabels, renameMailLabel, setMailMessageLabel } from '$lib/server/db/labels';
 
 class TestStatement {
   private bindings: unknown[] = [];
@@ -194,6 +195,48 @@ function insertCrossAddressThread(database: Database) {
 }
 
 describe('D1 mailbox pages', () => {
+  test('persists Owner labels across all mail sources with bounded cross-folder pagination', async () => {
+    const { env, workspace, database } = fixture();
+    database.query("INSERT INTO workspace_users (id, name, role) VALUES ('user-1', 'Ada', 'owner'), ('user-2', 'Bob', 'owner')").run();
+    const label = await createMailLabel(env.DB, workspace.userId, '  Project   Alpha  ');
+    expect(label.name).toBe('Project Alpha');
+    expect((await listMailLabels(env.DB, workspace.userId)).map((item) => item.id)).toEqual([label.id]);
+    expect(listMailLabels(env.DB, 'user-2')).resolves.toEqual([]);
+    expect(createMailLabel(env.DB, workspace.userId, 'project alpha')).rejects.toMatchObject({ status: 409 });
+    expect(setMailMessageLabel(env.DB, 'user-2', label.id, { kind: 'workspace', id: 'inbox-z' }, true)).rejects.toMatchObject({ status: 404 });
+    for (const target of [
+      { kind: 'workspace', id: 'inbox-z' },
+      { kind: 'workspace', id: 'sent-1' },
+      { kind: 'draft', id: 'draft-1' },
+      { kind: 'inbound', id: 'incoming-1' }
+    ] as const) {
+      expect((await setMailMessageLabel(env.DB, workspace.userId, label.id, target, true))[0]).toEqual(label);
+    }
+    expect(setMailMessageLabel(env.DB, workspace.userId, label.id, { kind: 'workspace', id: 'missing' }, true)).rejects.toMatchObject({ status: 404 });
+    const first = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams({ folder: 'label', label: label.id, limit: '2' })));
+    expect(first.messages.map((item) => item.id)).toEqual(['email:incoming-1', 'inbox-z']);
+    expect(first.messages[0]?.userLabels).toEqual([label]);
+    expect(first.searchTotal).toBe(4);
+    expect(first.hasMore).toBe(true);
+    const second = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams({ folder: 'label', label: label.id, limit: '2', cursor: first.nextCursor! })));
+    expect(second.messages.map((item) => item.id)).toEqual(['draft-1', 'sent-1']);
+    expect(second.hasMore).toBe(false);
+    expect(parseMailboxQuery.bind(null, new URLSearchParams({ folder: 'label', label: 'other-label', cursor: first.nextCursor! }))).toThrow();
+    database.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, deleted_at)
+      VALUES ('state-1', 'user-1', 'incoming-1', '2026-08-14T00:00:00.000Z')`).run();
+    expect(setMailMessageLabel(env.DB, workspace.userId, label.id, { kind: 'inbound', id: 'incoming-1' }, true))
+      .rejects.toMatchObject({ status: 404 });
+    expect((await renameMailLabel(env.DB, workspace.userId, label.id, 'Project Beta')).name).toBe('Project Beta');
+    expect((await setMailMessageLabel(env.DB, workspace.userId, label.id, { kind: 'draft', id: 'draft-1' }, false))).toEqual([]);
+    await deleteMailLabel(env.DB, workspace.userId, label.id);
+    expect(await listMailLabels(env.DB, workspace.userId)).toEqual([]);
+    expect(database.query('SELECT COUNT(*) AS total FROM mail_message_labels').get()).toEqual({ total: 0 });
+    const secondLabel = await createMailLabel(env.DB, workspace.userId, 'Cleanup');
+    await setMailMessageLabel(env.DB, workspace.userId, secondLabel.id, { kind: 'workspace', id: 'inbox-a' }, true);
+    database.query("DELETE FROM workspace_users WHERE id = 'user-1'").run();
+    expect(database.query('SELECT COUNT(*) AS total FROM mail_labels').get()).toEqual({ total: 0 });
+    expect(database.query('SELECT COUNT(*) AS total FROM mail_message_labels').get()).toEqual({ total: 0 });
+  });
   test('paginates global Starred across inbound, archived, sent and drafts without leaking other owners', async () => {
     const { env, workspace, database } = fixture();
     database.exec(`

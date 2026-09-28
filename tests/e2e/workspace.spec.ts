@@ -9,6 +9,47 @@ test.describe.configure({ mode: 'serial' });
 
 const webhookSecretBytes = new TextEncoder().encode('FlareMail E2E webhook secret 2026');
 
+test('creates, applies, navigates, renames and deletes a persistent label', async ({ page, consoleErrors }) => {
+  await login(page);
+  const mobile = page.viewportSize()!.width < 901;
+  if (mobile) await page.getByRole('button', { name: '打开导航' }).click();
+  await page.getByRole('button', { name: '新建标签' }).click();
+  await page.getByRole('dialog', { name: '新建标签' }).getByLabel('标签名称').fill('E2E Follow Up');
+  await page.getByRole('dialog', { name: '新建标签' }).getByRole('button', { name: '保存' }).click();
+  await expect(page.getByRole('dialog', { name: '新建标签' })).toBeHidden();
+
+  const inboxItem = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  await expect(inboxItem).toBeVisible();
+  await inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u }).click();
+  await page.getByRole('button', { name: '管理标签' }).click();
+  const manager = page.getByRole('dialog', { name: '管理标签' });
+  await manager.getByRole('checkbox', { name: 'E2E Follow Up' }).check();
+  await expect(manager.getByRole('checkbox', { name: 'E2E Follow Up' })).toBeChecked();
+  await manager.getByRole('button', { name: '关闭' }).click();
+
+  if (mobile) {
+    await page.getByRole('button', { name: '返回邮件列表' }).click();
+    await page.getByRole('button', { name: '打开导航' }).click();
+  }
+  await page.getByRole('button', { name: 'E2E Follow Up', exact: true }).click();
+  await expect(page).toHaveURL(/folder=label/u);
+  await expect(page.getByRole('heading', { name: 'E2E Follow Up' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'E2E Follow Up' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+
+  await page.getByRole('button', { name: '重命名标签' }).click();
+  await page.getByRole('dialog', { name: '重命名标签' }).getByLabel('标签名称').fill('E2E Resolved');
+  await page.getByRole('dialog', { name: '重命名标签' }).getByRole('button', { name: '保存' }).click();
+  await expect(page.getByRole('heading', { name: 'E2E Resolved' })).toBeVisible();
+  await page.getByRole('button', { name: '删除标签' }).click();
+  await page.getByRole('dialog', { name: '删除标签' }).getByRole('button', { name: '删除标签' }).click();
+  await expect(page).toHaveURL(/folder=inbox/u);
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('shows a server-paginated global Starred view across inbox and sent', async ({ page, consoleErrors }) => {
   await login(page);
   for (const id of ['e2e-inbox-message', 'e2e-sent-message']) {

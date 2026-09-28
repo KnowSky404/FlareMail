@@ -18,6 +18,8 @@ const REQUIRED_TABLES = [
   'mail_addresses',
   'workspace_messages',
   'workspace_drafts',
+  'mail_labels',
+  'mail_message_labels',
   'workspace_email_states',
   'workspace_settings',
   'workspace_outbound_statuses',

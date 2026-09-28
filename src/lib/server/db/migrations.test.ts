@@ -128,7 +128,8 @@ describe('versioned D1 migrations', () => {
       '0023_owner_principal_auth.sql',
       '0024_managed_mail_identities.sql',
       '0025_mail_domain_health_refresh.sql',
-      '0026_mail_address_delete_policy.sql'
+      '0026_mail_address_delete_policy.sql',
+      '0027_persistent_mail_labels.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -155,6 +156,12 @@ describe('versioned D1 migrations', () => {
         'signature', 'incoming_sequence', 'created_at', 'updated_at'
       ])
     );
+    expect(tableColumns(db, 'mail_labels')).toEqual(new Set([
+      'id', 'owner_user_id', 'name', 'name_key', 'created_at', 'updated_at'
+    ]));
+    expect(tableColumns(db, 'mail_message_labels')).toEqual(new Set([
+      'owner_user_id', 'label_id', 'message_kind', 'message_id', 'created_at'
+    ]));
     expect(tableColumns(db, 'workspace_owner')).toEqual(new Set(['singleton', 'user_id']));
     expect(tableColumns(db, 'workspace_auth_credentials')).toEqual(new Set(['user_id', 'username', 'credential_hash', 'updated_at']));
     expect(tableColumns(db, 'mail_domains')).toEqual(new Set([
@@ -256,7 +263,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 26 }
+      { schema_name: 'flaremail', schema_version: 27 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())

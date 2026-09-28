@@ -19,6 +19,8 @@ import type {
   MailboxMutationResult,
   MailboxMetricsScope,
   MailMessage,
+  MailUserLabel,
+  MailLabelMessageKind,
   MailboxPage,
   MessagePatch,
   TrashListResult,
@@ -226,6 +228,28 @@ export function fetchDraftDetail(draftId: string, signal?: AbortSignal) {
 
 export function fetchMailboxPage(params: URLSearchParams, signal?: AbortSignal) {
   return requestJson<{ page: MailboxPage }>(`/api/workspace/mailbox?${params}`, { signal });
+}
+
+export function fetchMailLabels(signal?: AbortSignal) {
+  return requestJson<{ labels: MailUserLabel[] }>('/api/workspace/labels', { signal });
+}
+
+export function createMailLabel(name: string) {
+  return requestJson<{ label: MailUserLabel }>('/api/workspace/labels', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function renameMailLabel(id: string, name: string) {
+  return requestJson<{ label: MailUserLabel }>(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+}
+
+export function deleteMailLabel(id: string) {
+  return requestJson<{ deleted: boolean }>(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function setMailMessageLabel(labelId: string, kind: MailLabelMessageKind, id: string, enabled: boolean) {
+  return requestJson<{ labels: MailUserLabel[] }>(`/api/workspace/labels/${encodeURIComponent(labelId)}/messages`, {
+    method: enabled ? 'PUT' : 'DELETE', body: JSON.stringify({ kind, id })
+  });
 }
 
 export function createSession(input: LoginInput) {

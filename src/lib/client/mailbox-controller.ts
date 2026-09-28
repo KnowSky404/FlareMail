@@ -139,7 +139,7 @@ export function selectNextMessage(
     return list.find((message) => message.id === preferredMessageId)?.id ?? list[0]?.id ?? null;
   }
 
-  if (section === 'archive' || section === 'starred') return preferredMessageId;
+  if (section === 'archive' || section === 'starred' || section === 'label') return preferredMessageId;
 
   const threads = buildMailThreads(nextMailbox, section);
   const preferredThread = preferredMessageId
@@ -194,7 +194,7 @@ export function mergeMailboxPage(snapshot: MailboxSnapshot, page: MailboxPage, a
       : {}),
     messages: sortMailboxMessages([...byId.values()])
   };
-  const nextMailbox = page.folder === 'archive' || page.folder === 'starred'
+  const nextMailbox = page.folder === 'archive' || page.folder === 'starred' || page.folder === 'label'
     ? snapshot.mailbox
     : {
       ...snapshot.mailbox,
@@ -239,7 +239,7 @@ export function mergeMessageDelta(
   const pageMatchesCurrentScope = !targetPage || sameIdentityFilter(targetPage.identityFilter, identityFilter);
   const query = targetPage?.query ?? (section === options.currentSection ? options.query ?? '' : '');
   const filter = targetPage?.filter ?? (section === options.currentSection ? options.filter ?? 'all' : 'all');
-  const canMergeMessage = section !== 'starred' && identityMatches && pageMatchesCurrentScope && !query.trim() && filter === 'all';
+  const canMergeMessage = section !== 'starred' && section !== 'label' && identityMatches && pageMatchesCurrentScope && !query.trim() && filter === 'all';
 
   if (options.removeDraftId && snapshot.mailboxPages?.drafts) {
     const draftsPage = snapshot.mailboxPages.drafts;
@@ -339,7 +339,7 @@ export function removeMessage(
   metrics?: WorkspaceMetrics
 ) {
   const nextMailbox = cloneMailbox(snapshot.mailbox);
-  if (folder !== 'archive' && folder !== 'starred') nextMailbox[folder] = nextMailbox[folder].filter((message) => message.id !== removedId);
+  if (folder !== 'archive' && folder !== 'starred' && folder !== 'label') nextMailbox[folder] = nextMailbox[folder].filter((message) => message.id !== removedId);
   const section = currentSection === 'profile' ? folder : currentSection;
   const currentPage = snapshot.mailboxPages?.[folder];
   return {
@@ -376,12 +376,12 @@ export class MailboxController {
     private readonly callbacks: MailboxControllerCallbacks
   ) {}
 
-  async refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null) {
+  async refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null) {
     const request = this.request.begin();
     this.callbacks.onLoading(true);
     try {
       const params = new URLSearchParams({ folder, limit: '40' });
-      this.addFilters(params, query, filter, identityFilter);
+      this.addFilters(params, query, filter, identityFilter, labelId);
       const result = await this.fetchPage(params, request.signal);
       if (request.isCurrent()) {
         this.callbacks.onPage(result.page, false);
@@ -395,7 +395,7 @@ export class MailboxController {
     return false;
   }
 
-  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null) {
+  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null) {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return;
     const request = this.request.begin();
     this.callbacks.onLoading(true);
@@ -405,7 +405,7 @@ export class MailboxController {
         cursor: currentPage.nextCursor,
         limit: String(currentPage.limit)
       });
-      this.addFilters(params, query, filter, identityFilter);
+      this.addFilters(params, query, filter, identityFilter, labelId);
       const result = await this.fetchPage(params, request.signal);
       if (request.isCurrent()) {
         this.callbacks.onPage(result.page, true);
@@ -423,9 +423,10 @@ export class MailboxController {
     this.request.cancel();
   }
 
-  private addFilters(params: URLSearchParams, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null) {
+  private addFilters(params: URLSearchParams, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null) {
     if (query.trim()) params.set('q', query.trim());
     if (filter !== 'all') params.set('filter', filter);
     if (identityFilter) params.set('identity', `${identityFilter.kind}:${identityFilter.id}`);
+    if (labelId) params.set('label', labelId);
   }
 }

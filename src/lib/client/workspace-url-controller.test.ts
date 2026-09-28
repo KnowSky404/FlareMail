@@ -4,7 +4,7 @@ import { readWorkspaceUrl, updateWorkspaceUrl } from './workspace-url-controller
 describe('workspace URL controller', () => {
   test('normalizes invalid state without dropping unrelated parameters', () => {
     const url = new URL('https://flaremail.example/?folder=unknown&q=123456789&filter=bad&keep=yes');
-    expect(readWorkspaceUrl(url)).toEqual({ section: 'inbox', managementView: 'settings', managementDomainId: null, query: '123456789', filter: 'all', identityFilter: null, messageId: null });
+    expect(readWorkspaceUrl(url)).toEqual({ section: 'inbox', managementView: 'settings', managementDomainId: null, query: '123456789', filter: 'all', identityFilter: null, messageId: null, labelId: null });
     const next = updateWorkspaceUrl(url, { section: 'profile', query: '', filter: 'all', messageId: null });
     expect(next.toString()).toBe('https://flaremail.example/?folder=settings&keep=yes');
   });
@@ -18,10 +18,10 @@ describe('workspace URL controller', () => {
       messageId: 'message-1'
     });
     expect(readWorkspaceUrl(next)).toEqual({
-      section: 'sent', managementView: 'settings', managementDomainId: null, query: 'invoice', filter: 'starred', identityFilter: { kind: 'address', id: 'address-1' }, messageId: 'message-1'
+      section: 'sent', managementView: 'settings', managementDomainId: null, query: 'invoice', filter: 'starred', identityFilter: { kind: 'address', id: 'address-1' }, messageId: 'message-1', labelId: null
     });
     expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=trash&q=invoice&filter=starred&identity=address:address-1')))
-      .toEqual({ section: 'trash', managementView: 'settings', managementDomainId: null, query: '', filter: 'all', identityFilter: null, messageId: null });
+      .toEqual({ section: 'trash', managementView: 'settings', managementDomainId: null, query: '', filter: 'all', identityFilter: null, messageId: null, labelId: null });
   });
 
   test('preserves a global Starred deep link and its address scope', () => {

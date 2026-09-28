@@ -2,7 +2,7 @@
   import { goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, untrack } from 'svelte';
-  import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Star, Trash2 } from '@lucide/svelte';
+  import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Star, Trash2, Tag } from '@lucide/svelte';
   import type { PageData } from './$types';
   import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
   import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
@@ -79,7 +79,12 @@
     submitMessage,
     updateMessageFlags,
     updateProfile,
-    mutateMailbox
+    mutateMailbox,
+    fetchMailLabels,
+    createMailLabel,
+    renameMailLabel,
+    deleteMailLabel,
+    setMailMessageLabel
   } from '$lib/client/workspace-api';
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
@@ -117,6 +122,8 @@
     type MailboxSection,
     type MailboxIdentityFilter,
     type MailMessage,
+    type MailUserLabel,
+    type MailLabelMessageKind,
     type MailboxState,
     type MailboxPage,
     type MailThread,
@@ -173,6 +180,13 @@
   let trashError = $state('');
   let emptyTrashConfirmOpen = $state(false);
   let activeSection = $state<AppSection>('inbox');
+  let userLabels = $state<MailUserLabel[]>([]);
+  let activeLabelId = $state<string | null>(null);
+  let labelEditorMode = $state<'create' | 'rename' | null>(null);
+  let labelEditorName = $state('');
+  let labelActionPending = $state(false);
+  let labelTargetMessage = $state<MailMessage | null>(null);
+  let deleteLabelConfirmOpen = $state(false);
   let managementView = $state<WorkspaceUrlState['managementView']>('settings');
   let createAddressDomainId = $state('');
   let selectedMessageId = $state<string | null>(null);
@@ -253,6 +267,7 @@
     workspaceBodyPendingId = snapshot.pendingId;
   }, { formatError: displayError });
   const shortcuts = new WorkspaceShortcutController();
+  const labelRequest = new LatestRequest();
 
   function replySource(message: MailMessage): MailMessage {
     if (!isInboundMessageId(message.id)) return message;
@@ -323,6 +338,7 @@
     composeClosePending = false;
     clearMailboxRefreshTimer();
     mailboxController.cancel();
+    labelRequest.cancel();
     trashController.cancel();
     targetMessageRequest.cancel();
     inboundDetailCache.cancel();
@@ -339,9 +355,11 @@
   const urlFilter = $derived(urlState.filter);
   const urlIdentityFilter = $derived(urlState.identityFilter);
   const urlMessageId = $derived(urlState.messageId);
+  const urlLabelId = $derived(urlState.labelId);
 
   $effect(() => {
     activeSection = urlSection;
+    activeLabelId = urlLabelId;
     managementView = urlManagementView;
     createAddressDomainId = urlManagementDomainId ?? '';
     searchQuery = urlQuery;
@@ -425,7 +443,7 @@
       ? trashItems.map((item) => item.message)
       : activeSection === 'drafts'
       ? mailbox.drafts
-      : activeSection === 'archive' || activeSection === 'starred'
+      : activeSection === 'archive' || activeSection === 'starred' || activeSection === 'label'
         ? mailboxPages?.[activeSection]?.messages ?? []
         : []
   );
@@ -456,7 +474,7 @@
       return matchesFilter;
     })
   );
-  const bulkSelectableIds = $derived.by(() => activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile' || activeSection === 'starred'
+  const bulkSelectableIds = $derived.by(() => activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile' || activeSection === 'starred' || activeSection === 'label'
     ? []
     : visibleThreads.length
       ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
@@ -472,7 +490,7 @@
     if (bulkSelectInput) bulkSelectInput.indeterminate = bulkSomeSelected;
   });
   const selectedThread = $derived.by(() => {
-    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile' || activeSection === 'starred') {
+    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile' || activeSection === 'starred' || activeSection === 'label') {
       return null;
     }
 
@@ -487,7 +505,7 @@
   });
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
-    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred') {
+    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred' || activeSection === 'label') {
       const list = visibleMessages;
 
       if (!list.length) {
@@ -637,6 +655,11 @@
   };
 
   function applyMessageDelta(result: MessageDelta, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
+    if (result.message.userLabels === undefined) {
+      const previous = [...mailbox.inbox, ...mailbox.sent, ...mailbox.drafts, ...Object.values(mailboxPages ?? {}).flatMap((page) => page?.messages ?? [])]
+        .find((message) => message.id === result.message.id);
+      if (previous?.userLabels) result = { ...result, message: { ...result.message, userLabels: previous.userLabels } };
+    }
     const merged = mergeMessageDelta(
       { mailbox, mailboxPages, metrics },
       result,
@@ -784,6 +807,7 @@
     metrics = next.metrics;
     mailboxPages = next.mailboxPages;
     activeSection = next.activeSection;
+    activeLabelId = next.activeSection === 'label' ? urlLabelId : null;
     selectedMessageId = next.selectedMessageId;
     selectedMessageIds = next.selectedMessageIds;
     searchQuery = next.searchQuery;
@@ -792,6 +816,7 @@
     mailIdentityOptions = workspace.mailIdentityOptions;
     mobileDetailOpen = false;
     authenticated = true;
+    void reloadMailLabels();
     workspaceSnapshotController.noteUser(workspace.profile.email);
 
     if (options?.syncUrl) {
@@ -811,11 +836,14 @@
   function resetWorkspace() {
     const initial = createEmptyWorkspaceViewState();
     mailboxController.cancel();
+    labelRequest.cancel();
     trashController.cancel();
     authenticated = false;
     profile = initial.profile;
     mailbox = initial.mailbox;
     activeSection = initial.activeSection;
+    activeLabelId = null;
+    userLabels = [];
     selectedMessageId = initial.selectedMessageId;
     selectedMessageIds = initial.selectedMessageIds;
     mailboxPages = initial.mailboxPages;
@@ -898,6 +926,7 @@
       filter?: MailFilter;
       identityFilter?: MailboxIdentityFilter | null;
       messageId?: string | null;
+      labelId?: string | null;
     },
     replaceHistory = false
   ) {
@@ -910,10 +939,15 @@
   }
 
   function setSection(section: AppSection, syncUrl = true) {
+    if (section === 'label') {
+      if (activeLabelId) selectLabel(activeLabelId);
+      return;
+    }
     clearMailboxRefreshTimer();
     selectedMessageIds = [];
     bulkThreadScope = 'selected';
     activeSection = section;
+    activeLabelId = null;
     managementView = 'settings';
     searchQuery = '';
     mailFilter = 'all';
@@ -961,6 +995,93 @@
     if (authenticated && !authExpired && (section === 'drafts' || section === 'starred')) void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
   }
 
+  async function reloadMailLabels() {
+    if (!authenticated || authExpired) return;
+    const request = labelRequest.begin();
+    try {
+      const result = await fetchMailLabels(request.signal);
+      if (!request.isCurrent() || !authenticated || authExpired) return;
+      userLabels = result.labels;
+      if (activeSection === 'label' && activeLabelId && !userLabels.some((label) => label.id === activeLabelId)) {
+        setSection('inbox');
+      }
+    } catch (error) {
+      if (request.signal.aborted) return;
+      notifyError(error, t('label.loadFailed'));
+    }
+  }
+
+  function selectLabel(id: string) {
+    if (!userLabels.some((label) => label.id === id)) return;
+    clearMailboxRefreshTimer();
+    activeLabelId = id;
+    activeSection = 'label';
+    selectedMessageId = null;
+    selectedMessageIds = [];
+    searchQuery = '';
+    mailFilter = 'all';
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ section: 'label', labelId: id, query: '', filter: 'all', messageId: null });
+    if (authenticated && !authExpired) void mailboxController.refresh('label', '', 'all', mailIdentityFilter, id);
+  }
+
+  function editLabel(mode: 'create' | 'rename') {
+    labelEditorMode = mode;
+    labelEditorName = mode === 'rename' ? userLabels.find((label) => label.id === activeLabelId)?.name ?? '' : '';
+  }
+
+  async function saveLabel() {
+    if (labelActionPending) return;
+    labelActionPending = true;
+    try {
+      const result = labelEditorMode === 'rename' && activeLabelId
+        ? await renameMailLabel(activeLabelId, labelEditorName)
+        : await createMailLabel(labelEditorName);
+      labelEditorMode = null;
+      await reloadMailLabels();
+      if (activeSection === 'label' && activeLabelId === result.label.id) void refreshWorkspace(false);
+    } catch (error) {
+      notifyError(error, t('label.saveFailed'));
+    } finally {
+      labelActionPending = false;
+    }
+  }
+
+  async function removeActiveLabel() {
+    if (!activeLabelId || labelActionPending) return;
+    labelActionPending = true;
+    try {
+      await deleteMailLabel(activeLabelId);
+      deleteLabelConfirmOpen = false;
+      setSection('inbox');
+      await reloadMailLabels();
+    } catch (error) {
+      notifyError(error, t('label.deleteFailed'));
+    } finally {
+      labelActionPending = false;
+    }
+  }
+
+  async function toggleMessageLabel(message: MailMessage, labelId: string) {
+    if (labelActionPending) return;
+    const enabled = !(message.userLabels ?? []).some((label) => label.id === labelId);
+    const kind: MailLabelMessageKind = message.source === 'inbound' ? 'inbound' : message.folder === 'drafts' ? 'draft' : 'workspace';
+    const id = message.source === 'inbound' ? message.id.slice('email:'.length) : message.id;
+    labelActionPending = true;
+    try {
+      const result = await setMailMessageLabel(labelId, kind, id, enabled);
+      const update = (items: MailMessage[]) => items.map((item) => item.id === message.id ? { ...item, userLabels: result.labels } : item);
+      mailbox = { inbox: update(mailbox.inbox), sent: update(mailbox.sent), drafts: update(mailbox.drafts) };
+      if (mailboxPages) mailboxPages = Object.fromEntries(Object.entries(mailboxPages).map(([section, page]) => [section, page ? { ...page, messages: update(page.messages) } : page])) as typeof mailboxPages;
+      labelTargetMessage = { ...message, userLabels: result.labels };
+      if (activeSection === 'label') void refreshWorkspace(false);
+    } catch (error) {
+      notifyError(error, t('label.applyFailed'));
+    } finally {
+      labelActionPending = false;
+    }
+  }
+
   function setManagementView(view: 'domains' | 'addresses', domainId = '') {
     setSection('profile', false);
     managementView = view;
@@ -989,7 +1110,7 @@
     mailboxRefreshTimer = setTimeout(() => {
       mailboxRefreshTimer = undefined;
       if (authenticated && !authExpired && activeSection === folder) {
-        void mailboxController.refresh(folder, query, filter, identityFilter);
+        void mailboxController.refresh(folder, query, filter, identityFilter, folder === 'label' ? activeLabelId : null);
       }
     }, delayMs);
   }
@@ -1050,7 +1171,8 @@
       activeSection === 'profile' ? 'inbox' : activeSection,
       searchQuery,
       mailFilter,
-      mailIdentityFilter
+      mailIdentityFilter,
+      activeSection === 'label' ? activeLabelId : null
     );
     if (refreshed) {
       runtimeOperationError = false;
@@ -1241,7 +1363,7 @@
 
   async function loadMoreMailbox() {
     if (!authenticated || authExpired || activeSection === 'profile' || activeSection === 'trash') return;
-    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter);
+    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter, activeSection === 'label' ? activeLabelId : null);
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
@@ -2236,6 +2358,8 @@
         <MobileNavigation
           activeSection={activeSection}
           {managementView}
+          {userLabels}
+          {activeLabelId}
           draftCount={metrics.draftsCount}
           inboxCount={metrics.inboxCount}
           starredCount={metrics.starredCount}
@@ -2245,6 +2369,8 @@
             openCompose('new');
           }}
           onSelectSection={setSection}
+          onSelectLabel={selectLabel}
+          onCreateLabel={() => editLabel('create')}
           onSelectManagementView={setManagementView}
         />
       </div>
@@ -2254,6 +2380,8 @@
           <AppSidebar
             activeSection={activeSection}
             {managementView}
+            labels={userLabels}
+            {activeLabelId}
             collapsed={sidebarCollapsed}
             draftCount={metrics.draftsCount}
             inboxCount={metrics.inboxCount}
@@ -2265,6 +2393,8 @@
               openCompose('new');
             }}
             onSelectSection={setSection}
+            onSelectLabel={selectLabel}
+            onCreateLabel={() => editLabel('create')}
             onSelectManagementView={setManagementView}
             onToggleCollapsed={toggleSidebar}
           />
@@ -2317,11 +2447,13 @@
                 <section class="mail-list-panel" aria-label={t('mail.listLabel', { section: t('shell.mailNavigation') })}>
                   <FolderHeader
                     activeSection={activeSection}
-                  count={searchQuery.trim() && activeSection !== 'trash'
+                    title={activeSection === 'label' ? userLabels.find((label) => label.id === activeLabelId)?.name : undefined}
+                    count={searchQuery.trim() && activeSection !== 'trash'
                       ? mailboxPages?.[activeSection]?.searchTotal ?? 0
                       : activeSection === 'inbox' ? metrics.inboxCount
                         : activeSection === 'archive' ? metrics.archiveCount
                           : activeSection === 'starred' ? metrics.starredCount
+                            : activeSection === 'label' ? mailboxPages?.label?.searchTotal ?? activeMessages.length
                           : activeSection === 'sent' ? metrics.sentCount
                             : activeSection === 'drafts' ? metrics.draftsCount : activeMessages.length}
                     unreadCount={activeSection === 'inbox' ? unreadCount : 0}
@@ -2335,12 +2467,19 @@
                     onIdentityFilterChange={handleIdentityFilterChange}
                     onRefresh={refreshWorkspace}
                   />
+                  {#if activeSection === 'label'}
+                    <div class="flex items-center gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-1.5">
+                      <Tag class="size-3.5 text-[var(--fm-text-muted)]" aria-hidden="true" />
+                      <button class="fm-touch-target rounded px-2 text-xs text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={() => editLabel('rename')}>{t('label.rename')}</button>
+                      <button class="fm-touch-target rounded px-2 text-xs text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" onclick={() => (deleteLabelConfirmOpen = true)}>{t('label.delete')}</button>
+                    </div>
+                  {/if}
                   {#if activeSection === 'trash'}
                     <div class="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
                       <span class="text-xs text-[var(--fm-text-muted)]">{t('mail.trashRetention')}</span>
                       <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending || trashItems.length === 0} onclick={() => (emptyTrashConfirmOpen = true)}>{t('mail.emptyTrash')}</button>
                     </div>
-                  {:else if activeSection !== 'drafts' && activeSection !== 'starred'}
+                  {:else if activeSection !== 'drafts' && activeSection !== 'starred' && activeSection !== 'label'}
                     <div class="bulk-toolbar" aria-label={t('mail.bulkActions')}>
                       <label class="bulk-select-control fm-touch-target" title={bulkAllSelected ? t('mail.clearSelection') : t('mail.selectPage')}>
                         <input
@@ -2417,7 +2556,7 @@
                     onClearFilters={clearMailFilters}
                     onRefresh={refreshWorkspace}
                     onLoadMore={loadMoreMailbox}
-                    selectable={activeSection !== 'drafts' && activeSection !== 'trash' && activeSection !== 'starred'}
+                    selectable={activeSection !== 'drafts' && activeSection !== 'trash' && activeSection !== 'starred' && activeSection !== 'label'}
                     selectedMessageIds={selectedMessageIds}
                     onToggleSelect={toggleBulkSelection}
                   />
@@ -2472,6 +2611,7 @@
                     onSelectThreadMessage={handleSelectMessage}
                     onToggleRead={handleToggleRead}
                     onToggleStar={handleToggleStar}
+                    onManageLabels={(message) => (labelTargetMessage = message)}
                     onOpenReader={openReader}
                     standaloneHref={selectedMessage ? standaloneMessageHref(selectedMessage) : null}
                     bodyView={selectedBodyView}
@@ -2523,6 +2663,7 @@
           onSelectThreadMessage={handleSelectMessage}
           onToggleRead={handleToggleRead}
           onToggleStar={handleToggleStar}
+          onManageLabels={(message) => (labelTargetMessage = message)}
           onCloseReader={() => (readerOpen = false)}
           bodyView={selectedBodyView}
           allowRemoteImages={selectedRemoteImagesAllowed}
@@ -2589,6 +2730,32 @@
         onSend={sendMessage}
       />
     {/if}
+
+    <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} onClose={() => (labelEditorMode = null)}>
+      <form onsubmit={(event) => { event.preventDefault(); void saveLabel(); }}>
+        <label class="grid gap-1 text-sm text-[var(--fm-text)]" for="mail-label-name">{t('label.name')}</label>
+        <input id="mail-label-name" class="mt-1 w-full rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 py-2 text-sm text-[var(--fm-text)]" bind:value={labelEditorName} maxlength="48" required />
+        <div class="mt-4 flex justify-end gap-2"><button type="button" class="fm-touch-target rounded px-3 text-sm" onclick={() => (labelEditorMode = null)}>{t('common.cancel')}</button><button type="submit" class="fm-touch-target rounded bg-[var(--fm-primary)] px-4 text-sm font-medium text-[var(--fm-text-inverse)]" disabled={labelActionPending}>{t('label.save')}</button></div>
+      </form>
+    </Dialog>
+
+    <Dialog id="message-labels" open={labelTargetMessage !== null} title={t('label.apply')} onClose={() => (labelTargetMessage = null)}>
+      {#if labelTargetMessage}
+        <p class="mb-3 truncate text-xs text-[var(--fm-text-muted)]">{labelTargetMessage.subject || t('mail.noSubject')}</p>
+        {#if userLabels.length === 0}<p class="text-sm text-[var(--fm-text-muted)]">{t('label.empty')}</p>{/if}
+        <div class="grid gap-1">
+          {#each userLabels as userLabel (userLabel.id)}
+            <label class="fm-touch-target flex items-center gap-3 rounded-[var(--radius-md)] px-2 text-sm text-[var(--fm-text)] hover:bg-[var(--fm-surface-hover)]">
+              <input type="checkbox" checked={(labelTargetMessage.userLabels ?? []).some((item) => item.id === userLabel.id)} disabled={labelActionPending} onchange={() => { if (labelTargetMessage) void toggleMessageLabel(labelTargetMessage, userLabel.id); }} />
+              <Tag class="size-4 text-[var(--fm-text-muted)]" aria-hidden="true" />{userLabel.name}
+            </label>
+          {/each}
+        </div>
+        <button type="button" class="fm-touch-target mt-3 text-sm text-[var(--fm-primary)]" onclick={() => { labelTargetMessage = null; editLabel('create'); }}>{t('label.create')}</button>
+      {/if}
+    </Dialog>
+
+    <ConfirmDialog id="delete-label-confirm" open={deleteLabelConfirmOpen} title={t('label.delete')} description={t('label.deleteDescription')} confirmLabel={t('label.delete')} pending={labelActionPending} onCancel={() => (deleteLabelConfirmOpen = false)} onConfirm={removeActiveLabel} />
 
     <Dialog
       id="shortcut-dialog"

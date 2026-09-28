@@ -38,7 +38,7 @@ export function buildD1LikeSearchPattern(query: string): string {
 
 export interface MailboxCursor {
   version: 2;
-  folder: MailFolder | 'starred';
+  folder: MailFolder | 'starred' | 'label';
   section?: MailboxSection;
   timestamp: string;
   id: string;
@@ -46,6 +46,7 @@ export interface MailboxCursor {
   filter: MailboxFilter;
   identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
+  labelId?: string | null;
 }
 
 export interface MailboxCursorContext {
@@ -53,10 +54,11 @@ export interface MailboxCursorContext {
   filter: MailboxFilter;
   identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
+  labelId?: string | null;
 }
 
 export interface MailboxQuery {
-  folder: MailFolder | 'starred';
+  folder: MailFolder | 'starred' | 'label';
   section?: MailboxSection;
   cursor: MailboxCursor | null;
   limit: number;
@@ -65,6 +67,7 @@ export interface MailboxQuery {
   filter: MailboxFilter;
   identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
+  labelId?: string | null;
 }
 
 function parseIdentityFilter(value: string | null): MailboxIdentityFilter | null {
@@ -102,7 +105,7 @@ export function encodeMailboxCursor(cursor: Omit<MailboxCursor, 'version'>): str
 
 export function decodeMailboxCursor(
   value: string,
-  folder: MailFolder | 'starred',
+  folder: MailFolder | 'starred' | 'label',
   section: MailboxSection = folder,
   expected: MailboxCursorContext
 ): MailboxCursor {
@@ -131,7 +134,8 @@ export function decodeMailboxCursor(
       parsed.query !== expected.query ||
       parsed.filter !== expected.filter ||
       !sameIdentityFilter(parsed.identityFilter, expected.identityFilter) ||
-      parsed.deliveryStatus !== expected.deliveryStatus
+      parsed.deliveryStatus !== expected.deliveryStatus ||
+      (parsed.labelId ?? null) !== (expected.labelId ?? null)
     ) throw new Error('invalid cursor');
     return parsed as MailboxCursor;
   } catch {
@@ -144,21 +148,31 @@ export function decodeMailboxCursor(
 export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   const folderValue = params.get('folder') ?? 'inbox';
   const sectionValue = params.get('section') ?? folderValue;
-  if (folderValue !== 'archive' && folderValue !== 'starred' && !folders.has(folderValue as MailFolder)) {
+  if (folderValue !== 'archive' && folderValue !== 'starred' && folderValue !== 'label' && !folders.has(folderValue as MailFolder)) {
     throw new ApiError(400, 'INVALID_FOLDER', '邮件文件夹无效。', {
-      folder: ['仅支持 inbox、sent 或 drafts。']
+      folder: ['仅支持 inbox、sent、drafts、archive、starred 或 label。']
     });
   }
   const section = sectionValue as MailboxSection;
-  if (!['inbox', 'sent', 'drafts', 'archive', 'starred'].includes(section)) {
+  if (!['inbox', 'sent', 'drafts', 'archive', 'starred', 'label'].includes(section)) {
     throw new ApiError(400, 'INVALID_SECTION', '邮件分区无效。');
   }
-  const folder = section === 'archive' ? 'inbox' : folderValue as MailFolder | 'starred';
+  const folder = section === 'archive' ? 'inbox' : folderValue as MailFolder | 'starred' | 'label';
   if (section === 'archive' && folderValue !== 'archive' && folderValue !== 'inbox') {
     throw new ApiError(400, 'INVALID_SECTION', '归档分区必须使用 inbox 或 archive 查询。');
   }
   if ((section === 'starred') !== (folderValue === 'starred')) {
     throw new ApiError(400, 'INVALID_SECTION', '星标分区必须使用 starred 查询。');
+  }
+  if ((section === 'label') !== (folderValue === 'label')) {
+    throw new ApiError(400, 'INVALID_SECTION', '标签分区必须使用 label 查询。');
+  }
+  const labelId = params.get('label');
+  if (section === 'label' && (!labelId || !/^[A-Za-z0-9:._-]{1,128}$/u.test(labelId))) {
+    throw new ApiError(400, 'INVALID_LABEL_ID', '请选择有效标签。');
+  }
+  if (section !== 'label' && labelId !== null) {
+    throw new ApiError(400, 'INVALID_LABEL_ID', '仅标签分区支持标签筛选。');
   }
 
   const filterValue = params.get('filter') ?? 'all';
@@ -220,7 +234,8 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
       query,
       filter: filterValue as MailboxFilter,
       identityFilter,
-      deliveryStatus
+      deliveryStatus,
+      labelId
     }) : null,
     section,
     limit,
@@ -228,6 +243,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
     search,
     filter: filterValue as MailboxFilter,
     identityFilter,
-    deliveryStatus
+    deliveryStatus,
+    labelId
   };
 }

@@ -9,6 +9,7 @@ export type WorkspaceUrlState = {
   filter: MailFilter;
   identityFilter: MailboxIdentityFilter | null;
   messageId: string | null;
+  labelId: string | null;
 };
 
 export type WorkspaceUrlUpdates = {
@@ -19,11 +20,12 @@ export type WorkspaceUrlUpdates = {
   filter?: MailFilter;
   identityFilter?: MailboxIdentityFilter | null;
   messageId?: string | null;
+  labelId?: string | null;
 };
 
 export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
-  const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'starred' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
+  const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'starred' || folder === 'label' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
   const filter = url.searchParams.get('filter');
   const view = url.searchParams.get('view');
   const managementDomainId = url.searchParams.get('domain');
@@ -37,13 +39,19 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
     query: section === 'trash' || section === 'profile' ? '' : url.searchParams.get('q')?.slice(0, 200) ?? '',
     filter: section !== 'trash' && section !== 'profile' && (filter === 'unread' || filter === 'starred') ? filter : 'all',
     identityFilter: section !== 'trash' && section !== 'profile' && identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
-    messageId: section === 'profile' ? null : url.searchParams.get('message')
+    messageId: section === 'profile' ? null : url.searchParams.get('message'),
+    labelId: section === 'label' && /^[A-Za-z0-9:._-]{1,128}$/u.test(url.searchParams.get('label') ?? '') ? url.searchParams.get('label') : null
   };
 }
 
 export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
   const next = new URL(url);
   if (updates.section) next.searchParams.set('folder', updates.section === 'profile' ? 'settings' : updates.section);
+  if (updates.labelId !== undefined || updates.section !== undefined) {
+    const labelId = updates.labelId ?? (updates.section === 'label' ? readWorkspaceUrl(url).labelId : null);
+    if ((updates.section ?? readWorkspaceUrl(url).section) === 'label' && labelId) next.searchParams.set('label', labelId);
+    else next.searchParams.delete('label');
+  }
   if (updates.managementView !== undefined || updates.section !== undefined) {
     const targetSection = updates.section ?? readWorkspaceUrl(url).section;
     if (targetSection === 'profile' && updates.managementView && updates.managementView !== 'settings') {

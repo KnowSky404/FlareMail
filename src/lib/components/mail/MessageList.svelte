@@ -63,6 +63,7 @@
   const sectionLabels = $derived<Record<AppSection, string>>({
     inbox: t('shell.inbox'),
     starred: t('shell.starred'),
+    label: t('shell.labels'),
     sent: t('shell.sent'),
     drafts: t('shell.drafts'),
     archive: t('shell.archive'),
@@ -71,7 +72,7 @@
   });
 
   const sourceItems = $derived.by<ListItem[]>(() => {
-    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred' || threads.length === 0) {
+    if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred' || activeSection === 'label' || threads.length === 0) {
       return messages.map((value) => ({ kind: 'message', value }));
     }
     return threads.map((value) => ({ kind: 'thread', value }));

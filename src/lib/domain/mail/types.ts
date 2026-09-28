@@ -10,9 +10,9 @@ import type { MailAddress, MailAddressInput } from './addresses';
 
 export type MailFolder = 'inbox' | 'sent' | 'drafts';
 /** Persisted folders plus cross-folder and archive views. */
-export type MailboxSection = MailFolder | 'archive' | 'starred';
+export type MailboxSection = MailFolder | 'archive' | 'starred' | 'label';
 export type MailboxIdentityFilter = { kind: 'domain' | 'address'; id: string };
-export type MailboxMutationSection = Exclude<MailboxSection, 'drafts' | 'starred'>;
+export type MailboxMutationSection = Exclude<MailboxSection, 'drafts' | 'starred' | 'label'>;
 export type MailboxThreadScope = 'selected' | 'filtered' | 'owner';
 export interface MailboxMutationScope {
   section: MailboxMutationSection;
@@ -29,6 +29,8 @@ export interface MailboxMetricsScope {
   identityFilter: MailboxIdentityFilter | null;
 }
 export type MailSource = 'workspace' | 'inbound';
+export interface MailUserLabel { id: string; name: string; }
+export type MailLabelMessageKind = 'workspace' | 'draft' | 'inbound';
 export type MailSearchHitField = 'all' | 'from' | 'to' | 'cc' | 'subject' | 'label' | 'state' | 'attachment' | 'date' | 'status';
 
 export type MailboxMutationAction = 'archive' | 'unarchive' | 'read' | 'unread' | 'star' | 'unstar' | 'trash';
@@ -166,6 +168,8 @@ export interface MailMessage extends MailRfcHeaders {
   html?: string;
   sentAt: string;
   labels: string[];
+  /** Owner-managed labels; separate from legacy provider/system labels. */
+  userLabels?: MailUserLabel[];
   read: boolean;
   starred: boolean;
   threadKey?: string | null;
@@ -270,7 +274,9 @@ export interface MailboxPage {
   filter: MailboxFilter;
   identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
-  /** Exact match count for the first page of a server-side search. */
+  /** Required for the cross-folder label section. */
+  labelId?: string | null;
+  /** Exact match count for the first page of a search or user-label view. */
   searchTotal?: number;
   searchHitFields?: MailSearchHitField[];
   metrics?: WorkspaceMetrics;

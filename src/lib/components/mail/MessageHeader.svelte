@@ -12,6 +12,7 @@
     ReplyAll,
     RotateCcw,
     Star,
+    Tag,
     Trash2,
     X
   } from '@lucide/svelte';
@@ -41,6 +42,7 @@
     onReply,
     onReplyAll,
     onToggleStar,
+    onManageLabels,
     onToggleRead,
     onRemove,
     onRestore,
@@ -67,6 +69,7 @@
     onReply?: (message: MailMessage) => void;
     onReplyAll?: (message: MailMessage) => void;
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
+    onManageLabels?: (message: MailMessage) => void;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
     onRestore?: (message: MailMessage) => void | Promise<void>;
@@ -214,6 +217,11 @@
             <Star class="size-4" fill={message.starred ? 'currentColor' : 'none'} aria-hidden="true" />
           </IconButton>
         {/if}
+        {#if !trashMode && onManageLabels}
+          <IconButton ariaLabel={t('label.apply')} title={t('label.apply')} size="sm" onclick={() => onManageLabels?.(message)} disabled={pending}>
+            <Tag class="size-4" aria-hidden="true" />
+          </IconButton>
+        {/if}
         {#if !trashMode && onToggleRead}
           <IconButton ariaLabel={message.read ? t('mail.markUnread') : t('mail.markRead')} title={message.read ? t('mail.markUnread') : t('mail.markRead')} size="sm" class="hidden text-[var(--fm-text-muted)] sm:inline-flex" onclick={() => onToggleRead?.(message)} disabled={pending}>
             <Mail class="size-4" aria-hidden="true" />
@@ -345,6 +353,9 @@
         {#if message.labels.length}
           {#each message.labels as label}<span class="rounded-full bg-[var(--fm-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--fm-text-secondary)]">{label}</span>{/each}
         {/if}
+        {#each message.userLabels ?? [] as userLabel (userLabel.id)}
+          <span class="rounded-full border border-[var(--fm-primary)]/25 bg-[var(--fm-primary-soft)] px-2 py-0.5 text-[11px] text-[var(--fm-primary)]">{userLabel.name}</span>
+        {/each}
         {#if inboundDetail}
           <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.attachmentSummary', inboundDetail.attachments.length, { size: formatBytes(inboundDetail.rawSize) })}</span>
         {/if}

@@ -405,7 +405,14 @@ export async function sendWorkspaceMessage(
       updatedAt: timestamp
     }));
   }
-  if (draftId && capabilities.drafts) statements.push(deleteDraft(env.DB, session.userId, draftId));
+  if (draftId && capabilities.drafts) {
+    statements.push(env.DB.prepare(`INSERT OR IGNORE INTO mail_message_labels
+      (owner_user_id, label_id, message_kind, message_id, created_at)
+      SELECT owner_user_id, label_id, 'workspace', ?, created_at
+      FROM mail_message_labels WHERE owner_user_id = ? AND message_kind = 'draft' AND message_id = ?`)
+      .bind(message.id, session.userId, draftId));
+    statements.push(deleteDraft(env.DB, session.userId, draftId));
+  }
   try {
     await env.DB.batch(statements);
   } catch (error) {

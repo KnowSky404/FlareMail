@@ -17,6 +17,7 @@ export interface MailboxRepositoryQuery {
   filter: MailboxFilter;
   /** Cross-folder Starred view still applies the unread filter when selected. */
   starredOnly?: boolean;
+  labelId?: string | null;
   identityFilter?: MailboxIdentityFilter | null;
   deliveryStatus: DeliveryStatus | null;
   /** Optional thread anchors used by a bounded bulk-operation preview/resolution. */
@@ -127,6 +128,12 @@ export async function listWorkspaceMessagePage(
     conditions.push(`m.thread_key IN (${input.threadKeys.map(() => '?').join(', ')})`);
     bindings.push(...input.threadKeys);
   }
+  if (input.labelId) {
+    conditions.push(`EXISTS (SELECT 1 FROM mail_message_labels AS labeled
+      WHERE labeled.owner_user_id = m.user_id AND labeled.label_id = ?
+        AND labeled.message_kind = 'workspace' AND labeled.message_id = m.id)`);
+    bindings.push(input.labelId);
+  }
   bindings.push(input.limit);
 
   const searchJoins = input.search ? `
@@ -166,7 +173,7 @@ export async function listWorkspaceMessagePage(
     LEFT JOIN workspace_outbound_receipts AS r
       ON r.user_id = m.user_id AND r.message_id = m.id
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search || input.labelId
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.sent_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`);
@@ -215,6 +222,12 @@ export async function listDraftPage(
     conditions.push('(d.updated_at < ? OR (d.updated_at = ? AND d.id < ?))');
     bindings.push(input.timestamp, input.timestamp, input.cursorId);
   }
+  if (input.labelId) {
+    conditions.push(`EXISTS (SELECT 1 FROM mail_message_labels AS labeled
+      WHERE labeled.owner_user_id = d.user_id AND labeled.label_id = ?
+        AND labeled.message_kind = 'draft' AND labeled.message_id = d.id)`);
+    bindings.push(input.labelId);
+  }
   bindings.push(input.limit);
 
   const searchJoins = input.search ? `
@@ -235,7 +248,7 @@ export async function listDraftPage(
     FROM workspace_drafts AS d
     ${searchJoins}
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search || input.labelId
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.updated_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?`);

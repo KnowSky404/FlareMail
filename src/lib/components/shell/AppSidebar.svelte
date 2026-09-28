@@ -9,10 +9,12 @@
   import Globe2 from '@lucide/svelte/icons/globe-2';
   import AtSign from '@lucide/svelte/icons/at-sign';
   import Trash2 from '@lucide/svelte/icons/trash-2';
+  import Tag from '@lucide/svelte/icons/tag';
+  import Plus from '@lucide/svelte/icons/plus';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
   import type { LucideIcon } from '@lucide/svelte';
-  import type { MailboxSection } from '$lib/domain/mail';
+  import type { MailboxSection, MailUserLabel } from '$lib/domain/mail';
   import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -35,7 +37,11 @@
     managementView = 'settings',
     collapsed = false,
     pending = false,
+    labels = [],
+    activeLabelId = null,
     onCompose,
+    onSelectLabel,
+    onCreateLabel,
     onSelectSection,
     onSelectManagementView,
     onToggleCollapsed
@@ -49,7 +55,11 @@
     managementView?: 'settings' | 'domains' | 'addresses';
     collapsed?: boolean;
     pending?: boolean;
+    labels?: MailUserLabel[];
+    activeLabelId?: string | null;
     onCompose: () => void;
+    onSelectLabel?: (id: string) => void;
+    onCreateLabel?: () => void;
     onSelectSection: (section: AppSection) => void;
     onSelectManagementView?: (view: 'domains' | 'addresses') => void;
     onToggleCollapsed?: () => void;
@@ -110,6 +120,18 @@
     {/each}
   </nav>
 
+  <div class="label-navigation" aria-label={t('shell.labels')}>
+    <div class="label-navigation-heading">
+      <span class="label">{t('shell.labels')}</span>
+      <button type="button" class="collapse-toggle fm-touch-target" aria-label={t('label.create')} title={t('label.create')} onclick={() => onCreateLabel?.()}><Plus size={16} aria-hidden="true" /></button>
+    </div>
+    {#each labels as userLabel (userLabel.id)}
+      <button type="button" class:active={activeSection === 'label' && activeLabelId === userLabel.id} aria-current={activeSection === 'label' && activeLabelId === userLabel.id ? 'page' : undefined} aria-label={userLabel.name} title={userLabel.name} class="fm-touch-target label-item" onclick={() => onSelectLabel?.(userLabel.id)}>
+        <Tag size={17} strokeWidth={1.8} aria-hidden="true" /><span class="label">{userLabel.name}</span>
+      </button>
+    {/each}
+  </div>
+
   <p class="powered">{t('shell.powered')}</p>
 </aside>
 
@@ -143,6 +165,13 @@
   }
 
   .collapse-toggle:hover { color: var(--fm-text); background: var(--fm-surface-hover); }
+
+  .label-navigation { min-height: 0; overflow-y: auto; }
+  .label-navigation-heading { display: flex; align-items: center; justify-content: space-between; padding-left: var(--space-3); color: var(--fm-text-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+  .label-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-md); color: var(--fm-text-secondary); background: transparent; text-align: left; cursor: pointer; }
+  .label-item:hover { background: var(--fm-surface-hover); }
+  .label-item.active { color: var(--fm-primary); background: var(--fm-primary-soft); }
+  .label-item .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .compose {
     display: flex;

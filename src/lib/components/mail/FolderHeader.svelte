@@ -46,6 +46,7 @@
   const sectionLabels = $derived<Record<AppSection, string>>({
     inbox: t('shell.inbox'),
     starred: t('shell.starred'),
+    label: t('shell.labels'),
     sent: t('shell.sent'),
     drafts: t('shell.drafts'),
     archive: t('shell.archive'),

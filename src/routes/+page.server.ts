@@ -8,7 +8,7 @@ import { telegramConfigurationSummary } from '$lib/server/telegram/config';
 import { classifyRuntimeError, runtimeUnavailableState } from '$lib/server/http/api';
 import type { RuntimeState } from '$lib/domain/runtime-state';
 
-const mailFolders: MailboxSection[] = ['inbox', 'sent', 'drafts', 'archive', 'starred'];
+const mailFolders: MailboxSection[] = ['inbox', 'sent', 'drafts', 'archive', 'starred', 'label'];
 
 function safeRuntimeDiagnostics(env: CloudflareEnv) {
   const provider = env.OUTBOUND_PROVIDER?.trim().toLowerCase() ?? '';
@@ -71,7 +71,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
   try {
     const activeFolder = requestedFolder(url.searchParams.get('folder'));
     const params = new URLSearchParams({ limit: '40', folder: activeFolder });
-    for (const key of ['q', 'filter', 'status', 'identity']) {
+    for (const key of ['q', 'filter', 'status', 'identity', 'label']) {
       const value = url.searchParams.get(key);
       if (value) params.set(key, value);
     }
@@ -82,7 +82,8 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       query: activeQuery.query,
       filter: activeQuery.filter,
       identityFilter: activeQuery.identityFilter,
-      deliveryStatus: activeQuery.deliveryStatus
+      deliveryStatus: activeQuery.deliveryStatus,
+      labelId: activeQuery.labelId
     });
     const workspace = loaded.workspace;
     const latest = workspace.activePage.messages[0] ?? null;
