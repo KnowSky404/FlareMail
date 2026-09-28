@@ -611,11 +611,63 @@ test('moves a draft to trash, persists across refresh, restores, and permanently
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }) => {
+test('moves, resizes, minimizes, and maximizes the desktop compose window', async ({ page, consoleErrors }, testInfo) => {
+  test.setTimeout(90_000);
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop compose window controls are hidden on touch layouts.');
+  await login(page);
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  const composeDialog = page.getByRole('dialog', { name: '新邮件' });
+  await expect(composeDialog).toHaveAttribute('aria-modal', 'false');
+  const initial = await composeDialog.boundingBox();
+  expect(initial).toBeTruthy();
+
+  const move = composeDialog.getByRole('button', { name: '移动写信窗口' });
+  const moveBox = await move.boundingBox();
+  expect(moveBox).toBeTruthy();
+  await page.mouse.move(moveBox!.x + moveBox!.width / 2, moveBox!.y + moveBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(moveBox!.x + moveBox!.width / 2 - 96, moveBox!.y + moveBox!.height / 2 - 64);
+  await page.mouse.up();
+  const moved = await composeDialog.boundingBox();
+  expect(moved!.x).toBeLessThan(initial!.x - 50);
+  expect(moved!.y).toBeLessThan(initial!.y - 30);
+
+  const resize = composeDialog.getByRole('button', { name: '调整写信窗口大小' });
+  await resize.focus();
+  await resize.press('ArrowLeft');
+  await resize.press('ArrowUp');
+  const resized = await composeDialog.boundingBox();
+  expect(resized!.width).toBeGreaterThan(moved!.width);
+  expect(resized!.height).toBeGreaterThan(moved!.height);
+
+  await composeDialog.getByRole('button', { name: '最大化写信窗口' }).click();
+  await expect(composeDialog).toHaveAttribute('data-maximized', 'true');
+  await composeDialog.getByRole('button', { name: '还原写信窗口' }).click();
+  await expect(composeDialog).toHaveAttribute('data-maximized', 'false');
+  await composeDialog.getByRole('textbox', { name: '主题', exact: true }).fill('E2E floating compose');
+  await composeDialog.getByRole('button', { name: '最小化写信窗口' }).click();
+  await expect(composeDialog).toHaveAttribute('data-minimized', 'true');
+  await expect(composeDialog.getByRole('textbox', { name: '主题', exact: true })).toHaveCount(0);
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '草稿箱', exact: true }).click();
+  await composeDialog.getByRole('button', { name: '还原写信窗口' }).click();
+  await expect(composeDialog.getByRole('textbox', { name: '主题', exact: true })).toHaveValue('E2E floating compose');
+  expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
+  await composeDialog.getByRole('button', { name: '关闭' }).click();
+  const unsavedDialog = page.getByRole('dialog', { name: '未保存的改动' });
+  if (await unsavedDialog.isVisible().catch(() => false)) {
+    await unsavedDialog.getByRole('button', { name: '保存并关闭' }).click();
+  }
+  await expect(composeDialog).toBeHidden();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
   const composeDialog = page.getByRole('dialog', { name: '新邮件' });
   await expect(composeDialog).toBeVisible();
+  await expect(composeDialog).toHaveAttribute('aria-modal', testInfo.project.name === 'mobile' ? 'true' : 'false');
+  await page.screenshot({ path: `/tmp/flaremail-compose-floating-${testInfo.project.name}.png` });
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await page.getByLabel('收件人').fill('html-sen');
   await expect(composeDialog.getByRole('listbox', { name: '最近联系人建议' }).getByRole('option', { name: /html-sender@flaremail\.test/u })).toBeVisible();

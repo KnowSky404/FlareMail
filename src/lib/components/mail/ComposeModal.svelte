@@ -8,6 +8,7 @@
   } from '$lib/domain/mail';
   import { Code2, Paperclip, RefreshCw, Trash2, Upload, X } from '@lucide/svelte';
   import { Button, Dialog, IconButton, TextArea, TextField } from '$lib/components/ui';
+  import ComposeWindow from './ComposeWindow.svelte';
   import type { ComposeInput, ComposeMode, MailMessage, UserProfile, WorkspaceSnapshot } from '$lib/domain/mail';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
   import { MAIL_HEALTH_MAX_AGE_MS } from '$lib/domain/mail/health';
@@ -579,8 +580,8 @@
   }
 
   function handleShortcut(event: KeyboardEvent) {
-    const dialog = document.querySelector('.compose-dialog');
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && dialog?.contains(event.target as Node)) {
+    const dialog = document.querySelector<HTMLElement>('.compose-dialog');
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && dialog?.dataset.minimized !== 'true' && dialog?.contains(event.target as Node)) {
       event.preventDefault();
       attempted = true;
       if (!sendDisabled) void onSend(validation.value);
@@ -596,14 +597,10 @@
   });
 </script>
 
-<Dialog
+<ComposeWindow
   id="compose-dialog"
-  open
   {title}
   description={profile.name || t('compose.workspaceIdentity')}
-  size="xl"
-  class="compose-dialog !max-w-[56rem] max-sm:fixed max-sm:inset-0 max-sm:h-[100dvh] max-sm:max-h-none max-sm:w-screen max-sm:max-w-none max-sm:rounded-none"
-  closeOnBackdrop={false}
   onClose={requestClose}
 >
   <form class="flex min-h-[34rem] flex-col gap-3 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
@@ -828,7 +825,7 @@
       </div>
     </div>
   {/snippet}
-</Dialog>
+</ComposeWindow>
 
 {#if showCloseConfirm}
   <Dialog
