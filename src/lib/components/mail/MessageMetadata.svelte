@@ -23,6 +23,7 @@
   ]);
   const visibleLabels = $derived(labels.slice(0, 3));
   const extraLabels = $derived(labels.slice(3));
+  const attachmentBytes = $derived(inboundDetail?.attachments.reduce((total, attachment) => total + attachment.size, 0) ?? 0);
 
   const formatBytes = (value: number) => {
     if (value < 1024) return `${formatNumber(value, i18n.locale)} B`;
@@ -31,16 +32,16 @@
   };
 </script>
 
-<div class="border-b border-[var(--fm-border)] px-4 py-2 text-xs text-[var(--fm-text-muted)] sm:px-6 lg:px-8">
-  {#if labels.length || inboundDetail}
+<div class="border-t border-[var(--fm-border)] px-4 py-2 text-xs text-[var(--fm-text-muted)] sm:px-6 lg:px-8">
+  {#if labels.length || inboundDetail?.attachments.length}
     <div class="message-header-labels flex flex-wrap items-center gap-2 pb-2">
       {#each visibleLabels as label (label.id)}
         <span class={label.user
           ? 'rounded-full border border-[var(--fm-primary)]/25 bg-[var(--fm-primary-soft)] px-2 py-0.5 text-[11px] text-[var(--fm-primary)]'
           : 'rounded-full bg-[var(--fm-surface-subtle)] px-2 py-0.5 text-[11px] text-[var(--fm-text-secondary)]'}>{label.name}</span>
       {/each}
-      {#if inboundDetail}
-        <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.attachmentSummary', inboundDetail.attachments.length, { size: formatBytes(inboundDetail.rawSize) })}</span>
+      {#if inboundDetail?.attachments.length}
+        <span class="text-xs text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.attachmentSummary', inboundDetail.attachments.length, { size: formatBytes(attachmentBytes) })}</span>
       {/if}
     </div>
     {#if extraLabels.length}

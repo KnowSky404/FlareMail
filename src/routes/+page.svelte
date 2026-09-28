@@ -186,6 +186,16 @@
   let activeSection = $state<AppSection>('inbox');
   let userLabels = $state<MailUserLabel[]>([]);
   let activeLabelId = $state<string | null>(null);
+  const activeSectionTitle = $derived(({
+    inbox: t('shell.inbox'),
+    starred: t('shell.starred'),
+    label: userLabels.find((label) => label.id === activeLabelId)?.name ?? t('shell.labels'),
+    sent: t('shell.sent'),
+    drafts: t('shell.drafts'),
+    archive: t('shell.archive'),
+    trash: t('shell.trash'),
+    profile: t('common.settings')
+  } satisfies Record<AppSection, string>)[activeSection]);
   let labelEditorMode = $state<'create' | 'rename' | null>(null);
   let labelEditorName = $state('');
   let labelCreateTarget = $state<MailMessage | null>(null);
@@ -2701,6 +2711,7 @@
                     {pending}
                     rawDownloadHref={selectedInboundDownloadHref}
                     showBack={true}
+                    sectionTitle={activeSectionTitle}
                     threadMessages={selectedThreadMessages}
                     onBack={closeMobileDetail}
                     onEditDraft={handleEditDraft}
