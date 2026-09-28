@@ -89,6 +89,26 @@ test('shows collapsed sidebar tooltips beyond the label scroller in WebKit', asy
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('navigates display preference radio groups by keyboard in desktop WebKit', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'webkit-desktop', 'The preference panel is in the desktop topbar.');
+  await login(page);
+  await clickHeadlessControl(page.getByRole('button', { name: '显示偏好' }));
+  const dialog = page.getByRole('dialog', { name: '显示偏好' });
+  const theme = dialog.getByRole('radiogroup', { name: '颜色主题' });
+  const density = dialog.getByRole('radiogroup', { name: '显示密度' });
+  await expect(theme.getByRole('radio', { name: '跟随系统' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(theme.getByRole('radio', { name: '浅色' })).toBeFocused();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.keyboard.press('Tab');
+  await expect(density.getByRole('radio', { name: '标准显示' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(density.getByRole('radio', { name: '紧凑显示' })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('bulk-removes a label from selected inbox and draft mail in WebKit', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const created = await page.evaluate(async () => {

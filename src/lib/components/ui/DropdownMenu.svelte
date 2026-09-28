@@ -15,6 +15,7 @@
     triggerAriaLabel,
     triggerTitle,
     triggerClass = '',
+    initialFocusSelector,
     showChevron = true,
     class: className = ''
   }: {
@@ -28,6 +29,7 @@
     triggerAriaLabel?: string;
     triggerTitle?: string;
     triggerClass?: string;
+    initialFocusSelector?: string;
     showChevron?: boolean;
     class?: string;
   } = $props();
@@ -103,7 +105,9 @@
     const frame = requestAnimationFrame(() => {
       if (contentRole === 'menu') focusItem(0);
       else {
-        menuElement?.querySelector<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])')?.focus({ preventScroll: true });
+        const preferred = initialFocusSelector ? menuElement?.querySelector<HTMLElement>(initialFocusSelector) : null;
+        const fallback = menuElement?.querySelector<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+        (preferred ?? fallback)?.focus({ preventScroll: true });
       }
     });
     const handleOutsidePointerDown = (event: PointerEvent) => {

@@ -78,3 +78,5 @@ WebKit 搜索截图发现原生清除装饰与应用清除按钮重叠出现两�
 | 邮件行和字体 | 概念稿约 98 px 行高且文字更大；当前 88 px、常规文字 14 px | 当前密度符合 `DESIGN.md` 的后台产品方向，未为合成截图牺牲可见邮件数 |
 | 品牌与交互色 | 橙色品牌、蓝色主操作和淡蓝选中态相近 | 保留设计 token；不引入概念稿中不可交互的静态控制 |
 | 附件与内容 | 概念稿附件整行；当前从半宽卡片改为整行 | 已修复；邮件正文短、导航项更多及安全控件不同是 fixture/功能要求的差异 |
+
+显示偏好键盘复核：此前主题和密度虽标注 radio group，每个选项却都进入 Tab 顺序，方向键也不能切换。现打开面板先聚焦已选主题，每组只有一个 Tab 停靠点，方向键循环选中、Home/End 跳首尾，焦点轮廓可见，Escape 关闭后回到入口。隔离本地 Chromium（1505×1045）、Firefox 桌面和 Linux WebKit 桌面的 Playwright 回归通过；Chromium 面板通过 axe WCAG 2.1 AA 自动规则且无页面级横向溢出。Browser plugin 当前不可用，使用 Playwright fallback；截图 `/tmp/flaremail-display-preferences-keyboard-desktop.png` 已按概念稿原始尺寸回看：三栏、白色表面、蓝色主操作、淡蓝选中行和橙色品牌仍一致，主题/密度面板及合成 fixture 内容不是概念稿场景，顶栏与邮件行也仍比概念稿紧凑。这不等于真实 Safari 或屏幕阅读器验收。

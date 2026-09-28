@@ -32,6 +32,25 @@ test('renders inbox and focused reading without Firefox errors', async ({ page, 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('navigates display preference radio groups by keyboard in Firefox', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.getByRole('button', { name: '显示偏好' }).click();
+  const dialog = page.getByRole('dialog', { name: '显示偏好' });
+  const theme = dialog.getByRole('radiogroup', { name: '颜色主题' });
+  const density = dialog.getByRole('radiogroup', { name: '显示密度' });
+  await expect(theme.getByRole('radio', { name: '跟随系统' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(theme.getByRole('radio', { name: '浅色' })).toBeFocused();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.keyboard.press('Tab');
+  await expect(density.getByRole('radio', { name: '标准显示' })).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(density.getByRole('radio', { name: '紧凑显示' })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('persists a created label on a message through Firefox reload and rename', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })

@@ -840,6 +840,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 
 - 纯图标入口必须有准确 accessible name；当前共享控件暴露 `aria-pressed`、`aria-expanded`、`aria-controls`、`aria-describedby`、loading/disabled 和稳定的 SSR ID。
 - Tooltip 的 `aria-describedby` 指向真正可聚焦的触发元素，而非包裹触发器的装饰节点；菜单支持 outside click、Escape、方向键/Home/End、Tab 和关闭后的焦点恢复，并限制在视口内。
+- 显示偏好的主题与密度按 radio group 交互：打开后聚焦已选主题；每组只占一个 Tab 停靠点，方向键循环移动焦点并选中，Home/End 跳到首尾，Escape 关闭后焦点回到入口；键盘焦点必须可见。
 - 阅读正文的 HTML 使用 sandbox iframe，禁用脚本和 `allow-same-origin`；远程图片默认不加载，显式开启后可撤销 URL。局部表格允许自身横向滚动，应用 UI 不依靠全局 `overflow-x: hidden`。
 
 ### 24.4 本轮证据与标准基线

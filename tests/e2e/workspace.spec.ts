@@ -1937,6 +1937,51 @@ test('supports display preferences and keyboard shortcut help/navigation', async
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('uses one keyboard stop per display preference radio group', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Display preferences are in the desktop topbar.');
+  await login(page);
+  await page.evaluate(() => localStorage.setItem('flaremail-theme', 'light'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await page.getByRole('button', { name: '显示偏好' }).click();
+  const dialog = page.getByRole('dialog', { name: '显示偏好' });
+  const theme = dialog.getByRole('radiogroup', { name: '颜色主题' });
+  const density = dialog.getByRole('radiogroup', { name: '显示密度' });
+  const light = theme.getByRole('radio', { name: '浅色' });
+  const dark = theme.getByRole('radio', { name: '深色' });
+  const system = theme.getByRole('radio', { name: '跟随系统' });
+  const standard = density.getByRole('radio', { name: '标准显示' });
+  const compact = density.getByRole('radio', { name: '紧凑显示' });
+  await expect(light).toBeFocused();
+  await expect(light).toHaveAttribute('tabindex', '0');
+  await expect(dark).toHaveAttribute('tabindex', '-1');
+  await page.keyboard.press('ArrowRight');
+  await expect(dark).toBeFocused();
+  await expect(dark).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.keyboard.press('ArrowRight');
+  await expect(system).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(light).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(standard).toBeFocused();
+  await expect(compact).toHaveAttribute('tabindex', '-1');
+  await page.keyboard.press('ArrowDown');
+  await expect(compact).toBeFocused();
+  await expect(compact).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Home');
+  await expect(standard).toBeFocused();
+  await expect(standard).toHaveAttribute('aria-checked', 'true');
+  expect((await new AxeBuilder({ page }).include('#display-preferences-content').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await page.setViewportSize({ width: 1505, height: 1045 });
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-display-preferences-keyboard-desktop.png'), fullPage: false });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: '显示偏好' })).toBeFocused();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('keeps one responsive search entry, three desktop topbar actions, and a visible reading viewport', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop project drives the complete responsive width matrix.');
   await login(page);

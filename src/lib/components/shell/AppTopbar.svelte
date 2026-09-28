@@ -9,6 +9,7 @@
   import type { UserProfile } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
   import { DropdownMenu } from '$lib/components/ui';
+  import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
   import BrandMark from './BrandMark.svelte';
   import ServiceStatusMenu from './ServiceStatusMenu.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
@@ -60,6 +61,8 @@
   let accountOpen = $state(false);
   let showDesktopSearch = $state(false);
   const { t } = useLocale();
+  const themeChoices = ['system', 'light', 'dark'] as const;
+  const densityChoices = ['comfortable', 'compact'] as const;
 
   const themeLabel = $derived(
     themePreference === 'system'
@@ -101,6 +104,27 @@
   function setTheme(next: ThemePreference) {
     themePreference = next;
     applyTheme(next);
+  }
+
+  function setDensity(next: 'comfortable' | 'compact') {
+    if (next !== density) onToggleDensity?.();
+  }
+
+  function handlePreferenceRadioKeydown<T extends string>(
+    event: KeyboardEvent,
+    values: readonly T[],
+    select: (value: T) => void
+  ) {
+    const currentButton = event.currentTarget as HTMLButtonElement;
+    const group = currentButton.parentElement;
+    if (!group) return;
+    const buttons = [...group.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+    const nextIndex = nextRadioIndex(event.key, buttons.indexOf(currentButton), buttons.length);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    select(values[nextIndex]);
+    buttons[nextIndex]?.focus({ preventScroll: true });
   }
 </script>
 
@@ -146,6 +170,7 @@
       triggerAriaLabel={t('shell.displayPreferences')}
       triggerTitle={t('shell.displayPreferences')}
       triggerClass="topbar-icon-trigger"
+      initialFocusSelector='[role="radiogroup"] [role="radio"][aria-checked="true"]'
       onOpenChange={(open) => {
         preferencesOpen = open;
         if (open) accountOpen = false;
@@ -159,15 +184,15 @@
           <section aria-labelledby="display-preferences-theme">
             <h2 id="display-preferences-theme">{t('settings.theme')}</h2>
             <div class="preference-options" role="radiogroup" aria-label={t('settings.theme')}>
-              <button class:active={themePreference === 'system'} type="button" role="radio" aria-checked={themePreference === 'system'} onclick={() => setTheme('system')}>
+              <button class:active={themePreference === 'system'} type="button" role="radio" aria-checked={themePreference === 'system'} tabindex={themePreference === 'system' ? 0 : -1} onclick={() => setTheme('system')} onkeydown={(event) => handlePreferenceRadioKeydown(event, themeChoices, setTheme)}>
                 <Monitor class="size-4" aria-hidden="true" />
                 <span>{t('settings.themeSystem')}</span>
               </button>
-              <button class:active={themePreference === 'light'} type="button" role="radio" aria-checked={themePreference === 'light'} onclick={() => setTheme('light')}>
+              <button class:active={themePreference === 'light'} type="button" role="radio" aria-checked={themePreference === 'light'} tabindex={themePreference === 'light' ? 0 : -1} onclick={() => setTheme('light')} onkeydown={(event) => handlePreferenceRadioKeydown(event, themeChoices, setTheme)}>
                 <Sun class="size-4" aria-hidden="true" />
                 <span>{t('settings.themeLight')}</span>
               </button>
-              <button class:active={themePreference === 'dark'} type="button" role="radio" aria-checked={themePreference === 'dark'} onclick={() => setTheme('dark')}>
+              <button class:active={themePreference === 'dark'} type="button" role="radio" aria-checked={themePreference === 'dark'} tabindex={themePreference === 'dark' ? 0 : -1} onclick={() => setTheme('dark')} onkeydown={(event) => handlePreferenceRadioKeydown(event, themeChoices, setTheme)}>
                 <Moon class="size-4" aria-hidden="true" />
                 <span>{t('settings.themeDark')}</span>
               </button>
@@ -176,11 +201,11 @@
           <section aria-labelledby="display-preferences-density">
             <h2 id="display-preferences-density">{t('settings.density')}</h2>
             <div class="preference-options" role="radiogroup" aria-label={t('settings.density')}>
-              <button class:active={density === 'comfortable'} type="button" role="radio" aria-checked={density === 'comfortable'} onclick={() => density === 'compact' && onToggleDensity?.()}>
+              <button class:active={density === 'comfortable'} type="button" role="radio" aria-checked={density === 'comfortable'} tabindex={density === 'comfortable' ? 0 : -1} onclick={() => setDensity('comfortable')} onkeydown={(event) => handlePreferenceRadioKeydown(event, densityChoices, setDensity)}>
                 <Rows3 class="size-4" aria-hidden="true" />
                 <span>{t('shell.standardDensity')}</span>
               </button>
-              <button class:active={density === 'compact'} type="button" role="radio" aria-checked={density === 'compact'} onclick={() => density === 'comfortable' && onToggleDensity?.()}>
+              <button class:active={density === 'compact'} type="button" role="radio" aria-checked={density === 'compact'} tabindex={density === 'compact' ? 0 : -1} onclick={() => setDensity('compact')} onkeydown={(event) => handlePreferenceRadioKeydown(event, densityChoices, setDensity)}>
                 <Rows3 class="size-4" aria-hidden="true" />
                 <span>{t('shell.compactDensity')}</span>
               </button>
@@ -456,6 +481,11 @@
     border-color: var(--fm-primary);
     color: var(--fm-primary);
     background: var(--fm-primary-soft);
+  }
+
+  .preference-options button:focus-visible {
+    outline: 2px solid var(--fm-focus);
+    outline-offset: 2px;
   }
 
   .preference-language {
