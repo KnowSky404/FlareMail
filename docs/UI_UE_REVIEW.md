@@ -27,6 +27,8 @@
 
 设置长表单现有资料、通知、外观、诊断和 Telegram 分区链接；使用原生锚点，键盘可进入，滚动时导航与保存栏保持可见，跳转不卸载未保存字段。移动端改为工作区内部滚动并约束容器宽度，避免导航把页面撑宽，也让全局顶栏留在视口中。临时通知在设置页上移，不覆盖保存栏。隔离本地 Chromium desktop/mobile 已验证跳转位置、草稿保留、键盘激活、深色主题、无横向溢出和 axe 主区域扫描；截图位于 `/tmp/flaremail-settings-sections-{desktop,mobile}.png` 与 `/tmp/flaremail-settings-appearance-dark-{desktop,mobile}.png`。这些不是完整屏幕阅读器或真实设备证据。
 
+设置页分区交互还通过了隔离本地 WebKit desktop/iPhone/iPad 与 Firefox 的回归：锚点跳转后标题不被导航遮住、保存入口留在视口、未保存姓名保持不变；Firefox 覆盖 1920/1440/1366/768/390 px。截图位于 `/tmp/flaremail-settings-webkit-{webkit-desktop,webkit-iphone,webkit-ipad}.png` 和 `/tmp/flaremail-settings-firefox-{1366,390}.png`。Firefox 首次运行因测试容器禁止 user namespace 且 XDG/dconf 目录只读，在浏览器启动阶段超时；将 XDG 缓存、配置和运行目录指向 `/tmp` 并为该容器禁用 Firefox 内容沙箱后重跑通过。这些仍是 Linux Playwright 模拟结果，不等同于真实 Safari、实体设备或屏幕阅读器验收。
+
 图标操作进展：共享 `IconButton` 已接入可悬停、可键盘聚焦的 Tooltip，保留直接作用于按钮的 accessible name，并用稳定的服务端/客户端 ID 关联提示。浏览器截图曾发现顶部提示被顶栏遮挡、中文被压成竖排、移动端返回提示超出视口；现按工具栏/列表/写信底栏及视口边缘设置方向与内容宽度，并用端到端几何断言防止回归。顶栏搜索宽度规则也已收窄到搜索组件根节点，避免影响清除按钮。
 
 写信窗口进展：桌面使用不锁定工作区的浮动写信窗口，可拖动、键盘调整位置和尺寸、最小化与最大化；手机保持全屏。草稿与附件状态属于写信组件，不因最小化销毁。仍需覆盖跨浏览器、极端窗口尺寸和更多焦点序列。

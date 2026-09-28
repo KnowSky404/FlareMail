@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Locator, Page } from '@playwright/test';
 import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, test } from './fixtures';
 
@@ -312,6 +314,33 @@ test('persists the selected theme across reload', async ({ page, consoleErrors }
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await theme.selectOption('light');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('keeps settings sections and save action reachable in WebKit', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings');
+  await expect(page).toHaveTitle('FlareMail');
+  const sections = page.getByRole('navigation', { name: '设置分区' });
+  const name = page.getByLabel('显示姓名');
+  await name.fill('Unsaved WebKit settings draft');
+
+  await pressHeadlessControl(sections.getByRole('link', { name: '通知', exact: true }));
+  await expect(page).toHaveURL(/#settings-notifications$/u);
+  const notification = page.locator('#settings-notifications');
+  await expect(notification).toBeInViewport();
+  await expect(sections).toBeInViewport();
+  await expect(page.getByRole('button', { name: '保存设置' })).toBeInViewport();
+  const navBounds = await sections.boundingBox();
+  const sectionBounds = await notification.boundingBox();
+  expect(sectionBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-settings-webkit-${testInfo.project.name}.png`), fullPage: false });
+
+  await pressHeadlessControl(sections.getByRole('link', { name: '诊断', exact: true }));
+  await expect(page.locator('#settings-diagnostics')).toBeInViewport();
+  await pressHeadlessControl(sections.getByRole('link', { name: '个人资料', exact: true }));
+  await expect(name).toHaveValue('Unsaved WebKit settings draft');
   await assertNoConsoleErrors(consoleErrors);
 });
 

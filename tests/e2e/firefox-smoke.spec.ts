@@ -207,3 +207,39 @@ test('keeps mobile compose, domains, and settings accessible in light and dark t
   await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors);
 });
+
+test('keeps settings navigation and save action usable across Firefox viewports', async ({ page, consoleErrors }) => {
+  test.setTimeout(90_000);
+  await login(page);
+  await page.goto('/?folder=settings');
+  await expect(page).toHaveTitle('FlareMail');
+  const sections = page.getByRole('navigation', { name: '设置分区' });
+  const name = page.getByLabel('显示姓名');
+  await name.fill('Unsaved Firefox settings draft');
+  const notification = page.locator('#settings-notifications');
+  const save = page.getByRole('button', { name: '保存设置' });
+
+  for (const width of [1920, 1440, 1366, 768, 390]) {
+    await page.setViewportSize({ width, height: width < 900 ? 844 : 900 });
+    await sections.getByRole('link', { name: '个人资料', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await sections.getByRole('link', { name: '通知', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/#settings-notifications$/u);
+    await expect(notification).toBeInViewport();
+    await expect(sections).toBeInViewport();
+    await expect(save).toBeInViewport();
+    const navBounds = await sections.boundingBox();
+    const sectionBounds = await notification.boundingBox();
+    expect(sectionBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+    await assertNoHorizontalOverflow(page);
+    if (width === 1366 || width === 390) {
+      await page.screenshot({ path: join(tmpdir(), `flaremail-settings-firefox-${width}.png`), fullPage: false });
+    }
+  }
+
+  await sections.getByRole('link', { name: '个人资料', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(name).toHaveValue('Unsaved Firefox settings draft');
+  await assertNoConsoleErrors(consoleErrors);
+});
