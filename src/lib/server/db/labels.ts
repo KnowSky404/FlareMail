@@ -3,6 +3,7 @@ import { fromInboundMessageId } from '$lib/domain/mail';
 import { ApiError } from '$lib/server/http/api';
 
 const maxLabels = 100;
+const maxBulkLabelTargets = 100;
 
 function normalizedName(value: unknown): { name: string; key: string } {
   if (typeof value !== 'string') throw new ApiError(400, 'INVALID_LABEL_NAME', '请输入标签名称。');
@@ -70,6 +71,63 @@ export async function deleteMailLabel(db: D1Database, ownerId: string, labelId: 
 
 export interface LabelTarget { kind: MailLabelMessageKind; id: string; }
 
+function validLabelTarget(value: unknown): value is LabelTarget {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) &&
+    'kind' in value && ['workspace', 'draft', 'inbound'].includes(String(value.kind)) &&
+    'id' in value && typeof value.id === 'string' && /^[A-Za-z0-9:._-]{1,256}$/u.test(value.id);
+}
+
+/** Applies one label to an explicitly selected, bounded set of Owner-owned messages. */
+export async function setManyMailMessageLabels(
+  db: D1Database, ownerId: string, labelId: string, input: unknown, enabled: boolean
+): Promise<number> {
+  if (!Array.isArray(input) || input.length === 0 || input.length > maxBulkLabelTargets ||
+    !input.every(validLabelTarget)) {
+    throw new ApiError(400, 'INVALID_LABEL_TARGETS', '请选择 1 至 100 封有效邮件。');
+  }
+  const targets = [...new Map(input.map((target: LabelTarget) => [`${target.kind}:${target.id}`, target])).values()];
+  await requireMailLabel(db, ownerId, labelId);
+
+  for (const kind of ['workspace', 'draft', 'inbound'] as const) {
+    const ids = targets.filter((target) => target.kind === kind).map((target) => target.id);
+    if (!ids.length) continue;
+    const table = kind === 'inbound' ? 'email_messages' : kind === 'draft' ? 'workspace_drafts' : 'workspace_messages';
+    const ownerColumn = kind === 'inbound' ? 'owner_user_id' : 'user_id';
+    const availability = kind === 'inbound'
+      ? `NOT EXISTS (SELECT 1 FROM workspace_email_states AS state
+          WHERE state.user_id = ? AND state.email_message_id = ${table}.id AND state.deleted_at IS NOT NULL)`
+      : 'deleted_at IS NULL';
+    const rows = await db.prepare(`SELECT id FROM ${table} WHERE ${ownerColumn} = ?
+      AND id IN (${ids.map(() => '?').join(', ')}) AND ${availability}`)
+      .bind(ownerId, ...ids, ...(kind === 'inbound' ? [ownerId] : []))
+      .all<{ id: string }>();
+    if ((rows.results ?? []).length !== ids.length) {
+      throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于当前工作区。');
+    }
+  }
+
+  const now = new Date().toISOString();
+  const statements = targets.map((target) => {
+    if (!enabled) {
+      return db.prepare(`DELETE FROM mail_message_labels
+        WHERE owner_user_id = ? AND label_id = ? AND message_kind = ? AND message_id = ?`)
+        .bind(ownerId, labelId, target.kind, target.id);
+    }
+    const table = target.kind === 'inbound' ? 'email_messages' : target.kind === 'draft' ? 'workspace_drafts' : 'workspace_messages';
+    const ownerColumn = target.kind === 'inbound' ? 'owner_user_id' : 'user_id';
+    const availability = target.kind === 'inbound'
+      ? `NOT EXISTS (SELECT 1 FROM workspace_email_states AS state
+          WHERE state.user_id = ? AND state.email_message_id = ${table}.id AND state.deleted_at IS NOT NULL)`
+      : 'deleted_at IS NULL';
+    return db.prepare(`INSERT INTO mail_message_labels (owner_user_id, label_id, message_kind, message_id, created_at)
+      SELECT ?, ?, ?, id, ? FROM ${table}
+      WHERE ${ownerColumn} = ? AND id = ? AND ${availability} ON CONFLICT DO NOTHING`)
+      .bind(ownerId, labelId, target.kind, now, ownerId, target.id, ...(target.kind === 'inbound' ? [ownerId] : []));
+  });
+  await db.batch(statements);
+  return targets.length;
+}
+
 function targetForMessage(message: MailMessage): LabelTarget {
   return message.source === 'inbound'
     ? { kind: 'inbound', id: fromInboundMessageId(message.id) }
@@ -102,8 +160,7 @@ export async function attachMailLabels(db: D1Database, ownerId: string, messages
 export async function setMailMessageLabel(
   db: D1Database, ownerId: string, labelId: string, target: LabelTarget, enabled: boolean
 ): Promise<MailUserLabel[]> {
-  if (!['workspace', 'draft', 'inbound'].includes(target.kind) ||
-    typeof target.id !== 'string' || !/^[A-Za-z0-9:._-]{1,256}$/u.test(target.id)) {
+  if (!validLabelTarget(target)) {
     throw new ApiError(400, 'INVALID_LABEL_TARGET', '邮件标识无效。');
   }
   await requireMailLabel(db, ownerId, labelId);

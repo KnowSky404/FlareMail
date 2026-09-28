@@ -64,6 +64,55 @@ async function openCompose(page: Page) {
   await mobileCompose.click({ force: true });
 }
 
+test('bulk-removes a label from selected inbox and draft mail in WebKit', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const created = await page.evaluate(async () => {
+    const response = await fetch('/api/workspace/labels', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'WebKit Bulk Label' })
+    });
+    return { ok: response.ok, payload: await response.json() };
+  });
+  expect(created.ok, JSON.stringify(created.payload)).toBe(true);
+  const labelId = (created.payload as { data: { label: { id: string } } }).data.label.id;
+  for (const target of [
+    { kind: 'workspace', id: 'e2e-inbox-message' },
+    { kind: 'draft', id: 'e2e-draft-1' }
+  ]) {
+    const result = await page.evaluate(async ({ id, message }) => {
+      const response = await fetch(`/api/workspace/labels/${encodeURIComponent(id)}/messages`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(message)
+      });
+      return { ok: response.ok, status: response.status };
+    }, { id: labelId, message: target });
+    expect(result.ok, `label setup failed: ${result.status}`).toBe(true);
+  }
+
+  await page.goto(`/?folder=label&label=${encodeURIComponent(labelId)}`);
+  await expect(page.getByRole('heading', { name: 'WebKit Bulk Label' })).toBeVisible();
+  for (const subject of ['E2E Inbox Welcome', 'E2E Existing Concurrent']) {
+    const row = page.getByRole('listitem').filter({ hasText: subject });
+    await expect(row).toBeVisible();
+    await row.getByRole('checkbox').check({ force: true });
+  }
+  await clickHeadlessControl(page.getByRole('button', { name: '批量管理标签' }));
+  const dialog = page.getByRole('dialog', { name: '批量管理标签' });
+  await expect(dialog).toContainText('仅更新当前页已选的 2 封邮件');
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-webkit-bulk-label-${testInfo.project.name}.png`), fullPage: false });
+  await clickHeadlessControl(dialog.getByRole('button', { name: '从已选邮件移除' }));
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('listitem')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('listitem')).toHaveCount(0);
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+  const removed = await page.evaluate(async (id) => {
+    const response = await fetch(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    return response.ok;
+  }, labelId);
+  expect(removed).toBe(true);
+});
+
 test('logs in, navigates, searches, opens a message, and returns', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   if (!projectIsMobile(testInfo.project.name)) {

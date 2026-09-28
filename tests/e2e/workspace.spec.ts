@@ -195,6 +195,14 @@ test('shows one persistent label across inbox, inbound, sent and drafts', async 
   });
   expect(created.ok, JSON.stringify(created.payload)).toBe(true);
   const labelId = (created.payload as { data: { label: { id: string } } }).data.label.id;
+  const secondary = await page.evaluate(async () => {
+    const response = await fetch('/api/workspace/labels', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'E2E Bulk Review' })
+    });
+    return { ok: response.ok, payload: await response.json() };
+  });
+  expect(secondary.ok, JSON.stringify(secondary.payload)).toBe(true);
+  const secondaryLabelId = (secondary.payload as { data: { label: { id: string } } }).data.label.id;
   for (const target of [
     { kind: 'workspace', id: 'e2e-inbox-message' },
     { kind: 'inbound', id: 'e2e-html-inbox-message' },
@@ -220,12 +228,77 @@ test('shows one persistent label across inbox, inbound, sent and drafts', async 
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' })).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-labels-${testInfo.project.name}.png`), fullPage: false });
+  const selectPage = page.getByRole('checkbox', { name: '选择已加载邮件' });
+  await selectPage.check();
+  await expect(page.locator('.bulk-context')).toHaveText('已选 4 封');
+  await page.getByRole('checkbox', { name: '取消选择' }).uncheck();
+  for (const subject of ['E2E Inbox Welcome', 'E2E HTML Safety', 'E2E Seeded Sent', 'E2E Existing Concurrent']) {
+    await page.getByRole('listitem').filter({ hasText: subject }).getByRole('checkbox').check();
+  }
+  await page.getByRole('button', { name: '批量管理标签' }).click();
+  const bulkDialog = page.getByRole('dialog', { name: '批量管理标签' });
+  await expect(bulkDialog).toContainText('仅更新当前页已选的 4 封邮件');
+  await bulkDialog.getByLabel('标签名称').selectOption(secondaryLabelId);
+  expect((await new AxeBuilder({ page }).include('[role="dialog"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  const dialogBounds = await bulkDialog.boundingBox();
+  expect(dialogBounds).not.toBeNull();
+  expect(dialogBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(dialogBounds!.x + dialogBounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-labels-bulk-dialog-${testInfo.project.name}.png`), fullPage: false });
+  if (testInfo.project.name === 'mobile') {
+    await page.setViewportSize({ width: 320, height: 720 });
+    await assertNoHorizontalOverflow(page);
+    const narrowBounds = await bulkDialog.boundingBox();
+    expect(narrowBounds).not.toBeNull();
+    expect(narrowBounds!.x + narrowBounds!.width).toBeLessThanOrEqual(321);
+    const narrowRemoveButton = await bulkDialog.getByRole('button', { name: '从已选邮件移除' }).boundingBox();
+    expect(narrowRemoveButton).not.toBeNull();
+    expect(narrowRemoveButton!.height).toBeLessThanOrEqual(48);
+    await page.screenshot({ path: join(tmpdir(), 'flaremail-labels-bulk-dialog-narrow.png'), fullPage: false });
+    await page.setViewportSize({ width: 390, height: 844 });
+  }
+  await page.keyboard.press('Escape');
+  await expect(bulkDialog).toBeHidden();
+  await expect(page.getByRole('button', { name: '批量管理标签' })).toBeFocused();
+  await page.getByRole('button', { name: '批量管理标签' }).click();
+  await bulkDialog.getByLabel('标签名称').selectOption(secondaryLabelId);
+  await bulkDialog.getByRole('button', { name: '添加到已选邮件' }).click();
+  await expect(bulkDialog).toBeHidden();
+  await page.goto(`/?folder=label&label=${encodeURIComponent(secondaryLabelId)}`);
+  await expect(page.getByRole('heading', { name: 'E2E Bulk Review' })).toBeVisible();
+  for (const subject of ['E2E Inbox Welcome', 'E2E HTML Safety', 'E2E Seeded Sent', 'E2E Existing Concurrent']) {
+    await expect(page.getByRole('listitem').filter({ hasText: subject })).toBeVisible();
+  }
+  for (const subject of ['E2E Seeded Sent', 'E2E Existing Concurrent']) {
+    await page.getByRole('listitem').filter({ hasText: subject }).getByRole('checkbox').check();
+  }
+  await page.getByRole('button', { name: '批量管理标签' }).click();
+  await bulkDialog.getByRole('button', { name: '从已选邮件移除' }).click();
+  await expect(bulkDialog).toBeHidden();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })).toHaveCount(0);
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })).toHaveCount(0);
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-labels-bulk-${testInfo.project.name}.png`), fullPage: false });
+  await page.goto(`/?folder=label&label=${encodeURIComponent(labelId)}`);
+  await expect(page.getByRole('heading', { name: 'E2E Across Folders' })).toBeVisible();
   await page.evaluate(() => localStorage.setItem('flaremail-theme', 'dark'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' })).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-labels-${testInfo.project.name}-dark.png`), fullPage: false });
+  await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('checkbox').check();
+  await page.getByRole('button', { name: '批量管理标签' }).click();
+  await expect(bulkDialog).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('[role="dialog"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-labels-bulk-dialog-${testInfo.project.name}-dark.png`), fullPage: false });
+  await page.keyboard.press('Escape');
+  await expect(bulkDialog).toBeHidden();
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -246,6 +319,13 @@ test('shows a server-paginated global Starred view across inbox and sent', async
   const sent = page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' });
   await expect(inbox).toBeVisible();
   await expect(sent).toBeVisible();
+  await inbox.getByRole('checkbox').check();
+  await sent.getByRole('checkbox').check();
+  await page.getByRole('button', { name: '批量管理标签' }).click();
+  const bulkDialog = page.getByRole('dialog', { name: '批量管理标签' });
+  await expect(bulkDialog).toContainText('仅更新当前页已选的 2 封邮件');
+  await expect(bulkDialog).toContainText('尚无标签');
+  await bulkDialog.getByRole('button', { name: '取消' }).click();
   const response = await page.request.get('/api/workspace/mailbox?folder=starred&limit=1');
   expect(response.ok()).toBe(true);
   const first = await response.json() as { data: { page: { folder: string; nextCursor: string | null; hasMore: boolean } } };

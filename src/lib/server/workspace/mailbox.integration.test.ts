@@ -7,7 +7,7 @@ import { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox } from '
 import { parseMailboxQuery } from './mailbox-query';
 import type { WorkspaceContext } from './shared';
 import { parseMailSearchQuery } from '$lib/domain/mail';
-import { createMailLabel, deleteMailLabel, listMailLabels, renameMailLabel, setMailMessageLabel } from '$lib/server/db/labels';
+import { createMailLabel, deleteMailLabel, listMailLabels, renameMailLabel, setMailMessageLabel, setManyMailMessageLabels } from '$lib/server/db/labels';
 
 class TestStatement {
   private bindings: unknown[] = [];
@@ -267,6 +267,47 @@ describe('D1 mailbox pages', () => {
     database.query("DELETE FROM workspace_users WHERE id = 'user-1'").run();
     expect(database.query('SELECT COUNT(*) AS total FROM mail_labels').get()).toEqual({ total: 0 });
     expect(database.query('SELECT COUNT(*) AS total FROM mail_message_labels').get()).toEqual({ total: 0 });
+  });
+  test('bulk-labels only selected Owner mail across folders in one transaction', async () => {
+    const { env, workspace, database } = fixture();
+    database.query("INSERT INTO workspace_users (id, name, role) VALUES ('user-1', 'Ada', 'owner'), ('user-2', 'Bob', 'owner')").run();
+    database.query(`INSERT INTO workspace_messages
+      (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred)
+      VALUES ('foreign-mail', 'user-2', 'inbox', 'Bob', 'bob@example.test', 'Ada', 'ada@example.test',
+        'Other owner', '', '', '2026-08-13T12:00:00.000Z', '[]', 0, 0)`).run();
+    const label = await createMailLabel(env.DB, workspace.userId, 'Bulk');
+    const targets = [
+      { kind: 'workspace', id: 'inbox-z' },
+      { kind: 'workspace', id: 'sent-1' },
+      { kind: 'draft', id: 'draft-1' },
+      { kind: 'inbound', id: 'incoming-1' }
+    ] as const;
+    expect(setManyMailMessageLabels(env.DB, workspace.userId, label.id, [targets[0], { kind: 'workspace', id: 'foreign-mail' }], true))
+      .rejects.toMatchObject({ status: 404 });
+    expect(database.query('SELECT COUNT(*) AS total FROM mail_message_labels').get()).toEqual({ total: 0 });
+    expect(await setManyMailMessageLabels(env.DB, workspace.userId, label.id, [...targets, targets[0]], true)).toBe(4);
+    expect(database.query(`SELECT message_kind, message_id FROM mail_message_labels ORDER BY message_kind, message_id`).all())
+      .toEqual([
+        { message_kind: 'draft', message_id: 'draft-1' },
+        { message_kind: 'inbound', message_id: 'incoming-1' },
+        { message_kind: 'workspace', message_id: 'inbox-z' },
+        { message_kind: 'workspace', message_id: 'sent-1' }
+      ]);
+    expect(setManyMailMessageLabels(env.DB, workspace.userId, label.id, [targets[0], { kind: 'workspace', id: 'foreign-mail' }], false))
+      .rejects.toMatchObject({ status: 404 });
+    expect(database.query('SELECT COUNT(*) AS total FROM mail_message_labels').get()).toEqual({ total: 4 });
+    expect(setManyMailMessageLabels(env.DB, workspace.userId, label.id, Array(101).fill(targets[0]), true))
+      .rejects.toMatchObject({ status: 400 });
+    expect(setManyMailMessageLabels(env.DB, workspace.userId, label.id, [{ kind: 'inbound', id: '../wrong' }], true))
+      .rejects.toMatchObject({ status: 400 });
+    database.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, deleted_at)
+      VALUES ('deleted-inbound', 'user-1', 'incoming-1', '2026-08-14T00:00:00.000Z')`).run();
+    expect(setManyMailMessageLabels(env.DB, workspace.userId, label.id, [targets[0], targets[3]], false))
+      .rejects.toMatchObject({ status: 404 });
+    expect(database.query('SELECT COUNT(*) AS total FROM mail_message_labels').get()).toEqual({ total: 4 });
+    expect(await setManyMailMessageLabels(env.DB, workspace.userId, label.id, targets.slice(0, 3), false)).toBe(3);
+    expect(database.query('SELECT message_kind, message_id FROM mail_message_labels').all())
+      .toEqual([{ message_kind: 'inbound', message_id: 'incoming-1' }]);
   });
   test('paginates global Starred across inbound, archived, sent and drafts without leaking other owners', async () => {
     const { env, workspace, database } = fixture();

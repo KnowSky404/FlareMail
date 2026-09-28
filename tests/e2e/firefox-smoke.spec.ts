@@ -52,6 +52,59 @@ test('persists a created label on a message through Firefox reload and rename', 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('bulk-labels selected inbox and sent mail without expanding conversations in Firefox', async ({ page, consoleErrors }) => {
+  await login(page);
+  const created = await page.evaluate(async () => {
+    const labels: string[] = [];
+    for (const name of ['Firefox Source Label', 'Firefox Bulk Target']) {
+      const response = await fetch('/api/workspace/labels', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      if (!response.ok) return { ok: false, status: response.status, labels };
+      labels.push((await response.json() as { data: { label: { id: string } } }).data.label.id);
+    }
+    return { ok: true, status: 200, labels };
+  });
+  expect(created.ok, `label setup failed: ${created.status}`).toBe(true);
+  const [sourceId, targetId] = created.labels;
+  if (!sourceId || !targetId) throw new Error('Firefox label setup did not return both labels.');
+  for (const id of ['e2e-inbox-message', 'e2e-sent-message']) {
+    const response = await page.evaluate(async ({ labelId, messageId }) => {
+      const result = await fetch(`/api/workspace/labels/${encodeURIComponent(labelId)}/messages`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: 'workspace', id: messageId })
+      });
+      return result.ok;
+    }, { labelId: sourceId, messageId: id });
+    expect(response).toBe(true);
+  }
+
+  await page.goto(`/?folder=label&label=${encodeURIComponent(sourceId)}`);
+  for (const subject of ['E2E Inbox Welcome', 'E2E Seeded Sent']) {
+    await page.getByRole('listitem').filter({ hasText: subject }).getByRole('checkbox').check();
+  }
+  await page.getByRole('button', { name: '批量管理标签' }).click();
+  const dialog = page.getByRole('dialog', { name: '批量管理标签' });
+  await expect(dialog).toContainText('仅更新当前页已选的 2 封邮件');
+  await dialog.getByLabel('标签名称').selectOption(targetId);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-firefox-bulk-label-dialog.png'), fullPage: false });
+  await dialog.getByRole('button', { name: '添加到已选邮件' }).click();
+  await expect(dialog).toBeHidden();
+  await page.goto(`/?folder=label&label=${encodeURIComponent(targetId)}`);
+  await page.reload();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+  for (const id of [sourceId, targetId]) {
+    const removed = await page.evaluate(async (labelId) => {
+      const response = await fetch(`/api/workspace/labels/${encodeURIComponent(labelId)}`, { method: 'DELETE' });
+      return response.ok;
+    }, id);
+    expect(removed).toBe(true);
+  }
+});
+
 test('sends with a second managed identity through the local demo provider', async ({ page, consoleErrors }) => {
   const remoteRequests: string[] = [];
   page.on('request', (request) => {

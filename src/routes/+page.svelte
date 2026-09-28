@@ -20,7 +20,7 @@
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
   import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
-  import { Button, Checkbox, DropdownMenu, IconButton, TextField } from '$lib/components/ui';
+  import { Button, Checkbox, DropdownMenu, IconButton, Select, TextField } from '$lib/components/ui';
   import { ClientApiError } from '$lib/client/api';
   import {
     AUTH_EXPIRED_EVENT,
@@ -84,7 +84,8 @@
     createMailLabel,
     renameMailLabel,
     deleteMailLabel,
-    setMailMessageLabel
+    setMailMessageLabel,
+    setManyMailMessageLabels
   } from '$lib/client/workspace-api';
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
@@ -188,6 +189,9 @@
   let labelCreateTarget = $state<MailMessage | null>(null);
   let labelActionPending = $state(false);
   let labelTargetMessage = $state<MailMessage | null>(null);
+  let bulkLabelDialogOpen = $state(false);
+  let bulkLabelId = $state('');
+  let bulkLabelPending = $state(false);
   let deleteLabelConfirmOpen = $state(false);
   let managementView = $state<WorkspaceUrlState['managementView']>('settings');
   let createAddressDomainId = $state('');
@@ -476,11 +480,13 @@
       return matchesFilter;
     })
   );
-  const bulkSelectableIds = $derived.by(() => activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile' || activeSection === 'starred' || activeSection === 'label'
+  const bulkSelectableIds = $derived.by(() => activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'profile'
     ? []
     : visibleThreads.length
       ? visibleThreads.map((thread) => thread.sectionLatestMessage.id)
       : visibleMessages.map((message) => message.id));
+  const bulkSelectedMessages = $derived.by(() => [...visibleThreads.map((thread) => thread.sectionLatestMessage), ...visibleMessages]
+    .filter((message, index, all) => selectedMessageIds.includes(message.id) && all.findIndex((candidate) => candidate.id === message.id) === index));
   const bulkSelectedVisibleCount = $derived(bulkSelectableIds.filter((id) => selectedMessageIds.includes(id)).length);
   const bulkSelectedThreadCount = $derived(visibleThreads.filter((thread) =>
     Boolean(thread.sectionLatestMessage.threadKey) && selectedMessageIds.includes(thread.sectionLatestMessage.id)
@@ -853,6 +859,9 @@
     labelEditorMode = null;
     labelCreateTarget = null;
     labelTargetMessage = null;
+    bulkLabelDialogOpen = false;
+    bulkLabelId = '';
+    bulkLabelPending = false;
     deleteLabelConfirmOpen = false;
     selectedMessageId = initial.selectedMessageId;
     selectedMessageIds = initial.selectedMessageIds;
@@ -1112,6 +1121,34 @@
     }
   }
 
+  function openBulkLabelDialog() {
+    if (!bulkSelectedMessages.length) return;
+    bulkLabelId = activeLabelId && userLabels.some((label) => label.id === activeLabelId)
+      ? activeLabelId : userLabels[0]?.id ?? '';
+    bulkLabelDialogOpen = true;
+  }
+
+  async function changeBulkLabel(enabled: boolean) {
+    if (bulkLabelPending || !bulkLabelId || !bulkSelectedMessages.length) return;
+    bulkLabelPending = true;
+    try {
+      const targets = bulkSelectedMessages.map((message) => ({
+        kind: (message.source === 'inbound' ? 'inbound' : message.folder === 'drafts' ? 'draft' : 'workspace') as MailLabelMessageKind,
+        id: message.source === 'inbound' ? message.id.slice('email:'.length) : message.id
+      }));
+      await setManyMailMessageLabels(bulkLabelId, targets, enabled);
+      bulkLabelDialogOpen = false;
+      selectedMessageIds = [];
+      await refreshWorkspace(false);
+      workspaceSync?.publish({ type: 'mailbox-refresh' });
+      notify(enabled ? t('label.bulkAdded') : t('label.bulkRemoved'), 'success');
+    } catch (error) {
+      notifyError(error, t('label.applyFailed'));
+    } finally {
+      bulkLabelPending = false;
+    }
+  }
+
   function setManagementView(view: 'domains' | 'addresses', domainId = '') {
     setSection('profile', false);
     managementView = view;
@@ -1342,8 +1379,7 @@
     if (!selectedMessageIds.length || !['inbox', 'sent', 'archive'].includes(activeSection)) return;
     pending = true;
     try {
-      const selected = [...visibleThreads.flatMap((thread) => [thread.sectionLatestMessage]), ...visibleMessages]
-        .filter((message, index, all) => selectedMessageIds.includes(message.id) && all.findIndex((candidate) => candidate.id === message.id) === index);
+      const selected = bulkSelectedMessages;
       const validSelectedIds = selected.map((message) => message.id);
       if (!validSelectedIds.length) {
         selectedMessageIds = [];
@@ -2511,8 +2547,9 @@
                       <span class="text-xs text-[var(--fm-text-muted)]">{t('mail.trashRetention')}</span>
                       <button class="min-h-9 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/40 px-2.5 text-xs font-medium text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={pending || trashItems.length === 0} onclick={() => (emptyTrashConfirmOpen = true)}>{t('mail.emptyTrash')}</button>
                     </div>
-                  {:else if activeSection !== 'drafts' && activeSection !== 'starred' && activeSection !== 'label'}
-                    <div class="bulk-toolbar" aria-label={t('mail.bulkActions')}>
+                  {/if}
+                  {#if activeSection !== 'drafts' && activeSection !== 'trash'}
+                    <div class="bulk-toolbar" role="group" aria-label={t('mail.bulkActions')}>
                       <label class="bulk-select-control fm-touch-target" title={bulkAllSelected ? t('mail.clearSelection') : t('mail.selectPage')}>
                         <input
                           bind:this={bulkSelectInput}
@@ -2531,7 +2568,8 @@
                       </span>
                       {#if bulkSelectedVisibleCount > 0}
                         <div class="bulk-actions">
-                          {#if bulkSelectedThreadCount > 0}
+                          <IconButton ariaLabel={t('label.bulkManage')} title={t('label.bulkManage')} size="sm" disabled={pending || bulkLabelPending} onclick={openBulkLabelDialog}><Tag class="size-4" aria-hidden="true" /></IconButton>
+                          {#if bulkSelectedThreadCount > 0 && activeSection !== 'starred' && activeSection !== 'label'}
                             <label class="inline-flex min-h-8 items-center gap-1.5 text-xs text-[var(--fm-text-muted)]" title={t('mail.threadScopeDescription')}>
                               <span class="sr-only">{t('mail.threadScope')}</span>
                               <select
@@ -2552,18 +2590,20 @@
                           {:else if activeSection === 'inbox'}
                             <IconButton ariaLabel={t('shell.archive')} title={t('shell.archive')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('archive')}><Archive class="size-4" aria-hidden="true" /></IconButton>
                           {/if}
-                          <IconButton ariaLabel={t('mail.markRead')} title={t('mail.markRead')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('read')}><MailOpen class="size-4" aria-hidden="true" /></IconButton>
-                          <IconButton ariaLabel={t('mail.moveTrash')} title={t('mail.moveTrash')} variant="ghost" size="sm" class="text-[var(--fm-danger)]" disabled={pending} onclick={() => void handleBulkMutation('trash')}><Trash2 class="size-4" aria-hidden="true" /></IconButton>
-                          <DropdownMenu id="bulk-more-actions" align="end" showChevron={false} triggerAriaLabel={t('mail.moreActions')} triggerTitle={t('mail.moreActions')} class="bulk-action-menu">
-                            {#snippet trigger()}
-                              <MoreHorizontal class="size-4" aria-hidden="true" />
-                            {/snippet}
-                            {#snippet children()}
-                              <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('unread')}><Mail class="size-4" aria-hidden="true" />{t('mail.markUnread')}</button>
-                              <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('star')}><Star class="size-4" aria-hidden="true" />{t('mail.star')}</button>
-                              <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('unstar')}><Star class="size-4" aria-hidden="true" />{t('mail.unstar')}</button>
-                            {/snippet}
-                          </DropdownMenu>
+                          {#if activeSection === 'inbox' || activeSection === 'sent' || activeSection === 'archive'}
+                            <IconButton ariaLabel={t('mail.markRead')} title={t('mail.markRead')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('read')}><MailOpen class="size-4" aria-hidden="true" /></IconButton>
+                            <IconButton ariaLabel={t('mail.moveTrash')} title={t('mail.moveTrash')} variant="ghost" size="sm" class="text-[var(--fm-danger)]" disabled={pending} onclick={() => void handleBulkMutation('trash')}><Trash2 class="size-4" aria-hidden="true" /></IconButton>
+                            <DropdownMenu id="bulk-more-actions" align="end" showChevron={false} triggerAriaLabel={t('mail.moreActions')} triggerTitle={t('mail.moreActions')} class="bulk-action-menu">
+                              {#snippet trigger()}
+                                <MoreHorizontal class="size-4" aria-hidden="true" />
+                              {/snippet}
+                              {#snippet children()}
+                                <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('unread')}><Mail class="size-4" aria-hidden="true" />{t('mail.markUnread')}</button>
+                                <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('star')}><Star class="size-4" aria-hidden="true" />{t('mail.star')}</button>
+                                <button class="menu-action" role="menuitem" type="button" onclick={() => void handleBulkMutation('unstar')}><Star class="size-4" aria-hidden="true" />{t('mail.unstar')}</button>
+                              {/snippet}
+                            </DropdownMenu>
+                          {/if}
                         </div>
                       {/if}
                     </div>
@@ -2588,7 +2628,7 @@
                     onClearFilters={clearMailFilters}
                     onRefresh={refreshWorkspace}
                     onLoadMore={loadMoreMailbox}
-                    selectable={activeSection !== 'drafts' && activeSection !== 'trash' && activeSection !== 'starred' && activeSection !== 'label'}
+                    selectable={activeSection !== 'drafts' && activeSection !== 'trash'}
                     selectedMessageIds={selectedMessageIds}
                     onToggleSelect={toggleBulkSelection}
                   />
@@ -2784,6 +2824,20 @@
         </div>
         <Button variant="ghost" size="sm" class="mt-3" onclick={() => { const target = labelTargetMessage; labelTargetMessage = null; editLabel('create', target); }}>{t('label.create')}</Button>
       {/if}
+    </Dialog>
+
+    <Dialog id="bulk-message-labels" open={bulkLabelDialogOpen} title={t('label.bulkManage')} description={t('label.bulkDescription', { count: bulkSelectedMessages.length })} dismissible={!bulkLabelPending} closeOnBackdrop={!bulkLabelPending} onClose={() => (bulkLabelDialogOpen = false)}>
+      {#if userLabels.length}
+        <Select id="bulk-label-target" label={t('label.name')} options={userLabels.map((label) => ({ value: label.id, label: label.name }))} value={bulkLabelId} disabled={bulkLabelPending} onchange={(value) => (bulkLabelId = value)} />
+      {:else}
+        <p class="text-sm text-[var(--fm-text-muted)]">{t('label.empty')}</p>
+        <Button variant="ghost" size="sm" class="mt-3" onclick={() => { bulkLabelDialogOpen = false; editLabel('create'); }}>{t('label.create')}</Button>
+      {/if}
+      <div class="mt-5 grid grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:flex sm:flex-wrap sm:justify-end">
+        <Button variant="secondary" class="w-full sm:w-auto" disabled={bulkLabelPending} onclick={() => (bulkLabelDialogOpen = false)}>{t('common.cancel')}</Button>
+        <Button variant="outline" class="w-full sm:w-auto" loading={bulkLabelPending} disabled={!bulkLabelId} onclick={() => void changeBulkLabel(false)}>{t('label.removeFromSelected')}</Button>
+        <Button variant="primary" class="w-full min-[360px]:col-span-2 sm:w-auto" loading={bulkLabelPending} disabled={!bulkLabelId} onclick={() => void changeBulkLabel(true)}>{t('label.addToSelected')}</Button>
+      </div>
     </Dialog>
 
     <ConfirmDialog id="delete-label-confirm" open={deleteLabelConfirmOpen} title={t('label.delete')} description={t('label.deleteDescription')} confirmLabel={t('label.delete')} pending={labelActionPending} onCancel={() => (deleteLabelConfirmOpen = false)} onConfirm={removeActiveLabel} />

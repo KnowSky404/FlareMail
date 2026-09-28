@@ -252,6 +252,14 @@ export function setMailMessageLabel(labelId: string, kind: MailLabelMessageKind,
   });
 }
 
+export function setManyMailMessageLabels(
+  labelId: string, targets: Array<{ kind: MailLabelMessageKind; id: string }>, enabled: boolean
+) {
+  return requestJson<{ processed: number }>(`/api/workspace/labels/${encodeURIComponent(labelId)}/messages`, {
+    method: 'PATCH', body: JSON.stringify({ targets, enabled })
+  });
+}
+
 export function createSession(input: LoginInput) {
   return requestJson<SessionResponse>('/api/workspace/session', {
     method: 'POST',
