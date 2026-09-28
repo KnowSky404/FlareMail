@@ -1102,6 +1102,7 @@ test('keeps a reply-all sender tied to the selected delivery after changing iden
   const detail = page.getByRole('region', { name: '邮件详情' });
   await detail.getByRole('button', { name: '回复全部', exact: true }).click();
   const replyAllDialog = page.getByRole('dialog', { name: '回复邮件' });
+  await expect(page.locator('.toast-region .toast')).toHaveCount(0);
   await expect(replyAllDialog.getByLabel('发件地址')).toHaveValue('00000000-0000-4000-8000-000000000021');
 
   const identityFilter = page.locator('#mail-identity-filter');
@@ -1418,6 +1419,21 @@ test('keeps a long multi-attachment compose usable in a short mobile viewport', 
   await expect(page.getByRole('region', { name: '邮件详情' }).getByRole('heading', { name: subject })).toBeVisible();
   await expect(page.getByRole('article', { name: '邮件正文详情' })).toContainText('Line 1: this draft keeps its text');
   await expect(page.getByRole('article', { name: '邮件正文详情' })).toContainText('Line 100: this draft keeps its text');
+  if (testInfo.project.name === 'mobile') {
+    await page.evaluate(() => localStorage.setItem('flaremail-theme', 'dark'));
+    await page.reload();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await openDraftEditor(page, subject);
+    const darkCompose = page.getByRole('dialog', { name: '编辑草稿' });
+    await expect(page.locator('.toast-region .toast')).toHaveCount(0);
+    const darkAttachments = darkCompose.getByRole('list', { name: '待发送附件' });
+    await expect(darkAttachments.getByRole('listitem')).toHaveCount(2);
+    await darkAttachments.getByRole('listitem').last().scrollIntoViewIfNeeded();
+    await expect(darkCompose.getByRole('textbox', { name: '正文', exact: true })).toHaveValue(longBody);
+    await assertNoHorizontalOverflow(page);
+    expect((await new AxeBuilder({ page }).include('.compose-dialog').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
+    await page.screenshot({ path: join(tmpdir(), 'flaremail-compose-short-mobile-dark.png'), fullPage: false });
+  }
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -1459,6 +1475,7 @@ test('uploads, restores, edits, sends and downloads outbound attachments', async
 
   await detail.getByRole('button', { name: '转发', exact: true }).click();
   const forwardDialog = page.getByRole('dialog', { name: '转发邮件' });
+  await expect(page.locator('.toast-region .toast')).toHaveCount(0);
   await expect(forwardDialog.getByText('原邮件有 1 个附件，默认不包含。')).toBeVisible();
   await forwardDialog.getByRole('button', { name: '包含原附件', exact: true }).click();
   await expect(forwardDialog.getByLabel('附件名称 renamed-evidence.txt')).toHaveValue('renamed-evidence.txt', { timeout: 12_000 });

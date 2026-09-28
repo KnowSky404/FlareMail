@@ -2168,7 +2168,6 @@
         current.attachments,
         current.attachmentRevision
       ));
-      notify(t('notify.editingDraft'));
     } catch (error) {
       notifyError(error, t('notify.loadDraftFailed'));
     }
@@ -2194,7 +2193,6 @@
     openCompose('reply', createReplyComposeInput(replySource(message), quotedBody, {
       replyTo: isInboundMessageId(message.id) ? inboundDetails[message.id]?.replyTo : undefined
     }));
-    notify(t('notify.replying', { subject: message.subject }));
   }
 
   async function handleReplyAllMessage(message: MailMessage) {
@@ -2219,7 +2217,6 @@
       selfEmails: mailIdentityOptions.addresses.map((address) => address.email),
       replyTo: isInboundMessageId(message.id) ? inboundDetails[message.id]?.replyTo : undefined
     }, quotedBody));
-    notify(t('notify.replyAll', { subject: message.subject }));
   }
 
   async function handleForwardMessage(message: MailMessage) {
@@ -2243,7 +2240,6 @@
       ? inboundDetails[message.id]?.attachments ?? []
       : workspaceBodies[message.id]?.attachments ?? [];
     openCompose('forward', createForwardComposeInput(message, forwardedBody, forwardAttachmentCandidates));
-    notify(t('notify.forwarding', { subject: message.subject }));
   }
 
   function handleReportHtmlIssue() {
