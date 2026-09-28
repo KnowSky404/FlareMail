@@ -452,6 +452,11 @@ test('opens dedicated domain and address management views with a domain-scoped c
   const domainCard = page.locator('.domain-card').filter({ hasText: 'flaremail.test' });
   await expect(domainCard).toBeVisible();
   await expect(domainCard).toContainText('Cloudflare');
+  const capabilities = domainCard.locator('.capability-summary');
+  await expect(capabilities).toContainText('收信');
+  await expect(capabilities).toContainText('发信');
+  await expect(capabilities.locator('dd')).toHaveCount(2);
+  await expect(capabilities.locator('dd').nth(1)).toHaveText('可用');
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: `/tmp/flaremail-domains-${testInfo.project.name}.png` });

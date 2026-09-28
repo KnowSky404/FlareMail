@@ -9,6 +9,7 @@
   import { requestJson } from '$lib/client/api';
   import { mailHealthState } from '$lib/domain/mail/health';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
+  import { summarizeDomainCapabilities, type DomainCapabilityState } from './domain-capabilities';
   import type { WorkspaceSnapshot } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -414,6 +415,35 @@
     }) === null;
   }
 
+  function capabilitiesFor(domain: MailDomain, domainAddresses: MailAddress[]) {
+    return summarizeDomainCapabilities({
+      enabled: Boolean(domain.enabled),
+      cloudflareHealth: mailHealthState({
+        configured: domain.cloudflare_configured,
+        checkedAt: domain.cloudflare_checked_at,
+        leaseExpiresAt: domain.cloudflare_check_expires_at,
+        errorCode: domain.cloudflare_error_code
+      }),
+      catchAllCollects: domain.unknown_recipient_policy === 'collect' &&
+        (checks[domain.id]?.cloudflare.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
+      resendStatus: domain.resend_status,
+      resendSendingStatus: domain.resend_sending_status,
+      resendCheckedAt: domain.resend_checked_at,
+      resendCheckFailed: Boolean(domain.resend_error_code),
+      addresses: domainAddresses.map((address) => ({
+        lifecycleStatus: address.lifecycle_status,
+        routingState: address.routing_state,
+        receiveEnabled: address.receive_enabled === 1,
+        sendEnabled: address.send_enabled === 1
+      }))
+    });
+  }
+
+  function capabilityLabel(state: DomainCapabilityState) {
+    return state === 'ready' ? t('settings.ready') :
+      state === 'needs_check' ? t('settings.statusNeedsCheck') : t('settings.notReady');
+  }
+
 </script>
 
 <Panel class="mx-auto max-w-[72rem]" title={view === 'domains' ? t('settings.domainDashboard') : t('settings.mailIdentities')} description={view === 'domains' ? t('settings.domainDashboardDescription') : t('settings.mailIdentitiesDescription')}>
@@ -448,6 +478,7 @@
       {#each domains as domain (domain.id)}
         {@const domainAddresses = addressByDomain.get(domain.id) ?? []}
         {@const check = checks[domain.id]}
+        {@const capabilities = capabilitiesFor(domain, domainAddresses)}
         <section class="domain-card" aria-labelledby={`domain-title-${domain.id}`}>
           <header class="domain-header">
             <div class="domain-heading">
@@ -464,6 +495,22 @@
             </div>
           </header>
           {#if view === 'domains'}
+          <dl class="capability-summary" aria-label={t('settings.domainCapabilities')}>
+            <div>
+              <dt>{t('settings.receive')}</dt>
+              <dd class:ready={capabilities.receiving === 'ready'} class:attention={capabilities.receiving === 'needs_check'}>
+                {#if capabilities.receiving === 'ready'}<CheckCircle2 size={16} aria-hidden="true" />{:else}<AlertTriangle size={16} aria-hidden="true" />{/if}
+                {capabilityLabel(capabilities.receiving)}
+              </dd>
+            </div>
+            <div>
+              <dt>{t('settings.send')}</dt>
+              <dd class:ready={capabilities.sending === 'ready'} class:attention={capabilities.sending === 'needs_check'}>
+                {#if capabilities.sending === 'ready'}<CheckCircle2 size={16} aria-hidden="true" />{:else}<AlertTriangle size={16} aria-hidden="true" />{/if}
+                {capabilityLabel(capabilities.sending)}
+              </dd>
+            </div>
+          </dl>
           <dl class="domain-status">
             <div>
               <dt>Cloudflare</dt>
@@ -473,7 +520,6 @@
               <dt>Resend</dt>
               <dd>{resendLabel(domain)} · {healthLabel(domain, 'resend')}{#if nextHealthCheck(domain, 'resend')}<small>{t('settings.mailHealthNextCheck')}: {nextHealthCheck(domain, 'resend')}</small>{/if}</dd>
             </div>
-            <div><dt>{t('settings.send')}</dt><dd>{domain.resend_sending_status === 'enabled' ? t('settings.ready') : t('settings.notReady')}</dd></div>
             <div><dt>{t('settings.unknownRecipients')}</dt><dd>{domain.unknown_recipient_policy === 'collect' ? t('settings.unknownCollect') : t('settings.unknownReject')}</dd></div>
           </dl>
 
@@ -623,7 +669,13 @@
   .domain-heading { min-width: 0; }
   .domain-heading h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 650; }
   .domain-heading p { margin: 4px 0 0; color: var(--fm-text-muted); font-size: 12px; }
-  .domain-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; margin: var(--space-3) 0; padding: var(--space-3) 0; border-block: 1px solid var(--fm-border); font-size: 12px; }
+  .capability-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 0; padding: var(--space-3) 0; border-block: 1px solid var(--fm-border); }
+  .capability-summary > div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .capability-summary dt { color: var(--fm-text-secondary); font-size: 13px; font-weight: 600; }
+  .capability-summary dd { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; color: var(--fm-danger); font-size: 13px; font-weight: 600; white-space: nowrap; }
+  .capability-summary dd.ready { color: var(--fm-success); }
+  .capability-summary dd.attention { color: var(--fm-warning); }
+  .domain-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; margin: 0 0 var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--fm-border); font-size: 12px; }
   .domain-status div { display: flex; justify-content: space-between; gap: 8px; }
   .domain-status dt { color: var(--fm-text-muted); }
   .domain-status dd { margin: 0; color: var(--fm-text); text-align: right; }
@@ -659,6 +711,7 @@
     .signature-field { grid-column: auto; }
     .domain-header { flex-direction: column; align-items: stretch; }
     .domain-header-actions { justify-content: flex-start; }
+    .capability-summary { grid-template-columns: minmax(0, 1fr); }
     .domain-status { grid-template-columns: minmax(0, 1fr); }
     .address-list li { grid-template-columns: minmax(0, 1fr) auto; }
     .address-state { grid-column: 1; justify-content: flex-start; }
