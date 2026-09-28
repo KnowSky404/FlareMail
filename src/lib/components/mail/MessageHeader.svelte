@@ -399,9 +399,9 @@
 
   .subject-toggle {
     border-radius: var(--radius-sm);
-    padding: 0 0.25rem;
+    padding: 0 0.375rem;
     color: var(--fm-primary);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
   }

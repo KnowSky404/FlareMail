@@ -119,7 +119,11 @@
         ? error.message
         : fallback;
 
-  const formatAttachmentSize = (size: number) => `${formatNumber(size / 1024, i18n.locale, { maximumFractionDigits: 1 })} KB`;
+  const formatAttachmentSize = (size: number) => {
+    if (size < 1024) return `${formatNumber(size, i18n.locale)} B`;
+    if (size < 1024 * 1024) return `${formatNumber(size / 1024, i18n.locale, { maximumFractionDigits: 1 })} KB`;
+    return `${formatNumber(size / (1024 * 1024), i18n.locale, { maximumFractionDigits: 1 })} MB`;
+  };
   const formatConflictDate = (value: string | null | undefined, fallback: string) => value ? new Intl.DateTimeFormat(i18n.locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : fallback;
 
   let input = $state<ComposeInput>(createComposeState(null));
@@ -151,6 +155,7 @@
     cancel?: () => void;
   }>>([]);
   let renameValues = $state<Record<string, string>>({});
+  const readyAttachmentCount = $derived((input.attachments ?? []).filter((attachment) => !attachment.state || attachment.state === 'ready').length);
 
   $effect(() => {
     const next = createComposeState(initialInput, initialInput?.draftId);
@@ -818,7 +823,13 @@
         <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> {t('compose.send')}</span>
       </div>
       <div class="flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
-        <IconButton ariaLabel={t('compose.attachFile')} title={t('compose.attachFile')} disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
+        <div class="relative shrink-0">
+          <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-footer-attachment-count' : undefined} title={t('compose.attachFile')} disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
+          {#if readyAttachmentCount}
+            <span class="compose-attachment-count pointer-events-none absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[var(--fm-primary)] text-[10px] font-semibold text-[var(--fm-text-inverse)]" aria-hidden="true">{readyAttachmentCount}</span>
+            <span id="compose-footer-attachment-count" class="sr-only" role="status" aria-live="polite">{t('compose.addedAttachmentCount', { count: readyAttachmentCount })}</span>
+          {/if}
+        </div>
         <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} ariaPressed={showHtml} ariaControls="compose-html-options" onclick={() => (showHtml = !showHtml)}><Code2 class="size-4" aria-hidden="true" /></IconButton>
         <Button variant="outline" disabled={pending} onclick={requestClose}>{t('common.cancel')}</Button>
         <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(validation.value); }}>{t('compose.sendMail')}</Button>
