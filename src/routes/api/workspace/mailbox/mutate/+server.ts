@@ -5,7 +5,7 @@ import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/works
 import { mutateWorkspaceMailbox } from '$lib/server/workspace';
 
 const actions = new Set<MailboxMutationAction>(['archive', 'unarchive', 'read', 'unread', 'star', 'unstar', 'trash']);
-const sections = new Set(['inbox', 'sent', 'archive']);
+const sections = new Set(['inbox', 'sent', 'archive', 'starred', 'label']);
 const threadScopes = new Set(['selected', 'filtered', 'owner']);
 const filters = new Set<MailboxFilter>(['all', 'unread', 'starred']);
 const deliveryStatuses = new Set<DeliveryStatus>([
@@ -48,6 +48,14 @@ function parseMutationScope(value: unknown, hasThreadKeys: boolean): MailboxMuta
   if ((threadScope === 'filtered' || threadScope === 'owner') && !hasThreadKeys) {
     throw new ApiError(400, 'MAILBOX_THREAD_SELECTION_REQUIRED', '会话操作必须提交当前范围内已选邮件对应的会话。');
   }
+  if ((scope.section === 'starred' || scope.section === 'label') && threadScope !== 'selected') {
+    throw new ApiError(400, 'INVALID_MAILBOX_THREAD_SELECTION', '跨文件夹视图只支持明确选中的邮件。');
+  }
+  if (scope.section === 'label'
+    ? typeof scope.labelId !== 'string' || !/^[A-Za-z0-9-]{1,128}$/u.test(scope.labelId)
+    : scope.labelId !== undefined) {
+    throw new ApiError(400, 'INVALID_MAILBOX_LABEL_SCOPE', '批量操作的标签范围无效。');
+  }
   if (scope.query !== undefined && (typeof scope.query !== 'string' || scope.query.length > 200)) {
     throw new ApiError(400, 'INVALID_MAILBOX_FILTER_SCOPE', '当前筛选会话的搜索范围无效。');
   }
@@ -65,6 +73,7 @@ function parseMutationScope(value: unknown, hasThreadKeys: boolean): MailboxMuta
     section: scope.section as MailboxMutationScope['section'],
     identityFilter,
     threadScope: threadScope as MailboxMutationScope['threadScope'],
+    ...(scope.section === 'label' ? { labelId: scope.labelId as string } : {}),
     ...(threadScope === 'filtered' ? {
       query: scope.query as string,
       filter: scope.filter as MailboxFilter,

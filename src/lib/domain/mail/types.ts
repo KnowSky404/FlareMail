@@ -12,11 +12,13 @@ export type MailFolder = 'inbox' | 'sent' | 'drafts';
 /** Persisted folders plus cross-folder and archive views. */
 export type MailboxSection = MailFolder | 'archive' | 'starred' | 'label';
 export type MailboxIdentityFilter = { kind: 'domain' | 'address'; id: string };
-export type MailboxMutationSection = Exclude<MailboxSection, 'drafts' | 'starred' | 'label'>;
+export type MailboxMutationSection = Exclude<MailboxSection, 'drafts'>;
 export type MailboxThreadScope = 'selected' | 'filtered' | 'owner';
 export interface MailboxMutationScope {
   section: MailboxMutationSection;
   identityFilter: MailboxIdentityFilter | null;
+  /** Required for selected-only mutations in a user label view. */
+  labelId?: string;
   /** Always explicit: selected IDs, matching messages in the filtered thread, or the whole Owner thread. */
   threadScope: MailboxThreadScope;
   /** Used only by `filtered` thread expansion. */

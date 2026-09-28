@@ -655,6 +655,84 @@ describe('D1 mailbox pages', () => {
     expect((await loadMailboxPage(env, workspace, query('inbox'))).messages.map(({ id }) => id)).not.toContain('inbox-z');
   });
 
+  test('mutates only explicitly selected starred messages across inbox, sent and inbound', async () => {
+    const { env, workspace, database } = fixture();
+    database.query("UPDATE workspace_messages SET is_starred = 1 WHERE id = 'sent-1'").run();
+    database.query(`INSERT INTO workspace_email_states
+      (id, user_id, email_message_id, is_starred, created_at, updated_at)
+      VALUES ('starred-inbound', 'user-1', 'incoming-1', 1, '2026-08-13T00:00:00Z', '2026-08-13T00:00:00Z')`).run();
+    const scope = { section: 'starred' as const, identityFilter: null, threadScope: 'selected' as const };
+
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read', messageIds: ['inbox-z', 'inbox-a'], scope
+    })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+    expect(database.query("SELECT is_read FROM workspace_messages WHERE id = 'inbox-z'").get()).toEqual({ is_read: 0 });
+    expect(database.query("SELECT is_read FROM workspace_email_states WHERE email_message_id = 'incoming-1'").get()).toEqual({ is_read: 0 });
+
+    const selected = ['inbox-z', 'sent-1', 'email:incoming-1'];
+    const result = await mutateWorkspaceMailbox(env, workspace, { action: 'read', messageIds: selected, scope });
+    expect(result.summaries.map(({ id }) => id).sort()).toEqual([...selected].sort());
+    expect(database.query("SELECT is_read FROM workspace_messages WHERE id = 'inbox-z'").get()).toEqual({ is_read: 1 });
+    expect(database.query("SELECT is_read FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ is_read: 1 });
+    expect(database.query("SELECT is_read FROM workspace_email_states WHERE email_message_id = 'incoming-1'").get()).toEqual({ is_read: 1 });
+
+    await mutateWorkspaceMailbox(env, workspace, { action: 'unstar', messageIds: selected, scope });
+    expect(database.query("SELECT is_starred FROM workspace_messages WHERE id = 'inbox-z'").get()).toEqual({ is_starred: 0 });
+    expect(database.query("SELECT is_starred FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ is_starred: 0 });
+    expect(database.query("SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-1'").get()).toEqual({ is_starred: 0 });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'trash', messageIds: ['inbox-z'], scope
+    })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+  });
+
+  test('enforces user label membership and identity scope before mixed-view writes', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+    database.query("UPDATE workspace_messages SET recipient_address_id = 'address-a' WHERE id = 'inbox-z'").run();
+    database.query("UPDATE workspace_messages SET sender_address_id = 'address-a' WHERE id = 'sent-1'").run();
+    const label = await createMailLabel(env.DB, workspace.userId, 'Follow Up');
+    for (const target of [
+      { kind: 'workspace', id: 'inbox-z' },
+      { kind: 'workspace', id: 'sent-1' },
+      { kind: 'workspace', id: 'inbox-b' },
+      { kind: 'draft', id: 'draft-1' },
+      { kind: 'inbound', id: 'incoming-1' }
+    ] as const) await setMailMessageLabel(env.DB, workspace.userId, label.id, target, true);
+    const scope = {
+      section: 'label' as const, labelId: label.id,
+      identityFilter: { kind: 'address' as const, id: 'address-a' }, threadScope: 'selected' as const
+    };
+
+    for (const invalidId of ['inbox-a', 'inbox-b', 'draft-1']) {
+      await expect(mutateWorkspaceMailbox(env, workspace, {
+        action: 'read', messageIds: ['inbox-z', invalidId], scope
+      })).rejects.toMatchObject({ code: 'MAILBOX_MESSAGE_NOT_FOUND' });
+    }
+    expect(database.query("SELECT is_read FROM workspace_messages WHERE id = 'inbox-z'").get()).toEqual({ is_read: 0 });
+
+    const selected = ['inbox-z', 'sent-1', 'email:incoming-1'];
+    const result = await mutateWorkspaceMailbox(env, workspace, { action: 'read', messageIds: selected, scope });
+    expect(result.summaries.map(({ id }) => id).sort()).toEqual([...selected].sort());
+    expect(result.metricsScope.identityFilter).toEqual(scope.identityFilter);
+    expect(database.query("SELECT is_read FROM workspace_messages WHERE id = 'inbox-b'").get()).toEqual({ is_read: 0 });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: selected, scope
+    })).rejects.toMatchObject({ code: 'MAILBOX_ACTION_INVALID' });
+    expect(database.query("SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'").get()).toEqual({ archived_at: null });
+    await mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['inbox-z', 'email:incoming-1'], scope
+    });
+    expect(database.query("SELECT archived_at FROM workspace_messages WHERE id = 'inbox-z'").get()).not.toEqual({ archived_at: null });
+
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read', messageIds: ['inbox-z'], scope: { ...scope, labelId: 'missing-label' }
+    })).rejects.toMatchObject({ code: 'MAIL_LABEL_NOT_FOUND' });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'read', messageIds: ['inbox-z'], threadKeys: ['shared-rfc'],
+      scope: { ...scope, threadScope: 'owner' }
+    })).rejects.toMatchObject({ code: 'INVALID_MAILBOX_THREAD_SELECTION' });
+  });
+
   test.each([
     ['archive', { column: 'archived_at', expected: 'not-null' }],
     ['unarchive', { column: 'archived_at', expected: null }],

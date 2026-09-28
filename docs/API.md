@@ -455,7 +455,7 @@ bounded repair workflow; a download never performs bulk repair.
   "action": "archive|unarchive|read|unread|star|unstar|trash",
   "ids": ["selected-message-id"],
   "scope": {
-    "section": "inbox|sent|archive",
+    "section": "inbox|sent|archive|starred|label",
     "identityFilter": null,
     "threadScope": "selected"
   }
@@ -468,6 +468,12 @@ section/address filter by the server before any write. `identityFilter` is
 `null`, `{ "kind": "domain", "id": "..." }`, or
 `{ "kind": "address", "id": "..." }`. A foreign identity, section, Owner,
 or selected message outside that scope is rejected without a partial mutation.
+For `section: "label"`, `scope.labelId` is required and each selected ID must
+still belong to that Owner's label. For `section: "starred"`, each selected ID
+must still be starred. These two cross-folder views accept only
+`threadScope: "selected"`; they never expand a thread or silently include
+unselected mail. Drafts can be selected for bulk label management, but are
+not targets of this mailbox mutation endpoint.
 
 The client selects only currently loaded rows. “Select all” means all rows
 loaded in the current page that match the active search, unread, or starred
@@ -497,8 +503,9 @@ metrics from a different identity scope and refresh when a message delta does
 not fit the current page.
 
 Trash has no identity filter: entering it clears the current identity filter,
-and its list/empty operation is Owner-global. A bulk `trash` action from an
-inbox/sent/archive view is still scoped to the declared identity and section.
+and its list/empty operation is Owner-global. A bulk `trash` action from
+any mailbox view is still scoped to the declared identity and section or
+cross-folder view membership.
 
 ## Mailbox search
 

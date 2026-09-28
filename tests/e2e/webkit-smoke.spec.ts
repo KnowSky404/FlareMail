@@ -101,6 +101,7 @@ test('bulk-removes a label from selected inbox and draft mail in WebKit', async 
   const labelId = (created.payload as { data: { label: { id: string } } }).data.label.id;
   for (const target of [
     { kind: 'workspace', id: 'e2e-inbox-message' },
+    { kind: 'workspace', id: 'e2e-sent-message' },
     { kind: 'draft', id: 'e2e-draft-1' }
   ]) {
     const result = await page.evaluate(async ({ id, message }) => {
@@ -122,11 +123,24 @@ test('bulk-removes a label from selected inbox and draft mail in WebKit', async 
   await page.screenshot({ path: join(tmpdir(), `flaremail-label-search-${testInfo.project.name}.png`), fullPage: false });
   await page.goto(`/?folder=label&label=${encodeURIComponent(labelId)}`);
   await expect(page.getByRole('heading', { name: 'WebKit Bulk Label' })).toBeVisible();
+  const inbox = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  const sent = page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' });
+  const toolbar = page.getByRole('group', { name: '批量邮件操作' });
+  await inbox.getByRole('checkbox').check({ force: true });
+  await sent.getByRole('checkbox').check({ force: true });
+  await expect(toolbar.getByRole('button', { name: '标为已读' })).toBeVisible();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-webkit-mixed-bulk-${testInfo.project.name}.png`), fullPage: false });
+  await clickHeadlessControl(toolbar.getByRole('button', { name: '标为已读' }));
+  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).not.toHaveAttribute('aria-label', /未读/u);
+  await expect(sent).toBeVisible();
+  await clickHeadlessControl(page.getByRole('button', { name: '关闭通知' }));
   for (const subject of ['E2E Inbox Welcome', 'E2E Existing Concurrent']) {
     const row = page.getByRole('listitem').filter({ hasText: subject });
     await expect(row).toBeVisible();
     await row.getByRole('checkbox').check({ force: true });
   }
+  await expect(page.getByRole('status').filter({ hasText: '所选邮件包含草稿' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '标为已读' })).toHaveCount(0);
   await clickHeadlessControl(page.getByRole('button', { name: '批量管理标签' }));
   const dialog = page.getByRole('dialog', { name: '批量管理标签' });
   await expect(dialog).toContainText('仅更新当前页已选的 2 封邮件');
@@ -134,9 +148,11 @@ test('bulk-removes a label from selected inbox and draft mail in WebKit', async 
   await page.screenshot({ path: join(tmpdir(), `flaremail-webkit-bulk-label-${testInfo.project.name}.png`), fullPage: false });
   await clickHeadlessControl(dialog.getByRole('button', { name: '从已选邮件移除' }));
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole('listitem')).toHaveCount(0);
+  await expect(inbox).toHaveCount(0);
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' })).toHaveCount(0);
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('listitem')).toHaveCount(0);
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors);
   const removed = await page.evaluate(async (id) => {

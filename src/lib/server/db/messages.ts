@@ -17,31 +17,42 @@ const placeholders = (values: string[]) => values.map(() => '?').join(', ');
 export interface MailboxMutationSqlScope {
   section: MailboxMutationSection;
   identityFilter: MailboxIdentityFilter | null;
+  labelId?: string;
 }
 
 function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
   if (!scope) return { sql: '', bindings: [] as unknown[] };
+  const mixed = scope.section === 'starred' || scope.section === 'label';
   const sectionSql = scope.section === 'sent'
     ? `${alias}.folder = 'sent'`
     : scope.section === 'archive'
       ? `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NOT NULL`
-      : `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NULL`;
-  if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings: [] as unknown[] };
-  const addressColumn = scope.section === 'sent' ? 'sender_address_id' : 'recipient_address_id';
+      : scope.section === 'starred'
+        ? `${alias}.is_starred = 1`
+        : scope.section === 'label'
+          ? `EXISTS (SELECT 1 FROM mail_message_labels AS mutation_label
+              WHERE mutation_label.owner_user_id = ${alias}.user_id AND mutation_label.message_kind = 'workspace'
+                AND mutation_label.message_id = ${alias}.id AND mutation_label.label_id = ?)`
+          : `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NULL`;
+  const bindings: unknown[] = scope.section === 'label' ? [scope.labelId ?? ''] : [];
+  if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings };
+  const addressColumn = mixed
+    ? `(CASE WHEN ${alias}.folder = 'sent' THEN ${alias}.sender_address_id ELSE ${alias}.recipient_address_id END)`
+    : `${alias}.${scope.section === 'sent' ? 'sender_address_id' : 'recipient_address_id'}`;
   const identitySql = scope.identityFilter.kind === 'address'
     ? ` AND EXISTS (
         SELECT 1 FROM mail_addresses AS mutation_scope_address
-        WHERE mutation_scope_address.id = ${alias}.${addressColumn}
+        WHERE mutation_scope_address.id = ${addressColumn}
           AND mutation_scope_address.owner_user_id = ${alias}.user_id
           AND mutation_scope_address.id = ?
       )`
     : ` AND EXISTS (
         SELECT 1 FROM mail_addresses AS mutation_scope_address
-        WHERE mutation_scope_address.id = ${alias}.${addressColumn}
+        WHERE mutation_scope_address.id = ${addressColumn}
           AND mutation_scope_address.owner_user_id = ${alias}.user_id
           AND mutation_scope_address.domain_id = ?
       )`;
-  return { sql: ` AND ${sectionSql}${identitySql}`, bindings: [scope.identityFilter.id] };
+  return { sql: ` AND ${sectionSql}${identitySql}`, bindings: [...bindings, scope.identityFilter.id] };
 }
 
 function inboundScopeSql(alias: string, stateAlias: string, scope: MailboxMutationSqlScope | null) {
@@ -49,12 +60,19 @@ function inboundScopeSql(alias: string, stateAlias: string, scope: MailboxMutati
   if (scope.section === 'sent') return { sql: ' AND 1 = 0', bindings: [] as unknown[] };
   const sectionSql = scope.section === 'archive'
     ? `${stateAlias}.archived_at IS NOT NULL`
-    : `${stateAlias}.archived_at IS NULL`;
-  if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings: [] as unknown[] };
+    : scope.section === 'starred'
+      ? `COALESCE(${stateAlias}.is_starred, 0) = 1`
+      : scope.section === 'label'
+        ? `EXISTS (SELECT 1 FROM mail_message_labels AS mutation_label
+            WHERE mutation_label.owner_user_id = ${alias}.owner_user_id AND mutation_label.message_kind = 'inbound'
+              AND mutation_label.message_id = ${alias}.id AND mutation_label.label_id = ?)`
+        : `${stateAlias}.archived_at IS NULL`;
+  const bindings: unknown[] = scope.section === 'label' ? [scope.labelId ?? ''] : [];
+  if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings };
   const identitySql = scope.identityFilter.kind === 'address'
     ? ` AND ${alias}.mail_address_id = ?`
     : ` AND ${alias}.mail_domain_id = ?`;
-  return { sql: ` AND ${sectionSql}${identitySql}`, bindings: [scope.identityFilter.id] };
+  return { sql: ` AND ${sectionSql}${identitySql}`, bindings: [...bindings, scope.identityFilter.id] };
 }
 
 function splitMailboxIds(messageIds: string[]) {

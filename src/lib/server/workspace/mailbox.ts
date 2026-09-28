@@ -80,7 +80,7 @@ export interface WorkspaceMailboxMutationInput {
   scope: MailboxMutationScope;
 }
 
-const mailboxMutationSections = new Set<MailboxMutationSection>(['inbox', 'sent', 'archive']);
+const mailboxMutationSections = new Set<MailboxMutationSection>(['inbox', 'sent', 'archive', 'starred', 'label']);
 const mailboxThreadScopes = new Set(['selected', 'filtered', 'owner']);
 
 function isValidIdentityFilter(value: unknown): value is NonNullable<MailboxMutationScope['identityFilter']> {
@@ -145,6 +145,14 @@ export async function mutateWorkspaceMailbox(
   if ((suppliedScope.threadScope === 'filtered' || suppliedScope.threadScope === 'owner') && !threadKeys.length) {
     throw new ApiError(400, 'MAILBOX_THREAD_SELECTION_REQUIRED', '会话操作必须提交当前范围内已选邮件对应的会话。');
   }
+  if ((suppliedScope.section === 'starred' || suppliedScope.section === 'label') && suppliedScope.threadScope !== 'selected') {
+    throw new ApiError(400, 'INVALID_MAILBOX_THREAD_SELECTION', '跨文件夹视图只支持明确选中的邮件。');
+  }
+  if (suppliedScope.section === 'label'
+    ? typeof suppliedScope.labelId !== 'string' || !/^[A-Za-z0-9-]{1,128}$/u.test(suppliedScope.labelId)
+    : suppliedScope.labelId !== undefined) {
+    throw new ApiError(400, 'INVALID_MAILBOX_LABEL_SCOPE', '批量操作的标签范围无效。');
+  }
   if (suppliedScope.threadScope === 'filtered' && (
     typeof suppliedScope.query !== 'string' || suppliedScope.query.length > 200 ||
     !mailboxMutationFilters.has(suppliedScope.filter as MailboxFilter) ||
@@ -158,6 +166,7 @@ export async function mutateWorkspaceMailbox(
     section: suppliedScope.section,
     identityFilter: suppliedScope.identityFilter,
     threadScope: suppliedScope.threadScope,
+    ...(suppliedScope.section === 'label' ? { labelId: suppliedScope.labelId } : {}),
     ...(suppliedScope.threadScope === 'filtered' ? {
       query: suppliedScope.query,
       filter: suppliedScope.filter,
@@ -167,6 +176,7 @@ export async function mutateWorkspaceMailbox(
   if (scope.identityFilter && !(await mailboxIdentityFilterExists(env.DB, workspace.userId, scope.identityFilter))) {
     throw new ApiError(404, 'MAIL_IDENTITY_NOT_FOUND', '所选邮件身份不存在或不属于当前工作区。');
   }
+  if (scope.section === 'label') await requireMailLabel(env.DB, workspace.userId, scope.labelId!);
 
   const directRows = directIds.length
     ? await listOwnedMailboxMutationRows(env.DB, workspace.userId, directIds, scope)

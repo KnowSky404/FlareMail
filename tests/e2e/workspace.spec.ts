@@ -202,6 +202,72 @@ test('creates a label from a message and applies it in the same flow', async ({ 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('mutates selected inbox and sent mail in a label view without touching selected drafts', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const created = await page.evaluate(async (project) => {
+    const response = await fetch('/api/workspace/labels', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: `E2E Mixed Actions ${project}` })
+    });
+    return { ok: response.ok, payload: await response.json() };
+  }, testInfo.project.name);
+  expect(created.ok, JSON.stringify(created.payload)).toBe(true);
+  const labelId = (created.payload as { data: { label: { id: string } } }).data.label.id;
+  for (const target of [
+    { kind: 'workspace', id: 'e2e-inbox-message' },
+    { kind: 'workspace', id: 'e2e-sent-message' },
+    { kind: 'draft', id: 'e2e-draft-1' }
+  ]) {
+    const applied = await page.evaluate(async ({ id, message }) => {
+      const response = await fetch(`/api/workspace/labels/${id}/messages`, {
+        method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(message)
+      });
+      return { ok: response.ok, payload: await response.json() };
+    }, { id: labelId, message: target });
+    expect(applied.ok, JSON.stringify(applied.payload)).toBe(true);
+  }
+
+  await page.goto(`/?folder=label&label=${encodeURIComponent(labelId)}`);
+  const toolbar = page.getByRole('group', { name: '批量邮件操作' });
+  const inbox = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  const sent = page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' });
+  const draft = page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' });
+  await expect(inbox).toBeVisible();
+  await expect(sent).toBeVisible();
+  await expect(draft).toBeVisible();
+  await toolbar.getByRole('checkbox', { name: '选择已加载邮件' }).check();
+  await expect(page.getByRole('status').filter({ hasText: '所选邮件包含草稿' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '标为已读' })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: '移入垃圾箱' })).toHaveCount(0);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-mixed-bulk-draft-${testInfo.project.name}.png`), fullPage: false });
+  await toolbar.getByRole('checkbox', { name: '取消选择' }).uncheck();
+  await inbox.getByRole('checkbox').check();
+  await sent.getByRole('checkbox').check();
+  await expect(page.getByRole('status').filter({ hasText: '所选邮件包含草稿' })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: '标为已读' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '移入垃圾箱' })).toBeVisible();
+  await toolbar.getByRole('button', { name: '更多邮件操作' }).click();
+  await page.getByRole('menuitem', { name: '标为未读' }).click();
+  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /未读/u);
+  await expect(sent.getByRole('button', { name: /E2E Seeded Sent/u })).toHaveAttribute('aria-label', /未读/u);
+  await inbox.getByRole('checkbox').check();
+  await sent.getByRole('checkbox').check();
+  await toolbar.getByRole('button', { name: '标为已读' }).click();
+  await expect(page.locator('.toast-region .toast')).toHaveCount(1);
+  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).not.toHaveAttribute('aria-label', /未读/u);
+  await expect(sent.getByRole('button', { name: /E2E Seeded Sent/u })).not.toHaveAttribute('aria-label', /未读/u);
+  await inbox.getByRole('checkbox').check();
+  await sent.getByRole('checkbox').check();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-mixed-bulk-selected-${testInfo.project.name}.png`), fullPage: false });
+  await toolbar.getByRole('button', { name: '移入垃圾箱' }).click();
+  await expect(inbox).toHaveCount(0);
+  await expect(sent).toHaveCount(0);
+  await expect(draft).toBeVisible();
+  await page.reload();
+  await expect(draft).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('shows one persistent label across inbox, inbound, sent and drafts', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const created = await page.evaluate(async () => {

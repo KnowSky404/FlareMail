@@ -123,6 +123,7 @@
     type LoginInput,
     type MailboxSection,
     type MailboxIdentityFilter,
+    type MailboxMutationScope,
     type MailMessage,
     type MailUserLabel,
     type MailLabelMessageKind,
@@ -487,6 +488,11 @@
       : visibleMessages.map((message) => message.id));
   const bulkSelectedMessages = $derived.by(() => [...visibleThreads.map((thread) => thread.sectionLatestMessage), ...visibleMessages]
     .filter((message, index, all) => selectedMessageIds.includes(message.id) && all.findIndex((candidate) => candidate.id === message.id) === index));
+  const bulkHasDraftSelection = $derived(bulkSelectedMessages.some((message) => message.folder === 'drafts'));
+  const bulkCanMutateMessages = $derived(bulkSelectedMessages.length > 0 && !bulkHasDraftSelection);
+  const bulkInboxOnly = $derived(bulkCanMutateMessages && bulkSelectedMessages.every((message) => message.folder === 'inbox'));
+  const bulkHasUnarchivedInbox = $derived(bulkInboxOnly && bulkSelectedMessages.some((message) => !message.archivedAt));
+  const bulkHasArchivedInbox = $derived(bulkInboxOnly && bulkSelectedMessages.some((message) => Boolean(message.archivedAt)));
   const bulkSelectedVisibleCount = $derived(bulkSelectableIds.filter((id) => selectedMessageIds.includes(id)).length);
   const bulkSelectedThreadCount = $derived(visibleThreads.filter((thread) =>
     Boolean(thread.sectionLatestMessage.threadKey) && selectedMessageIds.includes(thread.sectionLatestMessage.id)
@@ -1376,7 +1382,12 @@
   }
 
   async function handleBulkMutation(action: import('$lib/domain/mail').MailboxMutationAction) {
-    if (!selectedMessageIds.length || !['inbox', 'sent', 'archive'].includes(activeSection)) return;
+    if (!selectedMessageIds.length || !['inbox', 'sent', 'archive', 'starred', 'label'].includes(activeSection)) return;
+    if (bulkHasDraftSelection) {
+      notify(t('mail.bulkDraftRestriction'), 'info');
+      return;
+    }
+    if (activeSection === 'label' && !activeLabelId) return;
     pending = true;
     try {
       const selected = bulkSelectedMessages;
@@ -1387,14 +1398,17 @@
         return;
       }
       const selectedThreadKeys = selected.map((message) => message.threadKey).filter((key): key is string => Boolean(key));
-      const threadScope = bulkThreadScope !== 'selected' && selectedThreadKeys.length ? bulkThreadScope : 'selected';
+      const mixedView = activeSection === 'starred' || activeSection === 'label';
+      const threadScope = !mixedView && bulkThreadScope !== 'selected' && selectedThreadKeys.length ? bulkThreadScope : 'selected';
       const threadKeys = threadScope === 'selected' ? [] : selectedThreadKeys;
-      const result = await mutateMailbox(action, validSelectedIds, threadKeys, {
-        section: activeSection === 'archive' ? 'archive' : activeSection === 'sent' ? 'sent' : 'inbox',
+      const scope: MailboxMutationScope = {
+        section: activeSection as MailboxMutationScope['section'],
         identityFilter: mailIdentityFilter,
         threadScope,
+        ...(activeSection === 'label' ? { labelId: activeLabelId! } : {}),
         ...(threadScope === 'filtered' ? { query: searchQuery, filter: mailFilter } : {})
-      });
+      };
+      const result = await mutateMailbox(action, validSelectedIds, threadKeys, scope);
       const metricsScope = result.result.metricsScope.identityFilter;
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
         metrics = result.result.metrics;
@@ -1402,8 +1416,9 @@
       if (action === 'trash') trashLoaded = false;
       selectedMessageIds = [];
       bulkThreadScope = 'selected';
-      await refreshWorkspace();
+      await refreshWorkspace(false);
       workspaceSync?.publish({ type: 'mailbox-refresh' });
+      toastController.dismissPassive();
       notify(
         action === 'archive'
           ? t('notify.bulkArchived')
@@ -2081,7 +2096,7 @@
               metrics = restored.metrics;
               trashLoaded = false;
               workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId });
-              if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace();
+              if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace(false);
               notify(t('notify.trashUndone'), 'success');
             }
           }
@@ -2590,12 +2605,13 @@
                               <span class="sr-only">{t('mail.threadScopeDescription')}</span>
                             </label>
                           {/if}
-                          {#if activeSection === 'archive'}
+                          {#if activeSection === 'archive' || ((activeSection === 'starred' || activeSection === 'label') && bulkHasArchivedInbox)}
                             <IconButton ariaLabel={t('mail.moveToInbox')} title={t('mail.moveToInbox')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('unarchive')}><Inbox class="size-4" aria-hidden="true" /></IconButton>
-                          {:else if activeSection === 'inbox'}
+                          {/if}
+                          {#if activeSection === 'inbox' || ((activeSection === 'starred' || activeSection === 'label') && bulkHasUnarchivedInbox)}
                             <IconButton ariaLabel={t('shell.archive')} title={t('shell.archive')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('archive')}><Archive class="size-4" aria-hidden="true" /></IconButton>
                           {/if}
-                          {#if activeSection === 'inbox' || activeSection === 'sent' || activeSection === 'archive'}
+                          {#if bulkCanMutateMessages}
                             <IconButton ariaLabel={t('mail.markRead')} title={t('mail.markRead')} size="sm" disabled={pending} onclick={() => void handleBulkMutation('read')}><MailOpen class="size-4" aria-hidden="true" /></IconButton>
                             <IconButton ariaLabel={t('mail.moveTrash')} title={t('mail.moveTrash')} variant="ghost" size="sm" class="text-[var(--fm-danger)]" disabled={pending} onclick={() => void handleBulkMutation('trash')}><Trash2 class="size-4" aria-hidden="true" /></IconButton>
                             <DropdownMenu id="bulk-more-actions" align="end" showChevron={false} triggerAriaLabel={t('mail.moreActions')} triggerTitle={t('mail.moreActions')} class="bulk-action-menu">
@@ -2612,6 +2628,9 @@
                         </div>
                       {/if}
                     </div>
+                    {#if bulkHasDraftSelection}
+                      <p class="border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-1 text-xs text-[var(--fm-text-muted)]" role="status">{t('mail.bulkDraftRestriction')}</p>
+                    {/if}
                   {/if}
                   <MessageList
                     activeSection={activeSection}

@@ -108,4 +108,31 @@ describe('mailbox mutation API scope', () => {
     expect(db.query(`SELECT is_read FROM workspace_email_states WHERE email_message_id = 'inbound-a'`).get()).toEqual({ is_read: 1 });
     expect(db.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'inbound-b'`).get()).toEqual({ count: 0 });
   });
+
+  test('requires an owned label and selected-only scope for cross-folder mutations', async () => {
+    const { db, env } = fixture();
+    db.query(`INSERT INTO mail_labels (id, owner_user_id, name, name_key, created_at, updated_at)
+      VALUES ('label-a', 'user-1', 'Follow Up', 'follow up', '2026-09-20T00:00:00Z', '2026-09-20T00:00:00Z')`).run();
+    db.query(`INSERT INTO mail_message_labels (owner_user_id, label_id, message_kind, message_id, created_at)
+      VALUES ('user-1', 'label-a', 'inbound', 'inbound-a', '2026-09-20T00:00:00Z')`).run();
+    const scope = { section: 'label', labelId: 'label-a', identityFilter: null, threadScope: 'selected' };
+
+    const missingLabel = await POST(event(env, { action: 'read', ids: ['email:inbound-a'], scope: { ...scope, labelId: undefined } }));
+    expect(missingLabel.status).toBe(400);
+    expect(await missingLabel.json()).toMatchObject({ error: { code: 'INVALID_MAILBOX_LABEL_SCOPE' } });
+    const expanded = await POST(event(env, {
+      action: 'read', ids: ['email:inbound-a'], threadKeys: ['shared'], scope: { ...scope, threadScope: 'owner' }
+    }));
+    expect(expanded.status).toBe(400);
+    expect(await expanded.json()).toMatchObject({ error: { code: 'INVALID_MAILBOX_THREAD_SELECTION' } });
+    const outside = await POST(event(env, { action: 'read', ids: ['email:inbound-b'], scope }));
+    expect(outside.status).toBe(404);
+    expect(await outside.json()).toMatchObject({ error: { code: 'MAILBOX_MESSAGE_NOT_FOUND' } });
+    expect(db.query(`SELECT COUNT(*) AS count FROM workspace_email_states`).get()).toEqual({ count: 0 });
+
+    const response = await POST(event(env, { action: 'read', ids: ['email:inbound-a'], scope }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { result: { scope, summaries: [{ id: 'email:inbound-a', read: true }] } } });
+    expect(db.query(`SELECT is_read FROM workspace_email_states WHERE email_message_id = 'inbound-a'`).get()).toEqual({ is_read: 1 });
+  });
 });

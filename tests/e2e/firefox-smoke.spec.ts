@@ -59,6 +59,38 @@ test('persists a created label on a message through Firefox reload and rename', 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('mutates explicitly selected inbox and sent messages from global Starred in Firefox', async ({ page, consoleErrors }) => {
+  await login(page);
+  for (const id of ['e2e-inbox-message', 'e2e-sent-message']) {
+    const result = await page.evaluate(async (messageId) => {
+      const response = await fetch(`/api/workspace/messages/${messageId}/flags`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ starred: true })
+      });
+      return { ok: response.ok, status: response.status };
+    }, id);
+    expect(result.ok, `star setup failed: ${result.status}`).toBe(true);
+  }
+  await page.goto('/?folder=starred');
+  const inbox = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  const sent = page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' });
+  const toolbar = page.getByRole('group', { name: '批量邮件操作' });
+  await expect(inbox).toBeVisible();
+  await expect(sent).toBeVisible();
+  await inbox.getByRole('checkbox').check();
+  await sent.getByRole('checkbox').check();
+  await toolbar.getByRole('button', { name: '标为已读' }).click();
+  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).not.toHaveAttribute('aria-label', /未读/u);
+  await expect(sent.getByRole('button', { name: /E2E Seeded Sent/u })).not.toHaveAttribute('aria-label', /未读/u);
+  await inbox.getByRole('checkbox').check();
+  await sent.getByRole('checkbox').check();
+  await toolbar.getByRole('button', { name: '更多邮件操作' }).click();
+  await page.getByRole('menuitem', { name: '取消星标' }).click();
+  await expect(inbox).toHaveCount(0);
+  await expect(sent).toHaveCount(0);
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('keeps collapsed sidebar label tooltips readable in Firefox', async ({ page, consoleErrors }) => {
   await login(page);
   const created = await page.evaluate(async () => {
