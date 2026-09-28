@@ -282,7 +282,7 @@ export const mapWorkspaceMessageRow = (
   body: row.body,
   sentAt: row.sent_at,
   labels: parseLabels(row.labels_json),
-  hasAttachments: Boolean(row.has_attachments),
+  ...(row.has_attachments === undefined ? {} : { hasAttachments: Boolean(row.has_attachments) }),
   read: Boolean(row.is_read),
   starred: Boolean(row.is_starred),
   deliveryStatus: row.folder === 'sent' ? outboundStatus?.status ?? null : null,
@@ -336,7 +336,7 @@ export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile, search
       references: row.references
     }),
     senderAddressId: row.sender_address_id ?? null,
-    hasAttachments: Boolean(row.has_attachments),
+    ...(row.has_attachments === undefined ? {} : { hasAttachments: Boolean(row.has_attachments) }),
     replyToAddresses: parseAddressJson(row.reply_to_json),
     searchSnippet: row.search_snippet ?? undefined,
     searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined
@@ -362,7 +362,7 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, se
     body: row.text_body?.trim() || snippet,
     sentAt: row.timestamp,
     labels: ['Inbound', 'Cloudflare'],
-    hasAttachments: Boolean(row.has_attachments),
+    ...(row.has_attachments === undefined ? {} : { hasAttachments: Boolean(row.has_attachments) }),
     read: Boolean(row.is_read),
     starred: Boolean(row.is_starred),
     messageId: row.message_id,

@@ -743,6 +743,13 @@ test('announces list selection, star, attachment and delivery states', async ({ 
   await inboxButton.click();
   if (testInfo.project.name === 'desktop') {
     await expect(inboxButton).toHaveAttribute('aria-label', /^当前邮件, .*E2E Inbox Welcome/u);
+    await page.mouse.move(1, 1);
+    const selectedColor = await inboxItem.evaluate((item) => getComputedStyle(item).backgroundColor);
+    const unselectedColor = await page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
+      .evaluate((item) => getComputedStyle(item).backgroundColor);
+    expect(selectedColor).not.toBe(unselectedColor);
+    await inboxButton.hover();
+    await expect.poll(() => inboxItem.evaluate((item) => getComputedStyle(item).backgroundColor)).toBe(selectedColor);
   } else {
     await expect(page.getByRole('region', { name: '邮件详情' }).getByRole('heading', { name: 'E2E Inbox Welcome' })).toBeVisible();
   }

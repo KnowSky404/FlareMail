@@ -173,6 +173,7 @@ export async function saveWorkspaceDraft(env: CloudflareEnv | undefined, session
   }
 
   const attachmentSnapshot = await draftAttachmentSnapshot(env.DB, session.userId, draft.id);
+  draft.hasAttachments = attachmentSnapshot.attachments.length > 0;
   return {
     message: draft,
     html: responseHtml,

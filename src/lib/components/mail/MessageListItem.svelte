@@ -137,7 +137,8 @@
 
 {#if itemMessage}
   <article
-    class={`mail-list-item group relative flex cursor-pointer items-center border-b border-[var(--fm-border)] bg-[var(--fm-surface)] text-left transition-colors hover:bg-[var(--fm-surface-hover)] ${selected ? 'bg-[var(--fm-surface-selected)]' : ''}`}
+    class="mail-list-item group relative flex cursor-pointer items-center border-b border-[var(--fm-border)] bg-[var(--fm-surface)] text-left transition-colors hover:bg-[var(--fm-surface-hover)]"
+    class:fm-selected={selected}
     role="listitem"
   >
     {#if selected}<span class="absolute inset-y-0 left-0 w-[3px] bg-[var(--fm-brand-orange)]" aria-hidden="true"></span>{/if}
@@ -225,6 +226,11 @@
 {/if}
 
 <style>
+  .mail-list-item.fm-selected,
+  .mail-list-item.fm-selected:hover {
+    background: var(--fm-surface-selected);
+  }
+
   .mail-list-item,
   .mail-list-item-button {
     min-height: 76px;

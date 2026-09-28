@@ -657,10 +657,14 @@
   };
 
   function applyMessageDelta(result: MessageDelta, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
-    if (result.message.userLabels === undefined) {
+    if (result.message.userLabels === undefined || result.message.hasAttachments === undefined) {
       const previous = [...mailbox.inbox, ...mailbox.sent, ...mailbox.drafts, ...Object.values(mailboxPages ?? {}).flatMap((page) => page?.messages ?? [])]
         .find((message) => message.id === result.message.id);
-      if (previous?.userLabels) result = { ...result, message: { ...result.message, userLabels: previous.userLabels } };
+      if (previous) result = { ...result, message: {
+        ...result.message,
+        ...(result.message.userLabels === undefined && previous.userLabels ? { userLabels: previous.userLabels } : {}),
+        ...(result.message.hasAttachments === undefined && previous.hasAttachments !== undefined ? { hasAttachments: previous.hasAttachments } : {})
+      } };
     }
     const merged = mergeMessageDelta(
       { mailbox, mailboxPages, metrics },

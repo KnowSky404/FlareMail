@@ -19,6 +19,7 @@ describe('workspace shared compatibility contracts', () => {
     expect(mailbox.inbox[0]?.id).toBe('email:in-1');
     expect(mailbox.inbox[0]?.source).toBe('inbound');
     expect(mapInboundRow({ email_id: 'in-2', from: 'bob@example.com', to: '', subject: '', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 1, is_starred: 0 }, profile).subject).toBe('(no subject)');
+    expect(mapInboundRow({ email_id: 'in-2', from: 'bob@example.com', to: '', subject: '', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 1, is_starred: 0 }, profile).hasAttachments).toBeUndefined();
   });
 
   test('serializes a workspace session through the public payload shape', () => {

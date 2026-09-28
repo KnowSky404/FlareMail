@@ -47,6 +47,21 @@ const fixture = () => {
 const input = (extra: Record<string, unknown> = {}) => ({ toEmail: 'alice@example.net', cc: '', subject: 'Subject', body: 'Body', ...extra });
 
 describe('draft optimistic concurrency', () => {
+  test('returns current attachment presence after a draft save', async () => {
+    const { env, session, database } = fixture();
+    const created = await saveWorkspaceDraft(env, session, input());
+    expect(created.message.hasAttachments).toBe(false);
+    database.query(`INSERT INTO workspace_attachments
+      (id, user_id, message_id, filename, content_type, size, r2_key, relation_type)
+      VALUES ('draft-file', 'user-1', ?, 'draft.txt', 'text/plain', 4, 'draft/file', 'draft')`)
+      .run(created.message.id);
+    const updated = await saveWorkspaceDraft(env, session, input({ draftId: created.message.id, expectedUpdatedAt: created.message.sentAt }));
+    expect(updated.message.hasAttachments).toBe(true);
+    database.query("DELETE FROM workspace_attachments WHERE id = 'draft-file'").run();
+    const removed = await saveWorkspaceDraft(env, session, input({ draftId: created.message.id, expectedUpdatedAt: updated.message.sentAt }));
+    expect(removed.message.hasAttachments).toBe(false);
+  });
+
   test('persists a server-owned sender snapshot and ignores an untrusted Reply-To header', async () => {
     const { env, session, database } = fixture();
     database.query(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name)
