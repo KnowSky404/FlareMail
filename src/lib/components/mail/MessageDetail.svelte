@@ -5,6 +5,7 @@
   import DeliveryTimeline from './DeliveryTimeline.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageHeader from './MessageHeader.svelte';
+  import MessageMetadata from './MessageMetadata.svelte';
   import { formatNumber } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -147,6 +148,7 @@
 
   {#if message}
     <div class="fm-detail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <MessageMetadata {message} {inboundDetail} />
       <article class="mx-auto min-w-0 w-full max-w-none px-4 py-4 sm:px-6 sm:py-5 lg:px-8" aria-label={t('mail.bodyDetail')}>
         {#if inboundDetailError || deliveryDetailError || workspaceBodyError}
           <div class="mb-5 grid gap-2" aria-live="polite">

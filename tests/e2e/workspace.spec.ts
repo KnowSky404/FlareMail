@@ -183,6 +183,41 @@ test('lets users change the mail filter while search results load', async ({ pag
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps loaded mail and scroll position while appending the next page', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name === 'narrow', 'Desktop and 390 px mobile cover incremental pagination.');
+  await login(page);
+  let releaseNextPage: () => void = () => {};
+  const nextPageGate = new Promise<void>((resolve) => { releaseNextPage = resolve; });
+  await page.route('**/api/workspace/mailbox?**', async (route) => {
+    if (new URL(route.request().url()).searchParams.has('cursor')) await nextPageGate;
+    await route.continue().catch(() => {});
+  });
+
+  const scrollRegion = page.locator('.fm-list-scroll');
+  const rows = scrollRegion.getByRole('listitem');
+  const loadMore = scrollRegion.getByRole('button', { name: '加载更多' });
+  const initialCount = await rows.count();
+  expect(initialCount).toBeGreaterThan(0);
+  await loadMore.scrollIntoViewIfNeeded();
+  const initialScrollTop = await scrollRegion.evaluate((element) => element.scrollTop);
+  expect(initialScrollTop).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  await expect(page.getByRole('heading', { name: '收件箱', exact: true })).toBeInViewport();
+  try {
+    await loadMore.click();
+    await expect(rows).toHaveCount(initialCount);
+    await expect(loadMore).toHaveAttribute('aria-busy', 'true');
+    expect(await scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThanOrEqual(initialScrollTop - 2);
+    await page.screenshot({ path: join(tmpdir(), `flaremail-load-more-pending-${testInfo.project.name}.png`), fullPage: false });
+  } finally {
+    releaseNextPage();
+  }
+  await expect.poll(() => rows.count()).toBeGreaterThan(initialCount);
+  await expect(loadMore).toHaveCount(0);
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('shows one illustration in the empty mail detail pane', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop workspace keeps the detail pane beside the list.');
   await login(page);
@@ -1361,6 +1396,19 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   await expect(detail.getByTitle('安全 HTML 邮件正文')).toHaveCount(0);
 
   await detail.getByRole('button', { name: '安全 HTML' }).click();
+  if (testInfo.project.name === 'mobile') {
+    const readingScroll = await detail.evaluate((element) => ({
+      scrollTop: element.querySelector<HTMLElement>('.fm-detail-scroll')?.scrollTop ?? 0,
+      headerBottom: element.querySelector('header')?.getBoundingClientRect().bottom ?? 0,
+      scrollTopEdge: element.querySelector<HTMLElement>('.fm-detail-scroll')?.getBoundingClientRect().top ?? 0,
+      pageScrollY: window.scrollY
+    }));
+    expect(readingScroll.scrollTop).toBeGreaterThan(0);
+    expect(readingScroll.headerBottom).toBeLessThanOrEqual(readingScroll.scrollTopEdge + 1);
+    expect(readingScroll.pageScrollY).toBe(0);
+    await assertNoHorizontalOverflow(page);
+    await page.screenshot({ path: join(tmpdir(), 'flaremail-detail-expanded-mobile.png'), fullPage: false });
+  }
   const frame = page.frameLocator('iframe[title="安全 HTML 邮件正文"]');
   await expect(frame.getByText('Safe HTML fixture')).toBeVisible();
   await expect(frame.getByText('[example.com]')).toBeVisible();

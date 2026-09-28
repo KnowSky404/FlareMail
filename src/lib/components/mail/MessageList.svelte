@@ -19,6 +19,7 @@
     query = '',
     filter = 'all',
     loading = false,
+    loadingMore = false,
     error = '',
     paginationEnd = false,
     hasMore = false,
@@ -42,6 +43,7 @@
     query?: string;
     filter?: MailFilter;
     loading?: boolean;
+    loadingMore?: boolean;
     error?: string;
     paginationEnd?: boolean;
     hasMore?: boolean;
@@ -169,7 +171,7 @@
     </div>
     {#if hasMore && onLoadMore}
       <div class="border-t border-[var(--fm-border)] px-4 py-4 text-center">
-        <Button variant="secondary" size="sm" onclick={() => onLoadMore?.()}>{t('mail.loadMore')}</Button>
+        <Button variant="secondary" size="sm" loading={loadingMore} onclick={() => onLoadMore?.()}>{t('mail.loadMore')}</Button>
       </div>
     {:else if paginationEnd || selectedCount > 0}
       <p class="border-t border-[var(--fm-border)] px-4 py-3 text-center text-[11px] text-[var(--fm-text-muted)]" aria-label={t('mail.allShown')}>{t('mail.allShown')}</p>

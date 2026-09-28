@@ -364,12 +364,13 @@ type MailboxPageFetcher = (
 
 type MailboxControllerCallbacks = {
   onPage: (page: MailboxPage, append: boolean) => void;
-  onLoading: (loading: boolean) => void;
+  onLoading: (loading: boolean, append: boolean) => void;
   onError: (message: string) => void;
 };
 
 export class MailboxController {
   private readonly request = new LatestRequest();
+  private loadingAppend: boolean | null = null;
 
   constructor(
     private readonly fetchPage: MailboxPageFetcher,
@@ -378,7 +379,7 @@ export class MailboxController {
 
   async refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null) {
     const request = this.request.begin();
-    this.callbacks.onLoading(true);
+    this.setLoading(true, false);
     try {
       const params = new URLSearchParams({ folder, limit: '40' });
       this.addFilters(params, query, filter, identityFilter, labelId);
@@ -390,7 +391,7 @@ export class MailboxController {
     } catch (error) {
       if (!request.signal.aborted) this.callbacks.onError(error instanceof Error ? error.message : '刷新邮件列表失败。');
     } finally {
-      if (request.isCurrent()) this.callbacks.onLoading(false);
+      if (request.isCurrent()) this.setLoading(false, false);
     }
     return false;
   }
@@ -398,7 +399,7 @@ export class MailboxController {
   async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null) {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return;
     const request = this.request.begin();
-    this.callbacks.onLoading(true);
+    this.setLoading(true, true);
     try {
       const params = new URLSearchParams({
         folder,
@@ -414,13 +415,20 @@ export class MailboxController {
     } catch (error) {
       if (!request.signal.aborted) this.callbacks.onError(error instanceof Error ? error.message : '加载更多邮件失败。');
     } finally {
-      if (request.isCurrent()) this.callbacks.onLoading(false);
+      if (request.isCurrent()) this.setLoading(false, true);
     }
     return false;
   }
 
   cancel() {
+    const append = this.loadingAppend;
     this.request.cancel();
+    if (append !== null) this.setLoading(false, append);
+  }
+
+  private setLoading(loading: boolean, append: boolean) {
+    this.loadingAppend = loading ? append : null;
+    this.callbacks.onLoading(loading, append);
   }
 
   private addFilters(params: URLSearchParams, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null) {

@@ -260,6 +260,33 @@ describe('mailbox controller', () => {
     expect(seen.value?.toString()).toContain('filter=starred');
     expect(pages[0]?.append).toBe(false);
   });
+
+  test('reports refresh and append loading separately and clears a cancelled append', async () => {
+    const loading: Array<{ loading: boolean; append: boolean }> = [];
+    const errors: string[] = [];
+    const page = { ...makePage('inbox', []), nextCursor: 'next', hasMore: true };
+    const controller = new MailboxController(async (params, signal) => {
+      if (!params.has('cursor')) return { page };
+      return new Promise<{ page: MailboxPage }>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    }, {
+      onPage: () => undefined,
+      onLoading: (isLoading, append) => loading.push({ loading: isLoading, append }),
+      onError: (error) => errors.push(error)
+    });
+
+    expect(await controller.refresh('inbox', '', 'all')).toBe(true);
+    const pendingAppend = controller.loadMore('inbox', '', 'all', page);
+    expect(loading).toEqual([
+      { loading: true, append: false }, { loading: false, append: false },
+      { loading: true, append: true }
+    ]);
+    controller.cancel();
+    expect(await pendingAppend).toBe(false);
+    expect(loading.at(-1)).toEqual({ loading: false, append: true });
+    expect(errors).toEqual([]);
+  });
 });
 
 function makePage(folder: MailMessage['folder'], messages: MailMessage[]) {

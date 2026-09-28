@@ -247,6 +247,7 @@
   let profileStatusError = $state(false);
   let pending = $state(false);
   let mailboxLoading = $state(false);
+  let mailboxLoadingMore = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaceSync: WorkspaceSyncController | null = null;
   let authSessionSync: ReturnType<typeof createAuthSessionChannel> | null = null;
@@ -883,6 +884,7 @@
     mobileDetailOpen = false;
     shortcutHelpOpen = false;
     mailboxLoading = false;
+    mailboxLoadingMore = false;
     trashItems = [];
     trashHasMore = false;
     trashLoading = false;
@@ -1442,12 +1444,15 @@
 
   const mailboxController = new MailboxController(fetchMailboxPage, {
     onPage: (page, append) => applyMailboxPage(page, append),
-    onLoading: (loading) => (mailboxLoading = loading),
+    onLoading: (loading, append) => {
+      mailboxLoading = loading && !append;
+      mailboxLoadingMore = loading && append;
+    },
     onError: () => notify(t('mail.listError'), 'error')
   });
 
   async function loadMoreMailbox() {
-    if (!authenticated || authExpired || activeSection === 'profile' || activeSection === 'trash') return;
+    if (!authenticated || authExpired || mailboxLoading || mailboxLoadingMore || activeSection === 'profile' || activeSection === 'trash') return;
     await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter, activeSection === 'label' ? activeLabelId : null);
   }
 
@@ -2646,6 +2651,7 @@
                     query={searchQuery}
                     filter={mailFilter}
                     loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
+                    loadingMore={activeSection === 'trash' ? false : mailboxLoadingMore}
                     error={activeSection === 'trash' ? trashError : ''}
                     hasMore={activeSection === 'trash' ? trashHasMore : mailboxPages?.[activeSection]?.hasMore ?? false}
                     paginationEnd={activeSection === 'trash' ? !trashHasMore : !(mailboxPages?.[activeSection]?.hasMore ?? false)}
@@ -2961,6 +2967,7 @@
   .mail-workspace {
     display: grid;
     grid-template-columns: minmax(280px, var(--fm-list-width)) 8px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     height: 100%;
     min-width: 0;
   }
@@ -2968,6 +2975,7 @@
   .mail-list-panel {
     display: flex;
     min-width: 0;
+    min-height: 0;
     flex-direction: column;
     background: var(--fm-surface);
   }
