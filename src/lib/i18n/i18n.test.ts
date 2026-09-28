@@ -58,6 +58,9 @@ describe('message catalogs and formatters', () => {
     expect(translateCount('en', 'mail.moreLabels', 1)).toBe('Show 1 more label');
     expect(translateCount('en', 'mail.moreLabels', 35)).toBe('Show 35 more labels');
     expect(translateCount('zh-CN', 'mail.moreLabels', 35)).toBe('另外 35 个标签');
+    expect(translateCount('en', 'mail.moreRecipients', 1)).toBe('1 more recipient');
+    expect(translateCount('en', 'mail.moreRecipients', 3)).toBe('3 more recipients');
+    expect(translateCount('zh-CN', 'mail.moreRecipients', 3)).toBe('另有 3 位收件人');
     expect(interpolate('Hello, {name}!', { name: 'Ada' })).toBe('Hello, Ada!');
     expect(translate('en', 'missing.key' as MessageKey)).toBe('missing.key');
     expect(translate('invalid' as 'en', 'common.language')).toBe('语言');

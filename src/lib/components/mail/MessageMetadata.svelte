@@ -64,7 +64,7 @@
       <span>{t('mail.contactDetails', { label: counterpartLabel })}</span><ChevronDown class="size-3" aria-hidden="true" />
     </summary>
     <dl class="mt-2 grid max-w-xl grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-[var(--radius-md)] bg-[var(--fm-surface-subtle)] p-3 leading-5">
-      <dt>{t('mail.from')}</dt><dd class="truncate text-[var(--fm-text-secondary)]">{message.fromName} &lt;{message.fromEmail}&gt;</dd>
+      <dt>{t('mail.from')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{message.fromName} &lt;{message.fromEmail}&gt;</dd>
       {#if message.source === 'inbound'}
         <dt>{t('mail.actualDeliveredTo')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{message.envelopeRecipient || message.toEmail}</dd>
         <dt>{t('mail.to')}</dt><dd class="break-words text-[var(--fm-text-secondary)]">{toSummary || t('mail.notProvided')}</dd>

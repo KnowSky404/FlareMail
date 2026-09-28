@@ -16,9 +16,11 @@
     X
   } from '@lucide/svelte';
   import {
+    parseAddressList,
     type DeliveryDetail,
     type MailMessage
   } from '$lib/domain/mail';
+  import { translateCount } from '$lib/i18n';
   import { Avatar, ConfirmDialog, DropdownMenu, IconButton, StatusBadge } from '$lib/components/ui';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -109,6 +111,13 @@
 
   const senderName = $derived(message?.folder === 'inbox' ? message.fromName : message?.toName);
   const senderEmail = $derived(message?.folder === 'inbox' ? message.fromEmail : message?.toEmail);
+  const additionalRecipientCount = $derived.by(() => {
+    if (!message || (message.folder !== 'sent' && message.folder !== 'drafts')) return 0;
+    const to = message.toAddresses?.length ?? parseAddressList(message.toEmail).length;
+    const cc = message.ccAddresses?.length ?? parseAddressList(message.cc ?? '').length;
+    const bcc = message.bccAddresses?.length ?? parseAddressList(message.bcc ?? '').length;
+    return Math.max(0, to + cc + bcc - 1);
+  });
   const downloadHref = $derived(safeHref(rawDownloadHref));
   const deliveryStatus = $derived(message?.folder === 'sent' ? (message.deliveryStatus ?? 'submitted') : null);
 
@@ -268,11 +277,14 @@
         <Avatar name={senderName || senderEmail || '?'} size="lg" />
         <div class="min-w-0 flex-1">
           <div class="message-sender-identity flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span class="font-medium text-[var(--fm-text)]">
+            <span class="min-w-0 max-w-full break-words font-medium text-[var(--fm-text)]">
               {#if message.folder === 'sent' || message.folder === 'drafts'}
                 <span class="text-[11px] text-[var(--fm-text-muted)]">{t('mail.to')}:</span>
               {/if}
               {senderName || senderEmail || t('mail.unknownContact')}
+              {#if additionalRecipientCount > 0}
+                <span class="ml-1 text-xs font-normal text-[var(--fm-text-muted)]">{translateCount(i18n.locale, 'mail.moreRecipients', additionalRecipientCount)}</span>
+              {/if}
             </span>
             <span class="block max-w-full truncate text-xs text-[var(--fm-text-secondary)]">&lt;{senderEmail || t('mail.unknownAddress')}&gt;</span>
           </div>

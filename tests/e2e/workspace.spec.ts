@@ -162,6 +162,8 @@ test('lets users change the mail filter while search results load', async ({ pag
   const search = page.getByLabel('搜索邮件');
   await search.fill('E2E');
   await expect(page.getByLabel('正在加载邮件')).toBeVisible();
+  const loadingViolations = (await new AxeBuilder({ page }).include('.mail-list-panel').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations;
+  expect(loadingViolations.flatMap(({ id, nodes }) => nodes.map(({ target }) => `${id}: ${target.join(', ')}`))).toEqual([]);
   const starred = page.getByRole('button', { name: '已加星标', exact: true });
   const identity = page.getByLabel('按邮件身份筛选');
   try {
@@ -2757,7 +2759,17 @@ test('renders a representative multi-domain message with two attachments for vis
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
   const compose = page.getByRole('dialog', { name: '新邮件' });
   await compose.getByLabel('发件地址').selectOption('00000000-0000-4000-8000-000000000023');
-  await compose.getByLabel('收件人').fill('reviewer@flaremail.test');
+  await compose.getByLabel('收件人').fill('reviewer@flaremail.test, second@flaremail.test');
+  await compose.getByLabel('收件人').press('Enter');
+  const addCcBcc = compose.getByRole('button', { name: '抄送/密送' });
+  const combinedRecipients = await addCcBcc.isVisible();
+  if (combinedRecipients) await addCcBcc.click();
+  else await compose.getByRole('button', { name: '添加抄送', exact: true }).click();
+  await compose.getByLabel('抄送').fill('copy@flaremail.test');
+  await compose.getByLabel('抄送').press('Enter');
+  if (!combinedRecipients) await compose.getByRole('button', { name: '添加密送', exact: true }).click();
+  await compose.getByLabel('密送').fill('blind@flaremail.test');
+  await compose.getByLabel('密送').press('Enter');
   const subject = '多域名邮箱发布检查清单';
   const body = [
     '你好，',
@@ -2781,6 +2793,7 @@ test('renders a representative multi-domain message with two attachments for vis
   const detail = page.getByRole('region', { name: '邮件详情' });
   await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
   await expect(detail.locator('.message-sender-identity')).toContainText('收件人');
+  await expect(detail.locator('.message-sender-identity')).toContainText('另有 3 位收件人');
   await expect(detail.locator('.message-outbound-identity')).toContainText('postmaster@example.test');
   await expect(detail.locator('.message-plain-body')).toContainText('FlareMail 本地验收');
   const attachments = detail.getByRole('list', { name: '邮件附件列表' });
@@ -2798,8 +2811,16 @@ test('renders a representative multi-domain message with two attachments for vis
     await attachments.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(tmpdir(), 'flaremail-rich-detail-attachments-mobile.png'), fullPage: false });
   }
+  await detail.getByText('收件人详情', { exact: true }).click();
+  const recipients = detail.locator('dl').filter({ hasText: 'second@flaremail.test' });
+  await expect(recipients).toContainText('copy@flaremail.test');
+  await expect(recipients).toContainText('blind@flaremail.test');
+  await recipients.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-multi-recipients-${testInfo.project.name}.png`), fullPage: false });
+  await assertNoHorizontalOverflow(page);
   await expect(page).toHaveURL(/message=/u);
   await page.reload();
   await expect(page.getByRole('region', { name: '邮件详情' }).locator('.message-outbound-identity')).toContainText('postmaster@example.test');
+  await expect(page.getByRole('region', { name: '邮件详情' }).locator('.message-sender-identity')).toContainText('另有 3 位收件人');
   await assertNoConsoleErrors(consoleErrors);
 });

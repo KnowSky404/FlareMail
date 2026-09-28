@@ -102,7 +102,7 @@
 
 <section class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
   {#if loading}
-    <div class="divide-y divide-[var(--fm-border)]" aria-label={t('mail.loadingList')} aria-busy="true">
+    <div class="divide-y divide-[var(--fm-border)]" role="status" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}
         <div class="flex min-h-[76px] items-center gap-3 px-3 py-2 min-[901px]:min-h-[88px]" aria-hidden="true">
           <Skeleton class="size-2 shrink-0 rounded-full" />
@@ -174,7 +174,7 @@
         <Button variant="secondary" size="sm" loading={loadingMore} onclick={() => onLoadMore?.()}>{t('mail.loadMore')}</Button>
       </div>
     {:else if paginationEnd || selectedCount > 0}
-      <p class="border-t border-[var(--fm-border)] px-4 py-3 text-center text-[11px] text-[var(--fm-text-muted)]" aria-label={t('mail.allShown')}>{t('mail.allShown')}</p>
+      <p class="border-t border-[var(--fm-border)] px-4 py-3 text-center text-[11px] text-[var(--fm-text-muted)]">{t('mail.allShown')}</p>
     {/if}
   {/if}
 </section>
