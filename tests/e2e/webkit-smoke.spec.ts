@@ -64,6 +64,31 @@ async function openCompose(page: Page) {
   await mobileCompose.click({ force: true });
 }
 
+test('shows collapsed sidebar tooltips beyond the label scroller in WebKit', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'webkit-desktop', 'The sidebar is a desktop-only control.');
+  await login(page);
+  const created = await page.evaluate(async () => {
+    const response = await fetch('/api/workspace/labels', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'WebKit Sidebar Tooltip' })
+    });
+    return response.ok;
+  });
+  expect(created).toBe(true);
+  await page.reload();
+  const sidebar = page.locator('#fm-main-sidebar');
+  await clickHeadlessControl(sidebar.getByRole('button', { name: '折叠侧边栏' }));
+  const label = sidebar.getByRole('button', { name: 'WebKit Sidebar Tooltip' });
+  await label.focus();
+  const tooltip = page.getByRole('tooltip', { name: 'WebKit Sidebar Tooltip' });
+  await expect(tooltip).toBeVisible();
+  const [tip, rail] = await Promise.all([tooltip.boundingBox(), sidebar.boundingBox()]);
+  expect(tip!.x + tip!.width).toBeGreaterThan(rail!.x + rail!.width + 20);
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toBeHidden();
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('bulk-removes a label from selected inbox and draft mail in WebKit', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const created = await page.evaluate(async () => {

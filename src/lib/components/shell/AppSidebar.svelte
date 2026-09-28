@@ -15,6 +15,7 @@
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
   import type { LucideIcon } from '@lucide/svelte';
   import type { MailboxSection, MailUserLabel } from '$lib/domain/mail';
+  import Tooltip from '$lib/components/ui/Tooltip.svelte';
   import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -89,46 +90,65 @@
 
 <aside id="fm-main-sidebar" class:collapsed class="sidebar" aria-label={t('shell.mailNavigation')}>
   <div class="sidebar-toolbar">
-    <button class="collapse-toggle fm-touch-target" type="button" aria-expanded={!collapsed} aria-controls="fm-main-sidebar" aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} title={collapsed ? t('shell.expand') : t('shell.collapse')} onclick={() => onToggleCollapsed?.()}>
-      {#if collapsed}<PanelLeftOpen size={18} aria-hidden="true" />{:else}<PanelLeftClose size={18} aria-hidden="true" />{/if}
-      <span class="sr-only">{collapsed ? t('shell.expand') : t('shell.collapse')}</span>
-    </button>
+    <Tooltip content={collapsed ? t('shell.expand') : t('shell.collapse')} side="right" floating>
+      {#snippet trigger(tooltipId)}
+        <button class="collapse-toggle fm-touch-target" type="button" aria-expanded={!collapsed} aria-controls="fm-main-sidebar" aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} aria-describedby={tooltipId} onclick={() => onToggleCollapsed?.()}>
+          {#if collapsed}<PanelLeftOpen size={18} aria-hidden="true" />{:else}<PanelLeftClose size={18} aria-hidden="true" />{/if}
+        </button>
+      {/snippet}
+    </Tooltip>
   </div>
-  <button class="compose" type="button" aria-label={t('shell.compose')} title={t('shell.compose')} disabled={pending} onclick={onCompose}>
-    <PenLine size={18} strokeWidth={2} aria-hidden="true" />
-    <span>{t('shell.compose')}</span>
-  </button>
+  <Tooltip content={t('shell.compose')} side="right" floating disabled={!collapsed} class="w-full">
+    {#snippet trigger(tooltipId)}
+      <button class="compose" type="button" aria-label={t('shell.compose')} aria-describedby={collapsed ? tooltipId : undefined} disabled={pending} onclick={onCompose}>
+        <PenLine size={18} strokeWidth={2} aria-hidden="true" />
+        <span>{t('shell.compose')}</span>
+      </button>
+    {/snippet}
+  </Tooltip>
 
   <nav aria-label={t('shell.mainNavigation')}>
     {#each navigation as item}
       {@const Icon = item.icon}
-      <button
-        type="button"
-        class:active={isActive(item.id)}
-        aria-current={isActive(item.id) ? 'page' : undefined}
-        aria-label={item.label}
-        title={item.label}
-        class="fm-touch-target"
-        onclick={() => item.id === 'domains' || item.id === 'addresses' ? onSelectManagementView?.(item.id) : onSelectSection(item.id)}
-      >
-        <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
-        <span class="label">{item.label}</span>
-        {#if item.count > 0}
-          <span class="count" aria-label={translateCount(i18n.locale, 'mail.messageCount', item.count)}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
-        {/if}
-      </button>
+      <Tooltip content={item.label} side="right" floating disabled={!collapsed} class="w-full">
+        {#snippet trigger(tooltipId)}
+          <button
+            type="button"
+            class:active={isActive(item.id)}
+            aria-current={isActive(item.id) ? 'page' : undefined}
+            aria-label={item.label}
+            aria-describedby={collapsed ? tooltipId : undefined}
+            class="fm-touch-target"
+            onclick={() => item.id === 'domains' || item.id === 'addresses' ? onSelectManagementView?.(item.id) : onSelectSection(item.id)}
+          >
+            <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
+            <span class="label">{item.label}</span>
+            {#if item.count > 0}
+              <span class="count" aria-label={translateCount(i18n.locale, 'mail.messageCount', item.count)}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
+            {/if}
+          </button>
+        {/snippet}
+      </Tooltip>
     {/each}
   </nav>
 
   <div class="label-navigation" aria-label={t('shell.labels')}>
     <div class="label-navigation-heading">
       <span class="label">{t('shell.labels')}</span>
-      <button type="button" class="collapse-toggle fm-touch-target" aria-label={t('label.create')} title={t('label.create')} onclick={() => onCreateLabel?.()}><Plus size={16} aria-hidden="true" /></button>
+      <Tooltip content={t('label.create')} side="right" floating>
+        {#snippet trigger(tooltipId)}
+          <button type="button" class="collapse-toggle fm-touch-target" aria-label={t('label.create')} aria-describedby={tooltipId} onclick={() => onCreateLabel?.()}><Plus size={16} aria-hidden="true" /></button>
+        {/snippet}
+      </Tooltip>
     </div>
     {#each labels as userLabel (userLabel.id)}
-      <button type="button" class:active={activeSection === 'label' && activeLabelId === userLabel.id} aria-current={activeSection === 'label' && activeLabelId === userLabel.id ? 'page' : undefined} aria-label={userLabel.name} title={userLabel.name} class="fm-touch-target label-item" onclick={() => onSelectLabel?.(userLabel.id)}>
-        <Tag size={17} strokeWidth={1.8} aria-hidden="true" /><span class="label">{userLabel.name}</span>
-      </button>
+      <Tooltip content={userLabel.name} side="right" floating disabled={!collapsed} class="w-full">
+        {#snippet trigger(tooltipId)}
+          <button type="button" class:active={activeSection === 'label' && activeLabelId === userLabel.id} aria-current={activeSection === 'label' && activeLabelId === userLabel.id ? 'page' : undefined} aria-label={userLabel.name} aria-describedby={collapsed ? tooltipId : undefined} class="fm-touch-target label-item" onclick={() => onSelectLabel?.(userLabel.id)}>
+            <Tag size={17} strokeWidth={1.8} aria-hidden="true" /><span class="label">{userLabel.name}</span>
+          </button>
+        {/snippet}
+      </Tooltip>
     {/each}
   </div>
 
@@ -175,6 +195,7 @@
 
   .compose {
     display: flex;
+    width: 100%;
     min-height: var(--control-prominent);
     align-items: center;
     justify-content: center;
@@ -250,6 +271,7 @@
   nav button {
     position: relative;
     display: grid;
+    width: 100%;
     grid-template-columns: 20px minmax(0, 1fr) auto;
     min-height: 40px;
     align-items: center;

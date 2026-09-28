@@ -52,6 +52,30 @@ test('persists a created label on a message through Firefox reload and rename', 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps collapsed sidebar label tooltips readable in Firefox', async ({ page, consoleErrors }) => {
+  await login(page);
+  const created = await page.evaluate(async () => {
+    const response = await fetch('/api/workspace/labels', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Firefox Sidebar Tooltip' })
+    });
+    return response.ok;
+  });
+  expect(created).toBe(true);
+  await page.reload();
+  const sidebar = page.locator('#fm-main-sidebar');
+  await sidebar.getByRole('button', { name: '折叠侧边栏' }).click();
+  const label = sidebar.getByRole('button', { name: 'Firefox Sidebar Tooltip' });
+  await label.focus();
+  const tooltip = page.getByRole('tooltip', { name: 'Firefox Sidebar Tooltip' });
+  await expect(tooltip).toBeVisible();
+  const [tip, rail] = await Promise.all([tooltip.boundingBox(), sidebar.boundingBox()]);
+  expect(tip!.x + tip!.width).toBeGreaterThan(rail!.x + rail!.width + 20);
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toBeHidden();
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('bulk-labels selected inbox and sent mail without expanding conversations in Firefox', async ({ page, consoleErrors }) => {
   await login(page);
   const created = await page.evaluate(async () => {

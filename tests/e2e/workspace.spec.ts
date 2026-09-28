@@ -814,6 +814,63 @@ test('keeps readable default columns, persists the layout, and opens one focused
   await page.screenshot({ path: join(tmpdir(), `flaremail-reading-layout-${testInfo.project.name}.png`), fullPage: false });
 });
 
+test('shows accessible tooltips for the collapsed sidebar including scrollable labels', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The sidebar is a desktop-only control.');
+  await login(page);
+  const created = await page.evaluate(async () => {
+    for (const name of [...Array.from({ length: 18 }, (_, index) => `E2E Sidebar Extra ${String(index + 1).padStart(2, '0')}`), 'E2E Sidebar Tooltip']) {
+      const response = await fetch('/api/workspace/labels', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      if (!response.ok) return false;
+    }
+    return true;
+  });
+  expect(created).toBe(true);
+  await page.reload();
+  const sidebar = page.locator('#fm-main-sidebar');
+  await sidebar.getByRole('button', { name: '折叠侧边栏' }).click();
+  const inbox = sidebar.getByRole('button', { name: '收件箱' });
+  await inbox.hover();
+  await expect(page.getByRole('tooltip', { name: '收件箱' })).toBeVisible();
+  const [inboxBounds, inboxCountBounds, collapsedSidebarBounds] = await Promise.all([
+    inbox.boundingBox(), inbox.locator('.count').boundingBox(), sidebar.boundingBox()
+  ]);
+  expect(inboxBounds).not.toBeNull();
+  expect(inboxCountBounds).not.toBeNull();
+  expect(collapsedSidebarBounds).not.toBeNull();
+  expect(inboxBounds!.width).toBeGreaterThanOrEqual(44);
+  expect(inboxCountBounds!.x + inboxCountBounds!.width / 2)
+    .toBeGreaterThan(collapsedSidebarBounds!.x + collapsedSidebarBounds!.width / 2);
+  await inbox.focus();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('tooltip', { name: '收件箱' })).toBeHidden();
+
+  const label = sidebar.getByRole('button', { name: 'E2E Sidebar Tooltip' });
+  await label.focus();
+  expect(await sidebar.locator('.label-navigation').evaluate((navigation) => navigation.scrollTop)).toBeGreaterThan(0);
+  const tooltip = page.getByRole('tooltip', { name: 'E2E Sidebar Tooltip' });
+  await expect(tooltip).toBeVisible();
+  const descriptionId = await label.getAttribute('aria-describedby');
+  expect(descriptionId).toBe(await tooltip.getAttribute('id'));
+  const [tooltipBounds, sidebarBounds] = await Promise.all([tooltip.boundingBox(), sidebar.boundingBox()]);
+  expect(tooltipBounds).not.toBeNull();
+  expect(sidebarBounds).not.toBeNull();
+  expect(tooltipBounds!.x + tooltipBounds!.width).toBeGreaterThan(sidebarBounds!.x + sidebarBounds!.width + 20);
+  expect((await new AxeBuilder({ page }).include('#fm-main-sidebar').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-sidebar-tooltip-${testInfo.project.name}.png`), fullPage: false });
+  await sidebar.locator('.label-navigation').evaluate((navigation) => (navigation.scrollTop = 0));
+  await expect(tooltip).toBeHidden();
+  await page.evaluate(() => localStorage.setItem('flaremail-theme', 'dark'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await label.focus();
+  await expect(tooltip).toBeVisible();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-sidebar-tooltip-${testInfo.project.name}-dark.png`), fullPage: false });
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('opens a private standalone reader document without duplicating the message header', async ({ page, context, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop project covers the standalone reader route.');
   await login(page);
