@@ -122,7 +122,7 @@ recipient addresses or full R2 keys into shared evidence.
   implied by local plan/apply/verify evidence.
 
 - [ ] The checkout's latest migration filename and schema version are recorded
-  (currently migrations `0001` through `0026` and schema version `26`); the
+  (currently migrations `0001` through `0027` and schema version `27`); the
   repository's `schema-version.ts` and preflight output were checked rather
   than relying on an old number.
 - [ ] Every unapplied migration is approved and applied in numeric order:
@@ -249,7 +249,7 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] Production D1/R2 binding names, Resend webhook endpoint/event set,
   Email Routing rule and secret-present status are recorded without values.
 - [ ] If Telegram is enabled, the checkout's current schema version (currently
-  26) and Telegram migrations 0019-0022 are applied,
+  27) and Telegram migrations 0019-0022 are applied,
   including the account-delete cleanup trigger, challenge provenance, and privacy snapshot. `APP_BASE_URL` is a credential-free HTTPS origin, the Bot Token is present only as a secret, any webhook-secret override is also secret-only, and the one-Bot webhook is reviewed with `getMe`/`getWebhookInfo`.
 - [ ] Normal code rollback will deploy the previous Worker while preserving
   append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.
