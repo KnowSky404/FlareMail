@@ -124,7 +124,7 @@
 
 {#if itemMessage}
   <article
-    class={`group relative flex min-h-[72px] cursor-pointer items-center border-b border-[var(--fm-border)] bg-[var(--fm-surface)] text-left transition-colors hover:bg-[var(--fm-surface-hover)] ${selected ? 'bg-[var(--fm-surface-selected)]' : ''}`}
+    class={`mail-list-item group relative flex cursor-pointer items-center border-b border-[var(--fm-border)] bg-[var(--fm-surface)] text-left transition-colors hover:bg-[var(--fm-surface-hover)] ${selected ? 'bg-[var(--fm-surface-selected)]' : ''}`}
     role="listitem"
   >
     {#if selected}<span class="absolute inset-y-0 left-0 w-[3px] bg-[var(--fm-brand-orange)]" aria-hidden="true"></span>{/if}
@@ -143,7 +143,7 @@
     {/if}
     <button
       type="button"
-      class="flex min-h-[72px] min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fm-focus)]"
+      class="mail-list-item-button flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fm-focus)]"
       aria-current={selected ? 'true' : undefined}
       aria-label={`${isUnread ? t('mail.unreadPrefix') : ''}${counterpart}, ${itemSubject}${itemCount > 1 ? `, ${translateCount(i18n.locale, 'mail.threadCount', itemCount)}` : ''}${activeSection === 'starred' || activeSection === 'label' ? `, ${starredSourceLabel}` : ''}`}
       onclick={handleSelect}
@@ -151,19 +151,19 @@
       <span class="grid size-2 shrink-0 place-items-center" aria-hidden="true">
         {#if isUnread}<span class="size-2 rounded-full bg-[var(--fm-primary)]"></span>{/if}
       </span>
-      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--fm-primary-soft)] text-xs font-semibold text-[var(--fm-primary)]">
+      <span class="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--fm-primary-soft)] text-xs font-semibold text-[var(--fm-primary)]">
         {#if isDraft}<FileText class="size-4" aria-hidden="true" />{:else}{counterpart.trim().slice(0, 1).toUpperCase() || '?'}{/if}
       </span>
       <span class="min-w-0 flex-1 self-stretch py-0.5">
         <span class="flex min-w-0 items-center gap-2">
-          <span class={`min-w-0 flex-1 truncate text-xs ${isUnread ? 'font-bold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>{counterpart}</span>
-          <time class="shrink-0 text-[11px] tabular-nums text-[var(--fm-text-muted)]" datetime={itemMessage.sentAt}>{formatDate(thread?.sentAt || itemMessage.sentAt)}</time>
+          <span class={`min-w-0 flex-1 truncate text-[13px] ${isUnread ? 'font-bold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>{counterpart}</span>
+          <time class="shrink-0 text-xs tabular-nums text-[var(--fm-text-muted)]" datetime={itemMessage.sentAt}>{formatDate(thread?.sentAt || itemMessage.sentAt)}</time>
         </span>
-        <span class={`mt-0.5 flex min-w-0 items-center gap-1 text-sm leading-5 ${isUnread ? 'font-semibold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>
+        <span class={`mt-0.5 flex min-w-0 items-center gap-1 text-[15px] leading-5 ${isUnread ? 'font-semibold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>
           <span class="truncate">{itemSubject}</span>
           {#if itemCount > 1}<span class="shrink-0 text-[11px] font-medium text-[var(--fm-text-muted)]">({formattedItemCount})</span>{/if}
         </span>
-        <span class="mt-0.5 flex min-w-0 items-center gap-1 text-xs leading-4 text-[var(--fm-text-muted)]">
+        <span class="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] leading-4 text-[var(--fm-text-muted)]">
           {#if activeSection === 'starred' || activeSection === 'label'}<span class="shrink-0 rounded bg-[var(--fm-surface-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--fm-text-secondary)]">{starredSourceLabel}</span>{/if}
           {#if isDraft && activeSection !== 'starred' && activeSection !== 'label'}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">{t('mail.draft')}</span>{/if}
           {#if itemMessage.labels.includes('attachment')}<Paperclip class="size-3 shrink-0" aria-label={t('mail.hasAttachment')} />{/if}
@@ -208,5 +208,19 @@
     {/if}
   </article>
 {:else}
-  <div class="min-h-[72px] border-b border-[var(--fm-border)]" aria-hidden="true"></div>
+  <div class="mail-list-item min-h-[76px] border-b border-[var(--fm-border)]" aria-hidden="true"></div>
 {/if}
+
+<style>
+  .mail-list-item,
+  .mail-list-item-button {
+    min-height: 76px;
+  }
+
+  @media (min-width: 901px) {
+    .mail-list-item,
+    .mail-list-item-button {
+      min-height: 88px;
+    }
+  }
+</style>

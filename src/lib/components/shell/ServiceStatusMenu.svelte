@@ -102,8 +102,8 @@
 
   summary {
     display: inline-flex;
-    min-height: 32px;
-    min-width: 32px;
+    min-height: 40px;
+    min-width: 40px;
     align-items: center;
     justify-content: center;
     gap: 7px;

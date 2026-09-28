@@ -591,6 +591,10 @@ test('keeps readable default columns, persists the layout, and opens one focused
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-preference', '440');
   await page.setViewportSize({ width: 1505, height: 1045 });
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
+  await expect(page.locator('.topbar')).toHaveCSS('height', '64px');
+  await expect(page.locator('.topbar .account-trigger-label')).toBeHidden();
+  const firstRowHeight = await page.locator('.mail-list-item').first().evaluate((item) => item.getBoundingClientRect().height);
+  expect(firstRowHeight).toBeGreaterThanOrEqual(88);
   const columns = await page.locator('.mail-workspace').evaluate((workspace) => ({
     list: workspace.querySelector('.mail-list-panel')?.getBoundingClientRect().width ?? 0,
     detail: workspace.querySelector('.mail-detail-panel')?.getBoundingClientRect().width ?? 0
@@ -598,6 +602,12 @@ test('keeps readable default columns, persists the layout, and opens one focused
   expect(columns.list).toBeGreaterThanOrEqual(440);
   expect(columns.detail).toBeGreaterThanOrEqual(700);
   await page.screenshot({ path: join(tmpdir(), 'flaremail-list-default-desktop.png'), fullPage: false });
+  await page.getByRole('button', { name: '显示偏好' }).click();
+  await page.getByRole('radio', { name: '紧凑显示' }).click();
+  const compactRowHeight = await page.locator('.mail-list-item').first().evaluate((item) => item.getBoundingClientRect().height);
+  expect(compactRowHeight).toBeLessThan(firstRowHeight);
+  await page.getByRole('radio', { name: '标准显示' }).click();
+  await page.keyboard.press('Escape');
   for (const width of [1920, 1440, 1366, 768, 390]) {
     await page.setViewportSize({ width, height: width <= 900 ? 844 : 900 });
     await assertNoHorizontalOverflow(page);

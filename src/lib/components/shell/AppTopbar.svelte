@@ -228,9 +228,9 @@
     position: relative;
     z-index: 40;
     display: grid;
-    grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.8fr) minmax(152px, auto);
+    grid-template-columns: minmax(220px, 1fr) minmax(240px, 1.8fr) minmax(136px, 1fr);
     align-items: center;
-    height: 50px;
+    height: 64px;
     gap: var(--space-4);
     padding: 0 var(--space-4);
     border-bottom: 1px solid var(--fm-border);
@@ -247,10 +247,16 @@
 
   .identity {
     gap: var(--space-3);
+    --brand-mark-size: 38px;
+    --brand-wordmark-size: 19px;
   }
 
   .topbar-search {
     position: relative;
+    justify-content: center;
+    width: 100%;
+    max-width: 34rem;
+    justify-self: center;
   }
 
   .topbar-search :global(.mail-search-root) {
@@ -274,6 +280,7 @@
   }
 
   .topbar-search :global(input) {
+    height: 42px;
     padding-right: 2.75rem;
   }
 
@@ -299,7 +306,7 @@
     color: var(--fm-text);
     background: transparent;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.2;
     text-align: start;
@@ -314,14 +321,12 @@
   }
 
   .workspace-account {
-    color: var(--fm-text-muted);
-    font-size: 11px;
-    font-weight: 400;
+    display: none;
   }
 
   :global(.topbar-icon-trigger),
   :global(.account-trigger) {
-    height: 32px;
+    height: 40px;
     border: 1px solid var(--fm-border);
     border-radius: var(--radius-md);
     color: var(--fm-text-secondary);
@@ -329,12 +334,11 @@
   }
 
   :global(.topbar-icon-trigger) {
-    width: 32px;
+    width: 40px;
   }
 
   :global(.account-trigger) {
-    max-width: 164px;
-    padding: 0 8px;
+    padding: 0 7px;
     color: var(--fm-primary);
     font-size: 12px;
     font-weight: 700;
@@ -348,22 +352,19 @@
 
   .account-avatar {
     display: grid;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     flex: 0 0 auto;
     place-items: center;
     border-radius: 999px;
     color: var(--fm-primary);
     background: var(--fm-primary-soft);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 800;
   }
 
   .account-trigger-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: none;
   }
 
   :global(.menu-action) {
@@ -466,21 +467,14 @@
 
   @media (max-width: 1100px) {
     .topbar {
-      grid-template-columns: minmax(132px, 0.9fr) minmax(200px, 1.4fr) minmax(152px, auto);
+      grid-template-columns: minmax(160px, 0.9fr) minmax(200px, 1.4fr) minmax(136px, auto);
       gap: var(--space-3);
-    }
-
-    .workspace-account {
-      display: none;
     }
 
     .workspace > span:first-child {
       max-width: 150px;
     }
 
-    .account-trigger-label {
-      display: none;
-    }
   }
 
   @media (max-width: 900px) {

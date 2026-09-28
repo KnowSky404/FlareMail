@@ -18,7 +18,7 @@
     gap: var(--space-2);
     min-width: 0;
     color: var(--fm-text);
-    font-size: 17px;
+    font-size: var(--brand-wordmark-size, 17px);
     font-weight: 700;
     line-height: 1;
     letter-spacing: -0.025em;
@@ -26,8 +26,8 @@
 
   .mark {
     display: block;
-    width: 32px;
-    height: 32px;
+    width: var(--brand-mark-size, 32px);
+    height: var(--brand-mark-size, 32px);
     flex: none;
     fill: var(--fm-brand-orange);
   }

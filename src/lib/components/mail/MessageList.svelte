@@ -115,7 +115,7 @@
   {#if loading}
     <div class="divide-y divide-[var(--fm-border)]" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}
-        <div class="flex min-h-[72px] items-center gap-3 px-3 py-2" aria-hidden="true">
+        <div class="flex min-h-[76px] items-center gap-3 px-3 py-2 min-[901px]:min-h-[88px]" aria-hidden="true">
           <Skeleton class="size-2 shrink-0 rounded-full" />
           <Skeleton class="size-8 shrink-0 rounded-full" />
           <div class="min-w-0 flex-1 space-y-2">
