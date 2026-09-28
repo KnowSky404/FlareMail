@@ -498,7 +498,11 @@ test('shows a server-paginated global Starred view across inbox and sent', async
   await page.getByRole('button', { name: '批量管理标签' }).click();
   const bulkDialog = page.getByRole('dialog', { name: '批量管理标签' });
   await expect(bulkDialog).toContainText('仅更新当前页已选的 2 封邮件');
-  await expect(bulkDialog.getByLabel('标签名称')).toBeVisible();
+  if (await bulkDialog.getByText('尚无标签').isVisible()) {
+    await expect(bulkDialog.getByRole('button', { name: '新建标签' })).toBeVisible();
+  } else {
+    await expect(bulkDialog.getByLabel('标签名称')).toBeVisible();
+  }
   await bulkDialog.getByRole('button', { name: '取消' }).click();
   const response = await page.request.get('/api/workspace/mailbox?folder=starred&limit=1');
   expect(response.ok()).toBe(true);

@@ -2639,9 +2639,9 @@
                   {/if}
                   <MessageList
                     activeSection={activeSection}
-                    messages={activeMessages}
+                    messages={visibleMessages}
                     selectedThreadId={selectedThreadId}
-                    threads={activeThreads}
+                    threads={visibleThreads}
                     {selectedMessageId}
                     query={searchQuery}
                     filter={mailFilter}

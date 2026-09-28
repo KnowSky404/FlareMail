@@ -71,24 +71,11 @@
     profile: t('mail.detail')
   });
 
-  const sourceItems = $derived.by<ListItem[]>(() => {
+  const visibleItems = $derived.by<ListItem[]>(() => {
     if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred' || activeSection === 'label' || threads.length === 0) {
       return messages.map((value) => ({ kind: 'message', value }));
     }
     return threads.map((value) => ({ kind: 'thread', value }));
-  });
-
-  const visibleItems = $derived.by(() => {
-    return sourceItems.filter((item) => {
-      const message = item.kind === 'thread' ? item.value.sectionLatestMessage : item.value;
-      const thread = item.kind === 'thread' ? item.value : null;
-      const matchesFilter =
-        filter === 'all' ||
-        (filter === 'unread' && (thread ? thread.unreadCount > 0 : !message.read)) ||
-        (filter === 'starred' && (thread ? thread.messages.some((entry) => entry.starred) : message.starred));
-      if (!matchesFilter) return false;
-      return true;
-    });
   });
 
   const selectedCount = $derived(visibleItems.length);
