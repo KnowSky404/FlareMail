@@ -2,7 +2,7 @@
   import { goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, untrack } from 'svelte';
-  import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Star, Trash2, Tag } from '@lucide/svelte';
+  import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
   import type { PageData } from './$types';
   import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
   import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
@@ -20,7 +20,7 @@
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
   import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
-  import { DropdownMenu, IconButton } from '$lib/components/ui';
+  import { Button, Checkbox, DropdownMenu, IconButton, TextField } from '$lib/components/ui';
   import { ClientApiError } from '$lib/client/api';
   import {
     AUTH_EXPIRED_EVENT,
@@ -184,6 +184,7 @@
   let activeLabelId = $state<string | null>(null);
   let labelEditorMode = $state<'create' | 'rename' | null>(null);
   let labelEditorName = $state('');
+  let labelCreateTarget = $state<MailMessage | null>(null);
   let labelActionPending = $state(false);
   let labelTargetMessage = $state<MailMessage | null>(null);
   let deleteLabelConfirmOpen = $state(false);
@@ -844,6 +845,10 @@
     activeSection = initial.activeSection;
     activeLabelId = null;
     userLabels = [];
+    labelEditorMode = null;
+    labelCreateTarget = null;
+    labelTargetMessage = null;
+    deleteLabelConfirmOpen = false;
     selectedMessageId = initial.selectedMessageId;
     selectedMessageIds = initial.selectedMessageIds;
     mailboxPages = initial.mailboxPages;
@@ -1025,20 +1030,47 @@
     if (authenticated && !authExpired) void mailboxController.refresh('label', '', 'all', mailIdentityFilter, id);
   }
 
-  function editLabel(mode: 'create' | 'rename') {
+  function editLabel(mode: 'create' | 'rename', target: MailMessage | null = null) {
     labelEditorMode = mode;
     labelEditorName = mode === 'rename' ? userLabels.find((label) => label.id === activeLabelId)?.name ?? '' : '';
+    labelCreateTarget = mode === 'create' ? target : null;
+  }
+
+  function closeLabelEditor() {
+    if (labelActionPending) return;
+    labelEditorMode = null;
+    labelCreateTarget = null;
+  }
+
+  async function applyMessageLabel(message: MailMessage, labelId: string, enabled: boolean) {
+    const kind: MailLabelMessageKind = message.source === 'inbound' ? 'inbound' : message.folder === 'drafts' ? 'draft' : 'workspace';
+    const id = message.source === 'inbound' ? message.id.slice('email:'.length) : message.id;
+    const result = await setMailMessageLabel(labelId, kind, id, enabled);
+    const update = (items: MailMessage[]) => items.map((item) => item.id === message.id ? { ...item, userLabels: result.labels } : item);
+    mailbox = { inbox: update(mailbox.inbox), sent: update(mailbox.sent), drafts: update(mailbox.drafts) };
+    if (mailboxPages) mailboxPages = Object.fromEntries(Object.entries(mailboxPages).map(([section, page]) => [section, page ? { ...page, messages: update(page.messages) } : page])) as typeof mailboxPages;
+    if (labelTargetMessage?.id === message.id) labelTargetMessage = { ...message, userLabels: result.labels };
+    if (activeSection === 'label') void refreshWorkspace(false);
   }
 
   async function saveLabel() {
     if (labelActionPending) return;
     labelActionPending = true;
     try {
+      const target = labelCreateTarget;
       const result = labelEditorMode === 'rename' && activeLabelId
         ? await renameMailLabel(activeLabelId, labelEditorName)
         : await createMailLabel(labelEditorName);
       labelEditorMode = null;
+      labelCreateTarget = null;
       await reloadMailLabels();
+      if (target) {
+        try {
+          await applyMessageLabel(target, result.label.id, true);
+        } catch (error) {
+          notifyError(error, t('label.applyFailed'));
+        }
+      }
       if (activeSection === 'label' && activeLabelId === result.label.id) void refreshWorkspace(false);
     } catch (error) {
       notifyError(error, t('label.saveFailed'));
@@ -1065,16 +1097,9 @@
   async function toggleMessageLabel(message: MailMessage, labelId: string) {
     if (labelActionPending) return;
     const enabled = !(message.userLabels ?? []).some((label) => label.id === labelId);
-    const kind: MailLabelMessageKind = message.source === 'inbound' ? 'inbound' : message.folder === 'drafts' ? 'draft' : 'workspace';
-    const id = message.source === 'inbound' ? message.id.slice('email:'.length) : message.id;
     labelActionPending = true;
     try {
-      const result = await setMailMessageLabel(labelId, kind, id, enabled);
-      const update = (items: MailMessage[]) => items.map((item) => item.id === message.id ? { ...item, userLabels: result.labels } : item);
-      mailbox = { inbox: update(mailbox.inbox), sent: update(mailbox.sent), drafts: update(mailbox.drafts) };
-      if (mailboxPages) mailboxPages = Object.fromEntries(Object.entries(mailboxPages).map(([section, page]) => [section, page ? { ...page, messages: update(page.messages) } : page])) as typeof mailboxPages;
-      labelTargetMessage = { ...message, userLabels: result.labels };
-      if (activeSection === 'label') void refreshWorkspace(false);
+      await applyMessageLabel(message, labelId, enabled);
     } catch (error) {
       notifyError(error, t('label.applyFailed'));
     } finally {
@@ -2468,10 +2493,10 @@
                     onRefresh={refreshWorkspace}
                   />
                   {#if activeSection === 'label'}
-                    <div class="flex items-center gap-2 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-1.5">
+                    <div class="flex items-center gap-1 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-1" role="toolbar" aria-label={t('shell.labels')}>
                       <Tag class="size-3.5 text-[var(--fm-text-muted)]" aria-hidden="true" />
-                      <button class="fm-touch-target rounded px-2 text-xs text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={() => editLabel('rename')}>{t('label.rename')}</button>
-                      <button class="fm-touch-target rounded px-2 text-xs text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" onclick={() => (deleteLabelConfirmOpen = true)}>{t('label.delete')}</button>
+                      <IconButton ariaLabel={t('label.rename')} title={t('label.rename')} size="sm" onclick={() => editLabel('rename')}><Pencil class="size-4" aria-hidden="true" /></IconButton>
+                      <IconButton ariaLabel={t('label.delete')} title={t('label.delete')} size="sm" class="text-[var(--fm-danger)]" onclick={() => (deleteLabelConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" /></IconButton>
                     </div>
                   {/if}
                   {#if activeSection === 'trash'}
@@ -2731,11 +2756,13 @@
       />
     {/if}
 
-    <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} onClose={() => (labelEditorMode = null)}>
+    <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} onClose={closeLabelEditor}>
       <form onsubmit={(event) => { event.preventDefault(); void saveLabel(); }}>
-        <label class="grid gap-1 text-sm text-[var(--fm-text)]" for="mail-label-name">{t('label.name')}</label>
-        <input id="mail-label-name" class="mt-1 w-full rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 py-2 text-sm text-[var(--fm-text)]" bind:value={labelEditorName} maxlength="48" required />
-        <div class="mt-4 flex justify-end gap-2"><button type="button" class="fm-touch-target rounded px-3 text-sm" onclick={() => (labelEditorMode = null)}>{t('common.cancel')}</button><button type="submit" class="fm-touch-target rounded bg-[var(--fm-primary)] px-4 text-sm font-medium text-[var(--fm-text-inverse)]" disabled={labelActionPending}>{t('label.save')}</button></div>
+        <TextField id="mail-label-name" label={t('label.name')} bind:value={labelEditorName} maxlength={48} required disabled={labelActionPending} />
+        <div class="mt-4 flex justify-end gap-2">
+          <Button variant="secondary" onclick={closeLabelEditor} disabled={labelActionPending}>{t('common.cancel')}</Button>
+          <Button type="submit" loading={labelActionPending}>{t('label.save')}</Button>
+        </div>
       </form>
     </Dialog>
 
@@ -2745,13 +2772,10 @@
         {#if userLabels.length === 0}<p class="text-sm text-[var(--fm-text-muted)]">{t('label.empty')}</p>{/if}
         <div class="grid gap-1">
           {#each userLabels as userLabel (userLabel.id)}
-            <label class="fm-touch-target flex items-center gap-3 rounded-[var(--radius-md)] px-2 text-sm text-[var(--fm-text)] hover:bg-[var(--fm-surface-hover)]">
-              <input type="checkbox" checked={(labelTargetMessage.userLabels ?? []).some((item) => item.id === userLabel.id)} disabled={labelActionPending} onchange={() => { if (labelTargetMessage) void toggleMessageLabel(labelTargetMessage, userLabel.id); }} />
-              <Tag class="size-4 text-[var(--fm-text-muted)]" aria-hidden="true" />{userLabel.name}
-            </label>
+            <Checkbox id={`message-label-${userLabel.id}`} label={userLabel.name} checked={(labelTargetMessage.userLabels ?? []).some((item) => item.id === userLabel.id)} disabled={labelActionPending} class="rounded-[var(--radius-md)] px-2 hover:bg-[var(--fm-surface-hover)]" onchange={() => { if (labelTargetMessage) void toggleMessageLabel(labelTargetMessage, userLabel.id); }} />
           {/each}
         </div>
-        <button type="button" class="fm-touch-target mt-3 text-sm text-[var(--fm-primary)]" onclick={() => { labelTargetMessage = null; editLabel('create'); }}>{t('label.create')}</button>
+        <Button variant="ghost" size="sm" class="mt-3" onclick={() => { const target = labelTargetMessage; labelTargetMessage = null; editLabel('create', target); }}>{t('label.create')}</Button>
       {/if}
     </Dialog>
 

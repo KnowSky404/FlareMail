@@ -50,6 +50,31 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('creates a label from a message and applies it in the same flow', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const subject = 'E2E Inbox Welcome';
+  await page.getByRole('listitem').filter({ hasText: subject }).getByRole('button', { name: /E2E Inbox Welcome/u }).click();
+  await page.getByRole('button', { name: '管理标签' }).click();
+  const manager = page.getByRole('dialog', { name: '管理标签' });
+  await manager.getByRole('button', { name: '新建标签' }).click();
+  await expect(manager).toBeHidden();
+  const editor = page.getByRole('dialog', { name: '新建标签' });
+  await editor.getByLabel('标签名称').fill('E2E One Step');
+  await editor.getByRole('button', { name: '保存' }).click();
+  await expect(editor).toBeHidden();
+  await expect(page.getByRole('region', { name: '邮件详情' }).getByText('E2E One Step')).toBeVisible();
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('button', { name: '返回邮件列表' }).click();
+    await page.getByRole('button', { name: '打开导航' }).click();
+  }
+  await page.getByRole('button', { name: 'E2E One Step', exact: true }).click();
+  await expect(page.getByRole('listitem').filter({ hasText: subject })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('listitem').filter({ hasText: subject })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('shows one persistent label across inbox, inbound, sent and drafts', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const created = await page.evaluate(async () => {
@@ -85,6 +110,12 @@ test('shows one persistent label across inbox, inbound, sent and drafts', async 
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' })).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-labels-${testInfo.project.name}.png`), fullPage: false });
+  await page.evaluate(() => localStorage.setItem('flaremail-theme', 'dark'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Existing Concurrent' })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-labels-${testInfo.project.name}-dark.png`), fullPage: false });
   await assertNoConsoleErrors(consoleErrors);
 });
 
