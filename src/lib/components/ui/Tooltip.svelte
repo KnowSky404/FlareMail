@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import { cn } from './styles';
 
   let {
@@ -22,7 +22,8 @@
 
   let visible = $state(false);
   let showTimer: ReturnType<typeof setTimeout> | undefined;
-  const stableId = $derived(id ?? `tooltip-${stableHash(content)}`);
+  const runtimeId = $props.id();
+  const stableId = $derived(id ?? `tooltip-${runtimeId}`);
   const positions = {
     top: 'bottom-full left-1/2 mb-2 -translate-x-1/2',
     right: 'left-full top-1/2 ml-2 -translate-y-1/2',
@@ -30,11 +31,11 @@
     left: 'right-full top-1/2 mr-2 -translate-y-1/2'
   };
 
-  function stableHash(value: string) {
-    let hash = 0;
-    for (let index = 0; index < value.length; index += 1) hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-    return hash.toString(36);
-  }
+  onMount(() => {
+    return () => {
+      if (showTimer !== undefined) clearTimeout(showTimer);
+    };
+  });
 
   function show() {
     if (showTimer !== undefined) clearTimeout(showTimer);
@@ -48,7 +49,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && visible) {
       event.preventDefault();
       hide();
     }
@@ -71,9 +72,7 @@
   {:else if children}
     <span>{@render children()}</span>
   {/if}
-  {#if visible}
-    <span id={stableId} role="tooltip" class={cn('pointer-events-none absolute z-50 max-w-[min(20rem,calc(100vw-1rem))] rounded-[var(--radius-sm)] bg-[var(--fm-text)] px-2 py-1 text-[11px] leading-4 text-[var(--fm-text-inverse)] shadow-lg', positions[side])}>
-      {content}
-    </span>
-  {/if}
+  <span id={stableId} role="tooltip" hidden={!visible} class={cn('pointer-events-none absolute z-50 w-max max-w-[min(20rem,calc(100vw-1rem))] break-words rounded-[var(--radius-sm)] bg-[var(--fm-text)] px-2 py-1 text-[11px] leading-4 text-[var(--fm-text-inverse)] shadow-lg', positions[side])}>
+    {content}
+  </span>
 </span>

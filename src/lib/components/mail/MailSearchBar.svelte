@@ -28,7 +28,7 @@
   });
 </script>
 
-<div class="relative min-w-0 flex-1">
+<div class="mail-search-root relative min-w-0 flex-1">
   <label class="sr-only" for={id}>{t('mail.search')}</label>
   <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--fm-text-muted)]" aria-hidden="true" />
   <input
@@ -50,7 +50,8 @@
       ariaLabel={t('mail.clearSearch')}
       title={t('mail.clearSearch')}
       size="sm"
-      class="fm-search-clear absolute right-1 top-1/2 size-11 -translate-y-1/2 sm:size-7"
+      containerClass="!absolute right-1 top-1/2 -translate-y-1/2"
+      class="fm-search-clear size-11 sm:size-7"
       onclick={() => onQueryChange?.('')}
     >
       <X class="size-4" aria-hidden="true" />

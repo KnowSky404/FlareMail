@@ -824,13 +824,13 @@
       </div>
       <div class="flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
         <div class="relative shrink-0">
-          <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-footer-attachment-count' : undefined} title={t('compose.attachFile')} disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
+          <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-footer-attachment-count' : undefined} title={t('compose.attachFile')} tooltipSide="top" disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
           {#if readyAttachmentCount}
             <span class="compose-attachment-count pointer-events-none absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[var(--fm-primary)] text-[10px] font-semibold text-[var(--fm-text-inverse)]" aria-hidden="true">{readyAttachmentCount}</span>
             <span id="compose-footer-attachment-count" class="sr-only" role="status" aria-live="polite">{t('compose.addedAttachmentCount', { count: readyAttachmentCount })}</span>
           {/if}
         </div>
-        <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} ariaPressed={showHtml} ariaControls="compose-html-options" onclick={() => (showHtml = !showHtml)}><Code2 class="size-4" aria-hidden="true" /></IconButton>
+        <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={() => (showHtml = !showHtml)}><Code2 class="size-4" aria-hidden="true" /></IconButton>
         <Button variant="outline" disabled={pending} onclick={requestClose}>{t('common.cancel')}</Button>
         <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(validation.value); }}>{t('compose.sendMail')}</Button>
       </div>

@@ -199,6 +199,7 @@
         title={isStarred ? t('mail.unstar') : t('mail.star')}
         ariaPressed={isStarred}
         size="sm"
+        tooltipSide="top"
         class={`mr-1 shrink-0 text-[var(--fm-text-muted)] hover:text-[var(--fm-brand-orange)] ${isStarred ? 'text-[var(--fm-brand-orange)]' : ''}`}
         onclick={handleStar}
       >

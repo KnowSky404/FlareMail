@@ -253,7 +253,7 @@
     position: relative;
   }
 
-  .topbar-search :global(.relative) {
+  .topbar-search :global(.mail-search-root) {
     width: 100%;
   }
 

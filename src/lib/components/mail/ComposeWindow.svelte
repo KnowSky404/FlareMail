@@ -219,10 +219,10 @@
     </div>
     <div class="flex shrink-0 items-center gap-1">
       {#if minimized}
-        <IconButton ariaLabel={t('compose.restoreWindow')} title={t('compose.restoreWindow')} size="sm" onclick={toggleMinimized}><Square class="size-4" aria-hidden="true" /></IconButton>
+        <IconButton ariaLabel={t('compose.restoreWindow')} title={t('compose.restoreWindow')} size="sm" tooltipSide="top" onclick={toggleMinimized}><Square class="size-4" aria-hidden="true" /></IconButton>
       {:else}
-        <IconButton ariaLabel={t('compose.minimizeWindow')} title={t('compose.minimizeWindow')} size="sm" class="max-sm:!hidden" onclick={toggleMinimized}><Minimize2 class="size-4" aria-hidden="true" /></IconButton>
-        <IconButton ariaLabel={maximized ? t('compose.restoreWindow') : t('compose.maximizeWindow')} title={maximized ? t('compose.restoreWindow') : t('compose.maximizeWindow')} size="sm" class="max-sm:!hidden" onclick={() => (maximized = !maximized)}><Maximize2 class="size-4" aria-hidden="true" /></IconButton>
+        <IconButton ariaLabel={t('compose.minimizeWindow')} title={t('compose.minimizeWindow')} size="sm" containerClass="max-sm:!hidden" class="max-sm:!hidden" onclick={toggleMinimized}><Minimize2 class="size-4" aria-hidden="true" /></IconButton>
+        <IconButton ariaLabel={maximized ? t('compose.restoreWindow') : t('compose.maximizeWindow')} title={maximized ? t('compose.restoreWindow') : t('compose.maximizeWindow')} size="sm" containerClass="max-sm:!hidden" class="max-sm:!hidden" onclick={() => (maximized = !maximized)}><Maximize2 class="size-4" aria-hidden="true" /></IconButton>
       {/if}
       <IconButton ariaLabel={t('common.close')} title={t('common.close')} size="sm" onclick={onClose}><X class="size-4" aria-hidden="true" /></IconButton>
     </div>

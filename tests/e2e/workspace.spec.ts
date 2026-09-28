@@ -9,6 +9,69 @@ test.describe.configure({ mode: 'serial' });
 
 const webhookSecretBytes = new TextEncoder().encode('FlareMail E2E webhook secret 2026');
 
+test('shows icon guidance on pointer and keyboard focus', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop toolbar exposes the icon-first refresh control.');
+  await login(page);
+  const refresh = page.getByRole('button', { name: '刷新邮件列表' });
+  await expect(refresh).toHaveAttribute('aria-label', '刷新邮件列表');
+  const tooltipIds = await page.locator('[role="tooltip"]').evaluateAll((elements) => elements.map((element) => element.id));
+  expect(new Set(tooltipIds).size).toBe(tooltipIds.length);
+  await refresh.hover();
+  const guidance = page.getByRole('tooltip', { name: '刷新邮件列表' });
+  await expect(guidance).toBeVisible();
+  await expect(refresh).toHaveAttribute('aria-describedby', await guidance.getAttribute('id') ?? '');
+  const topbarBottom = await page.locator('.topbar').evaluate((element) => element.getBoundingClientRect().bottom);
+  const guidanceBounds = await guidance.boundingBox();
+  expect(guidanceBounds?.y).toBeGreaterThanOrEqual(topbarBottom);
+  expect(guidanceBounds!.width).toBeGreaterThan(guidanceBounds!.height);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-icon-tooltip-desktop.png'), fullPage: false });
+  await page.mouse.move(1, 1);
+  await expect(guidance).toBeHidden();
+  await refresh.focus();
+  await expect(guidance).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(guidance).toBeHidden();
+  await expect(refresh).toBeFocused();
+  const star = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: '加星' });
+  await star.hover();
+  await expect(page.getByRole('tooltip', { name: '加星' })).toBeVisible();
+  const search = page.getByLabel('搜索邮件');
+  await search.fill('E2E');
+  const clear = page.getByRole('button', { name: '清除搜索' });
+  const searchBounds = await search.boundingBox();
+  const clearBounds = await clear.boundingBox();
+  expect(clearBounds!.x).toBeGreaterThan(searchBounds!.x + searchBounds!.width / 2);
+  expect(clearBounds!.x + clearBounds!.width).toBeLessThanOrEqual(searchBounds!.x + searchBounds!.width);
+  await clear.click();
+  await expect(search).toHaveValue('');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('keeps the mobile search clear icon inside its field', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile search uses the folder header field.');
+  await login(page);
+  const search = page.getByLabel('搜索邮件');
+  await search.fill('E2E');
+  const clear = page.getByRole('button', { name: '清除搜索' });
+  const searchBounds = await search.boundingBox();
+  const clearBounds = await clear.boundingBox();
+  expect(clearBounds!.x).toBeGreaterThan(searchBounds!.x + searchBounds!.width / 2);
+  expect(clearBounds!.x + clearBounds!.width).toBeLessThanOrEqual(searchBounds!.x + searchBounds!.width);
+  await clear.click();
+  await expect(search).toHaveValue('');
+  await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).click();
+  const back = page.getByRole('button', { name: '返回邮件列表' });
+  await back.focus();
+  const guidance = page.getByRole('tooltip', { name: '返回邮件列表' });
+  await expect(guidance).toBeVisible();
+  const guidanceBounds = await guidance.boundingBox();
+  expect(guidanceBounds!.x).toBeGreaterThanOrEqual(0);
+  expect(guidanceBounds!.x + guidanceBounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-icon-tooltip-mobile.png'), fullPage: false });
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('creates, applies, navigates, renames and deletes a persistent label', async ({ page, consoleErrors }) => {
   await login(page);
   const mobile = page.viewportSize()!.width < 901;
@@ -855,8 +918,15 @@ test('moves, resizes, minimizes, and maximizes the desktop compose window', asyn
   await composeDialog.getByRole('button', { name: '最小化写信窗口' }).click();
   await expect(composeDialog).toHaveAttribute('data-minimized', 'true');
   await expect(composeDialog.getByRole('textbox', { name: '主题', exact: true })).toHaveCount(0);
+  const restore = composeDialog.getByRole('button', { name: '还原写信窗口' });
+  await restore.focus();
+  const restoreGuidance = composeDialog.getByRole('tooltip', { name: '还原写信窗口' });
+  await expect(restoreGuidance).toBeVisible();
+  const restoreBounds = await restoreGuidance.boundingBox();
+  expect(restoreBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(restoreBounds!.y + restoreBounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '草稿箱', exact: true }).click();
-  await composeDialog.getByRole('button', { name: '还原写信窗口' }).click();
+  await restore.click();
   await expect(composeDialog.getByRole('textbox', { name: '主题', exact: true })).toHaveValue('E2E floating compose');
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await composeDialog.getByRole('button', { name: '关闭' }).click();

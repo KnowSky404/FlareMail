@@ -182,7 +182,7 @@
   <header class="flex-none border-b border-[var(--fm-border)] bg-[var(--fm-surface)]">
     <div class="message-header-row flex min-h-12 items-center gap-1 border-b border-[var(--fm-border)] px-3 py-1 sm:px-5">
       {#if showBack}
-        <IconButton ariaLabel={t('mail.backToList')} title={t('mail.backToList')} size="sm" class="shrink-0 xl:hidden" onclick={() => onBack?.()}>
+        <IconButton ariaLabel={t('mail.backToList')} title={t('mail.backToList')} size="sm" tooltipSide="right" containerClass="xl:!hidden" class="shrink-0 xl:hidden" onclick={() => onBack?.()}>
           <ArrowLeft class="size-4" aria-hidden="true" />
         </IconButton>
       {/if}
@@ -203,7 +203,7 @@
       </div>
       <div class="message-header-tools flex shrink-0 items-center gap-0.5">
         {#if !trashMode && onOpenReader}
-          <IconButton ariaLabel={t('mail.openReader')} title={t('mail.openReader')} size="sm" class="hidden sm:inline-flex" onclick={() => onOpenReader?.(message)}>
+          <IconButton ariaLabel={t('mail.openReader')} title={t('mail.openReader')} size="sm" containerClass="!hidden sm:!inline-flex" class="hidden sm:inline-flex" onclick={() => onOpenReader?.(message)}>
             <Maximize2 class="size-4" aria-hidden="true" />
           </IconButton>
           {#if standaloneHref}
@@ -223,7 +223,7 @@
           </IconButton>
         {/if}
         {#if !trashMode && onToggleRead}
-          <IconButton ariaLabel={message.read ? t('mail.markUnread') : t('mail.markRead')} title={message.read ? t('mail.markUnread') : t('mail.markRead')} size="sm" class="hidden text-[var(--fm-text-muted)] sm:inline-flex" onclick={() => onToggleRead?.(message)} disabled={pending}>
+          <IconButton ariaLabel={message.read ? t('mail.markUnread') : t('mail.markRead')} title={message.read ? t('mail.markUnread') : t('mail.markRead')} size="sm" containerClass="!hidden sm:!inline-flex" class="hidden text-[var(--fm-text-muted)] sm:inline-flex" onclick={() => onToggleRead?.(message)} disabled={pending}>
             <Mail class="size-4" aria-hidden="true" />
           </IconButton>
         {/if}
