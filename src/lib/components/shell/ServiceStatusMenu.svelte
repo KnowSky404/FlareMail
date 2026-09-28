@@ -4,6 +4,7 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import { formatNumber } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
+  import Tooltip from '$lib/components/ui/Tooltip.svelte';
 
   let {
     runtimeLabel,
@@ -58,37 +59,41 @@
   });
 </script>
 
-<details bind:this={statusElement} bind:open class="status-menu">
-  <summary bind:this={summaryElement} class:degraded={!healthy} aria-label={t('status.view')} aria-controls="service-status-content" title={healthy ? t('status.healthy') : t('status.degraded')}>
-    {#if healthy}
-      <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
-      <span class="sr-only">{t('status.healthy')}</span>
-    {:else}
-      <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
-      <span class="sr-only">{t('status.degraded')}</span>
-      <span class="attention-count" aria-hidden="true">{formatNumber(attentionCount, i18n.locale)}</span>
-    {/if}
-    <ChevronDown class="chevron" size={14} aria-hidden="true" />
-  </summary>
+<Tooltip content={healthy ? t('status.healthy') : t('status.degraded')} side="bottom" disabled={open}>
+  {#snippet trigger(tooltipId)}
+    <details bind:this={statusElement} bind:open class="status-menu">
+      <summary bind:this={summaryElement} class:degraded={!healthy} aria-label={t('status.view')} aria-controls="service-status-content" aria-describedby={tooltipId}>
+        {#if healthy}
+          <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
+          <span class="sr-only">{t('status.healthy')}</span>
+        {:else}
+          <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
+          <span class="sr-only">{t('status.degraded')}</span>
+          <span class="attention-count" aria-hidden="true">{formatNumber(attentionCount, i18n.locale)}</span>
+        {/if}
+        <ChevronDown class="chevron" size={14} aria-hidden="true" />
+      </summary>
 
-  <div id="service-status-content" class="status-popover" role="region" aria-label={t('status.view')} tabindex="-1">
-    <div class="status-heading">
-      <strong>{t('status.workspace')}</strong>
-      <span class:healthy>{runtimeLabel}</span>
-    </div>
-    <dl>
-      <div><dt>{t('status.unread')}</dt><dd>{formatNumber(unreadCount, i18n.locale)}</dd></div>
-      <div><dt>{t('status.drafts')}</dt><dd>{formatNumber(draftCount, i18n.locale)}</dd></div>
-      <div><dt>{t('status.queued')}</dt><dd>{formatNumber(queuedCount, i18n.locale)}</dd></div>
-      <div><dt>{t('status.delayed')}</dt><dd class:danger={delayedCount > 0}>{formatNumber(delayedCount, i18n.locale)}</dd></div>
-      <div><dt>{t('status.failed')}</dt><dd class:danger={failedCount > 0}>{formatNumber(failedCount, i18n.locale)}</dd></div>
-      <div><dt>{t('status.bounced')}</dt><dd class:danger={bouncedCount > 0}>{formatNumber(bouncedCount, i18n.locale)}</dd></div>
-      <div><dt>{t('status.complained')}</dt><dd class:danger={complainedCount > 0}>{formatNumber(complainedCount, i18n.locale)}</dd></div>
-      <div><dt>{t('status.stale')}</dt><dd class:danger={staleDeliveryCount > 0}>{formatNumber(staleDeliveryCount, i18n.locale)}</dd></div>
-    </dl>
-    <p>{t('status.description')}</p>
-  </div>
-</details>
+      <div id="service-status-content" class="status-popover" role="region" aria-label={t('status.view')} tabindex="-1">
+        <div class="status-heading">
+          <strong>{t('status.workspace')}</strong>
+          <span class:healthy>{runtimeLabel}</span>
+        </div>
+        <dl>
+          <div><dt>{t('status.unread')}</dt><dd>{formatNumber(unreadCount, i18n.locale)}</dd></div>
+          <div><dt>{t('status.drafts')}</dt><dd>{formatNumber(draftCount, i18n.locale)}</dd></div>
+          <div><dt>{t('status.queued')}</dt><dd>{formatNumber(queuedCount, i18n.locale)}</dd></div>
+          <div><dt>{t('status.delayed')}</dt><dd class:danger={delayedCount > 0}>{formatNumber(delayedCount, i18n.locale)}</dd></div>
+          <div><dt>{t('status.failed')}</dt><dd class:danger={failedCount > 0}>{formatNumber(failedCount, i18n.locale)}</dd></div>
+          <div><dt>{t('status.bounced')}</dt><dd class:danger={bouncedCount > 0}>{formatNumber(bouncedCount, i18n.locale)}</dd></div>
+          <div><dt>{t('status.complained')}</dt><dd class:danger={complainedCount > 0}>{formatNumber(complainedCount, i18n.locale)}</dd></div>
+          <div><dt>{t('status.stale')}</dt><dd class:danger={staleDeliveryCount > 0}>{formatNumber(staleDeliveryCount, i18n.locale)}</dd></div>
+        </dl>
+        <p>{t('status.description')}</p>
+      </div>
+    </details>
+  {/snippet}
+</Tooltip>
 
 <style>
   .status-menu {

@@ -2,9 +2,10 @@
   import type { Snippet } from 'svelte';
   import { ChevronDown } from '@lucide/svelte';
   import { cn, focusRing } from './styles';
+  import Tooltip from './Tooltip.svelte';
 
   let {
-    trigger,
+    trigger: triggerContent,
     children,
     open = false,
     onOpenChange,
@@ -118,23 +119,27 @@
 </script>
 
 <div bind:this={rootElement} class={cn('relative inline-block', className)}>
-  <button
-    bind:this={triggerElement}
-    type="button"
-    aria-haspopup={contentRole}
-    aria-expanded={isOpen}
-    aria-controls={contentId}
-    aria-label={triggerAriaLabel}
-    title={triggerTitle}
-    class={cn('fm-menu-trigger fm-touch-target inline-flex items-center justify-center gap-1', focusRing, triggerClass)}
-    onclick={() => setOpen(!isOpen)}
-    onkeydown={handleTriggerKeydown}
-  >
-    {@render trigger()}
-    {#if showChevron}
-      <ChevronDown class={cn('size-3.5 transition-transform', isOpen && 'rotate-180')} aria-hidden="true" />
-    {/if}
-  </button>
+  <Tooltip content={triggerTitle ?? triggerAriaLabel ?? ''} side="bottom" disabled={isOpen}>
+    {#snippet trigger(tooltipId)}
+      <button
+        bind:this={triggerElement}
+        type="button"
+        aria-haspopup={contentRole}
+        aria-expanded={isOpen}
+        aria-controls={contentId}
+        aria-label={triggerAriaLabel}
+        aria-describedby={tooltipId}
+        class={cn('fm-menu-trigger fm-touch-target inline-flex items-center justify-center gap-1', focusRing, triggerClass)}
+        onclick={() => setOpen(!isOpen)}
+        onkeydown={handleTriggerKeydown}
+      >
+        {@render triggerContent()}
+        {#if showChevron}
+          <ChevronDown class={cn('size-3.5 transition-transform', isOpen && 'rotate-180')} aria-hidden="true" />
+        {/if}
+      </button>
+    {/snippet}
+  </Tooltip>
   {#if isOpen}
     <div
       bind:this={menuElement}
