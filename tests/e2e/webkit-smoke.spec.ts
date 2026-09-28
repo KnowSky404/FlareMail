@@ -70,9 +70,19 @@ test('logs in, navigates, searches, opens a message, and returns', async ({ page
   await openFolder(page, '已发送');
   await expect(page.getByRole('heading', { name: '已发送', exact: true })).toBeVisible();
   await openFolder(page, '收件箱');
+  const filteredMailbox = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/workspace/mailbox'
+      && url.searchParams.get('folder') === 'inbox'
+      && url.searchParams.get('q') === 'E2E Inbox Welcome'
+      && response.ok();
+  });
   await page.getByLabel('搜索邮件').fill('E2E Inbox Welcome');
+  await filteredMailbox;
+  await expect(page.getByRole('button', { name: '刷新邮件列表' })).toHaveAttribute('aria-busy', 'false');
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   await expect(item).toBeVisible();
+  await expect(item.locator('mark')).not.toHaveCount(0);
   await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click({ force: true });
   await expect(page.getByRole('region', { name: '邮件详情' })).toContainText('E2E Inbox Welcome');
   if (projectIsMobile(testInfo.project.name)) {

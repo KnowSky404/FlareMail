@@ -88,13 +88,13 @@ bun run test:e2e:webkit
 
 ## 当前跨浏览器复核（2026-09-28）
 
-在隔离的本地 Worker、D1/R2 和合成邮件 fixture 上重新运行。Firefox 与 WebKit 浏览器二进制放在 `/tmp`；Firefox 因当前容器不允许创建用户命名空间，测试进程使用 `MOZ_DISABLE_CONTENT_SANDBOX=1` 和可写的临时 XDG 目录。WebKit 底部“HTML 写信选项”在 Playwright 指针点击时等待位置稳定超时，改用按钮原生的聚焦加 Enter 激活后，发送成功与明确失败反馈均通过；这不是指针路径已获全面验证的证据。
+在隔离的本地 Worker、D1/R2 和合成邮件 fixture 上重新运行。Firefox 与 WebKit 浏览器二进制放在 `/tmp`；Firefox 因当前容器不允许创建用户命名空间，测试进程使用 `MOZ_DISABLE_CONTENT_SANDBOX=1` 和可写的临时 XDG 目录。WebKit 底部“HTML 写信选项”在 Playwright 指针点击时等待位置稳定超时，改用按钮原生的聚焦加 Enter 激活后，发送成功与明确失败反馈均通过；这不是指针路径已获全面验证的证据。iPad 的移动抽屉项目也曾等待指针稳定超时，辅助函数在先检查可见后强制点击，随后继续验证抽屉关闭和目标 URL。搜索用例等待带查询参数的邮箱响应完成与高亮出现，避免和异步筛选刷新竞态。
 
 | 浏览器/范围 | 当前结果 |
 | --- | --- |
 | Firefox desktop，收件、标签、第二发件身份、域名尺寸矩阵与长内容/约 7 MB 附件 | 独立 smoke `7 passed` |
-| WebKit desktop，登录/搜索/阅读、安全 HTML/CID/远程图片、写信/草稿/发送、主题与焦点 | 7 项分批通过；一次连续运行在前 3 项通过后中断，不记为一次完整 suite 通过 |
-| WebKit iPhone / iPad，视口、焦点、抽屉和触摸语义 | 各 1 项通过；不是两个项目的完整 smoke |
+| WebKit desktop，登录/搜索/阅读、安全 HTML/CID/远程图片、写信/草稿/发送、主题与焦点 | 连续 smoke `7 passed` |
+| WebKit iPhone / iPad，同一七项与移动视口、焦点、抽屉和触摸语义 | 各自连续 smoke `7 passed` |
 | Chromium，当前桌面密度、图标提示、移动标签及无障碍回归 | 对应目标用例通过；未在这次复跑完整 Chromium suite |
 
 截图 `/tmp/flaremail-list-default-desktop.png`（1505×1045）已与 `docs/design-concepts/flaremail-desktop-workspace.png` 同尺寸比对：三栏、选中态和品牌色接近；顶栏与列表行仍更紧凑，合成邮件内容和导航项也与概念稿不同。Linux WebKit 不等同于真实 macOS Safari；真实 Safari、屏幕阅读器和生产服务不属于本节证据。
