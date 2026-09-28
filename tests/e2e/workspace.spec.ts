@@ -1775,6 +1775,38 @@ test('keeps an open compose draft when its sidebar action is clicked again', asy
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('downloads the compose editor on demand and recovers from an unavailable chunk', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop project checks the first editor download and failure path.');
+  await login(page);
+  const scriptResources = () => page.evaluate(() => performance.getEntriesByType('resource')
+    .map((entry) => entry.name)
+    .filter((url) => new URL(url).pathname.startsWith('/_app/immutable/chunks/') && url.endsWith('.js')));
+  const before = await scriptResources();
+  const composeButton = page.getByRole('button', { name: '写邮件', exact: true }).first();
+  await composeButton.click();
+  const compose = page.getByRole('dialog', { name: '新邮件' });
+  await expect(compose).toBeVisible();
+  await page.setViewportSize({ width: 1505, height: 1045 });
+  await page.screenshot({ path: '/tmp/flaremail-lazy-compose-native-desktop.png', fullPage: false });
+  const editorChunk = (await scriptResources()).find((url) => !before.includes(url));
+  expect(editorChunk).toBeTruthy();
+  await compose.getByRole('button', { name: '关闭' }).click();
+
+  await page.route(editorChunk!, (route) => route.abort());
+  await page.reload();
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  expect(await scriptResources()).not.toContain(editorChunk);
+  await composeButton.click();
+  await expect(page.getByRole('alert').filter({ hasText: '无法载入写信窗口' })).toBeVisible();
+  await expect(compose).toHaveCount(0);
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await page.unroute(editorChunk!);
+  await page.reload();
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await composeButton.click();
+  await expect(compose).toBeVisible();
+});
+
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
   const isPhoneViewport = testInfo.project.name === 'mobile' || testInfo.project.name === 'narrow';
   await login(page);

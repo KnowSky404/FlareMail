@@ -4,7 +4,6 @@
   import { onMount, tick, untrack } from 'svelte';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
   import type { PageData } from './$types';
-  import ComposeModal from '$lib/components/mail/ComposeModal.svelte';
   import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
   import LoginView from '$lib/components/mail/LoginView.svelte';
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
@@ -227,6 +226,9 @@
   let remoteImagesMessageId = $state<string | null>(null);
   let shortcutHelpOpen = $state(false);
   let composeOpen = $state(false);
+  type ComposeModalComponent = (typeof import('$lib/components/mail/ComposeModal.svelte'))['default'];
+  let ComposeModal = $state<ComposeModalComponent | null>(null);
+  let composeModuleLoading = $state(false);
   let handledComposeAction = $state<string | null>(null);
   let composeMode = $state<ComposeMode>('new');
   let composeInitialInput = $state<ComposeInput | null>(null);
@@ -1500,6 +1502,22 @@
       : t('compose.autosaveIdle');
     composeLastSavedSignature = nextInitialInput.draftId ? serializeComposeInput(nextInitialInput) : '';
     composeOpen = true;
+    void loadComposeModule();
+  }
+
+  async function loadComposeModule() {
+    if (ComposeModal || composeModuleLoading) return;
+    composeModuleLoading = true;
+    try {
+      ComposeModal = (await import('$lib/components/mail/ComposeModal.svelte')).default;
+    } catch {
+      if (composeOpen) {
+        resetComposeState();
+        notify(t('compose.loadEditorFailed'), 'error');
+      }
+    } finally {
+      composeModuleLoading = false;
+    }
   }
 
   async function closeCompose(latestInput?: ComposeInput) {
@@ -2799,60 +2817,68 @@
     {/if}
 
     {#if composeOpen}
-      <ComposeModal
-        autosaveMessage={composeAutosaveMessage}
-        autosaveStatus={composeAutosaveStatus}
-        draftId={composeDraftId}
-        expectedUpdatedAt={composeLiveInput?.expectedUpdatedAt}
-        bodyRevision={composeLiveInput ? composeLiveInput.bodyRevision ?? null : undefined}
-        initialInput={composeInitialInput}
-        {recipientSuggestions}
-        mode={composeMode}
-        pending={composeBusy}
-        {authExpired}
-        {profile}
-        senderAddresses={mailIdentityOptions.addresses}
-        onClose={closeCompose}
-        onDiscard={discardCompose}
-        draftConflict={draftConflict}
-        localEditedAt={draftConflictLocalEditedAt}
-        onLoadServerDraft={loadServerDraft}
-        onSaveDraftCopy={saveDraftCopy}
-        onOverwriteServerDraft={overwriteServerDraft}
-        onPrepareAttachments={prepareComposeAttachments}
-        onInputChange={(input) => {
-          composeAutosave.changed();
-          const nextInput = withCurrentComposePersistence(input);
-          const nextSignature = serializeComposeInput(nextInput);
+      {#if ComposeModal}
+        <ComposeModal
+          autosaveMessage={composeAutosaveMessage}
+          autosaveStatus={composeAutosaveStatus}
+          draftId={composeDraftId}
+          expectedUpdatedAt={composeLiveInput?.expectedUpdatedAt}
+          bodyRevision={composeLiveInput ? composeLiveInput.bodyRevision ?? null : undefined}
+          initialInput={composeInitialInput}
+          {recipientSuggestions}
+          mode={composeMode}
+          pending={composeBusy}
+          {authExpired}
+          {profile}
+          senderAddresses={mailIdentityOptions.addresses}
+          onClose={closeCompose}
+          onDiscard={discardCompose}
+          draftConflict={draftConflict}
+          localEditedAt={draftConflictLocalEditedAt}
+          onLoadServerDraft={loadServerDraft}
+          onSaveDraftCopy={saveDraftCopy}
+          onOverwriteServerDraft={overwriteServerDraft}
+          onPrepareAttachments={prepareComposeAttachments}
+          onInputChange={(input) => {
+            composeAutosave.changed();
+            const nextInput = withCurrentComposePersistence(input);
+            const nextSignature = serializeComposeInput(nextInput);
 
-          composeLiveInput = nextInput;
-          composeTouched = true;
+            composeLiveInput = nextInput;
+            composeTouched = true;
 
-          if (authExpired) {
-            authRecoverySaveRequired = true;
-            composeAutosaveStatus = 'error';
-            composeAutosaveMessage = t('compose.authExpiredDraftPreserved');
-            return;
-          }
-          if (authRecoverySaveRequired) authRecoverySaveRequired = false;
+            if (authExpired) {
+              authRecoverySaveRequired = true;
+              composeAutosaveStatus = 'error';
+              composeAutosaveMessage = t('compose.authExpiredDraftPreserved');
+              return;
+            }
+            if (authRecoverySaveRequired) authRecoverySaveRequired = false;
 
-          if (!hasComposeContent(nextInput)) {
-            composeAutosaveStatus = 'idle';
-            composeAutosaveMessage = t('compose.autosaveIdle');
-            return;
-          }
+            if (!hasComposeContent(nextInput)) {
+              composeAutosaveStatus = 'idle';
+              composeAutosaveMessage = t('compose.autosaveIdle');
+              return;
+            }
 
-          if (nextSignature === composeLastSavedSignature) {
-            composeAutosaveStatus = 'saved';
-            return;
-          }
+            if (nextSignature === composeLastSavedSignature) {
+              composeAutosaveStatus = 'saved';
+              return;
+            }
 
-          composeAutosaveStatus = 'dirty';
-          composeAutosaveMessage = t('compose.autosavePending');
-        }}
-        onSaveDraft={saveDraft}
-        onSend={sendMessage}
-      />
+            composeAutosaveStatus = 'dirty';
+            composeAutosaveMessage = t('compose.autosavePending');
+          }}
+          onSaveDraft={saveDraft}
+          onSend={sendMessage}
+        />
+      {:else}
+        <div
+          class="fixed bottom-4 right-4 z-50 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-3 text-sm text-[var(--fm-text)] shadow-[var(--fm-shadow-overlay)]"
+          role="status"
+          aria-live="polite"
+        >{t('compose.loadingEditor')}</div>
+      {/if}
     {/if}
 
     <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} onClose={closeLabelEditor}>
