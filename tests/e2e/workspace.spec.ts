@@ -147,6 +147,56 @@ test('keeps the mobile search clear icon inside its field', async ({ page, conso
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('lets users change the mail filter while search results load', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name === 'narrow', 'Desktop and 390 px mobile cover the filter control.');
+  await login(page);
+  let releaseSearch: () => void = () => {};
+  const searchGate = new Promise<void>((resolve) => { releaseSearch = resolve; });
+  await page.route('**/api/workspace/mailbox?**', async (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    if (params.get('q') === 'E2E') await searchGate;
+    // Switching the filter or identity cancels older requests, so intercepted routes may be gone.
+    await route.continue().catch(() => {});
+  });
+
+  const search = page.getByLabel('搜索邮件');
+  await search.fill('E2E');
+  await expect(page.getByLabel('正在加载邮件')).toBeVisible();
+  const starred = page.getByRole('button', { name: '已加星标', exact: true });
+  const identity = page.getByLabel('按邮件身份筛选');
+  try {
+    expect(await starred.isEnabled()).toBe(true);
+    await starred.click();
+    await expect(starred).toHaveAttribute('aria-pressed', 'true');
+    await expect(page).toHaveURL(/filter=starred/u);
+    expect(await identity.isEnabled()).toBe(true);
+    await identity.selectOption('domain:00000000-0000-4000-8000-000000000011');
+    await expect(identity).toHaveValue('domain:00000000-0000-4000-8000-000000000011');
+  } finally {
+    releaseSearch();
+  }
+  await expect(search).toHaveValue('E2E');
+  await expect(page.getByLabel('正在加载邮件')).toHaveCount(0);
+  await expect(starred).toHaveAttribute('aria-pressed', 'true');
+  expect(new URL(page.url()).searchParams.get('identity')).toBe('domain:00000000-0000-4000-8000-000000000011');
+  await page.screenshot({ path: join(tmpdir(), `flaremail-filter-during-refresh-${testInfo.project.name}.png`), fullPage: false });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('shows one illustration in the empty mail detail pane', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop workspace keeps the detail pane beside the list.');
+  await login(page);
+  await page.setViewportSize({ width: 1505, height: 1045 });
+  await page.getByLabel('搜索邮件').fill('zzzznomatchzzzz');
+  await expect(page.getByRole('heading', { name: '没有匹配的邮件' })).toBeVisible();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const emptyContent = detail.getByRole('heading', { name: '选择一封邮件开始阅读' }).locator('..');
+  await expect(emptyContent.locator('svg')).toHaveCount(1);
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-empty-detail-single-icon-desktop.png'), fullPage: false });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('creates, applies, navigates, renames and deletes a persistent label', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const mobile = page.viewportSize()!.width < 901;
@@ -294,6 +344,19 @@ test('mutates selected inbox and sent mail in a label view without touching sele
   await expect(draft).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors);
+
+  // Later serial cases reuse these seeded messages, so restore only the two
+  // fixtures this case deliberately moved to trash after verifying that state.
+  for (const [id, originalFolder] of [
+    ['e2e-inbox-message', 'inbox'], ['e2e-sent-message', 'sent']
+  ] as const) {
+    const restored = await page.evaluate(async (messageId) => {
+      const response = await fetch(`/api/workspace/trash/${encodeURIComponent(messageId)}`, { method: 'POST' });
+      return { ok: response.ok, payload: await response.json() };
+    }, id);
+    expect(restored.ok, JSON.stringify(restored.payload)).toBe(true);
+    expect(restored.payload).toMatchObject({ data: { restoredId: id, originalFolder } });
+  }
 });
 
 test('shows one persistent label across inbox, inbound, sent and drafts', async ({ page, consoleErrors }, testInfo) => {
@@ -878,6 +941,8 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   await page.getByRole('button', { name: '清除搜索' }).click();
   await page.getByLabel('选择E2E Inbox Welcome').check();
   await page.getByRole('button', { name: '已加星标' }).click();
+  await expect(page.getByRole('button', { name: '已加星标' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page).toHaveURL(/filter=starred/u);
   await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
   await page.getByRole('button', { name: '全部', exact: true }).click();
   await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/ }).first().click();

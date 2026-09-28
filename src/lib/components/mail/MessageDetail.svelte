@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Inbox } from '@lucide/svelte';
   import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
   import { EmptyState } from '$lib/components/ui';
   import AttachmentList from './AttachmentList.svelte';
@@ -209,9 +208,7 @@
     </div>
   {:else}
     <div class="min-h-0 flex-1 overflow-y-auto">
-      <EmptyState title={t('mail.selectToRead')} description={t('mail.selectFromList')} class="h-full" icon={undefined}>
-        {#snippet children()}<Inbox class="size-5" aria-hidden="true" />{/snippet}
-      </EmptyState>
+      <EmptyState title={t('mail.selectToRead')} description={t('mail.selectFromList')} class="h-full" />
     </div>
   {/if}
 </div>

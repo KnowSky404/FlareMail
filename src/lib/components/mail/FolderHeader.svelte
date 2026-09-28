@@ -122,7 +122,6 @@
           id="mail-identity-filter"
           class="min-h-11 w-full rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 text-sm text-[var(--fm-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
           value={identityValue}
-          disabled={loading}
           onchange={(event) => changeIdentity(event.currentTarget.value)}
         >
           <option value="">{t('mail.allIdentities')}</option>
@@ -134,7 +133,7 @@
           {/each}
         </select>
       {/if}
-      <MailFilterBar {filter} disabled={loading} onFilterChange={onFilterChange} />
+      <MailFilterBar {filter} onFilterChange={onFilterChange} />
     </div>
   {/if}
 </header>
