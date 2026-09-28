@@ -17,8 +17,12 @@ const chromiumLaunchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
 const webkitLaunchOptions = process.env.PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH
   ? { executablePath: process.env.PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH }
   : undefined;
+const firefoxLaunchOptions = process.env.PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH
+  ? { executablePath: process.env.PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH }
+  : undefined;
 const chromiumTestMatch = /workspace\.spec\.ts/u;
 const webkitSmokeTestMatch = /webkit-smoke\.spec\.ts/u;
+const firefoxSmokeTestMatch = /firefox-smoke\.spec\.ts/u;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -91,6 +95,16 @@ export default defineConfig({
         reducedMotion: 'reduce',
         viewport: { width: 1280, height: 900 },
         launchOptions: webkitLaunchOptions
+      }
+    },
+    {
+      name: 'firefox-desktop',
+      testMatch: firefoxSmokeTestMatch,
+      use: {
+        ...devices['Desktop Firefox'],
+        locale: 'zh-CN',
+        viewport: { width: 1366, height: 900 },
+        launchOptions: firefoxLaunchOptions
       }
     },
     {

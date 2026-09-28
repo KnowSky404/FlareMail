@@ -45,10 +45,11 @@ bun run test
 bun run build
 bun run test:e2e
 bun run test:e2e:webkit
+bun run test:e2e:firefox
 bun run test:a11y
 ```
 
-Browser checks use isolated local D1/R2 state and fake providers. Linux Playwright WebKit is not evidence for a real iOS/iPadOS Safari device. If Playwright browser binaries are absent, the browser commands fail before launch; that is an environment blocker separate from build and unit-test results.
+Browser checks use isolated local D1/R2 state and fake providers, including a desktop Firefox smoke suite. Linux Playwright WebKit is not evidence for a real iOS/iPadOS Safari device. If Playwright browser binaries are absent, the browser commands fail before launch; that is an environment blocker separate from build and unit-test results.
 
 The reading-space-specific dimensions and current browser evidence are recorded in [docs/READING_SPACE_QA.md](./docs/READING_SPACE_QA.md).
 

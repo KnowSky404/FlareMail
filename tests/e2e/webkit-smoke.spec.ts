@@ -283,7 +283,8 @@ test('persists the selected theme across reload', async ({ page, consoleErrors }
   await login(page);
   if (projectIsMobile(testInfo.project.name)) {
     await page.getByRole('button', { name: '打开导航' }).click({ force: true });
-    await clickHeadlessControl(page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }));
+    await pressHeadlessControl(page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }));
+    await expect(page.getByRole('dialog', { name: '移动端导航' })).toBeHidden();
   } else {
     await clickHeadlessControl(page.getByRole('button', { name: '设置', exact: true }).first());
   }

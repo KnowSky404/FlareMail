@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { browserTestPlan, parseBrowserSuite } from './playwright-projects';
 
 describe('Playwright project orchestration', () => {
@@ -19,8 +21,18 @@ describe('Playwright project orchestration', () => {
     expect(plan.every(({ args }) => args.join(' ').includes('accessible'))).toBe(true);
   });
 
+  test('runs Firefox in its own isolated browser project', () => {
+    expect(browserTestPlan('firefox')).toEqual([{
+      project: 'firefox-desktop',
+      port: 4183,
+      stateDirectory: join(tmpdir(), 'flaremail-e2e', 'firefox', 'firefox-desktop', 'state'),
+      args: []
+    }]);
+  });
+
   test('rejects unknown suites before spawning a browser', () => {
     expect(parseBrowserSuite(['webkit'])).toBe('webkit');
+    expect(parseBrowserSuite(['firefox'])).toBe('firefox');
     expect(() => parseBrowserSuite(['production'])).toThrow('Usage:');
     expect(() => parseBrowserSuite([])).toThrow('Usage:');
   });

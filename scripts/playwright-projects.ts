@@ -1,10 +1,10 @@
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-export type BrowserSuite = 'chromium' | 'webkit' | 'a11y';
+export type BrowserSuite = 'chromium' | 'webkit' | 'firefox' | 'a11y';
 
 export type BrowserProjectRun = {
-  project: 'desktop' | 'mobile' | 'narrow' | 'webkit-desktop' | 'webkit-iphone' | 'webkit-ipad';
+  project: 'desktop' | 'mobile' | 'narrow' | 'webkit-desktop' | 'webkit-iphone' | 'webkit-ipad' | 'firefox-desktop';
   port: number;
   stateDirectory: string;
   args: string[];
@@ -17,7 +17,9 @@ export function browserTestPlan(suite: BrowserSuite): BrowserProjectRun[] {
     ? [['desktop', 4173], ['mobile', 4174], ['narrow', 4175]] as const
     : suite === 'webkit'
       ? [['webkit-desktop', 4180], ['webkit-iphone', 4181], ['webkit-ipad', 4182]] as const
-      : [['mobile', 4192], ['narrow', 4191]] as const;
+      : suite === 'firefox'
+        ? [['firefox-desktop', 4183]] as const
+        : [['mobile', 4192], ['narrow', 4191]] as const;
   return definitions.map(([project, port]) => ({
     project,
     port,
@@ -27,8 +29,8 @@ export function browserTestPlan(suite: BrowserSuite): BrowserProjectRun[] {
 }
 
 export function parseBrowserSuite(args: string[]): BrowserSuite {
-  if (args.length !== 1 || !['chromium', 'webkit', 'a11y'].includes(args[0] ?? '')) {
-    throw new Error('Usage: bun scripts/playwright-projects.ts chromium|webkit|a11y');
+  if (args.length !== 1 || !['chromium', 'webkit', 'firefox', 'a11y'].includes(args[0] ?? '')) {
+    throw new Error('Usage: bun scripts/playwright-projects.ts chromium|webkit|firefox|a11y');
   }
   return args[0] as BrowserSuite;
 }

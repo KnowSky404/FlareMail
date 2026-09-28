@@ -54,13 +54,17 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium webkit
+      - run: bunx playwright install --with-deps chromium webkit firefox
       - name: Chromium E2E smoke with isolated synthetic fixtures
         run: bun run test:e2e
         env:
           CI: true
       - name: WebKit E2E smoke
         run: bun run test:e2e:webkit
+        env:
+          CI: true
+      - name: Firefox E2E smoke
+        run: bun run test:e2e:firefox
         env:
           CI: true
       - run: bun run test:a11y

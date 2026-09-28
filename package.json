@@ -18,6 +18,7 @@
     "test:remaining": "bun test scripts src/hooks.server.test.ts src/lib/server/attachment-download.test.ts src/lib/server/attachment-integrity.test.ts src/lib/server/http/api.test.ts src/lib/server/resend-webhook.test.ts src/lib/server/workspace/mailbox-query.test.ts src/lib/server/workspace/reader.test.ts src/lib/server/workspace/r2-cleanup.test.ts src/lib/server/workspace/session.test.ts src/lib/server/workspace/shared.test.ts src/routes/api/send/server.test.ts src/routes/api/webhooks/resend/server.test.ts src/routes/api/webhooks/telegram/server.test.ts src/routes/api/workspace/notifications/telegram/settings/server.test.ts 'src/routes/api/workspace/messages/[id]/html/html.test.ts' 'src/routes/api/workspace/messages/[id]/server.test.ts' src/routes/api/workspace/session/server.test.ts src/routes/api/workspace/trash/trash.test.ts",
     "test:e2e": "bun scripts/playwright-projects.ts chromium",
     "test:e2e:webkit": "bun scripts/playwright-projects.ts webkit",
+    "test:e2e:firefox": "bun scripts/playwright-projects.ts firefox",
     "test:a11y": "bun scripts/playwright-projects.ts a11y",
     "runtime:fixtures": "bun scripts/runtime-fixtures.ts",
     "runtime:measure": "bun scripts/runtime-measure.ts",

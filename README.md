@@ -29,7 +29,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的个人自托管邮件工�
 - Telegram 入站通知：一个部署级 Bot、每个工作区用户一个私聊绑定、一次性深链确认、隐私/摘要开关、D1 durable outbox、每分钟 Cron、429/backoff/unknown-delivery 状态和现有邮件详情链接；实现边界与真实投递验证见 [docs/TELEGRAM.md](./docs/TELEGRAM.md)。
 - 工作区 API：active folder snapshot 只加载当前邮箱页，指标只请求一次；入站列表不携带正文；Wrangler 生成的 `worker-configuration.d.ts` 是 Cloudflare binding 类型权威来源，并由 CI 检查同步。
 - 可观测与维护：请求关联 ID、Workers logs/traces、只读优先的 D1/R2 retention/orphan 报告，以及有界 claim、lease、backoff、max-attempts 和人工复核的 canonical R2 cleanup lifecycle。
-- 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖 Chromium 桌面/移动/320px、axe，以及 Desktop WebKit、iPhone 与 iPad 模拟 smoke。
+- 隔离浏览器验证：Playwright 在操作系统临时目录创建独立 D1/R2 状态，使用 fake provider 和签名 webhook 覆盖 Chromium 桌面/移动/320px、axe、Firefox 桌面，以及 Desktop WebKit、iPhone 与 iPad 模拟 smoke。
 
 ## 运行环境边界
 
@@ -120,12 +120,13 @@ bun run build
 ```bash
 bun run test:e2e
 bun run test:e2e:webkit
+bun run test:e2e:firefox
 bun run test:a11y
 ```
 
 `deploy:dry-run` 只从公开 development config 生成临时配置，不读取私有生产
 配置，也不会发布 Worker。Linux Playwright WebKit 不是真实 iOS/iPadOS Safari
-证据。若本机未安装 Playwright 浏览器，`test:e2e`、`test:e2e:webkit` 和
+证据。若本机未安装 Playwright 浏览器，`test:e2e`、`test:e2e:webkit`、`test:e2e:firefox` 和
 `test:a11y` 会在浏览器启动阶段失败；这不等同于应用构建或单元测试失败。
 
 ## 生产部署
