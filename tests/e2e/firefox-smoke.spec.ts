@@ -51,6 +51,20 @@ test('navigates display preference radio groups by keyboard in Firefox', async (
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps the floating compose footer visible in a short Firefox viewport', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  const composeDialog = page.getByRole('dialog', { name: '新邮件' });
+  await page.setViewportSize({ width: 1366, height: 320 });
+  const panel = await composeDialog.boundingBox();
+  const footer = await composeDialog.locator('.compose-window-footer').boundingBox();
+  expect(panel!.y + panel!.height).toBeLessThanOrEqual(320);
+  expect(footer!.y + footer!.height).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-compose-floating-short-firefox.png'), fullPage: false });
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('persists a created label on a message through Firefox reload and rename', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })

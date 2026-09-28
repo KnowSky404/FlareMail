@@ -1492,6 +1492,49 @@ test('moves, resizes, minimizes, and maximizes the desktop compose window', asyn
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps the floating compose window inside a short desktop viewport', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Desktop compose geometry does not apply to the mobile full-screen layout.');
+  await login(page);
+  await page.setViewportSize({ width: 1505, height: 1045 });
+  const composeButton = page.getByRole('button', { name: '写邮件', exact: true }).first();
+  await composeButton.click();
+  const composeDialog = page.getByRole('dialog', { name: '新邮件' });
+  await expect(composeDialog).toBeVisible();
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-compose-floating-concept-size.png'), fullPage: false });
+
+  for (const viewport of [{ width: 1366, height: 320 }, { width: 641, height: 320 }]) {
+    await page.setViewportSize(viewport);
+    await page.screenshot({ path: join(tmpdir(), `flaremail-compose-floating-${viewport.width}x${viewport.height}.png`), fullPage: false });
+    const geometry = await composeDialog.evaluate((dialog) => {
+      const panel = dialog.getBoundingClientRect();
+      const header = dialog.querySelector('.compose-window-header')?.getBoundingClientRect();
+      const body = dialog.querySelector('.compose-window-body')?.getBoundingClientRect();
+      const footer = dialog.querySelector('.compose-window-footer')?.getBoundingClientRect();
+      return { panelTop: panel.top, panelRight: panel.right, panelBottom: panel.bottom, headerBottom: header?.bottom, bodyHeight: body?.height, footerTop: footer?.top, footerBottom: footer?.bottom };
+    });
+    expect(geometry.panelTop).toBeGreaterThanOrEqual(0);
+    expect(geometry.panelRight).toBeLessThanOrEqual(viewport.width);
+    expect(geometry.panelBottom).toBeLessThanOrEqual(viewport.height);
+    expect(geometry.bodyHeight).toBeGreaterThan(0);
+    expect(geometry.footerTop).toBeGreaterThanOrEqual(geometry.headerBottom!);
+    expect(geometry.footerBottom).toBeLessThanOrEqual(viewport.height);
+    await assertNoHorizontalOverflow(page);
+  }
+  await page.setViewportSize({ width: 1366, height: 320 });
+  await composeDialog.getByRole('button', { name: '调整写信窗口大小' }).press('ArrowUp');
+  await composeDialog.getByRole('button', { name: '移动写信窗口' }).press('ArrowDown');
+  let adjusted = await composeDialog.boundingBox();
+  expect(adjusted!.y + adjusted!.height).toBeLessThanOrEqual(320);
+  await composeDialog.getByRole('button', { name: '最大化写信窗口' }).click();
+  await expect(composeDialog).toHaveAttribute('data-maximized', 'true');
+  await composeDialog.getByRole('button', { name: '还原写信窗口' }).click();
+  adjusted = await composeDialog.boundingBox();
+  expect(adjusted!.y + adjusted!.height).toBeLessThanOrEqual(320);
+  await composeDialog.getByRole('button', { name: '关闭' }).click();
+  await expect(composeButton).toBeFocused();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
   const isPhoneViewport = testInfo.project.name === 'mobile' || testInfo.project.name === 'narrow';
   await login(page);

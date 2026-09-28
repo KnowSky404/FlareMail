@@ -51,14 +51,14 @@
   }
 
   function initialBounds(): Bounds {
-    const width = Math.min(defaultWidth, window.innerWidth - 32);
-    const height = Math.min(defaultHeight, window.innerHeight - 32);
+    const width = Math.min(defaultWidth, Math.max(1, window.innerWidth - 32));
+    const height = Math.min(defaultHeight, Math.max(1, window.innerHeight - 32));
     return { x: Math.max(16, window.innerWidth - width - 24), y: Math.max(16, window.innerHeight - height - 24), width, height };
   }
 
   function fitToViewport(value: Bounds): Bounds {
-    const width = Math.min(Math.max(minWidth, value.width), Math.max(minWidth, window.innerWidth - 32));
-    const height = Math.min(Math.max(minHeight, value.height), Math.max(minHeight, window.innerHeight - 32));
+    const width = Math.min(Math.max(minWidth, value.width), Math.max(1, window.innerWidth - 32));
+    const height = Math.min(Math.max(minHeight, value.height), Math.max(1, window.innerHeight - 32));
     return {
       x: Math.max(8, Math.min(value.x, window.innerWidth - width - 8)),
       y: Math.max(8, Math.min(value.y, window.innerHeight - height - 8)),
