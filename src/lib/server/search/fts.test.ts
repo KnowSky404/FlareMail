@@ -11,6 +11,7 @@ describe('safe FTS5 search compiler', () => {
     expect(plan.expression).toBe(
       '("incident" OR "OR") AND from_text : "Alice@example.test" AND subject_text : "release train"'
     );
+    expect(plan.labelExpression).toBeNull();
     expect(plan.hitFields).toEqual(['all', 'from', 'subject', 'state', 'attachment', 'date', 'status']);
   });
 
@@ -25,16 +26,21 @@ describe('safe FTS5 search compiler', () => {
       expect(() => db.query('SELECT rowid FROM search WHERE search MATCH ?').all(plan.expression)).not.toThrow();
     }
     const matching = buildFtsSearchPlan(parseMailSearchQuery('incident from:alice@example.test label:Operations'));
+    expect(matching.expression).toBe('"incident" AND from_text : "alice@example.test"');
+    expect(matching.labelExpression).toBe('labels_text : "Operations"');
     expect(db.query('SELECT rowid FROM search WHERE search MATCH ?').all(matching.expression)).toEqual([{ rowid: 1 }]);
+    expect(db.query('SELECT rowid FROM search WHERE search MATCH ?').all(matching.labelExpression)).toEqual([{ rowid: 1 }]);
   });
 
   test('keeps relational-only searches out of MATCH', () => {
     expect(buildFtsSearchPlan(parseMailSearchQuery('is:trash before:2026-09-01 has:attachment'))).toEqual({
       expression: null,
+      labelExpression: null,
       hitFields: ['state', 'attachment', 'date']
     });
     expect(buildFtsSearchPlan(parseMailSearchQuery('date:2026-08-13 attachment:no'))).toEqual({
       expression: null,
+      labelExpression: null,
       hitFields: ['attachment', 'date']
     });
   });

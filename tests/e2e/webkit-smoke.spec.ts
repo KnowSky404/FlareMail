@@ -112,6 +112,14 @@ test('bulk-removes a label from selected inbox and draft mail in WebKit', async 
     expect(result.ok, `label setup failed: ${result.status}`).toBe(true);
   }
 
+  await page.goto('/?folder=inbox');
+  await expect(page.getByRole('searchbox', { name: '搜索邮件' })).toHaveAttribute('inputmode', 'search');
+  await page.getByLabel('搜索邮件').fill('label:"WebKit Bulk Label"');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await expect(page.getByText('1 个结果', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '清除搜索', exact: true })).toBeVisible();
+  if (testInfo.project.name === 'webkit-desktop') await expect(page.locator('.topbar-search kbd')).toHaveCount(0);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-label-search-${testInfo.project.name}.png`), fullPage: false });
   await page.goto(`/?folder=label&label=${encodeURIComponent(labelId)}`);
   await expect(page.getByRole('heading', { name: 'WebKit Bulk Label' })).toBeVisible();
   for (const subject of ['E2E Inbox Welcome', 'E2E Existing Concurrent']) {

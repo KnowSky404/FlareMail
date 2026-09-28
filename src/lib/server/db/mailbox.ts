@@ -1,5 +1,5 @@
 import type { DeliveryStatus, MailFolder, MailboxFilter, MailboxIdentityFilter, MailboxSection, MailSearchQuery, WorkspaceMetrics } from '$lib/domain/mail';
-import { buildFtsSearchPlan } from '$lib/server/search/fts';
+import { buildFtsSearchPlan, buildLabelSearchPredicate } from '$lib/server/search/fts';
 import type {
   WorkspaceDraftRow,
   WorkspaceMessageRow,
@@ -75,6 +75,7 @@ export async function listWorkspaceMessagePage(
   input: MailboxRepositoryQuery
 ) {
   const searchPlan = input.search ? buildFtsSearchPlan(input.search) : null;
+  const labelSearch = input.search ? buildLabelSearchPredicate(input.search, searchPlan?.labelExpression ?? null, 'message') : null;
   const wantsTrash = input.search?.filters.is.includes('trash') ?? false;
   const wantsArchive = input.search?.filters.is.includes('archived') ?? false;
   const conditions = [
@@ -93,6 +94,10 @@ export async function listWorkspaceMessagePage(
   if (searchPlan?.expression) {
     conditions.push('workspace_search_fts MATCH ?');
     bindings.push(searchPlan.expression);
+  }
+  if (labelSearch) {
+    conditions.push(labelSearch.sql);
+    bindings.push(...labelSearch.bindings);
   }
   if (input.search) {
     for (const value of input.search.filters.is) {
@@ -187,6 +192,7 @@ export async function listDraftPage(
   input: MailboxRepositoryQuery
 ) {
   const searchPlan = input.search ? buildFtsSearchPlan(input.search) : null;
+  const labelSearch = input.search ? buildLabelSearchPredicate(input.search, searchPlan?.labelExpression ?? null, 'draft') : null;
   const wantsTrash = input.search?.filters.is.includes('trash') ?? false;
   const conditions = [
     'd.user_id = ?',
@@ -200,6 +206,10 @@ export async function listDraftPage(
   if (searchPlan?.expression) {
     conditions.push('workspace_search_fts MATCH ?');
     bindings.push(searchPlan.expression);
+  }
+  if (labelSearch) {
+    conditions.push(labelSearch.sql);
+    bindings.push(...labelSearch.bindings);
   }
   if (input.search) {
     for (const value of input.search.filters.is) {

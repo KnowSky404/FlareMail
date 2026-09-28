@@ -143,6 +143,17 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   await expect(inboxItem.getByText('E2E Follow Up', { exact: true })).toBeVisible();
   await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /标签: E2E Follow Up/u);
   await page.screenshot({ path: join(tmpdir(), `flaremail-label-chip-${testInfo.project.name}.png`), fullPage: false });
+  const search = page.getByLabel('搜索邮件');
+  await search.fill('label:"E2E Follow Up"');
+  await expect(inboxItem).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })).toHaveCount(0);
+  await expect(page.getByText('1 个结果', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(search).toHaveValue('label:"E2E Follow Up"');
+  await expect(inboxItem).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-label-search-${testInfo.project.name}.png`), fullPage: false });
+  await page.getByRole('button', { name: '清除搜索' }).click();
   if (mobile) {
     await page.getByRole('button', { name: '打开导航' }).click();
   }

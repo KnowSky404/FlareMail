@@ -34,7 +34,9 @@
   <input
     bind:this={searchInput}
     {id}
-    type="search"
+    type="text"
+    role="searchbox"
+    inputmode="search"
     value={query}
     placeholder={placeholder ?? t('mail.searchPlaceholder')}
     {disabled}

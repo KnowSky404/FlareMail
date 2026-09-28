@@ -117,7 +117,9 @@
   <div class="topbar-search">
     {#if showDesktopSearch}
       <MailSearchBar id="mail-search-desktop" query={searchQuery} disabled={pending} onQueryChange={onSearchQueryChange} />
-      <kbd aria-hidden="true">/</kbd>
+      {#if !searchQuery}
+        <kbd aria-hidden="true">/</kbd>
+      {/if}
     {/if}
   </div>
 

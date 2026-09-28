@@ -3,7 +3,7 @@ import { ApiError } from '$lib/server/http/api';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import { attachMailLabels, requireMailLabel } from '$lib/server/db/labels';
 import { listMailboxIdentityOptions, mailboxIdentityFilterExists } from '$lib/server/db/mail-identities';
-import { buildFtsSearchPlan } from '$lib/server/search/fts';
+import { buildFtsSearchPlan, buildLabelSearchPredicate } from '$lib/server/search/fts';
 import {
   getMailboxMetrics,
   listDraftPage,
@@ -478,6 +478,7 @@ async function listInboundMessageSummaryPage(
   input: MailboxSummaryQuery
 ) {
   const searchPlan = input.search ? buildFtsSearchPlan(input.search) : null;
+  const labelSearch = input.search ? buildLabelSearchPredicate(input.search, searchPlan?.labelExpression ?? null, 'inbound') : null;
   const wantsTrash = input.search?.filters.is.includes('trash') ?? false;
   const wantsArchive = input.search?.filters.is.includes('archived') ?? false;
   const conditions = [
@@ -504,6 +505,10 @@ async function listInboundMessageSummaryPage(
   if (searchPlan?.expression) {
     conditions.push('workspace_search_fts MATCH ?');
     bindings.push(searchPlan.expression);
+  }
+  if (labelSearch) {
+    conditions.push(labelSearch.sql);
+    bindings.push(...labelSearch.bindings);
   }
   if (input.deliveryStatus) conditions.push('1 = 0');
   if (input.search) {

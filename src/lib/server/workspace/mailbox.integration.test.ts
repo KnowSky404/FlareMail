@@ -268,6 +268,37 @@ describe('D1 mailbox pages', () => {
     expect(database.query('SELECT COUNT(*) AS total FROM mail_labels').get()).toEqual({ total: 0 });
     expect(database.query('SELECT COUNT(*) AS total FROM mail_message_labels').get()).toEqual({ total: 0 });
   });
+
+  test('searches persisted labels across mail sources alongside legacy labels and other filters', async () => {
+    const { env, workspace, database } = fixture();
+    database.query("UPDATE workspace_messages SET labels_json = '[\"Operations\"]' WHERE id = 'inbox-z'").run();
+    const label = await createMailLabel(env.DB, workspace.userId, 'Project Alpha');
+    for (const target of [
+      { kind: 'workspace', id: 'inbox-a' },
+      { kind: 'workspace', id: 'sent-1' },
+      { kind: 'draft', id: 'draft-1' },
+      { kind: 'inbound', id: 'incoming-1' }
+    ] as const) await setMailMessageLabel(env.DB, workspace.userId, label.id, target, true);
+
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'label:"Project Alpha"' }))).messages.map(({ id }) => id))
+      .toEqual(['email:incoming-1', 'inbox-a']);
+    expect((await loadMailboxPage(env, workspace, query('sent', { query: 'label:"Project Alpha"' }))).messages.map(({ id }) => id))
+      .toEqual(['sent-1']);
+    expect((await loadMailboxPage(env, workspace, query('drafts', { query: 'label:"Project Alpha"' }))).messages.map(({ id }) => id))
+      .toEqual(['draft-1']);
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'subject:Routine label:"Project Alpha"' }))).messages.map(({ id }) => id))
+      .toEqual(['inbox-a']);
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'label:Operations' }))).messages.map(({ id }) => id))
+      .toEqual(['inbox-z']);
+
+    await renameMailLabel(env.DB, workspace.userId, label.id, 'Project Beta');
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'label:"Project Alpha"' }))).messages).toEqual([]);
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'from:carol@example.test label:"Project Beta"' }))).messages.map(({ id }) => id))
+      .toEqual(['email:incoming-1']);
+    await setMailMessageLabel(env.DB, workspace.userId, label.id, { kind: 'workspace', id: 'inbox-a' }, false);
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'label:"Project Beta"' }))).messages.map(({ id }) => id))
+      .toEqual(['email:incoming-1']);
+  });
   test('bulk-labels only selected Owner mail across folders in one transaction', async () => {
     const { env, workspace, database } = fixture();
     database.query("INSERT INTO workspace_users (id, name, role) VALUES ('user-1', 'Ada', 'owner'), ('user-2', 'Bob', 'owner')").run();

@@ -42,6 +42,10 @@ test('persists a created label on a message through Firefox reload and rename', 
   await editor.getByLabel('标签名称').fill('Firefox Follow Up');
   await editor.getByRole('button', { name: '保存' }).click();
   await expect(editor).toBeHidden();
+  await page.getByLabel('搜索邮件').fill('label:"Firefox Follow Up"');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await expect(page.getByText('1 个结果', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '清除搜索' }).click();
   await page.getByRole('button', { name: 'Firefox Follow Up', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Firefox Follow Up' })).toBeVisible();
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
