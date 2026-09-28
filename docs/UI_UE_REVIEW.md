@@ -35,6 +35,8 @@ WebKit 搜索截图发现原生清除装饰与应用清除按钮重叠出现两�
 
 搜索焦点复核：隔离本地 Chromium 桌面曾复现清除查询后输入框变为 inactive；现在清除按钮在同一用户手势内将焦点交给输入框，可立即重新键入，鼠标点击与 Enter 激活均已回归。390 px 手机的搜索输入在邮箱请求加载期间不再被禁用，测试等待带 `q=E2E` 的本地 API 响应后仍确认焦点留在输入框，清除后同样恢复焦点。Firefox 桌面覆盖点击与 Enter 两种清除方式，Linux WebKit iPhone 模拟确认清除后焦点返回；截图为 `/tmp/flaremail-search-clear-{desktop,mobile,firefox,webkit-iphone}.png`。Browser plugin 当前不可用，使用 Playwright fallback；该自动焦点断言不能替代真实屏幕阅读器与 iOS 软键盘检查。
 
+跨页面无障碍复核：隔离本地 Chromium 在 1505×1045 桌面和 390×844 手机各走完收件箱、邮件详情、写信、设置、域名、邮件地址六个主要状态，浅色与深色各扫描一次 WCAG 2.1 AA 自动规则并检查页面级横向溢出。首次在写信状态复现通知容器的无效 `aria-label`；现移除普通容器上的名称，保留其 `aria-live` 与每条通知自身的 `status`/`alert` 语义，重跑两个视口均通过。桌面截图为 `/tmp/flaremail-journey-inbox-{light,dark}-desktop.png`；手机阅读与写信截图为 `/tmp/flaremail-journey-{detail,compose}-{light,dark}-mobile.png`。这证明自动规则覆盖到上述状态，不等于真实屏幕阅读器播报、实际 Safari 或整站所有动态状态验收。
+
 批量标签验收：Bun 集成测试覆盖四类来源的事务写入、重复目标去重、其他 Owner 与已删除邮件拒绝、超出 100 条限制及无部分增删；隔离本地 Chromium 桌面/390 px 手机经 UI 全选、逐封勾选、添加新标签、移除其中两封并刷新复核。弹窗在 390/320 px 均不越过视口，320 px 操作改为逐行全宽；Escape 关闭后将焦点还给发起按钮，浅色/深色弹窗通过 axe WCAG 2.1 AA 自动扫描。隔离本地 WebKit 桌面/iPhone 验证收件与草稿混合选择的批量移除，Firefox 桌面验证收件与已发送混合选择的批量添加及刷新后持久性；这些浏览器引擎测试不等于真实 Safari 设备测试。截图位于 `/tmp/flaremail-labels-bulk-{desktop,mobile}.png`、`/tmp/flaremail-labels-bulk-dialog-{desktop,mobile}.png`、`/tmp/flaremail-labels-bulk-dialog-narrow.png`、`/tmp/flaremail-webkit-bulk-label-{webkit-desktop,webkit-iphone}.png` 和 `/tmp/flaremail-firefox-bulk-label-dialog.png`。这不等于真实屏幕阅读器或生产 D1 验证。
 
 设置页资料草稿现在按字段保留未保存编辑：其他标签页的身份变更触发会话刷新时，只同步未编辑字段；保存成功后显示服务端规范化结果。隔离本地 D1 的双标签页 Chromium 桌面与移动端回归均已覆盖这一行为。

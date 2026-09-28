@@ -2235,6 +2235,61 @@ test('has an accessible WCAG 2.1 AA workspace and touch targets', async ({ page,
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps the primary mail journey accessible in both themes', async ({ page, consoleErrors }, testInfo) => {
+  test.setTimeout(120_000);
+  test.skip(testInfo.project.name === 'narrow', 'Desktop and 390 px mobile cover the primary journey.');
+  await login(page);
+  if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
+
+  const scan = async (state: string) => {
+    const { violations } = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+      .analyze();
+    expect(violations.flatMap(({ id, nodes }) => nodes.map(({ target }) => `${id}: ${target.join(', ')}`)), state).toEqual([]);
+    await assertNoHorizontalOverflow(page);
+  };
+
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate((nextTheme) => localStorage.setItem('flaremail-theme', nextTheme), theme);
+    await page.goto('/?folder=inbox');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await expect(page.getByRole('list', { name: '收件箱邮件' })).toBeVisible();
+    await scan(`${theme} inbox`);
+    if (testInfo.project.name === 'desktop') {
+      await page.screenshot({ path: join(tmpdir(), `flaremail-journey-inbox-${theme}-desktop.png`), fullPage: false });
+    }
+
+    await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })
+      .getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+    await expect(page.getByRole('region', { name: '邮件详情' })).toBeVisible();
+    await scan(`${theme} mail detail`);
+    if (testInfo.project.name === 'mobile') {
+      await page.screenshot({ path: join(tmpdir(), `flaremail-journey-detail-${theme}-mobile.png`), fullPage: false });
+    }
+
+    await openFolder(page, '收件箱');
+    const compose = testInfo.project.name === 'mobile'
+      ? page.locator('.mobile-bar').getByRole('button', { name: '写邮件' })
+      : page.getByRole('button', { name: '写邮件', exact: true }).first();
+    await compose.click();
+    await expect(page.getByRole('dialog', { name: '新邮件' })).toBeVisible();
+    await scan(`${theme} compose`);
+    if (testInfo.project.name === 'mobile') {
+      await page.screenshot({ path: join(tmpdir(), `flaremail-journey-compose-${theme}-mobile.png`), fullPage: false });
+    }
+    await page.getByRole('dialog', { name: '新邮件' }).getByRole('button', { name: '关闭' }).click();
+
+    for (const [view, heading] of [
+      ['', '设置'], ['domains', '域名概览'], ['addresses', '受管邮件地址']
+    ] as const) {
+      await page.goto(`/?folder=settings${view ? `&view=${view}` : ''}`);
+      await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+      await scan(`${theme} ${view || 'settings'}`);
+    }
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('binds, confirms, enables, tests, and unbinds Telegram from a non-default mailbox view', async ({ page, consoleErrors }, testInfo) => {
   const telegram = await installTelegramApiMock(page);
   await login(page);

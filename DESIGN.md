@@ -540,7 +540,7 @@ Header：
 
 反馈与可恢复动作：
 
-- Toast 使用 `info`、`success`、`warning`、`error` tone，支持 action、timeout、persistent、request ID 和 ARIA live；持久错误还必须在页面上下文提供恢复入口。
+- Toast 使用 `info`、`success`、`warning`、`error` tone，支持 action、timeout、persistent、request ID 和 ARIA live；每条通知按严重程度使用 `status` 或 `alert`，承载它们的普通容器不添加无效的可访问名称。持久错误还必须在页面上下文提供恢复入口。
 - 移入垃圾箱、恢复、归档和标签操作若采用乐观更新，必须精确回滚；短期撤销不得替代服务端幂等与 ownership preflight。跨文件夹批量标签先完成 Owner 校验与原子写入，前端在服务端确认后刷新。
 - 标签只改变映射，不删除邮件；Snooze 只改变可见时间并必须跨重启持久，恢复动作需由 Queue/Cron 或等价可靠调度驱动。
 

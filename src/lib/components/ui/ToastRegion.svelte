@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { ToastMessage } from '$lib/client/toast-controller';
   import Toast from './Toast.svelte';
-  import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     messages = [],
@@ -16,10 +15,9 @@
     onAction: (id: string) => void | Promise<void>;
     onDismiss: (id: string) => void;
   } = $props();
-  const { t } = useLocale();
 </script>
 
-<div class:above-actions={aboveActions} class:above-settings-save={aboveSettingsSave} class="toast-region" aria-label={t('common.notifications')} aria-live="polite" aria-relevant="additions text">
+<div class:above-actions={aboveActions} class:above-settings-save={aboveSettingsSave} class="toast-region" aria-live="polite" aria-relevant="additions text">
   {#each messages as toast (toast.id)}
     <Toast {toast} onAction={() => onAction(toast.id)} onDismiss={() => onDismiss(toast.id)} />
   {/each}
