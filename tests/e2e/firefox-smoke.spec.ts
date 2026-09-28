@@ -21,11 +21,14 @@ test('renders inbox and focused reading without Firefox errors', async ({ page, 
   const detail = page.getByRole('region', { name: '邮件详情' });
   await expect(detail.getByRole('heading', { name: 'E2E Inbox Welcome' })).toBeVisible();
   await expect(detail.locator('.message-plain-body')).toBeVisible();
-  await detail.getByRole('button', { name: '展开专注阅读' }).click();
+  const trigger = detail.getByRole('button', { name: '展开专注阅读' });
+  await trigger.click();
   const reader = page.getByRole('dialog', { name: 'E2E Inbox Welcome' });
   await expect(reader).toBeVisible();
+  await expect(reader).toBeFocused();
   await reader.getByRole('button', { name: '关闭专注阅读' }).click();
   await expect(reader).toBeHidden();
+  await expect(trigger).toBeFocused();
   await assertNoConsoleErrors(consoleErrors);
 });
 

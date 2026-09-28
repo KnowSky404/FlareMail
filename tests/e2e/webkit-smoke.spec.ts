@@ -160,7 +160,19 @@ test('logs in, navigates, searches, opens a message, and returns', async ({ page
   await expect(item).toBeVisible();
   await expect(item.locator('mark')).not.toHaveCount(0);
   await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click({ force: true });
-  await expect(page.getByRole('region', { name: '邮件详情' })).toContainText('E2E Inbox Welcome');
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail).toContainText('E2E Inbox Welcome');
+  if (!projectIsMobile(testInfo.project.name)) {
+    const trigger = detail.getByRole('button', { name: '展开专注阅读' });
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const reader = page.getByRole('dialog', { name: 'E2E Inbox Welcome' });
+    await expect(reader).toBeFocused();
+    await reader.getByRole('button', { name: '关闭专注阅读' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(reader).toBeHidden();
+    await expect(trigger).toBeFocused();
+  }
   if (projectIsMobile(testInfo.project.name)) {
     const backButton = page.getByRole('button', { name: '返回邮件列表' });
     await expect(backButton).toBeVisible();

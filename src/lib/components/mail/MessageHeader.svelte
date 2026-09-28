@@ -346,7 +346,7 @@
         <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatCompactDate(message.sentAt)}</time>
       </div>
 
-      <div class="mt-2 flex flex-wrap items-center gap-2">
+      <div class="message-header-labels mt-2 flex flex-wrap items-center gap-2">
         {#if message.folder === 'sent' && deliveryStatus}
           <span class="inline-flex sm:hidden"><StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge></span>
         {/if}

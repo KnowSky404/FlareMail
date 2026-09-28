@@ -78,7 +78,8 @@ export async function openFolder(page: Page, folder: '收件箱' | '星标邮件
     .filter({ hasText: folder });
   await expect(mobileFolder).toBeVisible();
   // Headless WebKit can hold the visible drawer item in an unstable state on iPad.
-  await mobileFolder.click({ force: true });
+  // Other engines should wait for a genuinely clickable target.
+  await mobileFolder.click({ force: page.context().browser()?.browserType().name() === 'webkit' });
   await expect(mobileFolder).toBeHidden();
   await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
 }

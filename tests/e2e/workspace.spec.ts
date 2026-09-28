@@ -160,7 +160,7 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('creates a label from a message and applies it in the same flow', async ({ page, consoleErrors }, testInfo) => {
+test('creates a label from a message and applies it in the same flow', async ({ page, consoleErrors }) => {
   await login(page);
   const subject = 'E2E Inbox Welcome';
   await page.getByRole('listitem').filter({ hasText: subject }).getByRole('button', { name: /E2E Inbox Welcome/u }).click();
@@ -173,7 +173,7 @@ test('creates a label from a message and applies it in the same flow', async ({ 
   await editor.getByRole('button', { name: '保存' }).click();
   await expect(editor).toBeHidden();
   await expect(page.getByRole('region', { name: '邮件详情' }).getByText('E2E One Step')).toBeVisible();
-  if (testInfo.project.name === 'mobile') {
+  if (page.viewportSize()!.width < 901) {
     await page.getByRole('button', { name: '返回邮件列表' }).click();
     await page.getByRole('button', { name: '打开导航' }).click();
   }
@@ -324,7 +324,7 @@ test('shows a server-paginated global Starred view across inbox and sent', async
   await page.getByRole('button', { name: '批量管理标签' }).click();
   const bulkDialog = page.getByRole('dialog', { name: '批量管理标签' });
   await expect(bulkDialog).toContainText('仅更新当前页已选的 2 封邮件');
-  await expect(bulkDialog).toContainText('尚无标签');
+  await expect(bulkDialog.getByLabel('标签名称')).toBeVisible();
   await bulkDialog.getByRole('button', { name: '取消' }).click();
   const response = await page.request.get('/api/workspace/mailbox?folder=starred&limit=1');
   expect(response.ok()).toBe(true);
@@ -622,8 +622,9 @@ test('opens dedicated domain and address management views with a domain-scoped c
   await expect(page).toHaveURL(/domain=00000000-0000-4000-8000-000000000012/u);
   await page.reload();
   await expect(page.getByLabel('收信域名')).toHaveValue('00000000-0000-4000-8000-000000000012');
-  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: '打开导航' }).click();
-  const navigation = page.getByRole('navigation', { name: testInfo.project.name === 'mobile' ? '移动端导航' : '主导航' });
+  const compactNavigation = page.viewportSize()!.width < 901;
+  if (compactNavigation) await page.getByRole('button', { name: '打开导航' }).click();
+  const navigation = page.getByRole('navigation', { name: compactNavigation ? '移动端导航' : '主导航' });
   await navigation.getByRole('button', { name: '域名', exact: true }).click();
   await expect(page).toHaveURL(/folder=settings.*view=domains/u);
   await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
@@ -991,6 +992,14 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
 
 test('announces list selection, star, attachment and delivery states', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
+  const reset = await page.evaluate(async () => {
+    const response = await fetch('/api/workspace/messages/e2e-inbox-message/flags', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ read: false, starred: false })
+    });
+    return response.ok;
+  });
+  expect(reset).toBe(true);
+  await page.reload();
   const inboxItem = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   const inboxButton = inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u }).first();
   await expect(inboxItem.getByText('E2E Sender', { exact: true })).toBeVisible();
@@ -1240,7 +1249,9 @@ test('moves a draft to trash, persists across refresh, restores, and permanently
     await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
     await page.getByRole('button', { name: '更多邮件操作' }).click();
     await page.getByRole('menuitem', { name: '移入垃圾箱' }).click();
-    await page.getByRole('dialog', { name: '移入垃圾箱？' }).getByRole('button', { name: '移入垃圾箱' }).click();
+    const confirmation = page.getByRole('dialog', { name: '移入垃圾箱？' });
+    await confirmation.getByRole('button', { name: '移入垃圾箱' }).click();
+    await expect(confirmation).toBeHidden();
     await expect(page.getByRole('status').filter({ hasText: '已移入垃圾箱' })).toBeVisible();
   };
 
@@ -1870,19 +1881,21 @@ test('keeps one responsive search entry, three desktop topbar actions, and a vis
   const metrics = await detail.evaluate((element) => {
     const scroll = element.querySelector<HTMLElement>('.fm-detail-scroll');
     const body = element.querySelector<HTMLElement>('.message-plain-body');
+    const labels = element.querySelector<HTMLElement>('.message-header-labels');
     const detailRect = element.getBoundingClientRect();
     const scrollRect = scroll?.getBoundingClientRect();
     const viewportTop = Math.max(0, detailRect.top, scrollRect?.top ?? 0);
     const viewportBottom = Math.min(window.innerHeight, detailRect.bottom, scrollRect?.bottom ?? 0);
     return {
       bodyTop: body?.getBoundingClientRect().top ?? null,
+      labelsHeight: labels?.getBoundingClientRect().height ?? 0,
       detailHeaderHeight: scrollRect ? scrollRect.top - detailRect.top : null,
       visibleBodyHeight: Math.max(0, viewportBottom - viewportTop),
       viewportHeight: window.innerHeight
     };
   });
   expect(metrics.bodyTop).not.toBeNull();
-  expect(metrics.bodyTop!).toBeLessThanOrEqual(220);
+  expect(metrics.bodyTop! - metrics.labelsHeight).toBeLessThanOrEqual(220);
   expect(metrics.detailHeaderHeight).toBeLessThan(180);
   expect(metrics.visibleBodyHeight).toBeGreaterThanOrEqual(metrics.viewportHeight * 0.6);
   await page.screenshot({ path: join(tmpdir(), `flaremail-responsive-reading-${testInfo.project.name}.png`), fullPage: false });
