@@ -852,9 +852,9 @@
           <div class="relative">
             <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-mobile-attachment-count' : undefined} title={t('compose.attachFile')} tooltipSide="top" disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
             {#if readyAttachmentCount}
-              <span class="pointer-events-none absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[var(--fm-primary)] text-[10px] font-semibold text-[var(--fm-text-inverse)]" aria-hidden="true">{readyAttachmentCount}</span>
-              <span id="compose-mobile-attachment-count" class="sr-only">{t('compose.addedAttachmentCount', { count: readyAttachmentCount })}</span>
+              <span class="compose-attachment-count pointer-events-none absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[var(--fm-primary)] text-[10px] font-semibold text-[var(--fm-text-inverse)]" aria-hidden="true">{readyAttachmentCount}</span>
             {/if}
+            <span id="compose-mobile-attachment-count" class="sr-only" role="status" aria-live="polite">{readyAttachmentCount ? t('compose.addedAttachmentCount', { count: readyAttachmentCount }) : ''}</span>
           </div>
           <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton>
         </div>
@@ -867,8 +867,8 @@
           <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-footer-attachment-count' : undefined} title={t('compose.attachFile')} tooltipSide="top" disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
           {#if readyAttachmentCount}
             <span class="compose-attachment-count pointer-events-none absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[var(--fm-primary)] text-[10px] font-semibold text-[var(--fm-text-inverse)]" aria-hidden="true">{readyAttachmentCount}</span>
-            <span id="compose-footer-attachment-count" class="sr-only" role="status" aria-live="polite">{t('compose.addedAttachmentCount', { count: readyAttachmentCount })}</span>
           {/if}
+          <span id="compose-footer-attachment-count" class="sr-only" role="status" aria-live="polite">{readyAttachmentCount ? t('compose.addedAttachmentCount', { count: readyAttachmentCount }) : ''}</span>
         </div>
         <div class="max-sm:hidden"><IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton></div>
         <Button variant="outline" disabled={pending} onclick={requestClose}>{t('common.cancel')}</Button>

@@ -141,6 +141,7 @@ test('uploads and downloads a near-limit attachment without mobile layout overfl
   await compose.getByLabel('收件人').fill('attachment-recipient@flaremail.test');
   await compose.getByRole('textbox', { name: '主题', exact: true }).fill('E2E Near-Limit Attachment');
   await compose.getByRole('textbox', { name: '正文', exact: true }).fill('Mobile near-limit attachment smoke.');
+  await expect(compose.locator('#compose-mobile-attachment-count')).toBeEmpty();
 
   const filename = `${'project-review-'.repeat(10)}report.bin`;
   const size = 7 * 1024 * 1024;
@@ -151,13 +152,23 @@ test('uploads and downloads a near-limit attachment without mobile layout overfl
   }]);
   await expect(compose.getByLabel(`附件名称 ${filename}`)).toHaveValue(filename, { timeout: 60_000 });
   await expect(compose.getByRole('list', { name: '附件上传状态' })).toHaveCount(0);
-  await expect(compose.locator('.compose-attachment-count')).toHaveText('1');
-  await expect(compose.locator('#compose-footer-attachment-count')).toHaveText('已添加 1 个附件');
+  const visibleAttachmentCount = compose.locator('.compose-footer-meta .compose-attachment-count');
+  const attachmentStatus = compose.locator('#compose-mobile-attachment-count');
+  const footerAttachButton = compose.getByRole('button', { name: '添加附件' });
+  await expect(visibleAttachmentCount).toBeVisible();
+  await expect(visibleAttachmentCount).toHaveText('1');
+  await expect(attachmentStatus).toHaveAttribute('role', 'status');
+  await expect(attachmentStatus).toHaveText('已添加 1 个附件');
+  await expect(footerAttachButton).toHaveAttribute('aria-describedby', /compose-mobile-attachment-count/u);
+  await expect(compose.locator('.compose-footer-actions .compose-attachment-count')).toBeHidden();
   await expect(compose.getByRole('list', { name: '待发送附件' })).toContainText('7 MB');
+  expect((await new AxeBuilder({ page }).include('.compose-dialog').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);
+  const dismissToast = page.getByRole('button', { name: '关闭通知' }).first();
+  if (await dismissToast.isVisible()) await dismissToast.click();
   await page.screenshot({ path: join(tmpdir(), `flaremail-large-attachment-${testInfo.project.name}-mobile.png`), fullPage: false });
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
-  await expect(compose.locator('.compose-attachment-count')).toHaveCSS('color', 'rgb(17, 24, 39)');
+  await expect(visibleAttachmentCount).toHaveCSS('color', 'rgb(17, 24, 39)');
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-large-attachment-${testInfo.project.name}-mobile-dark.png`), fullPage: false });
 
