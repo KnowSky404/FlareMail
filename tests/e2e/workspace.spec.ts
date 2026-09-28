@@ -1750,6 +1750,31 @@ test('keeps the floating compose window inside a short desktop viewport', async 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps an open compose draft when its sidebar action is clicked again', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Only the desktop floating compose leaves the sidebar action available.');
+  await login(page);
+  const composeButton = page.getByRole('button', { name: '写邮件', exact: true }).first();
+  await composeButton.click();
+  const compose = page.getByRole('dialog', { name: '新邮件' });
+  const subject = compose.getByRole('textbox', { name: '主题', exact: true });
+  const body = compose.getByRole('textbox', { name: '正文', exact: true });
+  await subject.fill('Keep this unsaved subject');
+  await body.fill('Keep this unsaved body.');
+  await composeButton.click();
+  await expect(compose).toBeVisible();
+  await expect(subject).toHaveValue('Keep this unsaved subject');
+  await expect(body).toHaveValue('Keep this unsaved body.');
+  await compose.getByRole('button', { name: '最小化写信窗口' }).click();
+  await expect(compose).toHaveAttribute('data-minimized', 'true');
+  await composeButton.click();
+  await expect(compose).toHaveAttribute('data-minimized', 'false');
+  await expect(subject).toHaveValue('Keep this unsaved subject');
+  await expect(body).toHaveValue('Keep this unsaved body.');
+  await expect(compose.getByLabel('收件人')).toBeFocused();
+  await page.screenshot({ path: '/tmp/flaremail-compose-repeat-preserved-desktop.png', fullPage: false });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
   const isPhoneViewport = testInfo.project.name === 'mobile' || testInfo.project.name === 'narrow';
   await login(page);

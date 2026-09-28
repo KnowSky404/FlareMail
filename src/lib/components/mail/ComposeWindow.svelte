@@ -142,6 +142,11 @@
     else requestAnimationFrame(() => element?.querySelector<HTMLInputElement>('#compose-to')?.focus());
   }
 
+  function restoreExistingCompose() {
+    minimized = false;
+    requestAnimationFrame(() => element?.querySelector<HTMLInputElement>('#compose-to')?.focus());
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (mobile && event.key === 'Tab' && element) {
       const focusable = [...element.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
@@ -166,10 +171,12 @@
     const onViewportResize = () => { bounds = fitToViewport(bounds); };
     const onMobileChange = () => { mobile = mobileMedia.matches; };
     window.addEventListener('resize', onViewportResize);
+    window.addEventListener('flaremail:restore-compose', restoreExistingCompose);
     mobileMedia.addEventListener('change', onMobileChange);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', onViewportResize);
+      window.removeEventListener('flaremail:restore-compose', restoreExistingCompose);
       mobileMedia.removeEventListener('change', onMobileChange);
       restoreFocus?.focus();
     };

@@ -1470,6 +1470,10 @@
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
+    if (composeOpen) {
+      window.dispatchEvent(new Event('flaremail:restore-compose'));
+      return;
+    }
     toastController.dismissPassive();
     const senderAddressId = selectInitialComposeSenderAddressId(
       mailIdentityOptions.addresses,
