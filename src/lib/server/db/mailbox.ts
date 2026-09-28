@@ -150,6 +150,7 @@ export async function listWorkspaceMessagePage(
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
       m.subject, m.preview, '' AS body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
+      EXISTS (SELECT 1 FROM workspace_attachments AS attachment WHERE attachment.user_id = m.user_id AND attachment.message_id = m.id AND attachment.relation_type IN ('inbound', 'message')) AS has_attachments,
       m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key, m.body_object_id, m.deleted_at,
       m.sender_address_id, m.recipient_address_id, m.reply_to_json,
       ${searchSnippet} AS search_snippet,
@@ -242,6 +243,7 @@ export async function listDraftPage(
 
   const pageSelect = `
     SELECT d.id, d.to_email, d.cc, d.to_json, d.cc_json, d.bcc_json, d.subject, '' AS body, d.is_starred, d.created_at, d.updated_at,
+      EXISTS (SELECT 1 FROM workspace_attachments AS attachment WHERE attachment.user_id = d.user_id AND attachment.message_id = d.id AND attachment.relation_type = 'draft') AS has_attachments,
       d.message_id, d.in_reply_to, d."references", d.thread_key, d.idempotency_key, d.body_object_id, d.deleted_at,
       d.sender_address_id, d.from_name, d.from_email, d.reply_to_json,
       ${searchSnippet} AS search_snippet

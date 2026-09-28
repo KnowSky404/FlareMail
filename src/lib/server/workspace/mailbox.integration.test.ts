@@ -195,6 +195,28 @@ function insertCrossAddressThread(database: Database) {
 }
 
 describe('D1 mailbox pages', () => {
+  test('reports indexed attachment presence for inbound, workspace, sent and draft rows', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      INSERT INTO workspace_attachments (id, user_id, message_id, filename, content_type, size, r2_key, relation_type) VALUES
+        ('inbound-file', 'user-1', 'incoming-1', 'inbound.txt', 'text/plain', 1, 'inbound/file', 'inbound'),
+        ('workspace-file', 'user-1', 'inbox-z', 'workspace.txt', 'text/plain', 1, 'workspace/file', 'inbound'),
+        ('sent-file', 'user-1', 'sent-1', 'sent.txt', 'text/plain', 1, 'sent/file', 'message'),
+        ('draft-file', 'user-1', 'draft-1', 'draft.txt', 'text/plain', 1, 'draft/file', 'draft'),
+        ('wrong-relation-file', 'user-1', 'inbox-a', 'draft.txt', 'text/plain', 1, 'wrong-relation/file', 'draft'),
+        ('foreign-file', 'user-2', 'inbox-a', 'foreign.txt', 'text/plain', 1, 'foreign/file', 'inbound');
+    `);
+
+    const inbox = await loadMailboxPage(env, workspace, query('inbox'));
+    expect(inbox.messages.map(({ id, hasAttachments }) => [id, hasAttachments])).toEqual([
+      ['email:incoming-1', true], ['inbox-z', true], ['inbox-a', false]
+    ]);
+    const sent = await loadMailboxPage(env, workspace, query('sent'));
+    expect(sent.messages.find(({ id }) => id === 'sent-1')?.hasAttachments).toBe(true);
+    const drafts = await loadMailboxPage(env, workspace, query('drafts'));
+    expect(drafts.messages.find(({ id }) => id === 'draft-1')?.hasAttachments).toBe(true);
+  });
+
   test('persists Owner labels across all mail sources with bounded cross-folder pagination', async () => {
     const { env, workspace, database } = fixture();
     database.query("INSERT INTO workspace_users (id, name, role) VALUES ('user-1', 'Ada', 'owner'), ('user-2', 'Bob', 'owner')").run();

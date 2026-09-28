@@ -733,6 +733,38 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('announces list selection, star, attachment and delivery states', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const inboxItem = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+  const inboxButton = inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u }).first();
+  await expect(inboxButton).toHaveAttribute('aria-label', /未读.*E2E Inbox Welcome/u);
+  await inboxItem.getByRole('button', { name: '加星', exact: true }).click();
+  await expect(inboxButton).toHaveAttribute('aria-label', /已加星标.*E2E Inbox Welcome/u);
+  await inboxButton.click();
+  if (testInfo.project.name === 'desktop') {
+    await expect(inboxButton).toHaveAttribute('aria-label', /^当前邮件, .*E2E Inbox Welcome/u);
+  } else {
+    await expect(page.getByRole('region', { name: '邮件详情' }).getByRole('heading', { name: 'E2E Inbox Welcome' })).toBeVisible();
+  }
+
+  await openFolder(page, '已发送');
+  const sentButton = page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })
+    .getByRole('button', { name: /E2E Seeded Sent/u }).first();
+  await expect(sentButton).toHaveAttribute('aria-label', /E2E Seeded Sent.*投递: 已发送/u);
+
+  await openFolder(page, '收件箱');
+  const attachmentButton = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
+    .getByRole('button', { name: /E2E HTML Safety/u }).first();
+  await expect(attachmentButton).toHaveAttribute('aria-label', /E2E HTML Safety.*含附件/u);
+  if (testInfo.project.name === 'desktop') {
+    await attachmentButton.click();
+    await expect(attachmentButton).toHaveAttribute('aria-label', /E2E HTML Safety.*含附件/u);
+    await page.setViewportSize({ width: 1505, height: 1045 });
+    await page.screenshot({ path: join(tmpdir(), 'flaremail-accessible-list-desktop.png'), fullPage: false });
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('runs advanced owner-scoped FTS search with highlighted persisted results', async ({ page, consoleErrors }) => {
   await login(page);
   const query = 'from:html-sender@flaremail.test subject:"E2E HTML Safety" has:attachment';

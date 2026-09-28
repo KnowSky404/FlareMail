@@ -168,6 +168,8 @@ export interface MailMessage extends MailRfcHeaders {
   html?: string;
   sentAt: string;
   labels: string[];
+  /** Attachment presence in a mailbox summary, without loading attachment metadata. */
+  hasAttachments?: boolean;
   /** Owner-managed labels; separate from legacy provider/system labels. */
   userLabels?: MailUserLabel[];
   read: boolean;

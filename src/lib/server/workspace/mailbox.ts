@@ -555,6 +555,7 @@ async function listInboundMessageSummaryPage(
       e.subject, e."timestamp", e.snippet,
       e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
+      EXISTS (SELECT 1 FROM workspace_attachments AS attachment WHERE attachment.user_id = e.owner_user_id AND attachment.message_id = e.id AND attachment.relation_type = 'inbound') AS has_attachments,
       ${searchSnippet} AS search_snippet
     FROM email_messages AS e
     ${searchJoins}
