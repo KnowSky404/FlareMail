@@ -1071,12 +1071,32 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
   await page.screenshot({ path: `/tmp/flaremail-compose-floating-${testInfo.project.name}.png` });
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await page.getByLabel('收件人').fill('html-sen');
-  await expect(composeDialog.getByRole('listbox', { name: '最近联系人建议' }).getByRole('option', { name: /html-sender@flaremail\.test/u })).toBeVisible();
+  const suggestion = composeDialog.getByRole('listbox', { name: '最近联系人建议' })
+    .getByRole('option', { name: /html-sender@flaremail\.test/u });
+  await expect(suggestion).toBeVisible();
+  if (testInfo.project.name === 'mobile') {
+    const suggestionBounds = await suggestion.boundingBox();
+    expect(suggestionBounds?.height).toBeGreaterThanOrEqual(44);
+    expect(suggestionBounds?.width).toBeGreaterThanOrEqual(44);
+    await page.screenshot({ path: '/tmp/flaremail-compose-suggestion-mobile.png', fullPage: false });
+  }
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);
   await page.getByLabel('收件人').press('Enter');
-  await expect(composeDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
-  await composeDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' }).click();
+  const removeRecipient = composeDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' });
+  await expect(removeRecipient).toBeVisible();
+  if (testInfo.project.name === 'mobile') {
+    const removeBounds = await removeRecipient.boundingBox();
+    expect(removeBounds?.height).toBeGreaterThanOrEqual(44);
+    expect(removeBounds?.width).toBeGreaterThanOrEqual(44);
+    const ccBounds = await composeDialog.getByRole('button', { name: '添加抄送' }).boundingBox();
+    const bccBounds = await composeDialog.getByRole('button', { name: '添加密送' }).boundingBox();
+    expect(ccBounds?.height).toBeGreaterThanOrEqual(44);
+    expect(bccBounds?.height).toBeGreaterThanOrEqual(44);
+    expect(ccBounds?.y).toBe(bccBounds?.y);
+    await page.screenshot({ path: '/tmp/flaremail-compose-recipient-mobile.png', fullPage: false });
+  }
+  await removeRecipient.click();
   await page.getByLabel('收件人').fill('draft-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill('E2E autosaved draft');
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('This draft must survive a page refresh.');

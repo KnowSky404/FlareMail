@@ -641,7 +641,7 @@
         <div class="relative">
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.to ?? input.toEmail ?? '') as address (address.email)}
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
+              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove fm-touch-target" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
             {/each}
             <input bind:this={toInput} id="compose-to" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" role="combobox" aria-autocomplete="list" aria-expanded={toSuggestionsOpen && toSuggestions.length > 0} aria-controls="compose-to-suggestions" aria-activedescendant={toSuggestionsOpen && toSuggestions.length > 0 ? `compose-to-suggestion-${activeToSuggestion}` : undefined} placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onfocus={() => (toSuggestionsOpen = true)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={handleToKeydown} onblur={() => commitRecipient('to')} />
           </div>
@@ -656,41 +656,54 @@
         {#if fieldError('to') || fieldError('toEmail')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('to') ?? fieldError('toEmail')}</p>{/if}
       </div>
 
-      <div class="grid gap-2">
-        {#if showCc}
+      {#if !showCc || !showBcc}
+        <div class="flex flex-wrap items-center gap-x-3">
+          {#if !showCc}
+            <button
+              class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
+              type="button"
+              aria-expanded="false"
+              onclick={() => (showCc = true)}
+            >
+              {t('compose.addCc')}
+            </button>
+          {/if}
+          {#if !showBcc}
+            <button
+              class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
+              type="button"
+              onclick={() => (showBcc = true)}
+            >
+              {t('compose.addBcc')}
+            </button>
+          {/if}
+        </div>
+      {/if}
+
+      {#if showCc}
+        <div class="grid gap-2">
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-cc">{t('mail.cc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.cc ?? '') as address (address.email)}
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.cc'), email: address.email })} onclick={() => removeRecipient('cc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
+              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove fm-touch-target" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.cc'), email: address.email })} onclick={() => removeRecipient('cc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
             {/each}
             <input id="compose-cc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
           </div>
           {#if fieldError('cc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('cc')}</p>{/if}
-        {:else}
-          <button
-            class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]"
-            type="button"
-            aria-expanded="false"
-            onclick={() => (showCc = true)}
-          >
-            {t('compose.addCc')}
-          </button>
-        {/if}
-      </div>
+        </div>
+      {/if}
 
       {#if showBcc}
         <div class="grid gap-2">
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-bcc">{t('mail.bcc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.bcc ?? '') as address (address.email)}
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.bcc'), email: address.email })} onclick={() => removeRecipient('bcc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
+              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove fm-touch-target" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.bcc'), email: address.email })} onclick={() => removeRecipient('bcc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
             {/each}
             <input id="compose-bcc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
           </div>
           {#if fieldError('bcc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('bcc')}</p>{/if}
         </div>
-      {:else}
-        <button class="fm-touch-target w-fit rounded-[var(--radius-md)] px-1 py-1 text-xs font-medium text-[var(--fm-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]" type="button" onclick={() => (showBcc = true)}>{t('compose.addBcc')}</button>
       {/if}
 
       <TextField
@@ -905,6 +918,10 @@
 
   .recipient-suggestion small { color: var(--fm-text-muted); }
   .recipient-suggestion:hover, .recipient-suggestion.active { background: var(--fm-surface-selected); }
+
+  @media (max-width: 900px) {
+    .recipient-suggestion { min-height: 44px; }
+  }
 
   @media (max-width: 420px) {
     .compose-advanced > summary {
