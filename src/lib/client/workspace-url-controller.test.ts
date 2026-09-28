@@ -46,4 +46,11 @@ describe('workspace URL controller', () => {
     expect(readWorkspaceUrl(addressUrl).managementDomainId).toBe('domain-1');
     expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=settings&view=addresses&domain=%3Cbad%3E')).managementDomainId).toBeNull();
   });
+
+  test('clears a settings section anchor when leaving that view', () => {
+    const settingsUrl = new URL('https://flaremail.example/?folder=settings#settings-notifications');
+    expect(updateWorkspaceUrl(settingsUrl, { query: '' }).hash).toBe('#settings-notifications');
+    expect(updateWorkspaceUrl(settingsUrl, { section: 'inbox' }).hash).toBe('');
+    expect(updateWorkspaceUrl(settingsUrl, { section: 'profile', managementView: 'domains' }).hash).toBe('');
+  });
 });

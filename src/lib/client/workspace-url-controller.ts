@@ -46,6 +46,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
 
 export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
   const next = new URL(url);
+  if (updates.section !== undefined || updates.managementView !== undefined) next.hash = '';
   if (updates.section) next.searchParams.set('folder', updates.section === 'profile' ? 'settings' : updates.section);
   if (updates.labelId !== undefined || updates.section !== undefined) {
     const labelId = updates.labelId ?? (updates.section === 'label' ? readWorkspaceUrl(url).labelId : null);

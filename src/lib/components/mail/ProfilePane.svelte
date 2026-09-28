@@ -103,8 +103,16 @@
     <LanguageSwitcher />
   </header>
 
+  <nav class="settings-section-nav" aria-label={t('settings.sectionNavigation')}>
+    <a href="#settings-profile">{t('settings.profile')}</a>
+    <a href="#settings-notifications">{t('settings.notifications')}</a>
+    <a href="#settings-appearance">{t('settings.appearance')}</a>
+    <a href="#settings-diagnostics">{t('settings.diagnostics')}</a>
+    <a href="#settings-telegram">{t('telegram.title')}</a>
+  </nav>
+
   <form onsubmit={submit}>
-    <Panel title={t('settings.profile')} description={t('settings.profileDescription')}>
+    <Panel id="settings-profile" class="scroll-mt-[5.25rem]" title={t('settings.profile')} description={t('settings.profileDescription')}>
       <div class="field-grid">
         <TextField
           id="profile-name"
@@ -176,7 +184,7 @@
       </div>
     </Panel>
 
-    <Panel title={t('settings.notifications')} description={t('settings.notificationsDescription')}>
+    <Panel id="settings-notifications" class="scroll-mt-[5.25rem]" title={t('settings.notifications')} description={t('settings.notificationsDescription')}>
       <Switch
         id="profile-forwarding"
         checked={nextProfile.forwardingEnabled}
@@ -188,7 +196,7 @@
       <p class="section-note">{t('settings.systemNotifications')}：{diagnostics?.notificationEnabled ? t('settings.runtimeEnabled') : t('settings.runtimeDisabled')}。{t('settings.notificationAddressHidden')}</p>
     </Panel>
 
-    <Panel title={t('settings.appearance')} description={t('settings.appearanceDescription')}>
+    <Panel id="settings-appearance" class="scroll-mt-[5.25rem]" title={t('settings.appearance')} description={t('settings.appearanceDescription')}>
       <div class="theme-field">
         <Select
           id="profile-theme"
@@ -207,7 +215,7 @@
       </div>
     </Panel>
 
-    <Panel title={t('settings.diagnostics')} description={t('settings.diagnosticsDescription')}>
+    <Panel id="settings-diagnostics" class="scroll-mt-[5.25rem]" title={t('settings.diagnostics')} description={t('settings.diagnosticsDescription')}>
       {#if diagnostics}
         <dl class="diagnostic-grid">
           <div><dt>{t('settings.runtime')}</dt><dd><Badge>{diagnostics.environment}</Badge></dd></div>
@@ -239,7 +247,7 @@
       <Button variant="secondary" onclick={onOpenAddresses}>{t('shell.addresses')}</Button>
     </div>
   </Panel>
-  <TelegramNotificationPanel />
+  <div id="settings-telegram" class="settings-anchor"><TelegramNotificationPanel /></div>
 </div>
 
 <style>
@@ -270,6 +278,49 @@
   header p {
     margin: var(--space-1) 0 0;
     color: var(--fm-text-muted);
+  }
+
+  .settings-section-nav {
+    position: sticky;
+    top: calc(-1 * var(--space-6));
+    z-index: 5;
+    display: flex;
+    gap: var(--space-1);
+    max-width: 100%;
+    margin-bottom: var(--space-5);
+    padding: var(--space-2) 0;
+    overflow-x: auto;
+    background: var(--fm-surface);
+    border-bottom: 1px solid var(--fm-border);
+    scrollbar-width: thin;
+  }
+
+  .settings-section-nav a {
+    flex: 0 0 auto;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--fm-text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .settings-section-nav a:hover {
+    background: var(--fm-surface-hover);
+    color: var(--fm-text);
+  }
+
+  .settings-section-nav a:focus-visible {
+    outline: 2px solid var(--fm-primary);
+    outline-offset: -2px;
+  }
+
+  .settings-anchor {
+    scroll-margin-top: 5.25rem;
   }
 
   form {
@@ -335,10 +386,17 @@
   }
 
   .save-row {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
     display: flex;
     min-height: 44px;
     align-items: center;
     gap: var(--space-4);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--fm-border);
+    border-radius: var(--radius-md);
+    background: var(--fm-surface);
   }
 
   .theme-field {
@@ -346,9 +404,11 @@
   }
 
   .save-row p {
+    min-width: 0;
     margin: 0;
     color: var(--fm-success);
     font-size: 13px;
+    overflow-wrap: anywhere;
   }
 
   .save-row p.error {
@@ -358,6 +418,12 @@
   @media (max-width: 720px) {
     .field-grid {
       grid-template-columns: 1fr;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .settings-section-nav {
+      top: calc(-1 * var(--space-8));
     }
   }
 </style>

@@ -6,18 +6,20 @@
   let {
     messages = [],
     aboveActions = false,
+    aboveSettingsSave = false,
     onAction,
     onDismiss
   }: {
     messages?: ToastMessage[];
     aboveActions?: boolean;
+    aboveSettingsSave?: boolean;
     onAction: (id: string) => void | Promise<void>;
     onDismiss: (id: string) => void;
   } = $props();
   const { t } = useLocale();
 </script>
 
-<div class:above-actions={aboveActions} class="toast-region" aria-label={t('common.notifications')} aria-live="polite" aria-relevant="additions text">
+<div class:above-actions={aboveActions} class:above-settings-save={aboveSettingsSave} class="toast-region" aria-label={t('common.notifications')} aria-live="polite" aria-relevant="additions text">
   {#each messages as toast (toast.id)}
     <Toast {toast} onAction={() => onAction(toast.id)} onDismiss={() => onDismiss(toast.id)} />
   {/each}
@@ -37,6 +39,10 @@
 
   .toast-region.above-actions {
     bottom: calc(144px + env(safe-area-inset-bottom));
+  }
+
+  .toast-region.above-settings-save {
+    bottom: calc(96px + env(safe-area-inset-bottom));
   }
 
   @media (max-width: 600px) {

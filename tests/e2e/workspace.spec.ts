@@ -444,6 +444,62 @@ async function openSettings(page: Page) {
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
 }
 
+test('keeps settings sections reachable and the save action visible while scrolling', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings');
+  await expect(page).toHaveTitle('FlareMail');
+  const sections = page.getByRole('navigation', { name: '设置分区' });
+  const name = page.getByLabel('显示姓名');
+  await name.fill('  Unsaved section navigation  ');
+
+  await sections.getByRole('link', { name: '通知', exact: true }).click();
+  await expect(page).toHaveURL(/#settings-notifications$/u);
+  await expect(page.locator('#settings-notifications')).toBeInViewport();
+  await expect(sections).toBeInViewport();
+  const save = page.getByRole('button', { name: '保存设置' });
+  await expect(save).toBeInViewport();
+  const navBounds = await sections.boundingBox();
+  const notificationBounds = await page.locator('#settings-notifications').boundingBox();
+  const appbarBounds = await page.getByRole('banner').first().boundingBox();
+  expect(navBounds!.y).toBeLessThanOrEqual(appbarBounds!.y + appbarBounds!.height + 1);
+  expect(notificationBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+  if (testInfo.project.name === 'mobile') await expect(page.getByRole('button', { name: '打开导航' })).toBeInViewport();
+  const toast = page.locator('.toast-region .toast');
+  if (await toast.count()) {
+    const toastBounds = await toast.first().boundingBox();
+    const saveBounds = await save.boundingBox();
+    expect(toastBounds!.y + toastBounds!.height).toBeLessThanOrEqual(saveBounds!.y);
+  }
+  await assertNoHorizontalOverflow(page);
+  if (testInfo.project.name === 'desktop' || testInfo.project.name === 'mobile') {
+    await page.screenshot({ path: `/tmp/flaremail-settings-sections-${testInfo.project.name}.png`, fullPage: false });
+  }
+
+  await sections.getByRole('link', { name: '诊断', exact: true }).click();
+  await expect(page.locator('#settings-diagnostics')).toBeInViewport();
+  await sections.getByRole('link', { name: '个人资料', exact: true }).click();
+  await expect(name).toHaveValue('  Unsaved section navigation  ');
+  await sections.getByRole('link', { name: '外观', exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/#settings-appearance$/u);
+  await page.getByLabel('主题').selectOption('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  if (testInfo.project.name === 'desktop' || testInfo.project.name === 'mobile') {
+    await page.screenshot({ path: `/tmp/flaremail-settings-appearance-dark-${testInfo.project.name}.png`, fullPage: false });
+  }
+  if (testInfo.project.name === 'desktop') {
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '收件箱', exact: true }).click();
+  } else {
+    await page.getByRole('button', { name: '打开导航' }).click();
+    await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: /^收件箱(?: \d+)?$/u }).click();
+  }
+  await expect(page).toHaveURL(/folder=inbox/u);
+  expect(new URL(page.url()).hash).toBe('');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('opens dedicated domain and address management views with a domain-scoped create shortcut', async ({ page, consoleErrors }, testInfo) => {
   test.setTimeout(90_000);
   await login(page);

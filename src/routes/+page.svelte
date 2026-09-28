@@ -2431,7 +2431,7 @@
             onToggleCollapsed={toggleSidebar}
           />
 
-          <main class="fm-workspace-main" aria-label={t('shell.mailWorkspace')}>
+          <main class:settings-main={activeSection === 'profile'} class="fm-workspace-main" aria-label={t('shell.mailWorkspace')}>
             {#if activeSection === 'profile'}
               <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
                 {#if managementView === 'settings'}
@@ -2825,6 +2825,7 @@
   <ToastRegion
     messages={toastMessages}
     aboveActions={composeOpen}
+    aboveSettingsSave={authenticated && activeSection === 'profile' && managementView === 'settings' && !composeOpen}
     onAction={(id) => void toastController.invoke(id)}
     onDismiss={(id) => toastController.dismiss(id)}
   />
@@ -2990,6 +2991,10 @@
   }
 
   @media (max-width: 900px) {
+    .settings-main {
+      height: 100%;
+    }
+
     .mail-workspace {
       grid-template-columns: minmax(0, 1fr);
     }
