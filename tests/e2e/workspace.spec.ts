@@ -2266,6 +2266,10 @@ test('supports mobile detail drill-in and back navigation', async ({ page, conso
   if (await dismissNotice.isVisible()) await dismissNotice.click();
   await page.screenshot({ path: join(tmpdir(), 'flaremail-mobile-detail-layout.png'), fullPage: false });
   await expect(page.getByRole('button', { name: '返回邮件列表' })).toBeVisible();
+  await expect(page).toHaveURL(/message=/u);
+  await page.reload();
+  await expect(detail.getByRole('heading', { name: 'E2E Inbox Welcome' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '返回邮件列表' })).toBeVisible();
   await page.getByRole('button', { name: '返回邮件列表' }).click();
   await expect(page.getByRole('button', { name: /E2E Inbox Welcome/ }).first()).toBeVisible();
   await assertNoConsoleErrors(consoleErrors);
@@ -2776,6 +2780,8 @@ test('renders a representative multi-domain message with two attachments for vis
 
   const detail = page.getByRole('region', { name: '邮件详情' });
   await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
+  await expect(detail.locator('.message-sender-identity')).toContainText('收件人');
+  await expect(detail.locator('.message-outbound-identity')).toContainText('postmaster@example.test');
   await expect(detail.locator('.message-plain-body')).toContainText('FlareMail 本地验收');
   const attachments = detail.getByRole('list', { name: '邮件附件列表' });
   await expect(attachments.getByRole('listitem')).toHaveCount(2);
@@ -2792,5 +2798,8 @@ test('renders a representative multi-domain message with two attachments for vis
     await attachments.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(tmpdir(), 'flaremail-rich-detail-attachments-mobile.png'), fullPage: false });
   }
+  await expect(page).toHaveURL(/message=/u);
+  await page.reload();
+  await expect(page.getByRole('region', { name: '邮件详情' }).locator('.message-outbound-identity')).toContainText('postmaster@example.test');
   await assertNoConsoleErrors(consoleErrors);
 });

@@ -268,9 +268,17 @@
         <Avatar name={senderName || senderEmail || '?'} size="lg" />
         <div class="min-w-0 flex-1">
           <div class="message-sender-identity flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span class="font-medium text-[var(--fm-text)]">{senderName || senderEmail || t('mail.unknownContact')}</span>
+            <span class="font-medium text-[var(--fm-text)]">
+              {#if message.folder === 'sent' || message.folder === 'drafts'}
+                <span class="text-[11px] text-[var(--fm-text-muted)]">{t('mail.to')}:</span>
+              {/if}
+              {senderName || senderEmail || t('mail.unknownContact')}
+            </span>
             <span class="block max-w-full truncate text-xs text-[var(--fm-text-secondary)]">&lt;{senderEmail || t('mail.unknownAddress')}&gt;</span>
           </div>
+          {#if (message.folder === 'sent' || message.folder === 'drafts') && message.fromEmail}
+            <p class="message-outbound-identity mt-1 min-w-0 text-xs leading-5 text-[var(--fm-text-secondary)]"><span class="font-medium">{t('mail.from')}:</span> <span class="break-all">{message.fromEmail}</span></p>
+          {/if}
         </div>
         <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatCompactDate(message.sentAt)}</time>
       </div>

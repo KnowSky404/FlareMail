@@ -847,7 +847,8 @@
     mailFilter = next.mailFilter;
     mailIdentityFilter = next.identityFilter;
     mailIdentityOptions = workspace.mailIdentityOptions;
-    mobileDetailOpen = false;
+    mobileDetailOpen = next.activeSection !== 'profile' &&
+      Boolean(options?.preferredMessageId && next.selectedMessageId === options.preferredMessageId);
     authenticated = true;
     void reloadMailLabels();
     workspaceSnapshotController.noteUser(workspace.profile.email);
