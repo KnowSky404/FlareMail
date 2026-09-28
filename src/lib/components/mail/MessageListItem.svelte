@@ -68,12 +68,20 @@
     return parts;
   }
 
-  const counterpart = $derived(
-    thread?.counterpartLabel ||
+  const counterpart = $derived.by(() => {
+    const name = thread?.counterpartLabel ||
       (isDraft || itemMessage?.folder === 'sent'
         ? itemMessage?.toName || itemMessage?.toEmail || t('mail.recipientMissing')
-        : itemMessage?.fromName || itemMessage?.fromEmail || t('mail.unknownSender'))
-  );
+        : itemMessage?.fromName || itemMessage?.fromEmail || t('mail.unknownSender'));
+    return thread && thread.counterpartyCount > 1
+      ? translateCount(i18n.locale, 'mail.threadCounterpart', thread.counterpartyCount - 1, { name })
+      : name;
+  });
+  const counterpartEmail = $derived(thread?.counterpartEmail ||
+    (isDraft || itemMessage?.folder === 'sent' ? itemMessage?.toEmail : itemMessage?.fromEmail) || '');
+  const accessibleCounterpart = $derived(counterpartEmail && counterpart !== counterpartEmail
+    ? `${counterpart} <${counterpartEmail}>`
+    : counterpart);
   const starredSourceLabel = $derived(itemMessage?.folder === 'drafts' ? t('shell.drafts')
     : itemMessage?.folder === 'sent' ? t('shell.sent')
     : itemMessage?.archivedAt ? t('shell.archive') : t('shell.inbox'));
@@ -107,7 +115,7 @@
     selected ? t('mail.listSelected') : '',
     isUnread ? t('mail.unread') : '',
     isStarred ? t('mail.starred') : '',
-    counterpart,
+    accessibleCounterpart,
     itemSubject,
     itemCount > 1 ? translateCount(i18n.locale, 'mail.threadCount', itemCount) : '',
     activeSection === 'starred' || activeSection === 'label' ? starredSourceLabel : '',

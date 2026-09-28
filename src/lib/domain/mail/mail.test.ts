@@ -53,6 +53,37 @@ describe('mail thread domain', () => {
   test('falls back to normalized subject and counterparty for legacy mail', () => {
     expect(getMailThreadKey(message({ subject: ' Re:  Hello ' }))).toBe('hello::ada@example.com');
   });
+
+  test('keeps a compact sender label and the full address for accessible list names', () => {
+    const thread = buildMailThreads({
+      inbox: [message({ id: 'inbox', fromName: ' Ada Lovelace ', fromEmail: 'ada@example.com' })],
+      sent: [], drafts: []
+    }, 'inbox')[0];
+    expect(thread).toMatchObject({
+      counterpartLabel: 'Ada Lovelace',
+      counterpartEmail: 'ada@example.com',
+      counterpartyCount: 1
+    });
+    const unnamed = buildMailThreads({
+      inbox: [message({ id: 'unnamed', fromName: ' ', fromEmail: 'unknown@example.com' })],
+      sent: [], drafts: []
+    }, 'inbox')[0];
+    expect(unnamed.counterpartLabel).toBe('unknown@example.com');
+  });
+
+  test('counts distinct correspondents in one RFC thread without embedding locale-specific prose', () => {
+    const root = message({ id: 'root', messageId: '<root@example.com>' });
+    const reply = message({
+      id: 'reply', fromName: 'Grace', fromEmail: 'grace@example.com',
+      messageId: '<reply@example.com>', references: '<root@example.com>',
+      sentAt: '2026-08-13T00:01:00.000Z'
+    });
+    expect(buildMailThreads({ inbox: [root, reply], sent: [], drafts: [] }, 'inbox')[0]).toMatchObject({
+      counterpartLabel: 'Grace',
+      counterpartEmail: 'grace@example.com',
+      counterpartyCount: 2
+    });
+  });
 });
 
 describe('compose domain', () => {

@@ -737,6 +737,8 @@ test('announces list selection, star, attachment and delivery states', async ({ 
   await login(page);
   const inboxItem = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   const inboxButton = inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u }).first();
+  await expect(inboxItem.getByText('E2E Sender', { exact: true })).toBeVisible();
+  await expect(inboxButton).toHaveAttribute('aria-label', /E2E Sender <sender@flaremail\.test>.*E2E Inbox Welcome/u);
   await expect(inboxButton).toHaveAttribute('aria-label', /未读.*E2E Inbox Welcome/u);
   await inboxItem.getByRole('button', { name: '加星', exact: true }).click();
   await expect(inboxButton).toHaveAttribute('aria-label', /已加星标.*E2E Inbox Welcome/u);

@@ -205,6 +205,8 @@ export interface MailThread {
   id: string;
   subject: string;
   counterpartLabel: string;
+  counterpartEmail: string;
+  counterpartyCount: number;
   latestMessage: MailMessage;
   sectionLatestMessage: MailMessage;
   messages: MailMessage[];

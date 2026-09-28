@@ -50,9 +50,8 @@ function getCounterpartyEmail(message: MailMessage): string {
 }
 
 function getCounterpartyLabel(message: MailMessage): string {
-  return message.folder === 'inbox'
-    ? `${message.fromName} <${message.fromEmail}>`
-    : `${message.toName} <${message.toEmail}>`;
+  const name = message.folder === 'inbox' ? message.fromName : message.toName;
+  return name.trim() || getCounterpartyEmail(message).trim();
 }
 
 function getRfcIds(message: MailMessage): string[] {
@@ -164,24 +163,20 @@ export function buildMailThreads(
       const sectionMessages = messages.filter((message) => message.folder === section);
       if (!sectionMessages.length) return null;
 
-      const counterparties = [
-        ...messages
-          .reduce((accumulator, message) => {
-            accumulator.set(normalizeEmail(getCounterpartyEmail(message)), getCounterpartyLabel(message));
-            return accumulator;
-          }, new Map<string, string>())
-          .values()
-      ];
+      const counterparties = messages.reduce((accumulator, message) => {
+        const email = normalizeEmail(getCounterpartyEmail(message));
+        if (!accumulator.has(email)) accumulator.set(email, getCounterpartyLabel(message));
+        return accumulator;
+      }, new Map<string, string>());
       const latestMessage = messages[0];
       const oldestFirst = [...messages].sort(compareOldestFirst);
 
       return {
         id,
         subject: latestMessage.subject,
-        counterpartLabel:
-          counterparties.length === 1
-            ? counterparties[0]
-            : `${counterparties[0]} 等 ${counterparties.length} 位联系人`,
+        counterpartLabel: counterparties.values().next().value ?? '',
+        counterpartEmail: counterparties.keys().next().value ?? '',
+        counterpartyCount: counterparties.size,
         latestMessage,
         sectionLatestMessage: sectionMessages[0],
         messages: oldestFirst,

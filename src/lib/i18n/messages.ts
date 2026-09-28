@@ -180,6 +180,9 @@ const zhCN = {
   'mail.threadCount': '{count} 封邮件',
   'mail.threadCount.one': '{count} 封邮件',
   'mail.threadCount.other': '{count} 封邮件',
+  'mail.threadCounterpart': '{name} 和另外 {count} 位联系人',
+  'mail.threadCounterpart.one': '{name} 和另外 {count} 位联系人',
+  'mail.threadCounterpart.other': '{name} 和另外 {count} 位联系人',
   'mail.recipientMissing': '收件人未填写',
   'mail.unknownSender': '未知发件人',
   'mail.draft': '草稿',
@@ -774,6 +777,7 @@ export type PluralMessageKey =
   | 'mail.viewDeliveryEvents'
   | 'mail.selectedCount'
   | 'mail.threadCount'
+  | 'mail.threadCounterpart'
   | 'mail.attachmentSummary'
   | 'mail.filteredHeaders'
   | 'compose.forwardAttachmentMessage'
@@ -961,6 +965,9 @@ const en = {
   'mail.threadCount': '{count} messages',
   'mail.threadCount.one': '{count} message',
   'mail.threadCount.other': '{count} messages',
+  'mail.threadCounterpart': '{name} and {count} others',
+  'mail.threadCounterpart.one': '{name} and {count} other',
+  'mail.threadCounterpart.other': '{name} and {count} others',
   'mail.recipientMissing': 'No recipient',
   'mail.unknownSender': 'Unknown sender',
   'mail.draft': 'Draft',
