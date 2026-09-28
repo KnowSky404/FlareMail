@@ -572,9 +572,17 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
   const composeDialog = page.getByRole('dialog', { name: '新邮件' });
   await expect(composeDialog).toBeVisible();
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
+  await page.getByLabel('收件人').fill('html-sen');
+  await expect(composeDialog.getByRole('listbox', { name: '最近联系人建议' }).getByRole('option', { name: /html-sender@flaremail\.test/u })).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  await page.getByLabel('收件人').press('Enter');
+  await expect(composeDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
+  await composeDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' }).click();
   await page.getByLabel('收件人').fill('draft-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill('E2E autosaved draft');
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('This draft must survive a page refresh.');
+  await composeDialog.getByRole('button', { name: 'HTML 写信选项' }).click();
   await composeDialog.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>This <strong>HTML</strong> draft must survive a page refresh.</p>');
   await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
   await page.reload();
@@ -769,6 +777,7 @@ test('sends through the local fake provider and applies a signed delivered webho
   await page.getByLabel('收件人').fill('send-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('This message is sent by the local fake provider.');
+  await page.getByRole('dialog', { name: '新邮件' }).getByRole('button', { name: 'HTML 写信选项' }).click();
   await page.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>This <em>HTML</em> message is sent by the local fake provider.</p>');
   await page.getByRole('button', { name: '发送邮件' }).click();
   const detail = page.getByRole('region', { name: '邮件详情' });

@@ -6,12 +6,13 @@
     type MailAddress,
     type MailAddressInput
   } from '$lib/domain/mail';
-  import { Paperclip, RefreshCw, Trash2, Upload, X } from '@lucide/svelte';
-  import { Button, Dialog, TextArea, TextField } from '$lib/components/ui';
+  import { Code2, Paperclip, RefreshCw, Trash2, Upload, X } from '@lucide/svelte';
+  import { Button, Dialog, IconButton, TextArea, TextField } from '$lib/components/ui';
   import type { ComposeInput, ComposeMode, MailMessage, UserProfile, WorkspaceSnapshot } from '$lib/domain/mail';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
   import { MAIL_HEALTH_MAX_AGE_MS } from '$lib/domain/mail/health';
   import { withComposePersistence } from '$lib/client/compose-controller';
+  import { matchRecipientSuggestions } from '$lib/client/recipient-suggestions';
   import {
     deleteDraftAttachment,
     renameDraftAttachment,
@@ -65,6 +66,7 @@
     mode = 'new',
     profile,
     senderAddresses = [],
+    recipientSuggestions = [],
     authExpired = false,
     pending = false,
     autosaveStatus = 'idle',
@@ -86,6 +88,7 @@
     mode?: ComposeMode;
     profile: UserProfile;
     senderAddresses?: WorkspaceSnapshot['mailIdentityOptions']['addresses'];
+    recipientSuggestions?: MailAddress[];
     authExpired?: boolean;
     pending?: boolean;
     autosaveStatus?: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -124,8 +127,11 @@
   let attempted = $state(false);
   let showCc = $state(false);
   let showBcc = $state(false);
-  let showHtml = $state(true);
+  let showHtml = $state(false);
   let recipientDraft = $state({ to: '', cc: '', bcc: '' });
+  let toInput = $state<HTMLInputElement>();
+  let toSuggestionsOpen = $state(false);
+  let activeToSuggestion = $state(0);
   let recipientCommitTimers: Partial<Record<'to' | 'cc' | 'bcc', ReturnType<typeof setTimeout>>> = {};
   let showCloseConfirm = $state(false);
   let fileInput = $state<HTMLInputElement>();
@@ -153,7 +159,10 @@
     attempted = false;
     showCc = Array.isArray(next.cc) && next.cc.length > 0;
     showBcc = Array.isArray(next.bcc) && next.bcc.length > 0;
+    showHtml = Boolean(next.html?.trim());
     recipientDraft = { to: '', cc: '', bcc: '' };
+    toSuggestionsOpen = false;
+    activeToSuggestion = 0;
     attachmentTasks = [];
     attachmentMutationError = '';
     renameValues = Object.fromEntries((next.attachments ?? []).flatMap((attachment) => attachment.id ? [[attachment.id, attachment.filename]] : []));
@@ -211,6 +220,11 @@
     }
     return next;
   });
+  const toSuggestions = $derived(matchRecipientSuggestions(
+    recipientSuggestions,
+    recipientDraft.to,
+    parseAddressList(input.to ?? input.toEmail ?? '')
+  ));
   const validation = $derived(validateComposeInput(inputWithRecipientDrafts));
   const hasPendingRecipient = $derived(Object.values(recipientDraft).some((value) => value.trim().length > 0));
   const isEmpty = $derived(!(Array.isArray(inputWithRecipientDrafts.to) ? inputWithRecipientDrafts.to.length : parseAddressList(inputWithRecipientDrafts.to ?? inputWithRecipientDrafts.toEmail ?? '').length) && !(Array.isArray(inputWithRecipientDrafts.cc) ? inputWithRecipientDrafts.cc.length : parseAddressList(inputWithRecipientDrafts.cc ?? '').length) && !(Array.isArray(inputWithRecipientDrafts.bcc) ? inputWithRecipientDrafts.bcc.length : parseAddressList(inputWithRecipientDrafts.bcc ?? '').length) && !inputWithRecipientDrafts.subject.trim() && !inputWithRecipientDrafts.body.trim() && !inputWithRecipientDrafts.html?.trim() && !(inputWithRecipientDrafts.attachments?.length) && attachmentTasks.length === 0);
@@ -456,6 +470,10 @@
 
   function updateRecipientDraft(field: 'to' | 'cc' | 'bcc', value: string) {
     recipientDraft = { ...recipientDraft, [field]: value };
+    if (field === 'to') {
+      toSuggestionsOpen = true;
+      activeToSuggestion = 0;
+    }
     clearRecipientCommitTimer(field);
     const entries = inspectAddressList(value);
     if (!value.trim() || entries.length === 0 || entries.some((entry) => !entry.address)) return;
@@ -466,6 +484,7 @@
 
   function commitRecipient(field: 'to' | 'cc' | 'bcc') {
     clearRecipientCommitTimer(field);
+    if (field === 'to') toSuggestionsOpen = false;
     const value = recipientDraft[field].trim();
     if (!value) return;
     const entries = inspectAddressList(value);
@@ -477,6 +496,40 @@
     const current = Array.isArray(input[field]) ? input[field] as MailAddress[] : parseAddressList(input[field] as string | undefined);
     updateInput(field, [...current, ...nextAddresses]);
     recipientDraft = { ...recipientDraft, [field]: '' };
+  }
+
+  function chooseToSuggestion(address: MailAddress) {
+    clearRecipientCommitTimer('to');
+    const current = parseAddressList(input.to ?? input.toEmail ?? '');
+    if (!current.some((entry) => entry.email === address.email)) updateInput('to', [...current, address]);
+    recipientDraft = { ...recipientDraft, to: '' };
+    toSuggestionsOpen = false;
+    toInput?.focus();
+  }
+
+  function handleToKeydown(event: KeyboardEvent) {
+    if (toSuggestionsOpen && toSuggestions.length > 0) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        activeToSuggestion = (activeToSuggestion + (event.key === 'ArrowDown' ? 1 : -1) + toSuggestions.length) % toSuggestions.length;
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        chooseToSuggestion(toSuggestions[activeToSuggestion] ?? toSuggestions[0]);
+        return;
+      }
+    }
+    if (event.key === 'Escape' && toSuggestionsOpen) {
+      event.preventDefault();
+      event.stopPropagation();
+      toSuggestionsOpen = false;
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') {
+      event.preventDefault();
+      commitRecipient('to');
+    }
   }
 
   function pasteRecipients(field: 'to' | 'cc' | 'bcc', event: ClipboardEvent) {
@@ -583,11 +636,20 @@
 
       <div class="grid gap-2">
         <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-to">{t('mail.to')}</label>
-        <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
-          {#each parseAddressList(input.to ?? input.toEmail ?? '') as address (address.email)}
-            <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
-          {/each}
-          <input id="compose-to" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('to'); } }} onblur={() => commitRecipient('to')} />
+        <div class="relative">
+          <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
+            {#each parseAddressList(input.to ?? input.toEmail ?? '') as address (address.email)}
+              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
+            {/each}
+            <input bind:this={toInput} id="compose-to" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" role="combobox" aria-autocomplete="list" aria-expanded={toSuggestionsOpen && toSuggestions.length > 0} aria-controls="compose-to-suggestions" aria-activedescendant={toSuggestionsOpen && toSuggestions.length > 0 ? `compose-to-suggestion-${activeToSuggestion}` : undefined} placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onfocus={() => (toSuggestionsOpen = true)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={handleToKeydown} onblur={() => commitRecipient('to')} />
+          </div>
+          {#if toSuggestionsOpen && toSuggestions.length > 0}
+            <ul id="compose-to-suggestions" role="listbox" aria-label={t('compose.recipientSuggestions')} class="absolute left-0 right-0 top-full z-20 mt-1 max-h-52 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] p-1 shadow-[var(--fm-shadow-overlay)]">
+              {#each toSuggestions as address, index (address.email)}
+                <li role="presentation"><button id={`compose-to-suggestion-${index}`} role="option" aria-selected={activeToSuggestion === index} tabindex="-1" class:active={activeToSuggestion === index} class="recipient-suggestion" type="button" onpointerdown={(event) => event.preventDefault()} onclick={() => chooseToSuggestion(address)}><span class="truncate">{address.name || address.email}</span>{#if address.name}<small class="truncate">{address.email}</small>{/if}</button></li>
+              {/each}
+            </ul>
+          {/if}
         </div>
         {#if fieldError('to') || fieldError('toEmail')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('to') ?? fieldError('toEmail')}</p>{/if}
       </div>
@@ -652,7 +714,7 @@
       oninput={(event) => updateInput('body', event.currentTarget.value)}
     />
 
-    <details class="compose-advanced" bind:open={showHtml}>
+    <details id="compose-html-options" class="compose-advanced" bind:open={showHtml}>
       <summary class="fm-touch-target flex cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2 text-xs font-medium text-[var(--fm-text-secondary)]">
         <span>{t('compose.htmlLabel')}</span>
         <span class="text-[11px] text-[var(--fm-text-muted)]">{t('compose.htmlHint')}</span>
@@ -759,6 +821,8 @@
         <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> {t('compose.send')}</span>
       </div>
       <div class="flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
+        <IconButton ariaLabel={t('compose.attachFile')} title={t('compose.attachFile')} disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
+        <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} ariaPressed={showHtml} ariaControls="compose-html-options" onclick={() => (showHtml = !showHtml)}><Code2 class="size-4" aria-hidden="true" /></IconButton>
         <Button variant="outline" disabled={pending} onclick={requestClose}>{t('common.cancel')}</Button>
         <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(validation.value); }}>{t('compose.sendMail')}</Button>
       </div>
@@ -815,6 +879,24 @@
     color: var(--fm-danger);
     background: var(--fm-danger-soft);
   }
+
+  .recipient-suggestion {
+    display: flex;
+    width: 100%;
+    min-height: 40px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--fm-text);
+    background: transparent;
+    text-align: left;
+  }
+
+  .recipient-suggestion small { color: var(--fm-text-muted); }
+  .recipient-suggestion:hover, .recipient-suggestion.active { background: var(--fm-surface-selected); }
 
   @media (max-width: 420px) {
     .compose-advanced > summary {

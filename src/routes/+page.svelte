@@ -41,6 +41,7 @@
     withComposePersistence
   } from '$lib/client/compose-controller';
   import { DetailCacheController } from '$lib/client/detail-cache-controller';
+  import { deriveRecipientSuggestions } from '$lib/client/recipient-suggestions';
   import {
     MailboxController,
     createEmptyWorkspaceViewState,
@@ -405,6 +406,10 @@
   });
 
   const unreadCount = $derived(metrics.unreadCount);
+  const recipientSuggestions = $derived(deriveRecipientSuggestions(
+    [...mailbox.inbox, ...mailbox.sent],
+    mailIdentityOptions.addresses.map((address) => address.email)
+  ));
   const serviceDegraded = $derived(
     runtimeOperationError || metrics.delayedCount + metrics.failedCount + metrics.bouncedCount + metrics.complainedCount + metrics.staleDeliveryCount > 0
   );
@@ -2213,7 +2218,6 @@
           {pending}
           onCompose={() => {
             openCompose('new');
-            notify(t('notify.composeOpened'));
           }}
           onSelectSection={setSection}
         />
@@ -2231,7 +2235,6 @@
             sentCount={metrics.sentCount}
             onCompose={() => {
               openCompose('new');
-              notify(t('notify.composeOpened'));
             }}
             onSelectSection={setSection}
             onToggleCollapsed={toggleSidebar}
@@ -2493,6 +2496,7 @@
         expectedUpdatedAt={composeLiveInput?.expectedUpdatedAt}
         bodyRevision={composeLiveInput ? composeLiveInput.bodyRevision ?? null : undefined}
         initialInput={composeInitialInput}
+        {recipientSuggestions}
         mode={composeMode}
         pending={composeBusy}
         {authExpired}
@@ -2577,6 +2581,7 @@
 
   <ToastRegion
     messages={toastMessages}
+    aboveActions={composeOpen}
     onAction={(id) => void toastController.invoke(id)}
     onDismiss={(id) => toastController.dismiss(id)}
   />
