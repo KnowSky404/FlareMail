@@ -206,7 +206,9 @@ test('sends successfully and exposes a typed failure without claiming success', 
   await page.getByLabel('收件人').fill('webkit-send@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill(successSubject);
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('WebKit fake-provider success.');
-  await page.getByRole('dialog', { name: '新邮件' }).getByRole('button', { name: 'HTML 写信选项' }).click();
+  const htmlOptions = page.getByRole('dialog', { name: '新邮件' }).getByRole('button', { name: 'HTML 写信选项' });
+  await htmlOptions.focus();
+  await htmlOptions.press('Enter');
   await page.getByLabel('HTML 源码（可选）', { exact: true }).fill('<p>WebKit <strong>HTML</strong> fake-provider success.</p>');
   const successSend = page.getByRole('button', { name: '发送邮件' });
   await expect(successSend).toBeVisible();
