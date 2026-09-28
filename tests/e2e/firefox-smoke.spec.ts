@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import AxeBuilder from '@axe-core/playwright';
 import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, test } from './fixtures';
 
 test.describe.configure({ mode: 'serial' });
@@ -172,6 +173,36 @@ test('uploads and downloads a near-limit attachment without mobile layout overfl
   expect(bytes.length).toBe(size);
   expect(bytes[0]).toBe(0x41);
   expect(bytes[size - 1]).toBe(0x41);
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('keeps mobile compose, domains, and settings accessible in light and dark themes', async ({ page, consoleErrors }) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  const composeButton = page.locator('.mobile-bar').getByRole('button', { name: '写邮件' });
+  await composeButton.click();
+  await expect(page.getByRole('dialog', { name: '新邮件' })).toBeVisible();
+
+  const scan = async () => (await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze()).violations;
+  expect(await scan()).toEqual([]);
+  await page.getByRole('dialog', { name: '新邮件' }).getByRole('button', { name: '关闭' }).click();
+  await expect(page.getByRole('dialog', { name: '新邮件' })).toBeHidden();
+  await expect(composeButton).toBeFocused();
+
+  await page.goto('/?folder=settings&view=domains');
+  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  expect(await scan()).toEqual([]);
+  await page.goto('/?folder=settings');
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  expect(await scan()).toEqual([]);
+  await page.evaluate(() => localStorage.setItem('flaremail-theme', 'dark'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await scan()).toEqual([]);
   await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors);
 });
