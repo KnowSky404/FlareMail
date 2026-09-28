@@ -1678,6 +1678,7 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
   await page.getByRole('textbox', { name: '主题', exact: true }).fill('E2E autosaved draft');
   await page.getByRole('textbox', { name: '正文', exact: true }).fill('This draft must survive a page refresh.');
   if (isPhoneViewport) {
+    await expect(page.getByRole('textbox', { name: '正文', exact: true })).toHaveCSS('box-shadow', /inset/u);
     await expect(page.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible({ timeout: 8_000 });
     await composeDialog.locator('.compose-window-body').evaluate((element) => { element.scrollTop = 0; });
     const dismissToast = page.getByRole('button', { name: '关闭通知' }).first();

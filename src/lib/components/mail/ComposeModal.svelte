@@ -981,7 +981,8 @@
     .compose-subject :global(input) { min-width: 0; border: 0; padding: 0 var(--space-1); background: transparent; }
     .compose-subject :global(label > span:last-child:not(:first-child)) { grid-column: 2; }
     .compose-body { flex: 1; min-height: max(18rem, calc(100dvh - 26rem)); padding: var(--space-3); }
-    .compose-body :global(textarea) { min-height: max(15rem, calc(100dvh - 30rem)); border: 0; padding: var(--space-2) 0; resize: vertical; }
+    .compose-body :global(textarea) { min-height: max(15rem, calc(100dvh - 30rem)); border: 0; padding: var(--space-2); resize: none; }
+    .compose-body :global(textarea:not([aria-invalid="true"]):focus-visible) { box-shadow: inset 2px 0 var(--fm-focus); }
     .compose-body :global(label) { color: var(--fm-text-secondary); font-size: 0.875rem; font-weight: 400; }
     .compose-attachment-item { display: grid; grid-template-columns: 1rem minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); }
     .compose-attachment-name { grid-column: 2; width: 100%; }
