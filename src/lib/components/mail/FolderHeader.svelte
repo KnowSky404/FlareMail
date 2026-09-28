@@ -113,7 +113,7 @@
     <div class="folder-search mt-3 grid gap-2">
       {#if showMobileSearch}
         <div class="folder-search-field">
-          <MailSearchBar {query} disabled={loading} onQueryChange={onQueryChange} />
+          <MailSearchBar {query} onQueryChange={onQueryChange} />
         </div>
       {/if}
       {#if activeSection !== 'trash' && identityOptions.domains.length > 0}

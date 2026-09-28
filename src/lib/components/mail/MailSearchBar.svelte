@@ -26,6 +26,11 @@
     window.addEventListener('flaremail:focus-search', focusSearch);
     return () => window.removeEventListener('flaremail:focus-search', focusSearch);
   });
+
+  function clearSearch() {
+    if (!disabled) searchInput?.focus({ preventScroll: true });
+    onQueryChange?.('');
+  }
 </script>
 
 <div class="mail-search-root relative min-w-0 flex-1">
@@ -54,7 +59,7 @@
       size="sm"
       containerClass="!absolute right-1 top-1/2 -translate-y-1/2"
       class="fm-search-clear size-11 sm:size-7"
-      onclick={() => onQueryChange?.('')}
+      onclick={clearSearch}
     >
       <X class="size-4" aria-hidden="true" />
     </IconButton>

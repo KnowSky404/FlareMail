@@ -51,6 +51,21 @@ test('navigates display preference radio groups by keyboard in Firefox', async (
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('returns search focus after clearing by pointer and keyboard in Firefox', async ({ page, consoleErrors }) => {
+  await login(page);
+  const search = page.getByLabel('搜索邮件');
+  await search.fill('E2E');
+  await page.getByRole('button', { name: '清除搜索' }).click();
+  await expect(search).toBeFocused();
+  await search.fill('E2E Inbox');
+  const clear = page.getByRole('button', { name: '清除搜索' });
+  await clear.focus();
+  await clear.press('Enter');
+  await expect(search).toBeFocused();
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-search-clear-firefox.png'), fullPage: false });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('keeps the floating compose footer visible in a short Firefox viewport', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();

@@ -70,14 +70,29 @@ test('shows icon guidance on pointer and keyboard focus', async ({ page, console
   await star.hover();
   await expect(page.getByRole('tooltip', { name: '加星' })).toBeVisible();
   const search = page.getByLabel('搜索邮件');
+  const searched = page.waitForResponse((response) => response.url().includes('/api/workspace/mailbox?')
+    && new URL(response.url()).searchParams.get('q') === 'E2E');
   await search.fill('E2E');
+  await searched;
   const clear = page.getByRole('button', { name: '清除搜索' });
   const searchBounds = await search.boundingBox();
   const clearBounds = await clear.boundingBox();
   expect(clearBounds!.x).toBeGreaterThan(searchBounds!.x + searchBounds!.width / 2);
   expect(clearBounds!.x + clearBounds!.width).toBeLessThanOrEqual(searchBounds!.x + searchBounds!.width);
+  const cleared = page.waitForResponse((response) => response.url().includes('/api/workspace/mailbox?')
+    && !new URL(response.url()).searchParams.has('q'));
   await clear.click();
+  await cleared;
   await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
+  await expect(page.locator('.mail-list-panel [aria-busy="true"]')).toHaveCount(0);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-search-clear-desktop.png'), fullPage: false });
+  await search.fill('E2E Inbox');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  const keyboardClear = page.getByRole('button', { name: '清除搜索' });
+  await keyboardClear.focus();
+  await keyboardClear.press('Enter');
+  await expect(search).toBeFocused();
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -85,14 +100,27 @@ test('keeps the mobile search clear icon inside its field', async ({ page, conso
   test.skip(testInfo.project.name !== 'mobile', 'Mobile search uses the folder header field.');
   await login(page);
   const search = page.getByLabel('搜索邮件');
+  const searched = page.waitForResponse((response) => response.url().includes('/api/workspace/mailbox?')
+    && new URL(response.url()).searchParams.get('q') === 'E2E');
   await search.fill('E2E');
+  await searched;
+  await expect(search).toBeFocused();
   const clear = page.getByRole('button', { name: '清除搜索' });
   const searchBounds = await search.boundingBox();
   const clearBounds = await clear.boundingBox();
   expect(clearBounds!.x).toBeGreaterThan(searchBounds!.x + searchBounds!.width / 2);
   expect(clearBounds!.x + clearBounds!.width).toBeLessThanOrEqual(searchBounds!.x + searchBounds!.width);
+  const cleared = page.waitForResponse((response) => response.url().includes('/api/workspace/mailbox?')
+    && !new URL(response.url()).searchParams.has('q'));
   await clear.click();
+  await cleared;
   await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
+  await expect(page.locator('.mail-list-panel [aria-busy="true"]')).toHaveCount(0);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-search-clear-mobile.png'), fullPage: false });
+  await search.fill('E2E Inbox');
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
+  await page.getByRole('button', { name: '清除搜索' }).click();
   await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).click();
   const back = page.getByRole('button', { name: '返回邮件列表' });
   await back.focus();

@@ -104,6 +104,19 @@ test('keeps the floating compose footer visible in a short desktop WebKit viewpo
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('returns mobile search focus after clearing in WebKit', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'webkit-iphone', 'The iPhone layout exposes search in the folder header.');
+  await login(page);
+  const search = page.getByLabel('搜索邮件');
+  await search.fill('E2E');
+  await clickHeadlessControl(page.getByRole('button', { name: '清除搜索' }));
+  await expect(search).toHaveValue('');
+  await expect(search).toBeFocused();
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-search-clear-webkit-iphone.png'), fullPage: false });
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('navigates display preference radio groups by keyboard in desktop WebKit', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'webkit-desktop', 'The preference panel is in the desktop topbar.');
   await login(page);
