@@ -5,6 +5,8 @@
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
+  import Globe2 from '@lucide/svelte/icons/globe-2';
+  import AtSign from '@lucide/svelte/icons/at-sign';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
@@ -14,8 +16,9 @@
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
+  type NavigationId = AppSection | 'domains' | 'addresses';
   type NavigationItem = {
-    id: AppSection;
+    id: NavigationId;
     label: string;
     count: number;
     icon: LucideIcon;
@@ -27,10 +30,12 @@
     sentCount,
     draftCount,
     trashCount,
+    managementView = 'settings',
     collapsed = false,
     pending = false,
     onCompose,
     onSelectSection,
+    onSelectManagementView,
     onToggleCollapsed
   }: {
     activeSection: AppSection;
@@ -38,10 +43,12 @@
     sentCount: number;
     draftCount: number;
     trashCount: number;
+    managementView?: 'settings' | 'domains' | 'addresses';
     collapsed?: boolean;
     pending?: boolean;
     onCompose: () => void;
     onSelectSection: (section: AppSection) => void;
+    onSelectManagementView?: (view: 'domains' | 'addresses') => void;
     onToggleCollapsed?: () => void;
   } = $props();
 
@@ -50,12 +57,20 @@
 
   const navigation = $derived<NavigationItem[]>([
     { id: 'inbox', label: t('shell.inbox'), count: inboxCount, icon: Inbox },
-    { id: 'sent', label: t('shell.sent'), count: sentCount, icon: Send },
     { id: 'drafts', label: t('shell.drafts'), count: draftCount, icon: FileText },
+    { id: 'sent', label: t('shell.sent'), count: sentCount, icon: Send },
     { id: 'archive', label: t('shell.archive'), count: 0, icon: Archive },
     { id: 'trash', label: t('shell.trash'), count: trashCount, icon: Trash2 },
+    { id: 'domains', label: t('shell.domains'), count: 0, icon: Globe2 },
+    { id: 'addresses', label: t('shell.addresses'), count: 0, icon: AtSign },
     { id: 'profile', label: t('common.settings'), count: 0, icon: Settings }
   ]);
+
+  function isActive(id: NavigationId) {
+    return id === 'domains' || id === 'addresses'
+      ? activeSection === 'profile' && managementView === id
+      : activeSection === id && (id !== 'profile' || managementView === 'settings');
+  }
 </script>
 
 <aside id="fm-main-sidebar" class:collapsed class="sidebar" aria-label={t('shell.mailNavigation')}>
@@ -75,12 +90,12 @@
       {@const Icon = item.icon}
       <button
         type="button"
-        class:active={activeSection === item.id}
-        aria-current={activeSection === item.id ? 'page' : undefined}
+        class:active={isActive(item.id)}
+        aria-current={isActive(item.id) ? 'page' : undefined}
         aria-label={item.label}
         title={item.label}
         class="fm-touch-target"
-        onclick={() => onSelectSection(item.id)}
+        onclick={() => item.id === 'domains' || item.id === 'addresses' ? onSelectManagementView?.(item.id) : onSelectSection(item.id)}
       >
         <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
         <span class="label">{item.label}</span>

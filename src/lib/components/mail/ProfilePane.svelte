@@ -8,7 +8,6 @@
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
-  import MailIdentityManager from '$lib/components/mail/MailIdentityManager.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
   import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
@@ -40,7 +39,8 @@
     statusError = false,
     pending = false,
     onSave,
-    onIdentitiesChanged
+    onOpenDomains,
+    onOpenAddresses
   }: {
     profile: UserProfile;
     diagnostics?: RuntimeDiagnostics | null;
@@ -50,7 +50,8 @@
     statusError?: boolean;
     pending?: boolean;
     onSave: (next: UserProfile) => void | Promise<void>;
-    onIdentitiesChanged?: (options: import('$lib/domain/mail').WorkspaceSnapshot['mailIdentityOptions']) => void;
+    onOpenDomains?: () => void;
+    onOpenAddresses?: () => void;
   } = $props();
 
   let nextProfile = $state<UserProfile>(
@@ -220,7 +221,12 @@
       {/if}
     </div>
   </form>
-  <MailIdentityManager onOptionsChange={onIdentitiesChanged} />
+  <Panel title={t('settings.mailIdentities')} description={t('settings.mailIdentitiesDescription')}>
+    <div class="flex flex-wrap gap-2">
+      <Button variant="secondary" onclick={onOpenDomains}>{t('shell.domains')}</Button>
+      <Button variant="secondary" onclick={onOpenAddresses}>{t('shell.addresses')}</Button>
+    </div>
+  </Panel>
   <TelegramNotificationPanel />
 </div>
 

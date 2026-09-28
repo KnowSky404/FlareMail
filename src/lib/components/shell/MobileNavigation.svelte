@@ -6,6 +6,8 @@
   import PenLine from '@lucide/svelte/icons/pen-line';
   import Send from '@lucide/svelte/icons/send';
   import Settings from '@lucide/svelte/icons/settings';
+  import Globe2 from '@lucide/svelte/icons/globe-2';
+  import AtSign from '@lucide/svelte/icons/at-sign';
   import Trash2 from '@lucide/svelte/icons/trash-2';
   import { Drawer } from '$lib/components/ui';
   import type { MailboxSection } from '$lib/domain/mail';
@@ -21,17 +23,21 @@
     inboxCount,
     draftCount,
     trashCount,
+    managementView = 'settings',
     pending = false,
     onCompose,
-    onSelectSection
+    onSelectSection,
+    onSelectManagementView
   }: {
     activeSection: AppSection;
     inboxCount: number;
     draftCount: number;
     trashCount: number;
+    managementView?: 'settings' | 'domains' | 'addresses';
     pending?: boolean;
     onCompose: () => void;
     onSelectSection: (section: AppSection) => void;
+    onSelectManagementView?: (view: 'domains' | 'addresses') => void;
   } = $props();
 
   let open = $state(false);
@@ -44,7 +50,7 @@
     drafts: t('shell.drafts'),
     archive: t('shell.archive'),
     trash: t('shell.trash'),
-    profile: t('common.settings')
+    profile: managementView === 'domains' ? t('shell.domains') : managementView === 'addresses' ? t('shell.addresses') : t('common.settings')
   });
 
   const formattedInboxCount = $derived(inboxCount ? formatNumber(inboxCount, i18n.locale) : '');
@@ -53,6 +59,11 @@
 
   function select(section: AppSection) {
     onSelectSection(section);
+    open = false;
+  }
+
+  function selectManagement(view: 'domains' | 'addresses') {
+    onSelectManagementView?.(view);
     open = false;
   }
 </script>
@@ -73,11 +84,11 @@
       <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
         <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span><small>{formattedInboxCount}</small>
       </button>
-      <button class:active={activeSection === 'sent'} type="button" onclick={() => select('sent')}>
-        <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>
-      </button>
       <button class:active={activeSection === 'drafts'} type="button" onclick={() => select('drafts')}>
         <FileText size={19} aria-hidden="true" /><span>{t('shell.drafts')}</span><small>{formattedDraftCount}</small>
+      </button>
+      <button class:active={activeSection === 'sent'} type="button" onclick={() => select('sent')}>
+        <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>
       </button>
       <button class:active={activeSection === 'archive'} type="button" onclick={() => select('archive')}>
         <Archive size={19} aria-hidden="true" /><span>{t('shell.archive')}</span>
@@ -85,7 +96,13 @@
       <button class:active={activeSection === 'trash'} type="button" onclick={() => select('trash')}>
         <Trash2 size={19} aria-hidden="true" /><span>{t('shell.trash')}</span><small>{formattedTrashCount}</small>
       </button>
-      <button class:active={activeSection === 'profile'} type="button" onclick={() => select('profile')}>
+      <button class:active={activeSection === 'profile' && managementView === 'domains'} type="button" onclick={() => selectManagement('domains')}>
+        <Globe2 size={19} aria-hidden="true" /><span>{t('shell.domains')}</span>
+      </button>
+      <button class:active={activeSection === 'profile' && managementView === 'addresses'} type="button" onclick={() => selectManagement('addresses')}>
+        <AtSign size={19} aria-hidden="true" /><span>{t('shell.addresses')}</span>
+      </button>
+      <button class:active={activeSection === 'profile' && managementView === 'settings'} type="button" onclick={() => select('profile')}>
         <Settings size={19} aria-hidden="true" /><span>{t('common.settings')}</span>
       </button>
       <div class="mobile-language"><LanguageSwitcher /></div>

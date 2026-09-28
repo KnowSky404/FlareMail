@@ -11,6 +11,7 @@
   import RuntimeUnavailableView from '$lib/components/mail/RuntimeUnavailableView.svelte';
   import MessageList from '$lib/components/mail/MessageList.svelte';
   import ProfilePane from '$lib/components/mail/ProfilePane.svelte';
+  import MailIdentityManager from '$lib/components/mail/MailIdentityManager.svelte';
   import AppSidebar from '$lib/components/shell/AppSidebar.svelte';
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
@@ -83,7 +84,7 @@
   import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
   import { TrashController } from '$lib/client/trash-controller';
-  import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl } from '$lib/client/workspace-url-controller';
+  import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl, type WorkspaceUrlState } from '$lib/client/workspace-url-controller';
   import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
   import { createWorkspaceSync, type WorkspaceSyncController } from '$lib/client/workspace-sync';
   import { LOCALE_CHANGE_EVENT } from '$lib/client/locale-preferences';
@@ -172,6 +173,8 @@
   let trashError = $state('');
   let emptyTrashConfirmOpen = $state(false);
   let activeSection = $state<AppSection>('inbox');
+  let managementView = $state<WorkspaceUrlState['managementView']>('settings');
+  let createAddressDomainId = $state('');
   let selectedMessageId = $state<string | null>(null);
   let selectedMessageIds = $state<string[]>([]);
   let bulkThreadScope = $state<'selected' | 'filtered' | 'owner'>('selected');
@@ -330,6 +333,8 @@
 
   const urlState = $derived(readWorkspaceUrl(page.url));
   const urlSection = $derived(urlState.section);
+  const urlManagementView = $derived(urlState.managementView);
+  const urlManagementDomainId = $derived(urlState.managementDomainId);
   const urlQuery = $derived(urlState.query);
   const urlFilter = $derived(urlState.filter);
   const urlIdentityFilter = $derived(urlState.identityFilter);
@@ -337,6 +342,8 @@
 
   $effect(() => {
     activeSection = urlSection;
+    managementView = urlManagementView;
+    createAddressDomainId = urlManagementDomainId ?? '';
     searchQuery = urlQuery;
     mailFilter = urlFilter;
     mailIdentityFilter = urlIdentityFilter;
@@ -885,6 +892,8 @@
   function updateWorkspaceUrl(
     updates: {
       section?: AppSection;
+      managementView?: WorkspaceUrlState['managementView'];
+      managementDomainId?: string | null;
       query?: string;
       filter?: MailFilter;
       identityFilter?: MailboxIdentityFilter | null;
@@ -905,6 +914,7 @@
     selectedMessageIds = [];
     bulkThreadScope = 'selected';
     activeSection = section;
+    managementView = 'settings';
     searchQuery = '';
     mailFilter = 'all';
     mobileDetailOpen = false;
@@ -947,6 +957,15 @@
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
     if (authenticated && !authExpired && section === 'drafts') void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
+  }
+
+  function setManagementView(view: 'domains' | 'addresses', domainId = '') {
+    setSection('profile', false);
+    managementView = view;
+    createAddressDomainId = domainId;
+    mailIdentityFilter = null;
+    selectedMessageId = null;
+    updateWorkspaceUrl({ section: 'profile', managementView: view, managementDomainId: domainId || null, query: '', filter: 'all', identityFilter: null, messageId: null });
   }
 
   function clearMailboxRefreshTimer() {
@@ -2212,6 +2231,7 @@
       <div class:mobile-detail-nav-hidden={mobileDetailOpen}>
         <MobileNavigation
           activeSection={activeSection}
+          {managementView}
           draftCount={metrics.draftsCount}
           inboxCount={metrics.inboxCount}
           trashCount={metrics.trashCount}
@@ -2220,6 +2240,7 @@
             openCompose('new');
           }}
           onSelectSection={setSection}
+          onSelectManagementView={setManagementView}
         />
       </div>
 
@@ -2227,6 +2248,7 @@
         <div class="fm-workspace-shell">
           <AppSidebar
             activeSection={activeSection}
+            {managementView}
             collapsed={sidebarCollapsed}
             draftCount={metrics.draftsCount}
             inboxCount={metrics.inboxCount}
@@ -2237,29 +2259,45 @@
               openCompose('new');
             }}
             onSelectSection={setSection}
+            onSelectManagementView={setManagementView}
             onToggleCollapsed={toggleSidebar}
           />
 
           <main class="fm-workspace-main" aria-label={t('shell.mailWorkspace')}>
             {#if activeSection === 'profile'}
               <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
-                <ProfilePane
-                  {metrics}
-                  {pending}
-                  {profile}
-                  {serviceDegraded}
-                  diagnostics={data.runtimeDiagnostics ? {
-                    ...data.runtimeDiagnostics,
-                    senderConfigured: mailIdentityOptions.addresses.some((address) => address.sendReady)
-                  } : null}
-                  status={profileStatus}
-                  statusError={profileStatusError}
-                  onSave={saveProfile}
-                  onIdentitiesChanged={(options) => {
-                    mailIdentityOptions = options;
-                    workspaceSync?.publish({ type: 'mail-identity-options-changed' });
-                  }}
-                />
+                {#if managementView === 'settings'}
+                  <ProfilePane
+                    {metrics}
+                    {pending}
+                    {profile}
+                    {serviceDegraded}
+                    diagnostics={data.runtimeDiagnostics ? {
+                      ...data.runtimeDiagnostics,
+                      senderConfigured: mailIdentityOptions.addresses.some((address) => address.sendReady)
+                    } : null}
+                    status={profileStatus}
+                    statusError={profileStatusError}
+                    onSave={saveProfile}
+                    onOpenDomains={() => setManagementView('domains')}
+                    onOpenAddresses={() => setManagementView('addresses')}
+                  />
+                {:else}
+                  <MailIdentityManager
+                    view={managementView}
+                    initialDomainId={createAddressDomainId}
+                    onCreateAddressForDomain={(domainId) => setManagementView('addresses', domainId)}
+                    onSelectedDomainChange={(domainId) => {
+                      createAddressDomainId = domainId;
+                      updateWorkspaceUrl({ managementDomainId: domainId }, true);
+                    }}
+                    onOptionsChange={(options) => {
+                      const changed = JSON.stringify(mailIdentityOptions) !== JSON.stringify(options);
+                      mailIdentityOptions = options;
+                      if (changed) workspaceSync?.publish({ type: 'mail-identity-options-changed' });
+                    }}
+                  />
+                {/if}
               </div>
             {:else}
               <div

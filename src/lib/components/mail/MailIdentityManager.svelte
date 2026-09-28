@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { AlertTriangle, CheckCircle2, Mail, RefreshCw, RotateCw, ShieldAlert, Trash2 } from '@lucide/svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -78,11 +78,19 @@
   };
 
   let {
+    view = 'addresses',
+    initialDomainId = '',
     onError,
-    onOptionsChange
+    onOptionsChange,
+    onCreateAddressForDomain,
+    onSelectedDomainChange
   }: {
+    view?: 'domains' | 'addresses';
+    initialDomainId?: string;
     onError?: (error: unknown) => void;
     onOptionsChange?: (options: WorkspaceSnapshot['mailIdentityOptions']) => void;
+    onCreateAddressForDomain?: (domainId: string) => void;
+    onSelectedDomainChange?: (domainId: string) => void;
   } = $props();
   const { t } = useLocale();
   let domains = $state<MailDomain[]>([]);
@@ -110,6 +118,16 @@
       grouped.set(address.domain_id, current);
     }
     return grouped;
+  });
+
+  $effect(() => {
+    const requestedDomainId = initialDomainId;
+    if (!requestedDomainId) return;
+    untrack(() => {
+      if (domains.some((domain) => domain.id === requestedDomainId && domain.enabled)) {
+        selectedDomainId = requestedDomainId;
+      }
+    });
   });
 
   async function load() {
@@ -154,7 +172,8 @@
         })
       });
       if (!selectedDomainId || !domains.some((domain) => domain.id === selectedDomainId)) {
-        selectedDomainId = domains.find((domain) => domain.enabled)?.id ?? domains[0]?.id ?? '';
+        selectedDomainId = domains.find((domain) => domain.id === initialDomainId && domain.enabled)?.id
+          ?? domains.find((domain) => domain.enabled)?.id ?? domains[0]?.id ?? '';
       }
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityLoadFailed');
@@ -397,7 +416,7 @@
 
 </script>
 
-<Panel title={t('settings.mailIdentities')} description={t('settings.mailIdentitiesDescription')}>
+<Panel class="mx-auto max-w-[72rem]" title={view === 'domains' ? t('settings.domainDashboard') : t('settings.mailIdentities')} description={view === 'domains' ? t('settings.domainDashboardDescription') : t('settings.mailIdentitiesDescription')}>
   {#if errorMessage}<p class="message error" role="alert">{errorMessage}</p>{/if}
   {#if notice}<p class="message success" role="status" aria-live="polite">{notice}</p>{/if}
 
@@ -407,11 +426,12 @@
     <p class="muted">{t('settings.noMailDomains')}</p>
     <p class="setup-hint">{t('settings.mailDomainSetupHint')} <code>bun run mail:domain:configure</code></p>
   {:else}
+    {#if view === 'addresses'}
     <form class="create-form" onsubmit={createAddress}>
       <div class="form-title"><Mail size={16} aria-hidden="true" /><strong>{t('settings.addMailAddress')}</strong></div>
       <div class="create-grid">
         <label class="field-label" for="mail-identity-domain">{t('settings.mailDomain')}</label>
-        <select id="mail-identity-domain" bind:value={selectedDomainId} disabled={pendingAction === 'create'}>
+        <select id="mail-identity-domain" bind:value={selectedDomainId} disabled={pendingAction === 'create'} onchange={(event) => onSelectedDomainChange?.(event.currentTarget.value)}>
           {#each domains as domain (domain.id)}
             <option value={domain.id} disabled={!domain.enabled}>{domain.domain_name}</option>
           {/each}
@@ -422,6 +442,7 @@
         <Button type="submit" loading={pendingAction === 'create'} disabled={!selectedDomainId || !localPart.trim()}>{t('settings.createMailAddress')}</Button>
       </div>
     </form>
+    {/if}
 
     <div class="domain-list">
       {#each domains as domain (domain.id)}
@@ -433,10 +454,16 @@
               <h3 id={`domain-title-${domain.id}`}>{domain.domain_name}</h3>
               <p>{domain.enabled ? t('settings.enabled') : t('settings.disabled')} · {t('settings.catchAll')}: {catchAllLabel(domain)}</p>
             </div>
-            <Button variant="secondary" size="sm" loading={pendingAction === 'check:' + domain.id} onclick={() => void checkDomain(domain)}>
-              <RefreshCw size={14} aria-hidden="true" /> {t('settings.checkMailDomain')}
-            </Button>
+            <div class="domain-header-actions">
+              {#if view === 'domains'}
+                <Button variant="secondary" size="sm" onclick={() => onCreateAddressForDomain?.(domain.id)}>{t('settings.createAddressForDomain')}</Button>
+                <Button variant="secondary" size="sm" loading={pendingAction === 'check:' + domain.id} onclick={() => void checkDomain(domain)}>
+                  <RefreshCw size={14} aria-hidden="true" /> {t('settings.checkMailDomain')}
+                </Button>
+              {/if}
+            </div>
           </header>
+          {#if view === 'domains'}
           <dl class="domain-status">
             <div>
               <dt>Cloudflare</dt>
@@ -454,6 +481,7 @@
             <p class="warning"><AlertTriangle size={15} aria-hidden="true" /> {t('settings.externalCatchAllRisk')}</p>
           {:else if domain.unknown_recipient_policy === 'collect' && (check?.cloudflare.catchAllTarget ?? domain.catch_all_target) !== 'this_worker'}
             <p class="warning"><ShieldAlert size={15} aria-hidden="true" /> {t('settings.collectRequiresWorkerCatchAll')}</p>
+          {/if}
           {/if}
 
           {#if domainAddresses.length === 0}
@@ -475,6 +503,7 @@
                     <span class="route-state">{statusLabel(route ?? address.routing_state)}</span>
                     {#if address.last_error_code}<span class="safe-error">{t('settings.lastSyncNeedsAttention')}</span>{/if}
                   </div>
+                  {#if view === 'addresses'}
                   <div class="address-actions" aria-label={t('settings.mailAddressActions')}>
                     {#if route === 'importable' && address.lifecycle_status !== 'deleted'}
                       <Button size="sm" variant="secondary" loading={pendingAction === `${address.id}:import`} onclick={() => void runAction(address, 'import')}><CheckCircle2 size={14} aria-hidden="true" /> {t('settings.importRule')}</Button>
@@ -503,6 +532,7 @@
                       <Button size="sm" variant="ghost" ariaLabel={t('settings.deleteAddress')} onclick={() => void openDeletePreview(address)}><Trash2 size={14} aria-hidden="true" /><span class="sr-only">{t('settings.deleteAddress')}</span></Button>
                     {/if}
                   </div>
+                  {/if}
                 </li>
               {/each}
             </ul>
@@ -589,6 +619,7 @@
   .domain-list { display: grid; gap: var(--space-3); margin-top: var(--space-4); }
   .domain-card { min-width: 0; padding: var(--space-4); border: 1px solid var(--fm-border); border-radius: var(--radius-md); }
   .domain-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+  .domain-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
   .domain-heading { min-width: 0; }
   .domain-heading h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 650; }
   .domain-heading p { margin: 4px 0 0; color: var(--fm-text-muted); font-size: 12px; }
@@ -626,8 +657,9 @@
   @media (max-width: 720px) {
     .create-grid { grid-template-columns: minmax(0, 1fr); }
     .signature-field { grid-column: auto; }
-    .domain-header { align-items: flex-start; }
-    .domain-header :global(button) { flex: none; }
+    .domain-header { flex-direction: column; align-items: stretch; }
+    .domain-header-actions { justify-content: flex-start; }
+    .domain-status { grid-template-columns: minmax(0, 1fr); }
     .address-list li { grid-template-columns: minmax(0, 1fr) auto; }
     .address-state { grid-column: 1; justify-content: flex-start; }
     .address-actions { grid-column: 1 / -1; justify-content: flex-start; }

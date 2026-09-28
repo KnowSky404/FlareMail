@@ -33,8 +33,12 @@ FlareMail 必须保持独立产品身份。不得复制 Cloudflare 源代码、�
 主导航：
 
 - 收件箱
-- 已发送
 - 草稿箱
+- 已发送
+- 归档
+- 垃圾箱
+- 域名
+- 邮箱地址
 - 设置
 
 Cloudflare Email Routing、D1、R2、Resend 等技术信息应放在状态详情、诊断或设置页面中，不应成为主信息架构。
@@ -129,8 +133,12 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 │   ├── 写邮件
 │   ├── 邮件
 │   │   ├── 收件箱
+│   │   ├── 草稿箱
 │   │   ├── 已发送
-│   │   └── 草稿箱
+│   │   ├── 归档
+│   │   └── 垃圾箱
+│   ├── 域名
+│   ├── 邮箱地址
 │   └── 设置
 └── 主工作区
     ├── 文件夹标题与筛选
@@ -166,6 +174,7 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 - “专注阅读”使用接近全屏的 dialog，锁定背景焦点、支持 `Escape` 关闭并恢复触发控件焦点；详情头提供唯一可见的主题和关闭按钮，正文继续由详情区域独立滚动。
 - 独立阅读地址为 `/messages/[id]`。服务端只按当前 session 查询邮件元数据，正文和附件仍通过现有 owner-scoped API 读取；页面响应使用 `private, no-store`，返回工作台时只保留 folder、message、q 和受支持的 filter 参数。
 - 语言优先级为显式 locale cookie、跟随浏览器的 locale cookie、`localStorage` 和 `Accept-Language`，最后回退到简体中文；切换器也可选择跟随浏览器，用户内容（主题、地址、正文和附件文件名）不翻译。
+- 域名、邮箱地址和设置是三个独立的导航状态。前两者使用 `folder=settings&view=domains|addresses` 深链，不改变现有邮箱文件夹契约；从域名卡片创建地址时额外保留 `domain` 参数，刷新后仍预选目标域名。域名概览展示按供应商区分的健康状态和关联地址，地址页集中展示创建与管理操作。
 
 ## 5. 布局与间距 Token
 

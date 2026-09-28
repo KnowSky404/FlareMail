@@ -186,6 +186,51 @@ async function openSettings(page: Page) {
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
 }
 
+test('opens dedicated domain and address management views with a domain-scoped create shortcut', async ({ page, consoleErrors }, testInfo) => {
+  test.setTimeout(90_000);
+  await login(page);
+  await page.goto('/?folder=settings&view=domains');
+  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  const domainCard = page.locator('.domain-card').filter({ hasText: 'flaremail.test' });
+  await expect(domainCard).toBeVisible();
+  await expect(domainCard).toContainText('Cloudflare');
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: `/tmp/flaremail-domains-${testInfo.project.name}.png` });
+  if (testInfo.project.name === 'desktop') {
+    for (const width of [1920, 1440, 1366, 768, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await assertNoHorizontalOverflow(page);
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
+  }
+
+  await domainCard.getByRole('button', { name: '为此域名创建地址' }).click();
+  await expect(page).toHaveURL(/folder=settings.*view=addresses/u);
+  await expect(page.getByRole('heading', { name: '受管邮件地址' })).toBeVisible();
+  await expect(page.getByLabel('收信域名')).toHaveValue('00000000-0000-4000-8000-000000000011');
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '受管邮件地址' })).toBeVisible();
+  await expect(page.getByLabel('收信域名')).toHaveValue('00000000-0000-4000-8000-000000000011');
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: `/tmp/flaremail-addresses-${testInfo.project.name}.png` });
+  await page.evaluate(() => localStorage.setItem('flaremail-theme', 'dark'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  await page.getByLabel('收信域名').selectOption('00000000-0000-4000-8000-000000000012');
+  await expect(page).toHaveURL(/domain=00000000-0000-4000-8000-000000000012/u);
+  await page.reload();
+  await expect(page.getByLabel('收信域名')).toHaveValue('00000000-0000-4000-8000-000000000012');
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name: '打开导航' }).click();
+  const navigation = page.getByRole('navigation', { name: testInfo.project.name === 'mobile' ? '移动端导航' : '主导航' });
+  await navigation.getByRole('button', { name: '域名', exact: true }).click();
+  await expect(page).toHaveURL(/folder=settings.*view=domains/u);
+  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('hydrates global metrics and pagination on fresh login, then purges state on logout', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
   await login(page);
