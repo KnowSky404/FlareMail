@@ -26,6 +26,8 @@ describe('layout preferences', () => {
   });
 
   test('clamps list width against the available content width', () => {
+    expect(DEFAULT_LAYOUT_PREFERENCES.listWidth).toBe(440);
+    expect(clampListWidth(DEFAULT_LAYOUT_PREFERENCES.listWidth, 792)).toBe(424);
     expect(clampListWidth(200)).toBe(280);
     expect(clampListWidth(480, 600)).toBe(280);
     expect(clampListWidth(420, 900)).toBe(420);

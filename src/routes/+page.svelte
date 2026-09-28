@@ -96,6 +96,7 @@
   import { useLocale } from '$lib/i18n/runtime.svelte';
   import { formatDate, formatNumber, translateCount } from '$lib/i18n';
   import {
+    DEFAULT_LAYOUT_PREFERENCES,
     clampListWidth,
     layoutPreferenceRange,
     listWidthFromKeyboard,
@@ -201,7 +202,7 @@
   let mobileDetailOpen = $state(false);
   let readerOpen = $state(false);
   let sidebarCollapsed = $state(false);
-  let listWidth = $state(360);
+  let listWidth = $state(DEFAULT_LAYOUT_PREFERENCES.listWidth);
   let workspaceElement = $state<HTMLElement>();
   let workspaceWidth = $state(Number.POSITIVE_INFINITY);
   let density = $state<DisplayDensity>('comfortable');

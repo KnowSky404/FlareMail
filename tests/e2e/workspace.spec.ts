@@ -430,9 +430,28 @@ test('opens an older inbound message from a cold deep link without selecting the
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('persists the reading layout, resets the splitter, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
+test('keeps readable default columns, persists the layout, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop project covers the wide reading workspace controls.');
   await login(page);
+
+  await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-preference', '440');
+  await page.setViewportSize({ width: 1505, height: 1045 });
+  await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
+  const columns = await page.locator('.mail-workspace').evaluate((workspace) => ({
+    list: workspace.querySelector('.mail-list-panel')?.getBoundingClientRect().width ?? 0,
+    detail: workspace.querySelector('.mail-detail-panel')?.getBoundingClientRect().width ?? 0
+  }));
+  expect(columns.list).toBeGreaterThanOrEqual(440);
+  expect(columns.detail).toBeGreaterThanOrEqual(700);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-list-default-desktop.png'), fullPage: false });
+  for (const width of [1920, 1440, 1366, 768, 390]) {
+    await page.setViewportSize({ width, height: width <= 900 ? 844 : 900 });
+    await assertNoHorizontalOverflow(page);
+    if (width > 900) {
+      await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
 
   const sidebar = page.locator('#fm-main-sidebar');
   const collapse = sidebar.getByRole('button', { name: '折叠侧边栏' });
@@ -454,7 +473,7 @@ test('persists the reading layout, resets the splitter, and opens one focused re
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '480');
   await page.keyboard.press('Enter');
-  await expect(splitter).toHaveAttribute('aria-valuenow', '360');
+  await expect(splitter).toHaveAttribute('aria-valuenow', '440');
 
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
@@ -471,9 +490,10 @@ test('persists the reading layout, resets the splitter, and opens one focused re
   await language.selectOption('en');
   await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
   await expect(page.locator('#fm-main-sidebar').getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'All', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Unread', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Starred', exact: true })).toBeVisible();
+  const filters = page.getByRole('group', { name: 'Mail filters' });
+  await expect(filters.getByRole('button', { name: 'All', exact: true })).toBeVisible();
+  await expect(filters.getByRole('button', { name: 'Unread', exact: true })).toBeVisible();
+  await expect(filters.getByRole('button', { name: 'Starred', exact: true })).toBeVisible();
   await page.screenshot({ path: join(tmpdir(), `flaremail-reading-layout-${testInfo.project.name}-en.png`), fullPage: false });
   await page.getByLabel('Change language').selectOption('zh-CN');
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();

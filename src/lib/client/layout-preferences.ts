@@ -11,7 +11,7 @@ export const LAYOUT_PREFERENCES_KEY = 'flaremail-layout-v1';
 export const DEFAULT_LAYOUT_PREFERENCES: LayoutPreferences = {
   version: 1,
   sidebarCollapsed: false,
-  listWidth: 360,
+  listWidth: 440,
   density: 'comfortable'
 };
 

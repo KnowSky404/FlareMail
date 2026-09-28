@@ -64,6 +64,9 @@ async function openCompose(page: Page) {
 
 test('logs in, navigates, searches, opens a message, and returns', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
+  if (!projectIsMobile(testInfo.project.name)) {
+    await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
+  }
   await openFolder(page, '已发送');
   await expect(page.getByRole('heading', { name: '已发送', exact: true })).toBeVisible();
   await openFolder(page, '收件箱');
