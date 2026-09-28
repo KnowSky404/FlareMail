@@ -687,10 +687,45 @@ test('opens dedicated domain and address management views with a domain-scoped c
     await page.setViewportSize({ width: 1280, height: 900 });
   }
 
-  await domainCard.getByRole('button', { name: '为此域名创建地址' }).click();
+  const quickCreateTrigger = domainCard.getByRole('button', { name: '为此域名创建地址' });
+  await quickCreateTrigger.click();
+  await expect(quickCreateTrigger).toHaveAttribute('aria-expanded', 'true');
+  const quickCreateForm = domainCard.locator('.quick-create-form');
+  await expect(quickCreateForm.getByLabel('地址前缀 (@flaremail.test)')).toBeFocused();
+  await expect(quickCreateForm).toContainText('@flaremail.test');
+  const passiveToastDismiss = page.locator('.toast-region .dismiss');
+  while (await passiveToastDismiss.count()) await passiveToastDismiss.first().click();
+  if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
+  await quickCreateForm.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+  await page.screenshot({ path: `/tmp/flaremail-domain-quick-create-${testInfo.project.name}.png` });
+  if (testInfo.project.name === 'desktop') {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await quickCreateForm.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+    await assertNoHorizontalOverflow(page);
+    const primaryBox = await quickCreateForm.getByRole('button', { name: '创建并配置收信规则' }).boundingBox();
+    const detailsBox = await quickCreateForm.getByRole('button', { name: '填写名称与签名' }).boundingBox();
+    const cancelBox = await quickCreateForm.getByRole('button', { name: '取消' }).boundingBox();
+    expect(primaryBox!.y + primaryBox!.height).toBeLessThan(detailsBox!.y);
+    expect(Math.abs(detailsBox!.y - cancelBox!.y)).toBeLessThan(2);
+    await page.screenshot({ path: '/tmp/flaremail-domain-quick-create-mobile.png' });
+    await page.setViewportSize({ width: 1280, height: 900 });
+  }
+  expect((await new AxeBuilder({ page }).include('.quick-create-form').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
+  const prefixInput = quickCreateForm.getByLabel('地址前缀 (@flaremail.test)');
+  await prefixInput.fill('hello@other.test');
+  await quickCreateForm.getByRole('button', { name: '创建并配置收信规则' }).click();
+  await expect(prefixInput).toHaveAttribute('aria-invalid', 'true');
+  await expect(quickCreateForm).toContainText('这里只填写 @ 前的地址前缀');
+  await page.keyboard.press('Escape');
+  await expect(quickCreateForm).toBeHidden();
+  await expect(quickCreateTrigger).toBeFocused();
+  await quickCreateTrigger.click();
+  await quickCreateForm.getByLabel('地址前缀 (@flaremail.test)').fill('details-e2e');
+  await quickCreateForm.getByRole('button', { name: '填写名称与签名' }).click();
   await expect(page).toHaveURL(/folder=settings.*view=addresses/u);
   await expect(page.getByRole('heading', { name: '受管邮件地址' })).toBeVisible();
   await expect(page.getByLabel('收信域名')).toHaveValue('00000000-0000-4000-8000-000000000011');
+  await expect(page.getByLabel('邮件地址或本地部分')).toHaveValue('details-e2e');
   await page.reload();
   await expect(page.getByRole('heading', { name: '受管邮件地址' })).toBeVisible();
   await expect(page.getByLabel('收信域名')).toHaveValue('00000000-0000-4000-8000-000000000011');
@@ -712,6 +747,43 @@ test('opens dedicated domain and address management views with a domain-scoped c
   await expect(page).toHaveURL(/folder=settings.*view=domains/u);
   await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
   await assertNoConsoleErrors(consoleErrors);
+});
+
+test('keeps addresses visible after local routing fails in quick and full creation', async ({ page }) => {
+  await login(page);
+  await page.goto('/?folder=settings&view=domains');
+  const domainCard = page.locator('.domain-card').filter({ hasText: 'flaremail.test' });
+  await expect(domainCard).toBeVisible();
+  const trigger = domainCard.getByRole('button', { name: '为此域名创建地址' });
+  await trigger.click();
+  const quickCreateForm = domainCard.locator('.quick-create-form');
+  await quickCreateForm.getByLabel('地址前缀 (@flaremail.test)').fill('quick-e2e');
+  await quickCreateForm.getByRole('button', { name: '创建并配置收信规则' }).click();
+  await expect(domainCard).toContainText('quick-e2e@flaremail.test');
+  await expect(domainCard.getByRole('status')).toContainText('地址已保存，但收信规则配置未完成');
+  await expect(quickCreateForm).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await page.reload();
+  await expect(domainCard).toContainText('quick-e2e@flaremail.test');
+  const duplicatePosts: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/api/workspace/mail-identities')) duplicatePosts.push(request.url());
+  });
+  await trigger.click();
+  const duplicateForm = domainCard.locator('.quick-create-form');
+  await duplicateForm.getByLabel('地址前缀 (@flaremail.test)').fill('quick-e2e');
+  await duplicateForm.getByRole('button', { name: '创建并配置收信规则' }).click();
+  await expect(duplicateForm).toContainText('此地址已存在或待恢复');
+  expect(duplicatePosts).toEqual([]);
+  await page.goto('/?folder=settings&view=addresses&domain=00000000-0000-4000-8000-000000000011');
+  await expect(page.getByRole('heading', { name: '受管邮件地址' })).toBeVisible();
+  await page.getByLabel('邮件地址或本地部分').fill('full-e2e');
+  await page.getByRole('button', { name: '创建并配置收信规则' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '地址已保存，但收信规则配置未完成' })).toBeVisible();
+  await expect(page.locator('.domain-card').filter({ hasText: 'flaremail.test' })).toContainText('full-e2e@flaremail.test');
+  await page.reload();
+  await expect(page.locator('.domain-card').filter({ hasText: 'flaremail.test' })).toContainText('full-e2e@flaremail.test');
+  await assertNoHorizontalOverflow(page);
 });
 
 test('preserves an unsaved profile edit across another tab identity refresh', async ({ page, context, consoleErrors }, testInfo) => {

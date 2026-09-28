@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { AlertTriangle, CheckCircle2, Mail, RefreshCw, RotateCw, ShieldAlert, Trash2 } from '@lucide/svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -81,6 +81,7 @@
   let {
     view = 'addresses',
     initialDomainId = '',
+    initialAddressLocalPart = '',
     onError,
     onOptionsChange,
     onCreateAddressForDomain,
@@ -88,9 +89,10 @@
   }: {
     view?: 'domains' | 'addresses';
     initialDomainId?: string;
+    initialAddressLocalPart?: string;
     onError?: (error: unknown) => void;
     onOptionsChange?: (options: WorkspaceSnapshot['mailIdentityOptions']) => void;
-    onCreateAddressForDomain?: (domainId: string) => void;
+    onCreateAddressForDomain?: (domainId: string, addressLocalPart: string) => void;
     onSelectedDomainChange?: (domainId: string) => void;
   } = $props();
   const { t } = useLocale();
@@ -101,10 +103,17 @@
   let selectedDomainId = $state('');
   let displayName = $state('');
   let signature = $state('');
+  let quickCreateDomainId = $state('');
+  let quickLocalPart = $state('');
+  let quickCreateError = $state('');
+  let quickCreateNoticeDomainId = $state('');
+  let quickCreateNotice = $state('');
+  let quickCreateNeedsAttention = $state(false);
   let loading = $state(true);
   let pendingAction = $state('');
   let errorMessage = $state('');
   let notice = $state('');
+  let noticeNeedsAttention = $state(false);
   let deleteTarget = $state<MailAddress | null>(null);
   let deletePreview = $state<DeletePreview | null>(null);
   let deletePreviewLoading = $state(false);
@@ -129,6 +138,11 @@
         selectedDomainId = requestedDomainId;
       }
     });
+  });
+
+  $effect(() => {
+    const requestedLocalPart = initialAddressLocalPart;
+    if (requestedLocalPart) untrack(() => { localPart = requestedLocalPart; });
   });
 
   async function load() {
@@ -195,27 +209,121 @@
   async function createAddress(event: SubmitEvent) {
     event.preventDefault();
     if (!selectedDomainId || !localPart.trim()) return;
+    const requestedAddress = localPart.trim().toLowerCase();
+    const domainName = domains.find((domain) => domain.id === selectedDomainId)?.domain_name.toLowerCase() ?? '';
+    const expectedEmail = requestedAddress.includes('@') ? requestedAddress : `${requestedAddress}@${domainName}`;
+    const existedBefore = addresses.some((address) => address.email.toLowerCase() === expectedEmail);
     pendingAction = 'create';
     errorMessage = '';
     notice = '';
+    noticeNeedsAttention = false;
     try {
-      await requestJson('/api/workspace/mail-identities', {
+      const created = await requestJson<{ address: MailAddress }>('/api/workspace/mail-identities', {
         method: 'POST',
         body: JSON.stringify({ domainId: selectedDomainId, address: localPart, displayName, signature })
       });
       localPart = '';
       displayName = '';
       signature = '';
-      notice = t('settings.mailAddressCreated');
+      noticeNeedsAttention = created.address.receive_enabled !== 1;
+      notice = t(noticeNeedsAttention ? 'settings.mailAddressSavedNeedsAttention' : 'settings.mailAddressCreated');
       await load();
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
+      const message = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
       onError?.(error);
-      const message = errorMessage;
       await load();
-      errorMessage = message;
+      if (!existedBefore && addresses.some((address) => address.email.toLowerCase() === expectedEmail)) {
+        localPart = '';
+        displayName = '';
+        signature = '';
+        notice = t('settings.mailAddressSavedNeedsAttention');
+        noticeNeedsAttention = true;
+      } else {
+        errorMessage = message;
+      }
     } finally {
       pendingAction = '';
+    }
+  }
+
+  async function toggleQuickCreate(domainId: string) {
+    const closing = quickCreateDomainId === domainId;
+    quickCreateDomainId = closing ? '' : domainId;
+    quickLocalPart = '';
+    quickCreateError = '';
+    quickCreateNoticeDomainId = '';
+    quickCreateNotice = '';
+    quickCreateNeedsAttention = false;
+    await tick();
+    document.getElementById(`${closing ? 'quick-create-trigger' : 'quick-address'}-${domainId}`)?.focus();
+  }
+
+  function handleQuickCreateKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || !quickCreateDomainId) return;
+    const form = document.getElementById(`quick-create-form-${quickCreateDomainId}`);
+    if (!form?.contains(event.target as Node)) return;
+    event.preventDefault();
+    void toggleQuickCreate(quickCreateDomainId);
+  }
+
+  function openFullAddressForm(domainId: string) {
+    quickCreateDomainId = '';
+    onCreateAddressForDomain?.(domainId, quickLocalPart.trim());
+  }
+
+  async function createQuickAddress(event: SubmitEvent, domain: MailDomain) {
+    event.preventDefault();
+    const requestedLocalPart = quickLocalPart.trim();
+    if (!requestedLocalPart || pendingAction || !domain.enabled) return;
+    if (requestedLocalPart.includes('@')) {
+      quickCreateError = t('settings.quickAddressPrefixOnly');
+      return;
+    }
+    const expectedEmail = `${requestedLocalPart.toLowerCase()}@${domain.domain_name.toLowerCase()}`;
+    const existedBefore = addresses.some((address) => address.email.toLowerCase() === expectedEmail);
+    if (existedBefore) {
+      quickCreateError = t('settings.quickAddressAlreadyExists');
+      return;
+    }
+    pendingAction = `quick-create:${domain.id}`;
+    quickCreateError = '';
+    quickCreateNoticeDomainId = '';
+    quickCreateNotice = '';
+    quickCreateNeedsAttention = false;
+    let restoreTriggerFocus = false;
+    try {
+      const created = await requestJson<{ address: MailAddress }>('/api/workspace/mail-identities', {
+        method: 'POST',
+        body: JSON.stringify({ domainId: domain.id, address: requestedLocalPart })
+      });
+      await load();
+      quickLocalPart = '';
+      quickCreateDomainId = '';
+      quickCreateNoticeDomainId = domain.id;
+      quickCreateNeedsAttention = created.address.receive_enabled !== 1;
+      quickCreateNotice = t(quickCreateNeedsAttention ? 'settings.mailAddressSavedNeedsAttention' : 'settings.mailAddressCreated');
+      restoreTriggerFocus = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
+      onError?.(error);
+      await load();
+      if (!existedBefore && addresses.some((address) => address.email.toLowerCase() === expectedEmail)) {
+        quickLocalPart = '';
+        quickCreateDomainId = '';
+        quickCreateError = '';
+        quickCreateNoticeDomainId = domain.id;
+        quickCreateNotice = t('settings.mailAddressSavedNeedsAttention');
+        quickCreateNeedsAttention = true;
+        restoreTriggerFocus = true;
+      } else {
+        quickCreateError = message;
+      }
+    } finally {
+      pendingAction = '';
+      if (restoreTriggerFocus) {
+        await tick();
+        document.getElementById(`quick-create-trigger-${domain.id}`)?.focus();
+      }
     }
   }
 
@@ -223,6 +331,7 @@
     pendingAction = 'check:' + domain.id;
     errorMessage = '';
     notice = '';
+    noticeNeedsAttention = false;
     try {
       const result = await requestJson<{ check: DomainCheck }>(
         `/api/workspace/mail-identities/domains/${encodeURIComponent(domain.id)}/check`,
@@ -245,6 +354,7 @@
     pendingAction = `${address.id}:${action}`;
     errorMessage = '';
     notice = '';
+    noticeNeedsAttention = false;
     try {
       await requestJson(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, {
         method: 'POST',
@@ -274,6 +384,7 @@
     pendingAction = `${address.id}:delete`;
     errorMessage = '';
     notice = '';
+    noticeNeedsAttention = false;
     try {
       const result = await requestJson<{ remoteRuleStatus: string }>(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, {
         method: 'DELETE',
@@ -446,9 +557,11 @@
 
 </script>
 
+<svelte:window onkeydown={handleQuickCreateKeydown} />
+
 <Panel class="mx-auto max-w-[72rem]" title={view === 'domains' ? t('settings.domainDashboard') : t('settings.mailIdentities')} description={view === 'domains' ? t('settings.domainDashboardDescription') : t('settings.mailIdentitiesDescription')}>
   {#if errorMessage}<p class="message error" role="alert">{errorMessage}</p>{/if}
-  {#if notice}<p class="message success" role="status" aria-live="polite">{notice}</p>{/if}
+  {#if notice}<p class="message" class:success={!noticeNeedsAttention} class:attention={noticeNeedsAttention} role="status" aria-live="polite">{notice}</p>{/if}
 
   {#if loading}
     <p class="muted" role="status">{t('common.loading')}</p>
@@ -487,13 +600,29 @@
             </div>
             <div class="domain-header-actions">
               {#if view === 'domains'}
-                <Button variant="secondary" size="sm" onclick={() => onCreateAddressForDomain?.(domain.id)}>{t('settings.createAddressForDomain')}</Button>
+                <Button id={`quick-create-trigger-${domain.id}`} variant="secondary" size="sm" disabled={!domain.enabled || Boolean(pendingAction)} ariaExpanded={quickCreateDomainId === domain.id} ariaControls={quickCreateDomainId === domain.id ? `quick-create-form-${domain.id}` : undefined} onclick={() => void toggleQuickCreate(domain.id)}>{t('settings.createAddressForDomain')}</Button>
                 <Button variant="secondary" size="sm" loading={pendingAction === 'check:' + domain.id} onclick={() => void checkDomain(domain)}>
                   <RefreshCw size={14} aria-hidden="true" /> {t('settings.checkMailDomain')}
                 </Button>
               {/if}
             </div>
           </header>
+          {#if view === 'domains' && quickCreateDomainId === domain.id}
+            <form id={`quick-create-form-${domain.id}`} class="quick-create-form" onsubmit={(event) => void createQuickAddress(event, domain)}>
+              <div class="quick-address-field">
+                <TextField id={`quick-address-${domain.id}`} label={`${t('settings.quickAddressLocalPart')} (@${domain.domain_name})`} value={quickLocalPart} error={quickCreateError} maxlength={64} required disabled={Boolean(pendingAction)} autocomplete="off" placeholder="hello" oninput={(event) => { quickLocalPart = event.currentTarget.value; quickCreateError = ''; }} />
+                <span class="quick-address-domain" aria-hidden="true">@{domain.domain_name}</span>
+              </div>
+              <div class="quick-create-actions">
+                <Button type="submit" size="sm" loading={pendingAction === `quick-create:${domain.id}`} disabled={!quickLocalPart.trim() || Boolean(pendingAction)}>{t('settings.createMailAddress')}</Button>
+                <Button variant="ghost" size="sm" disabled={Boolean(pendingAction)} onclick={() => openFullAddressForm(domain.id)}>{t('settings.quickAddressDetails')}</Button>
+                <Button variant="ghost" size="sm" disabled={Boolean(pendingAction)} onclick={() => void toggleQuickCreate(domain.id)}>{t('common.cancel')}</Button>
+              </div>
+            </form>
+          {/if}
+          {#if view === 'domains' && quickCreateNoticeDomainId === domain.id}
+            <p class:attention={quickCreateNeedsAttention} class="quick-create-notice" role="status">{quickCreateNotice}</p>
+          {/if}
           {#if view === 'domains'}
           <dl class="capability-summary" aria-label={t('settings.domainCapabilities')}>
             <div>
@@ -654,6 +783,7 @@
   .message { margin: 0 0 var(--space-3); font-size: 13px; }
   .error, .safe-error { color: var(--fm-danger); }
   .success { color: var(--fm-success); }
+  .attention { color: var(--fm-warning); }
   .muted, .setup-hint { color: var(--fm-text-muted); font-size: 13px; }
   .setup-hint code { overflow-wrap: anywhere; }
   .create-form { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface-subtle); }
@@ -669,6 +799,13 @@
   .domain-heading { min-width: 0; }
   .domain-heading h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 650; }
   .domain-heading p { margin: 4px 0 0; color: var(--fm-text-muted); font-size: 12px; }
+  .quick-create-form { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface-subtle); }
+  .quick-address-field { display: flex; min-width: 0; align-items: end; gap: var(--space-2); }
+  .quick-address-field :global(label) { flex: 1; min-width: 0; }
+  .quick-address-domain { flex: 0 1 auto; min-width: 0; max-width: 50%; min-height: 40px; display: inline-flex; align-items: center; color: var(--fm-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+  .quick-create-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .quick-create-notice { margin: var(--space-3) 0 0; color: var(--fm-success); font-size: 12px; }
+  .quick-create-notice.attention { color: var(--fm-warning); }
   .capability-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 0; padding: var(--space-3) 0; border-block: 1px solid var(--fm-border); }
   .capability-summary > div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .capability-summary dt { color: var(--fm-text-secondary); font-size: 13px; font-weight: 600; }
@@ -711,6 +848,10 @@
     .signature-field { grid-column: auto; }
     .domain-header { flex-direction: column; align-items: stretch; }
     .domain-header-actions { justify-content: flex-start; }
+    .quick-address-field { flex-direction: column; align-items: stretch; }
+    .quick-address-domain { max-width: 100%; min-height: 0; }
+    .quick-create-actions :global(button:first-child) { flex: 1 0 100%; }
+    .quick-create-actions :global(button:not(:first-child)) { flex: 1; }
     .capability-summary { grid-template-columns: minmax(0, 1fr); }
     .domain-status { grid-template-columns: minmax(0, 1fr); }
     .address-list li { grid-template-columns: minmax(0, 1fr) auto; }

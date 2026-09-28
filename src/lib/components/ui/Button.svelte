@@ -10,6 +10,9 @@
     size = 'md',
     disabled = false,
     loading = false,
+    id,
+    ariaExpanded,
+    ariaControls,
     class: className = '',
     ariaLabel,
     onclick
@@ -20,6 +23,9 @@
     size?: ControlSize;
     disabled?: boolean;
     loading?: boolean;
+    id?: string;
+    ariaExpanded?: boolean;
+    ariaControls?: string;
     class?: string;
     ariaLabel?: string;
     onclick?: (event: MouseEvent) => void;
@@ -27,10 +33,13 @@
 </script>
 
 <button
+  {id}
   {type}
   class={buttonClass(variant, size, className)}
   disabled={disabled || loading}
   aria-label={ariaLabel}
+  aria-expanded={ariaExpanded}
+  aria-controls={ariaControls}
   aria-busy={loading}
   {onclick}
 >

@@ -109,6 +109,23 @@ test('navigates display preference radio groups by keyboard in desktop WebKit', 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('opens a domain-scoped quick address form without WebKit overflow', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.goto('/?folder=settings&view=domains');
+  const domainCard = page.locator('.domain-card').filter({ hasText: 'flaremail.test' });
+  await expect(domainCard).toBeVisible();
+  const quickCreate = domainCard.getByRole('button', { name: '为此域名创建地址' });
+  await clickHeadlessControl(quickCreate);
+  const quickCreateForm = domainCard.locator('.quick-create-form');
+  await expect(quickCreateForm.getByLabel('地址前缀 (@flaremail.test)')).toBeFocused();
+  await expect(quickCreate).toHaveAttribute('aria-expanded', 'true');
+  await assertNoHorizontalOverflow(page);
+  await clickHeadlessControl(quickCreateForm.getByRole('button', { name: '取消' }));
+  await expect(quickCreateForm).toBeHidden();
+  await expect(quickCreate).toBeFocused();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('bulk-removes a label from selected inbox and draft mail in WebKit', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const created = await page.evaluate(async () => {

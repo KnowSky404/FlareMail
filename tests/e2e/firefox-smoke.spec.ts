@@ -222,6 +222,14 @@ test('keeps domain dashboard responsive in light and dark Firefox', async ({ pag
   await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), 'flaremail-firefox-domains-mobile-dark.png'), fullPage: false });
+  const domainCard = page.locator('.domain-card').filter({ hasText: 'flaremail.test' });
+  const quickCreate = domainCard.getByRole('button', { name: '为此域名创建地址' });
+  await quickCreate.click();
+  const quickCreateForm = domainCard.locator('.quick-create-form');
+  await expect(quickCreateForm.getByLabel('地址前缀 (@flaremail.test)')).toBeFocused();
+  await assertNoHorizontalOverflow(page);
+  await quickCreateForm.getByRole('button', { name: '取消' }).click();
+  await expect(quickCreate).toBeFocused();
   await assertNoConsoleErrors(consoleErrors);
 });
 

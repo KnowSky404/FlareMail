@@ -197,6 +197,7 @@
   let deleteLabelConfirmOpen = $state(false);
   let managementView = $state<WorkspaceUrlState['managementView']>('settings');
   let createAddressDomainId = $state('');
+  let createAddressLocalPart = $state('');
   let selectedMessageId = $state<string | null>(null);
   let selectedMessageIds = $state<string[]>([]);
   let bulkThreadScope = $state<'selected' | 'filtered' | 'owner'>('selected');
@@ -370,6 +371,7 @@
     activeLabelId = urlLabelId;
     managementView = urlManagementView;
     createAddressDomainId = urlManagementDomainId ?? '';
+    if (urlManagementView !== 'addresses') createAddressLocalPart = '';
     searchQuery = urlQuery;
     mailFilter = urlFilter;
     mailIdentityFilter = urlIdentityFilter;
@@ -1156,10 +1158,11 @@
     }
   }
 
-  function setManagementView(view: 'domains' | 'addresses', domainId = '') {
+  function setManagementView(view: 'domains' | 'addresses', domainId = '', addressLocalPart = '') {
     setSection('profile', false);
     managementView = view;
     createAddressDomainId = domainId;
+    createAddressLocalPart = addressLocalPart;
     mailIdentityFilter = null;
     selectedMessageId = null;
     updateWorkspaceUrl({ section: 'profile', managementView: view, managementDomainId: domainId || null, query: '', filter: 'all', identityFilter: null, messageId: null });
@@ -2511,7 +2514,8 @@
                   <MailIdentityManager
                     view={managementView}
                     initialDomainId={createAddressDomainId}
-                    onCreateAddressForDomain={(domainId) => setManagementView('addresses', domainId)}
+                    initialAddressLocalPart={createAddressLocalPart}
+                    onCreateAddressForDomain={(domainId, addressLocalPart) => setManagementView('addresses', domainId, addressLocalPart)}
                     onSelectedDomainChange={(domainId) => {
                       createAddressDomainId = domainId;
                       updateWorkspaceUrl({ managementDomainId: domainId }, true);
