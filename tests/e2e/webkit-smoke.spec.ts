@@ -293,6 +293,58 @@ test('opens the compose attachment modal and restores an autosaved draft', async
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps two attachment actions reachable in a short WebKit phone viewport', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(!projectIsPhone(testInfo.project.name), 'The full-screen short-viewport layout is phone-only.');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await openCompose(page);
+  const dialog = page.getByRole('dialog', { name: '新邮件' });
+  const subject = `WebKit short viewport compose ${Date.now()}`;
+  await dialog.getByLabel('收件人').fill('webkit-short@flaremail.test');
+  await dialog.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
+  await dialog.getByRole('textbox', { name: '正文', exact: true }).fill(Array.from({ length: 100 }, (_, index) => `Line ${index + 1}`).join('\n'));
+  await dialog.getByLabel('选择附件').setInputFiles([
+    { name: 'webkit-short-one.txt', mimeType: 'text/plain', buffer: Buffer.alloc(128 * 1024, 0x41) },
+    { name: 'webkit-short-two.txt', mimeType: 'text/plain', buffer: Buffer.alloc(128 * 1024, 0x42) }
+  ]);
+  const attachments = dialog.getByRole('list', { name: '待发送附件' });
+  await expect(attachments.getByRole('listitem')).toHaveCount(2, { timeout: 20_000 });
+  await page.setViewportSize({ width: 390, height: 500 });
+  await attachments.getByRole('listitem').last().scrollIntoViewIfNeeded();
+  const body = await dialog.locator('.compose-window-body').boundingBox();
+  const footer = await dialog.locator('.compose-window-footer').boundingBox();
+  const first = await attachments.getByRole('listitem').first().boundingBox();
+  const second = await attachments.getByRole('listitem').last().boundingBox();
+  const remove = await attachments.getByRole('button', { name: '删除附件 webkit-short-one.txt' }).boundingBox();
+  expect(body).not.toBeNull();
+  expect(footer).not.toBeNull();
+  expect(first).not.toBeNull();
+  expect(second).not.toBeNull();
+  expect(remove).not.toBeNull();
+  expect(footer!.y + footer!.height).toBeLessThanOrEqual(501);
+  expect(first!.y).toBeGreaterThanOrEqual(body!.y);
+  expect(second!.y + second!.height).toBeLessThanOrEqual(body!.y + body!.height + 1);
+  expect(first!.height).toBeLessThanOrEqual(72);
+  expect(remove!.y).toBeGreaterThanOrEqual(first!.y);
+  expect(remove!.y + remove!.height).toBeLessThanOrEqual(first!.y + first!.height + 1);
+  const deleteColor = await attachments.getByRole('button', { name: '删除附件 webkit-short-one.txt' }).evaluate((button) => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--fm-danger)';
+    document.body.appendChild(probe);
+    const result = { actual: getComputedStyle(button).color, expected: getComputedStyle(probe).color };
+    probe.remove();
+    return result;
+  });
+  expect(deleteColor.actual).toBe(deleteColor.expected);
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), 'flaremail-compose-short-webkit-iphone.png'), fullPage: false });
+  await pressHeadlessControl(dialog.getByRole('button', { name: '保存草稿', exact: true }));
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('region', { name: '邮件详情' }).getByRole('heading', { name: subject })).toBeVisible();
+  await expect(page.getByRole('article', { name: '邮件正文详情' })).toContainText('Line 100');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('sends successfully and exposes a typed failure without claiming success', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const successSubject = `WebKit smoke send ${Date.now()}`;

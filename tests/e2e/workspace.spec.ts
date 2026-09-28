@@ -1345,6 +1345,82 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps a long multi-attachment compose usable in a short mobile viewport', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(!['mobile', 'narrow'].includes(testInfo.project.name), 'Only phone-width projects exercise the full-screen compose.');
+  test.setTimeout(90_000);
+  const width = testInfo.project.name === 'narrow' ? 320 : 390;
+  await page.setViewportSize({ width, height: 844 });
+  await login(page);
+  await page.locator('.mobile-bar').getByRole('button', { name: '写邮件' }).click();
+  const compose = page.getByRole('dialog', { name: '新邮件' });
+  await expect(page.locator('.toast-region .toast')).toHaveCount(0);
+  const subject = `E2E Short Viewport ${width}`;
+  const longBody = Array.from({ length: 100 }, (_, index) => `Line ${index + 1}: this draft keeps its text while the viewport gets shorter.`).join('\n');
+  await compose.getByLabel('收件人').fill('short-viewport@flaremail.test');
+  await compose.getByRole('textbox', { name: '主题', exact: true }).fill(subject);
+  await compose.getByRole('textbox', { name: '正文', exact: true }).fill(longBody);
+  await compose.getByLabel('选择附件').setInputFiles([
+    { name: 'long-project-review-notes-one.txt', mimeType: 'text/plain', buffer: Buffer.alloc(128 * 1024, 0x41) },
+    { name: 'long-project-review-notes-two.txt', mimeType: 'text/plain', buffer: Buffer.alloc(128 * 1024, 0x42) }
+  ]);
+  const attachments = compose.getByRole('list', { name: '待发送附件' });
+  await expect(attachments.getByRole('listitem')).toHaveCount(2, { timeout: 30_000 });
+  await expect(compose.locator('.compose-attachment-count:visible')).toHaveText('2');
+
+  await page.setViewportSize({ width, height: 500 });
+  const geometry = await compose.evaluate((dialog) => {
+    const header = dialog.querySelector('.compose-window-header')!.getBoundingClientRect();
+    const body = dialog.querySelector('.compose-window-body')! as HTMLElement;
+    const footer = dialog.querySelector('.compose-window-footer')!.getBoundingClientRect();
+    return { headerBottom: header.bottom, bodyHeight: body.clientHeight, bodyScrollHeight: body.scrollHeight, footerTop: footer.top, footerBottom: footer.bottom, viewportHeight: window.innerHeight };
+  });
+  expect(geometry.bodyHeight).toBeGreaterThan(80);
+  expect(geometry.bodyScrollHeight).toBeGreaterThan(geometry.bodyHeight);
+  expect(geometry.footerTop).toBeGreaterThanOrEqual(geometry.headerBottom);
+  expect(geometry.footerBottom).toBeLessThanOrEqual(geometry.viewportHeight + 1);
+  for (const name of ['添加附件', 'HTML 写信选项', '取消', '保存草稿', '发送邮件']) {
+    await expect(compose.getByRole('button', { name, exact: true })).toBeVisible();
+  }
+  await compose.getByRole('textbox', { name: '正文', exact: true }).focus();
+  await expect(compose.getByRole('textbox', { name: '正文', exact: true })).toBeFocused();
+  await attachments.getByRole('listitem').last().scrollIntoViewIfNeeded();
+  const bodyBounds = await compose.locator('.compose-window-body').boundingBox();
+  const firstAttachment = attachments.getByRole('listitem').first();
+  const [cardBounds, lastCardBounds, nameBounds, deleteBounds] = await Promise.all([
+    firstAttachment.boundingBox(),
+    attachments.getByRole('listitem').last().boundingBox(),
+    firstAttachment.getByLabel('附件名称 long-project-review-notes-one.txt').boundingBox(),
+    firstAttachment.getByRole('button', { name: '删除附件 long-project-review-notes-one.txt' }).boundingBox()
+  ]);
+  expect(bodyBounds).not.toBeNull();
+  expect(cardBounds).not.toBeNull();
+  expect(lastCardBounds).not.toBeNull();
+  expect(nameBounds).not.toBeNull();
+  expect(deleteBounds).not.toBeNull();
+  expect(cardBounds!.y).toBeGreaterThanOrEqual(bodyBounds!.y);
+  expect(lastCardBounds!.y + lastCardBounds!.height).toBeLessThanOrEqual(bodyBounds!.y + bodyBounds!.height + 1);
+  expect(cardBounds!.height).toBeLessThanOrEqual(width === 390 ? 72 : 116);
+  if (width === 390) expect(Math.abs(deleteBounds!.y - nameBounds!.y)).toBeLessThan(12);
+  const deleteColor = await firstAttachment.getByRole('button', { name: '删除附件 long-project-review-notes-one.txt' }).evaluate((button) => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--fm-danger)';
+    document.body.appendChild(probe);
+    const result = { actual: getComputedStyle(button).color, expected: getComputedStyle(probe).color };
+    probe.remove();
+    return result;
+  });
+  expect(deleteColor.actual).toBe(deleteColor.expected);
+  await assertNoHorizontalOverflow(page);
+  expect((await new AxeBuilder({ page }).include('.compose-dialog').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-compose-short-${testInfo.project.name}.png`), fullPage: false });
+  await compose.getByRole('button', { name: '保存草稿', exact: true }).click();
+  await expect(compose).toBeHidden();
+  await expect(page.getByRole('region', { name: '邮件详情' }).getByRole('heading', { name: subject })).toBeVisible();
+  await expect(page.getByRole('article', { name: '邮件正文详情' })).toContainText('Line 1: this draft keeps its text');
+  await expect(page.getByRole('article', { name: '邮件正文详情' })).toContainText('Line 100: this draft keeps its text');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('uploads, restores, edits, sends and downloads outbound attachments', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop path covers the complete attachment lifecycle once.');
   await login(page);

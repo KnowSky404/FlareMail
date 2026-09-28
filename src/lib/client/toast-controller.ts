@@ -54,6 +54,18 @@ export class ToastController {
     this.emit();
   }
 
+  dismissPassive() {
+    const remaining = this.messages.filter((message) =>
+      message.persistent || message.actionLabel || (message.tone !== 'info' && message.tone !== 'success')
+    );
+    if (remaining.length === this.messages.length) return;
+    for (const message of this.messages) {
+      if (!remaining.some(({ id }) => id === message.id)) this.clearResources(message.id);
+    }
+    this.messages = remaining;
+    this.emit();
+  }
+
   async invoke(id: string) {
     const action = this.actions.get(id);
     if (!action) return;

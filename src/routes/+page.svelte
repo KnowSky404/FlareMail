@@ -1433,6 +1433,7 @@
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
+    toastController.dismissPassive();
     const senderAddressId = selectInitialComposeSenderAddressId(
       mailIdentityOptions.addresses,
       mode,

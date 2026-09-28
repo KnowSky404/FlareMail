@@ -33,4 +33,21 @@ describe('ToastController', () => {
     controller.reset();
     expect(current).toEqual([]);
   });
+
+  test('dismisses passive notices on focus changes but keeps actionable and important messages', async () => {
+    let current: ToastMessage[] = [];
+    let invoked = 0;
+    const controller = new ToastController((messages) => (current = messages));
+    const passive = controller.push({ tone: 'success', message: 'Workspace restored' });
+    controller.push({ tone: 'info', message: 'Action available', action: { label: 'Undo', run: () => { invoked += 1; } } });
+    controller.push({ tone: 'warning', message: 'Attention needed' });
+    const error = controller.push({ tone: 'error', message: 'Save failed' });
+    controller.dismissPassive();
+    expect(current.map(({ message }) => message)).toEqual(['Action available', 'Attention needed', 'Save failed']);
+    expect(current.some(({ id }) => id === passive)).toBe(false);
+    expect(current.some(({ id }) => id === error)).toBe(true);
+    await controller.invoke(current[0].id);
+    expect(invoked).toBe(1);
+    controller.reset();
+  });
 });

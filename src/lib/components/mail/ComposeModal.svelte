@@ -803,14 +803,16 @@
       {#if input.attachments?.length}
         <ul class="grid gap-2" aria-label={t('compose.pendingAttachments')}>
           {#each input.attachments as attachment (attachment.id)}
-            <li class="flex min-w-0 flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
+            <li class="compose-attachment-item flex min-w-0 flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2">
               <Paperclip class="size-4 shrink-0 text-[var(--fm-primary)]" aria-hidden="true" />
-              <input class="fm-field min-w-0 flex-[1_1_10rem] px-2 py-1 text-xs" aria-label={t('compose.attachmentName', { filename: attachment.filename })} disabled={attachment.state !== undefined && attachment.state !== 'ready'} value={attachment.id ? renameValues[attachment.id] ?? attachment.filename : attachment.filename} oninput={(event) => { if (attachment.id) renameValues = { ...renameValues, [attachment.id]: event.currentTarget.value }; }} />
-              <span class="text-[11px] text-[var(--fm-text-muted)]">{formatAttachmentSize(attachment.size)}</span>
-              {#if attachment.state && attachment.state !== 'ready'}<span class="text-[11px] text-[var(--fm-danger)]">{attachment.state === 'failed' ? t('compose.uploadFailed') : t('compose.uploadIncomplete')}</span>{/if}
-              {#if attachment.id && attachment.state === 'failed'}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired} aria-label={t('compose.retryUpload', { filename: attachment.filename })} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}
-              {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="fm-touch-target min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired} onclick={() => void renameAttachment(attachment.id!)}>{t('compose.rename')}</button>{/if}
-              {#if attachment.id}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={authExpired} aria-label={t('compose.deleteAttachment', { filename: attachment.filename })} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></button>{/if}
+              <input class="compose-attachment-name fm-field min-w-0 flex-[1_1_10rem] px-2 py-1 text-xs" aria-label={t('compose.attachmentName', { filename: attachment.filename })} disabled={attachment.state !== undefined && attachment.state !== 'ready'} value={attachment.id ? renameValues[attachment.id] ?? attachment.filename : attachment.filename} oninput={(event) => { if (attachment.id) renameValues = { ...renameValues, [attachment.id]: event.currentTarget.value }; }} />
+              <span class="compose-attachment-size shrink-0 text-[11px] text-[var(--fm-text-muted)]">{formatAttachmentSize(attachment.size)}</span>
+              {#if attachment.state && attachment.state !== 'ready'}<span class="compose-attachment-state text-[11px] text-[var(--fm-danger)]">{attachment.state === 'failed' ? t('compose.uploadFailed') : t('compose.uploadIncomplete')}</span>{/if}
+              <div class="compose-attachment-actions ml-auto flex items-center gap-1">
+                {#if attachment.id && attachment.state === 'failed'}<IconButton ariaLabel={t('compose.retryUpload', { filename: attachment.filename })} title={t('compose.retryUpload', { filename: attachment.filename })} size="sm" class="compose-attachment-retry" disabled={authExpired} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></IconButton>{/if}
+                {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="fm-touch-target min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired} onclick={() => void renameAttachment(attachment.id!)}>{t('compose.rename')}</button>{/if}
+                {#if attachment.id}<IconButton ariaLabel={t('compose.deleteAttachment', { filename: attachment.filename })} title={t('compose.deleteAttachment', { filename: attachment.filename })} size="sm" class="compose-attachment-delete" disabled={authExpired} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></IconButton>{/if}
+              </div>
             </li>
           {/each}
         </ul>
@@ -900,6 +902,11 @@
 {/if}
 
 <style>
+  .compose-attachment-actions :global(.compose-attachment-retry) { color: var(--fm-primary); }
+  .compose-attachment-actions :global(.compose-attachment-retry:hover) { background: var(--fm-primary-soft); }
+  .compose-attachment-actions :global(.compose-attachment-delete) { color: var(--fm-danger); }
+  .compose-attachment-actions :global(.compose-attachment-delete:hover) { background: var(--fm-danger-soft); }
+
   .compose-advanced > summary {
     list-style: none;
   }
@@ -976,10 +983,20 @@
     .compose-body { flex: 1; min-height: max(18rem, calc(100dvh - 26rem)); padding: var(--space-3); }
     .compose-body :global(textarea) { min-height: max(15rem, calc(100dvh - 30rem)); border: 0; padding: var(--space-2) 0; resize: vertical; }
     .compose-body :global(label) { color: var(--fm-text-secondary); font-size: 0.875rem; font-weight: 400; }
+    .compose-attachment-item { display: grid; grid-template-columns: 1rem minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); }
+    .compose-attachment-name { grid-column: 2; width: 100%; }
+    .compose-attachment-size { grid-column: 3; white-space: nowrap; }
+    .compose-attachment-state { grid-column: 2 / -1; }
+    .compose-attachment-actions { grid-column: 4; justify-self: end; margin-left: 0; }
     .compose-footer-layout { gap: var(--space-2); padding-bottom: var(--space-2); }
     .compose-footer-meta { justify-content: space-between; flex-wrap: nowrap; }
     .compose-footer-meta > span[role="status"] { flex: 1; text-align: right; }
     .compose-footer-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
     .compose-footer-actions > :global(button), .compose-footer-actions > div, .compose-footer-actions > div :global(button) { width: 100%; min-width: 0; min-height: 44px; padding-right: var(--space-1); padding-left: var(--space-1); }
+  }
+
+  @media (max-width: 359px) {
+    .compose-attachment-item { grid-template-columns: 1rem minmax(0, 1fr) auto; }
+    .compose-attachment-actions { grid-column: 2 / -1; }
   }
 </style>
