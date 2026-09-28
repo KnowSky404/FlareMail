@@ -1159,6 +1159,12 @@ test('autosaves a compose draft and restores it after refresh', async ({ page, c
     expect(ccBounds?.y).toBe(bccBounds?.y);
     await page.screenshot({ path: '/tmp/flaremail-compose-recipient-mobile.png', fullPage: false });
   }
+  await removeRecipient.focus();
+  await expect(composeDialog.getByRole('tooltip', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
+  expect(await composeDialog.locator('[role="tooltip"]:not([hidden])').count()).toBe(1);
+  if (testInfo.project.name === 'desktop' || testInfo.project.name === 'mobile') {
+    await page.screenshot({ path: `/tmp/flaremail-compose-recipient-tooltip-${testInfo.project.name}.png`, fullPage: false });
+  }
   await removeRecipient.click();
   await page.getByLabel('收件人').fill('draft-recipient@flaremail.test');
   await page.getByRole('textbox', { name: '主题', exact: true }).fill('E2E autosaved draft');

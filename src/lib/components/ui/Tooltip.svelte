@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, type Snippet } from 'svelte';
   import { cn } from './styles';
+  import { claimTooltip, releaseTooltip } from './tooltip-coordinator';
 
   let {
     content,
@@ -39,6 +40,7 @@
     window.addEventListener('resize', keepWithinViewport);
     return () => {
       if (showTimer !== undefined) clearTimeout(showTimer);
+      releaseTooltip(hide);
       window.removeEventListener('resize', keepWithinViewport);
     };
   });
@@ -49,6 +51,7 @@
 
   function show() {
     if (disabled) return;
+    claimTooltip(hide);
     if (showTimer !== undefined) clearTimeout(showTimer);
     showTimer = setTimeout(() => {
       showTimer = undefined;
@@ -62,6 +65,7 @@
     showTimer = undefined;
     visible = false;
     horizontalShift = 0;
+    releaseTooltip(hide);
   }
 
   async function keepWithinViewport() {

@@ -9,6 +9,7 @@
   import { Code2, Paperclip, RefreshCw, Trash2, Upload, X } from '@lucide/svelte';
   import { Button, Dialog, IconButton, TextArea, TextField } from '$lib/components/ui';
   import ComposeWindow from './ComposeWindow.svelte';
+  import RecipientChip from './RecipientChip.svelte';
   import type { ComposeInput, ComposeMode, MailMessage, UserProfile, WorkspaceSnapshot } from '$lib/domain/mail';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
   import { MAIL_HEALTH_MAX_AGE_MS } from '$lib/domain/mail/health';
@@ -641,7 +642,7 @@
         <div class="relative">
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.to ?? input.toEmail ?? '') as address (address.email)}
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove fm-touch-target" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.to'), email: address.email })} onclick={() => removeRecipient('to', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
+              <RecipientChip {address} field="to" onRemove={() => removeRecipient('to', address.email)} />
             {/each}
             <input bind:this={toInput} id="compose-to" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" role="combobox" aria-autocomplete="list" aria-expanded={toSuggestionsOpen && toSuggestions.length > 0} aria-controls="compose-to-suggestions" aria-activedescendant={toSuggestionsOpen && toSuggestions.length > 0 ? `compose-to-suggestion-${activeToSuggestion}` : undefined} placeholder={t('compose.recipientPlaceholder')} value={recipientDraft.to} oninput={(event) => updateRecipientDraft('to', event.currentTarget.value)} onfocus={() => (toSuggestionsOpen = true)} onpaste={(event) => pasteRecipients('to', event)} onkeydown={handleToKeydown} onblur={() => commitRecipient('to')} />
           </div>
@@ -685,7 +686,7 @@
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-cc">{t('mail.cc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.cc ?? '') as address (address.email)}
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove fm-touch-target" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.cc'), email: address.email })} onclick={() => removeRecipient('cc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
+              <RecipientChip {address} field="cc" onRemove={() => removeRecipient('cc', address.email)} />
             {/each}
             <input id="compose-cc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
           </div>
@@ -698,7 +699,7 @@
           <label class="text-sm font-medium text-[var(--fm-text)]" for="compose-bcc">{t('mail.bcc')}</label>
           <div class="flex min-h-11 flex-wrap items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-2 py-1.5 focus-within:border-[var(--fm-focus)]">
             {#each parseAddressList(input.bcc ?? '') as address (address.email)}
-              <span class="inline-flex max-w-full items-center gap-1 rounded-full bg-[var(--fm-primary-soft)] px-2 py-1 text-xs text-[var(--fm-primary)]"><span class="min-w-0 truncate" title={address.name || address.email}>{address.name || address.email}</span><button class="recipient-remove fm-touch-target" type="button" aria-label={t('compose.removeRecipient', { field: t('mail.bcc'), email: address.email })} onclick={() => removeRecipient('bcc', address.email)}><X class="size-3" aria-hidden="true" /></button></span>
+              <RecipientChip {address} field="bcc" onRemove={() => removeRecipient('bcc', address.email)} />
             {/each}
             <input id="compose-bcc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
           </div>
@@ -885,20 +886,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .recipient-remove {
-    display: inline-grid;
-    width: 28px;
-    height: 28px;
-    flex: 0 0 auto;
-    place-items: center;
-    border-radius: 999px;
-  }
-
-  .recipient-remove:hover {
-    color: var(--fm-danger);
-    background: var(--fm-danger-soft);
   }
 
   .recipient-suggestion {
