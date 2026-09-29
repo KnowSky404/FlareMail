@@ -21,6 +21,7 @@
 
 <section
   class="toast"
+  class:interactive={toast.persistent || Boolean(toast.actionLabel)}
   class:success={toast.tone === 'success'}
   class:warning={toast.tone === 'warning'}
   class:error={toast.tone === 'error'}
@@ -65,6 +66,11 @@
     box-shadow: var(--fm-shadow-overlay);
     pointer-events: auto;
   }
+
+  /* Passive notices should never block the control beneath them. Keep the
+     close affordance interactive for users who want to dismiss one early. */
+  .toast:not(.interactive) { pointer-events: none; }
+  .toast:not(.interactive) .dismiss { pointer-events: auto; }
 
   .toast.success { border-left-color: var(--fm-success); }
   .toast.warning { border-left-color: var(--fm-warning); }
