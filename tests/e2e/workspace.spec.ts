@@ -1814,6 +1814,7 @@ test('loads management panels on demand, supports deep links, and recovers after
     .map((entry) => entry.name)
     .filter((url) => new URL(url).pathname.startsWith('/_app/immutable/chunks/') && url.endsWith('.js')));
   const inboxScripts = await scriptResources();
+  await page.setViewportSize({ width: 1505, height: 1045 });
 
   let releaseManagementChunk = () => {};
   const managementChunkGate = new Promise<void>((resolve) => { releaseManagementChunk = resolve; });
