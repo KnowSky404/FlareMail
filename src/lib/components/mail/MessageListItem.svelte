@@ -230,10 +230,10 @@
         ariaPressed={isStarred}
         size="sm"
         tooltipSide="top"
-        class={`mr-1 shrink-0 text-[var(--fm-text-muted)] hover:text-[var(--fm-brand-orange)] ${isStarred ? 'text-[var(--fm-brand-orange)]' : ''}`}
+        class="mr-1 shrink-0 text-[var(--fm-text-muted)] hover:text-[var(--fm-brand-orange-strong)]"
         onclick={handleStar}
       >
-        <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)]' : ''}`} aria-hidden="true" />
+        <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)]' : ''}`} color={isStarred ? 'var(--fm-brand-orange-strong)' : 'currentColor'} aria-hidden="true" />
       </IconButton>
     {/if}
   </article>

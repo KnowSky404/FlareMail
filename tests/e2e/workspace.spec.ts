@@ -1271,6 +1271,23 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
       await expect(page.getByRole('status').filter({ hasText: '已加入星标邮件' })).toBeVisible();
     }
   }
+  const starColors = [await removeStar.locator('svg').evaluate((icon) => ({ stroke: getComputedStyle(icon).stroke, fill: getComputedStyle(icon).fill }))];
+  if (testInfo.project.name === 'desktop') {
+    starColors.push(await item.getByRole('button', { name: '取消星标', exact: true }).locator('svg').evaluate((icon) => ({ stroke: getComputedStyle(icon).stroke, fill: getComputedStyle(icon).fill })));
+  }
+  const expectedColors = await page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--fm-brand-orange-strong)';
+    probe.style.fill = 'var(--fm-brand-orange)';
+    document.body.appendChild(probe);
+    const colors = { stroke: getComputedStyle(probe).color, fill: getComputedStyle(probe).fill };
+    probe.remove();
+    return colors;
+  });
+  for (const colors of starColors) {
+    expect(colors).toEqual(expectedColors);
+  }
+  await page.screenshot({ path: join(tmpdir(), `flaremail-star-contrast-${testInfo.project.name}.png`), fullPage: false });
   if (testInfo.project.name !== 'desktop') {
     await page.getByRole('button', { name: '更多邮件操作' }).click();
     await expect(page.getByRole('menuitem', { name: '标为未读' })).toBeVisible();

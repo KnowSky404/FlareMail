@@ -227,8 +227,8 @@
           {/if}
         {/if}
         {#if !trashMode && onToggleStar}
-          <IconButton ariaLabel={message.starred ? t('mail.unstar') : t('mail.star')} title={message.starred ? t('mail.unstar') : t('mail.star')} size="sm" ariaPressed={message.starred} class={message.starred ? 'text-[var(--fm-brand-orange)]' : 'text-[var(--fm-text-muted)]'} onclick={() => onToggleStar?.(message)} disabled={pending}>
-            <Star class="size-4" fill={message.starred ? 'currentColor' : 'none'} aria-hidden="true" />
+          <IconButton ariaLabel={message.starred ? t('mail.unstar') : t('mail.star')} title={message.starred ? t('mail.unstar') : t('mail.star')} size="sm" ariaPressed={message.starred} class="text-[var(--fm-text-muted)]" onclick={() => onToggleStar?.(message)} disabled={pending}>
+            <Star class="size-4" fill={message.starred ? 'var(--fm-brand-orange)' : 'none'} color={message.starred ? 'var(--fm-brand-orange-strong)' : 'currentColor'} aria-hidden="true" />
           </IconButton>
         {/if}
         {#if !trashMode && onManageLabels}
