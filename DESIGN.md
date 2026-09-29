@@ -233,7 +233,7 @@ Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共�
 
 --fm-text: #1d1d1f;
 --fm-text-secondary: #4f5965;
---fm-text-muted: #687483;
+--fm-text-muted: #5d6978;
 --fm-text-inverse: #ffffff;
 
 --fm-primary: #0055dc;
