@@ -20,7 +20,10 @@ export const test = base.extend<{ consoleErrors: string[] }>({
 export { expect };
 
 export async function login(page: Page) {
-  await page.goto('/');
+  // Firefox can render the local streamed Worker page without resolving its
+  // load event; the network-idle and visible-workspace checks below still
+  // establish that the application is ready before interacting with it.
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle');
   const workspace = page.getByRole('main', { name: '邮件工作区' });
   const loginHeading = page.getByRole('heading', { name: '登录邮件工作台' });

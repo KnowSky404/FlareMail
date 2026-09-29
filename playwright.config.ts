@@ -23,6 +23,9 @@ const firefoxLaunchOptions = process.env.PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH
 const chromiumTestMatch = /workspace\.spec\.ts/u;
 const webkitSmokeTestMatch = /webkit-smoke\.spec\.ts/u;
 const firefoxSmokeTestMatch = /firefox-smoke\.spec\.ts/u;
+// Linux browser video finalization is unreliable here; failures still retain
+// screenshots and traces through the shared test configuration.
+const nonChromiumVideo = 'off' as const;
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -94,6 +97,7 @@ export default defineConfig({
         locale: 'zh-CN',
         reducedMotion: 'reduce',
         viewport: { width: 1280, height: 900 },
+        video: nonChromiumVideo,
         launchOptions: webkitLaunchOptions
       }
     },
@@ -104,6 +108,7 @@ export default defineConfig({
         ...devices['Desktop Firefox'],
         locale: 'zh-CN',
         viewport: { width: 1366, height: 900 },
+        video: nonChromiumVideo,
         launchOptions: firefoxLaunchOptions
       }
     },
@@ -114,6 +119,7 @@ export default defineConfig({
         ...devices['iPhone 13'],
         locale: 'zh-CN',
         reducedMotion: 'reduce',
+        video: nonChromiumVideo,
         launchOptions: webkitLaunchOptions
       }
     },
@@ -124,6 +130,7 @@ export default defineConfig({
         ...devices['iPad (gen 7)'],
         locale: 'zh-CN',
         reducedMotion: 'reduce',
+        video: nonChromiumVideo,
         launchOptions: webkitLaunchOptions
       }
     }

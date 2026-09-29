@@ -288,13 +288,21 @@ test('keeps an exceptionally long subject and message readable at desktop, table
     await page.setViewportSize({ width, height: width < 900 ? 844 : 900 });
     await assertNoHorizontalOverflow(page);
     await expect(detail.getByRole('button', { name: '展开主题' })).toBeVisible();
-    const geometry = await detail.locator('.message-header-row').evaluate((header) => {
-      const subject = header.querySelector('h1')?.getBoundingClientRect();
-      const row = header.getBoundingClientRect();
-      return { subjectLeft: subject?.left ?? -1, subjectRight: subject?.right ?? -1, rowLeft: row.left, rowRight: row.right };
+    const geometry = await detail.locator('.message-subject').evaluate((container) => {
+      const subject = container.querySelector('h1')?.getBoundingClientRect();
+      const toggle = container.querySelector('.subject-toggle')?.getBoundingClientRect();
+      const bounds = container.getBoundingClientRect();
+      return {
+        subjectLeft: subject?.left ?? -1,
+        subjectRight: subject?.right ?? -1,
+        toggleRight: toggle?.right ?? -1,
+        containerLeft: bounds.left,
+        containerRight: bounds.right
+      };
     });
-    expect(geometry.subjectLeft).toBeGreaterThanOrEqual(geometry.rowLeft);
-    expect(geometry.subjectRight).toBeLessThanOrEqual(geometry.rowRight);
+    expect(geometry.subjectLeft).toBeGreaterThanOrEqual(geometry.containerLeft);
+    expect(geometry.subjectRight).toBeLessThanOrEqual(geometry.containerRight);
+    expect(geometry.toggleRight).toBeLessThanOrEqual(geometry.containerRight);
   }
   await page.screenshot({ path: join(tmpdir(), `flaremail-long-message-${testInfo.project.name}-mobile.png`), fullPage: false });
   await detail.getByRole('button', { name: '展开主题' }).click();
