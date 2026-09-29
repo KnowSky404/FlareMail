@@ -214,6 +214,11 @@ summary {
   overscroll-behavior: contain;
 }
 
+.fm-list-scroll.fm-list-loading {
+  /* Keep the reader's position stable while the pagination request is pending. */
+  overflow-anchor: none;
+}
+
 .fm-workspace-shell {
   display: grid;
   grid-template-columns: var(--fm-sidebar-width, 232px) minmax(0, 1fr);

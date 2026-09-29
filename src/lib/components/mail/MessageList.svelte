@@ -100,7 +100,7 @@
   };
 </script>
 
-<section class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
+<section class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" class:fm-list-loading={loadingMore} aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
   {#if loading}
     <div class="divide-y divide-[var(--fm-border)]" role="status" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}
