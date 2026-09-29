@@ -292,6 +292,84 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   await assertNoConsoleErrors(consoleErrors);
 });
 
+for (const lateResponse of ['success', 'unauthorized'] as const) {
+  test(`does not resume a delayed label write after session recovery (${lateResponse})`, async ({ page, consoleErrors }, testInfo) => {
+    await login(page);
+    await page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+    await page.getByRole('button', { name: '管理标签' }).click();
+    await page.getByRole('dialog', { name: '管理标签' }).getByRole('button', { name: '新建标签' }).click();
+    const editor = page.getByRole('dialog', { name: '新建标签' });
+    const name = `E2E Delayed Label Recovery ${lateResponse}`;
+    await editor.getByLabel('标签名称').fill(name);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let created!: () => void;
+    const committed = new Promise<void>((resolve) => { created = resolve; });
+    let delivered!: () => void;
+    const responseDelivered = new Promise<void>((resolve) => { delivered = resolve; });
+    let labelId = '';
+    const assignments: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'PUT' && /\/api\/workspace\/labels\/[^/]+\/messages$/u.test(new URL(request.url()).pathname)) assignments.push(request.url());
+    });
+    await page.route('**/api/workspace/labels', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      const response = await route.fetch();
+      labelId = (await response.json()).data.label.id;
+      created();
+      await gate;
+      try {
+        await route.fulfill(lateResponse === 'success'
+          ? { response }
+          : { status: 401, contentType: 'text/html', body: '<html>Expired prior session</html>' });
+      } catch (error) {
+        if (!route.request().failure()) throw error;
+      } finally {
+        delivered();
+      }
+    });
+    try {
+      await editor.getByRole('button', { name: '保存', exact: true }).click();
+      await committed;
+      await page.evaluate(() => {
+        const channel = new BroadcastChannel('flaremail-auth-session-v1');
+        channel.postMessage({ type: 'expired' });
+        channel.close();
+      });
+      const expiredHeading = page.getByRole('heading', { name: '登录状态已过期' });
+      await expect(expiredHeading).toBeVisible();
+      await expect(editor.getByRole('button', { name: '保存', exact: true })).toBeDisabled();
+      await page.evaluate(() => {
+        const channel = new BroadcastChannel('flaremail-auth-session-v1');
+        channel.postMessage({ type: 'authenticated' });
+        channel.close();
+      });
+      await expect(expiredHeading).toBeHidden();
+      release();
+      await responseDelivered;
+      await page.waitForLoadState('networkidle');
+      await expect(expiredHeading).toBeHidden();
+      await expect(editor).toBeVisible();
+      await expect(editor.getByLabel('标签名称')).toHaveValue(name);
+      await expect(editor.getByRole('button', { name: '保存', exact: true })).toBeEnabled();
+      await expect(editor.getByRole('status')).toContainText('上次操作可能已保存');
+      expect(assignments).toEqual([]);
+      await page.screenshot({ path: join(tmpdir(), `flaremail-label-session-recovery-${lateResponse}-${testInfo.project.name}.png`), fullPage: false });
+      await editor.getByRole('button', { name: '取消', exact: true }).click();
+      await page.getByRole('button', { name: '管理标签' }).click();
+      await expect(page.getByRole('dialog', { name: '管理标签' }).getByRole('checkbox', { name, exact: true })).not.toBeChecked();
+      await assertNoConsoleErrors(consoleErrors);
+    } finally {
+      release();
+      await page.unroute('**/api/workspace/labels');
+      if (labelId) await page.evaluate(async (id) => {
+        await fetch(`/api/workspace/labels/${id}`, { method: 'DELETE' });
+      }, labelId);
+    }
+  });
+}
+
 test('creates a label from a message and applies it in the same flow', async ({ page, consoleErrors }) => {
   await login(page);
   const subject = 'E2E Inbox Welcome';

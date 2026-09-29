@@ -17,7 +17,7 @@
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
   import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
-  import { Button, Checkbox, DropdownMenu, IconButton, Select, Skeleton, TextField } from '$lib/components/ui';
+  import { Banner, Button, Checkbox, DropdownMenu, IconButton, Select, Skeleton, TextField } from '$lib/components/ui';
   import { ClientApiError } from '$lib/client/api';
   import {
     AUTH_EXPIRED_EVENT,
@@ -197,6 +197,7 @@
   let labelEditorName = $state('');
   let labelCreateTarget = $state<MailMessage | null>(null);
   let labelActionPending = $state(false);
+  let labelEditorInterrupted = $state(false);
   let labelTargetMessage = $state<MailMessage | null>(null);
   let bulkLabelDialogOpen = $state(false);
   let bulkLabelId = $state('');
@@ -300,6 +301,16 @@
   }, { formatError: displayError });
   const shortcuts = new WorkspaceShortcutController();
   const labelRequest = new LatestRequest();
+  const labelActionRequest = new LatestRequest();
+  const bulkLabelRequest = new LatestRequest();
+
+  // Cancel local requests and continuations; server writes may already be committed.
+  function cancelLabelActions() {
+    labelActionRequest.cancel();
+    bulkLabelRequest.cancel();
+    labelActionPending = false;
+    bulkLabelPending = false;
+  }
 
   function replySource(message: MailMessage): MailMessage {
     if (!isInboundMessageId(message.id)) return message;
@@ -353,6 +364,7 @@
   function enterAuthExpired(source: AuthExpirySource) {
     if (authExpired) return;
     authExpired = true;
+    if (labelEditorMode && labelActionPending) labelEditorInterrupted = true;
     authRecoveryError = '';
     const composeInput = composeLiveInput ? withCurrentComposePersistence(composeLiveInput) : null;
     const hasUnsavedCompose = Boolean(
@@ -371,6 +383,11 @@
     clearMailboxRefreshTimer();
     mailboxController.cancel();
     labelRequest.cancel();
+    cancelLabelActions();
+    // Reopen server-backed choices after recovery; keep typed editor text intact.
+    labelTargetMessage = null;
+    bulkLabelDialogOpen = false;
+    deleteLabelConfirmOpen = false;
     trashController.cancel();
     targetMessageRequest.cancel();
     inboundDetailCache.cancel();
@@ -865,6 +882,8 @@
   ) {
     mailboxController.cancel();
     if (options?.resetUserScoped) {
+      cancelLabelActions();
+      labelEditorInterrupted = false;
       resetComposeState();
       inboundDetailCache.reset();
       deliveryDetailCache.reset();
@@ -912,6 +931,7 @@
     const initial = createEmptyWorkspaceViewState();
     mailboxController.cancel();
     labelRequest.cancel();
+    cancelLabelActions();
     trashController.cancel();
     authenticated = false;
     profile = initial.profile;
@@ -920,6 +940,7 @@
     activeLabelId = null;
     userLabels = [];
     labelEditorMode = null;
+    labelEditorInterrupted = false;
     labelCreateTarget = null;
     labelTargetMessage = null;
     bulkLabelDialogOpen = false;
@@ -1110,6 +1131,7 @@
   }
 
   function editLabel(mode: 'create' | 'rename', target: MailMessage | null = null) {
+    labelEditorInterrupted = false;
     labelEditorMode = mode;
     labelEditorName = mode === 'rename' ? userLabels.find((label) => label.id === activeLabelId)?.name ?? '' : '';
     labelCreateTarget = mode === 'create' ? target : null;
@@ -1118,13 +1140,15 @@
   function closeLabelEditor() {
     if (labelActionPending) return;
     labelEditorMode = null;
+    labelEditorInterrupted = false;
     labelCreateTarget = null;
   }
 
-  async function applyMessageLabel(message: MailMessage, labelId: string, enabled: boolean) {
+  async function applyMessageLabel(message: MailMessage, labelId: string, enabled: boolean, request: ReturnType<LatestRequest['begin']>) {
     const kind: MailLabelMessageKind = message.source === 'inbound' ? 'inbound' : message.folder === 'drafts' ? 'draft' : 'workspace';
     const id = message.source === 'inbound' ? message.id.slice('email:'.length) : message.id;
-    const result = await setMailMessageLabel(labelId, kind, id, enabled);
+    const result = await setMailMessageLabel(labelId, kind, id, enabled, request.signal);
+    if (!request.isCurrent()) return;
     const update = (items: MailMessage[]) => items.map((item) => item.id === message.id ? { ...item, userLabels: result.labels } : item);
     mailbox = { inbox: update(mailbox.inbox), sent: update(mailbox.sent), drafts: update(mailbox.drafts) };
     if (mailboxPages) mailboxPages = Object.fromEntries(Object.entries(mailboxPages).map(([section, page]) => [section, page ? { ...page, messages: update(page.messages) } : page])) as typeof mailboxPages;
@@ -1133,56 +1157,64 @@
   }
 
   async function saveLabel() {
-    if (labelActionPending) return;
+    if (labelActionPending || !authenticated || authExpired) return;
+    const request = labelActionRequest.begin();
     labelActionPending = true;
     try {
       const target = labelCreateTarget;
       const result = labelEditorMode === 'rename' && activeLabelId
-        ? await renameMailLabel(activeLabelId, labelEditorName)
-        : await createMailLabel(labelEditorName);
+        ? await renameMailLabel(activeLabelId, labelEditorName, request.signal)
+        : await createMailLabel(labelEditorName, request.signal);
+      if (!request.isCurrent()) return;
       labelEditorMode = null;
       labelCreateTarget = null;
       await reloadMailLabels();
+      if (!request.isCurrent()) return;
       if (target) {
         try {
-          await applyMessageLabel(target, result.label.id, true);
+          await applyMessageLabel(target, result.label.id, true, request);
         } catch (error) {
-          notifyError(error, t('label.applyFailed'));
+          if (request.isCurrent()) notifyError(error, t('label.applyFailed'));
         }
       }
+      if (!request.isCurrent()) return;
       if (activeSection === 'label' && activeLabelId === result.label.id) void refreshWorkspace(false);
     } catch (error) {
-      notifyError(error, t('label.saveFailed'));
+      if (request.isCurrent()) notifyError(error, t('label.saveFailed'));
     } finally {
-      labelActionPending = false;
+      if (request.isCurrent()) labelActionPending = false;
     }
   }
 
   async function removeActiveLabel() {
-    if (!activeLabelId || labelActionPending) return;
+    if (!activeLabelId || labelActionPending || !authenticated || authExpired) return;
+    const request = labelActionRequest.begin();
+    const removedLabelId = activeLabelId;
     labelActionPending = true;
     try {
-      await deleteMailLabel(activeLabelId);
+      await deleteMailLabel(removedLabelId, request.signal);
+      if (!request.isCurrent()) return;
       deleteLabelConfirmOpen = false;
-      setSection('inbox');
+      if (activeSection === 'label' && activeLabelId === removedLabelId) setSection('inbox');
       await reloadMailLabels();
     } catch (error) {
-      notifyError(error, t('label.deleteFailed'));
+      if (request.isCurrent()) notifyError(error, t('label.deleteFailed'));
     } finally {
-      labelActionPending = false;
+      if (request.isCurrent()) labelActionPending = false;
     }
   }
 
   async function toggleMessageLabel(message: MailMessage, labelId: string) {
-    if (labelActionPending) return;
+    if (labelActionPending || !authenticated || authExpired) return;
+    const request = labelActionRequest.begin();
     const enabled = !(message.userLabels ?? []).some((label) => label.id === labelId);
     labelActionPending = true;
     try {
-      await applyMessageLabel(message, labelId, enabled);
+      await applyMessageLabel(message, labelId, enabled, request);
     } catch (error) {
-      notifyError(error, t('label.applyFailed'));
+      if (request.isCurrent()) notifyError(error, t('label.applyFailed'));
     } finally {
-      labelActionPending = false;
+      if (request.isCurrent()) labelActionPending = false;
     }
   }
 
@@ -1194,23 +1226,26 @@
   }
 
   async function changeBulkLabel(enabled: boolean) {
-    if (bulkLabelPending || !bulkLabelId || !bulkSelectedMessages.length) return;
+    if (bulkLabelPending || !bulkLabelId || !bulkSelectedMessages.length || !authenticated || authExpired) return;
+    const request = bulkLabelRequest.begin();
     bulkLabelPending = true;
     try {
       const targets = bulkSelectedMessages.map((message) => ({
         kind: (message.source === 'inbound' ? 'inbound' : message.folder === 'drafts' ? 'draft' : 'workspace') as MailLabelMessageKind,
         id: message.source === 'inbound' ? message.id.slice('email:'.length) : message.id
       }));
-      await setManyMailMessageLabels(bulkLabelId, targets, enabled);
+      await setManyMailMessageLabels(bulkLabelId, targets, enabled, request.signal);
+      if (!request.isCurrent()) return;
       bulkLabelDialogOpen = false;
       selectedMessageIds = [];
       await refreshWorkspace(false);
+      if (!request.isCurrent()) return;
       workspaceSync?.publish({ type: 'mailbox-refresh' });
       notify(enabled ? t('label.bulkAdded') : t('label.bulkRemoved'), 'success');
     } catch (error) {
-      notifyError(error, t('label.applyFailed'));
+      if (request.isCurrent()) notifyError(error, t('label.applyFailed'));
     } finally {
-      bulkLabelPending = false;
+      if (request.isCurrent()) bulkLabelPending = false;
     }
   }
 
@@ -1344,6 +1379,7 @@
         authSessionSync?.publish({ type: 'authenticated' });
 
         void refreshWorkspace(false);
+        void reloadMailLabels();
         const current = selectedMessage;
         if (current) {
           if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
@@ -2462,6 +2498,8 @@
       document.body.classList.remove('fm-is-resizing');
       clearMailboxRefreshTimer();
       mailboxController.cancel();
+      labelRequest.cancel();
+      cancelLabelActions();
       shortcuts.dispose();
       toastController.reset();
     };
@@ -2953,10 +2991,11 @@
 
     <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} onClose={closeLabelEditor}>
       <form onsubmit={(event) => { event.preventDefault(); void saveLabel(); }}>
+        {#if labelEditorInterrupted}<Banner variant="warning" class="mb-3">{t('label.interrupted')}</Banner>{/if}
         <TextField id="mail-label-name" label={t('label.name')} bind:value={labelEditorName} maxlength={48} required disabled={labelActionPending} />
         <div class="mt-4 flex justify-end gap-2">
           <Button variant="secondary" onclick={closeLabelEditor} disabled={labelActionPending}>{t('common.cancel')}</Button>
-          <Button type="submit" loading={labelActionPending}>{t('label.save')}</Button>
+          <Button type="submit" loading={labelActionPending} disabled={authExpired}>{t('label.save')}</Button>
         </div>
       </form>
     </Dialog>
@@ -2967,7 +3006,7 @@
         {#if userLabels.length === 0}<p class="text-sm text-[var(--fm-text-muted)]">{t('label.empty')}</p>{/if}
         <div class="grid gap-1">
           {#each userLabels as userLabel (userLabel.id)}
-            <Checkbox id={`message-label-${userLabel.id}`} label={userLabel.name} checked={(labelTargetMessage.userLabels ?? []).some((item) => item.id === userLabel.id)} disabled={labelActionPending} class="rounded-[var(--radius-md)] px-2 hover:bg-[var(--fm-surface-hover)]" onchange={() => { if (labelTargetMessage) void toggleMessageLabel(labelTargetMessage, userLabel.id); }} />
+            <Checkbox id={`message-label-${userLabel.id}`} label={userLabel.name} checked={(labelTargetMessage.userLabels ?? []).some((item) => item.id === userLabel.id)} disabled={labelActionPending || authExpired} class="rounded-[var(--radius-md)] px-2 hover:bg-[var(--fm-surface-hover)]" onchange={() => { if (labelTargetMessage) void toggleMessageLabel(labelTargetMessage, userLabel.id); }} />
           {/each}
         </div>
         <Button variant="ghost" size="sm" class="mt-3" onclick={() => { const target = labelTargetMessage; labelTargetMessage = null; editLabel('create', target); }}>{t('label.create')}</Button>
@@ -2983,8 +3022,8 @@
       {/if}
       <div class="mt-5 grid grid-cols-1 gap-2 min-[360px]:grid-cols-2 sm:flex sm:flex-wrap sm:justify-end">
         <Button variant="secondary" class="w-full sm:w-auto" disabled={bulkLabelPending} onclick={() => (bulkLabelDialogOpen = false)}>{t('common.cancel')}</Button>
-        <Button variant="outline" class="w-full sm:w-auto" loading={bulkLabelPending} disabled={!bulkLabelId} onclick={() => void changeBulkLabel(false)}>{t('label.removeFromSelected')}</Button>
-        <Button variant="primary" class="w-full min-[360px]:col-span-2 sm:w-auto" loading={bulkLabelPending} disabled={!bulkLabelId} onclick={() => void changeBulkLabel(true)}>{t('label.addToSelected')}</Button>
+        <Button variant="outline" class="w-full sm:w-auto" loading={bulkLabelPending} disabled={!bulkLabelId || authExpired} onclick={() => void changeBulkLabel(false)}>{t('label.removeFromSelected')}</Button>
+        <Button variant="primary" class="w-full min-[360px]:col-span-2 sm:w-auto" loading={bulkLabelPending} disabled={!bulkLabelId || authExpired} onclick={() => void changeBulkLabel(true)}>{t('label.addToSelected')}</Button>
       </div>
     </Dialog>
 

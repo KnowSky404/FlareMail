@@ -234,29 +234,29 @@ export function fetchMailLabels(signal?: AbortSignal) {
   return requestJson<{ labels: MailUserLabel[] }>('/api/workspace/labels', { signal });
 }
 
-export function createMailLabel(name: string) {
-  return requestJson<{ label: MailUserLabel }>('/api/workspace/labels', { method: 'POST', body: JSON.stringify({ name }) });
+export function createMailLabel(name: string, signal?: AbortSignal) {
+  return requestJson<{ label: MailUserLabel }>('/api/workspace/labels', { method: 'POST', body: JSON.stringify({ name }), signal });
 }
 
-export function renameMailLabel(id: string, name: string) {
-  return requestJson<{ label: MailUserLabel }>(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+export function renameMailLabel(id: string, name: string, signal?: AbortSignal) {
+  return requestJson<{ label: MailUserLabel }>(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }), signal });
 }
 
-export function deleteMailLabel(id: string) {
-  return requestJson<{ deleted: boolean }>(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export function deleteMailLabel(id: string, signal?: AbortSignal) {
+  return requestJson<{ deleted: boolean }>(`/api/workspace/labels/${encodeURIComponent(id)}`, { method: 'DELETE', signal });
 }
 
-export function setMailMessageLabel(labelId: string, kind: MailLabelMessageKind, id: string, enabled: boolean) {
+export function setMailMessageLabel(labelId: string, kind: MailLabelMessageKind, id: string, enabled: boolean, signal?: AbortSignal) {
   return requestJson<{ labels: MailUserLabel[] }>(`/api/workspace/labels/${encodeURIComponent(labelId)}/messages`, {
-    method: enabled ? 'PUT' : 'DELETE', body: JSON.stringify({ kind, id })
+    method: enabled ? 'PUT' : 'DELETE', body: JSON.stringify({ kind, id }), signal
   });
 }
 
 export function setManyMailMessageLabels(
-  labelId: string, targets: Array<{ kind: MailLabelMessageKind; id: string }>, enabled: boolean
+  labelId: string, targets: Array<{ kind: MailLabelMessageKind; id: string }>, enabled: boolean, signal?: AbortSignal
 ) {
   return requestJson<{ processed: number }>(`/api/workspace/labels/${encodeURIComponent(labelId)}/messages`, {
-    method: 'PATCH', body: JSON.stringify({ targets, enabled })
+    method: 'PATCH', body: JSON.stringify({ targets, enabled }), signal
   });
 }
 
