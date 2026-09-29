@@ -17,7 +17,7 @@
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
   import ToastRegion from '$lib/components/ui/ToastRegion.svelte';
   import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
-  import { Button, Checkbox, DropdownMenu, IconButton, Select, TextField } from '$lib/components/ui';
+  import { Button, Checkbox, DropdownMenu, IconButton, Select, Skeleton, TextField } from '$lib/components/ui';
   import { ClientApiError } from '$lib/client/api';
   import {
     AUTH_EXPIRED_EVENT,
@@ -2609,9 +2609,32 @@
                     {t('shell.managementLoadFailed', { section: managementTitle })}
                   </p>
                 {:else}
-                  <p class="text-sm text-[var(--fm-text-muted)]" role="status">
-                    {t('shell.managementLoading', { section: managementTitle })}
-                  </p>
+                  <div
+                    class={`mx-auto grid gap-5 ${managementView === 'settings' ? 'max-w-[920px]' : 'max-w-[72rem]'}`}
+                    role="status"
+                    data-management-loading
+                  >
+                    <p class="sr-only">{t('shell.managementLoading', { section: managementTitle })}</p>
+                    <div class="grid gap-2 py-1">
+                      <Skeleton width="11rem" height="1.375rem" />
+                      <Skeleton width="min(24rem, 75%)" height="0.75rem" />
+                    </div>
+                    {#if managementView === 'settings'}
+                      <div class="flex flex-wrap gap-3 border-b border-[var(--fm-border)] pb-4" aria-hidden="true">
+                        {#each Array(4) as _, index (index)}<Skeleton width={index === 0 ? '5rem' : '4rem'} height="1.25rem" />{/each}
+                      </div>
+                    {/if}
+                    <div class="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--fm-border)] bg-[var(--fm-surface)]">
+                      <div class="grid gap-2 border-b border-[var(--fm-border)] px-4 py-3">
+                        <Skeleton width="9rem" height="0.875rem" />
+                        <Skeleton width="min(20rem, 75%)" height="0.75rem" />
+                      </div>
+                      <div class="grid gap-4 p-4">
+                        <Skeleton height="2.5rem" />
+                        <Skeleton height="2.5rem" />
+                      </div>
+                    </div>
+                  </div>
                 {/if}
               </div>
             {:else}

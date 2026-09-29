@@ -1815,7 +1815,26 @@ test('loads management panels on demand, supports deep links, and recovers after
     .filter((url) => new URL(url).pathname.startsWith('/_app/immutable/chunks/') && url.endsWith('.js')));
   const inboxScripts = await scriptResources();
 
-  await openSettings(page);
+  let releaseManagementChunk = () => {};
+  const managementChunkGate = new Promise<void>((resolve) => { releaseManagementChunk = resolve; });
+  await page.route('**/_app/immutable/chunks/*.js', async (route) => {
+    await managementChunkGate;
+    await route.continue();
+  });
+  try {
+    await page.getByRole('button', { name: '账号菜单' }).click();
+    await page.getByRole('menuitem', { name: '打开设置', exact: true }).click();
+    const managementLoading = page.locator('[data-management-loading]');
+    await expect(managementLoading).toBeVisible();
+    await expect(managementLoading).toContainText('正在打开设置');
+    expect(await managementLoading.locator('[aria-hidden="true"]').count()).toBeGreaterThanOrEqual(6);
+    await assertNoHorizontalOverflow(page);
+    await page.screenshot({ path: '/tmp/flaremail-management-loading-desktop.png', fullPage: false });
+  } finally {
+    releaseManagementChunk();
+  }
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  await page.unroute('**/_app/immutable/chunks/*.js');
   const settingsScripts = await scriptResources();
   expect(settingsScripts.some((url) => !inboxScripts.includes(url))).toBe(true);
   await page.goto('/?folder=settings&view=domains');
@@ -1836,6 +1855,31 @@ test('loads management panels on demand, supports deep links, and recovers after
   await page.unroute('**/_app/immutable/chunks/*.js');
   await page.reload();
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+});
+
+test('keeps mobile navigation usable while the management panel downloads', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'The mobile project checks the loading layout at 390 px.');
+  await login(page);
+  let releaseManagementChunk = () => {};
+  const managementChunkGate = new Promise<void>((resolve) => { releaseManagementChunk = resolve; });
+  await page.route('**/_app/immutable/chunks/*.js', async (route) => {
+    await managementChunkGate;
+    await route.continue();
+  });
+  try {
+    await page.getByRole('button', { name: '打开导航' }).click();
+    await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }).click();
+    const managementLoading = page.locator('[data-management-loading]');
+    await expect(managementLoading).toBeVisible();
+    await expect(page.getByRole('button', { name: '打开导航' })).toBeVisible();
+    await assertNoHorizontalOverflow(page);
+    expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+    await page.screenshot({ path: '/tmp/flaremail-management-loading-mobile.png', fullPage: false });
+  } finally {
+    releaseManagementChunk();
+  }
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+  await page.unroute('**/_app/immutable/chunks/*.js');
 });
 
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
