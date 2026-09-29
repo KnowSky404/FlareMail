@@ -60,6 +60,9 @@
     onToggleSelect?: (message: MailMessage) => void;
   } = $props();
 
+  let listElement = $state<HTMLElement | null>(null);
+  let preservedScrollTop = $state<number | null>(null);
+
   const { t } = useLocale();
 
   const sectionLabels = $derived<Record<AppSection, string>>({
@@ -98,9 +101,24 @@
     if (item.kind === 'thread') void onSelectThread?.(item.value);
     else void onSelect?.(item.value);
   };
+
+  function handleLoadMore() {
+    preservedScrollTop = listElement?.scrollTop ?? null;
+    void onLoadMore?.();
+  }
+
+  $effect(() => {
+    if (!loadingMore || preservedScrollTop === null || !listElement) return;
+    const target = preservedScrollTop;
+    listElement.scrollTop = target;
+    const frame = requestAnimationFrame(() => {
+      if (loadingMore && preservedScrollTop === target && listElement) listElement.scrollTop = target;
+    });
+    return () => cancelAnimationFrame(frame);
+  });
 </script>
 
-<section class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" class:fm-list-loading={loadingMore} aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
+<section bind:this={listElement} class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" class:fm-list-loading={loadingMore} aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
   {#if loading}
     <div class="divide-y divide-[var(--fm-border)]" role="status" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}
@@ -171,7 +189,7 @@
     </div>
     {#if hasMore && onLoadMore}
       <div class="border-t border-[var(--fm-border)] px-4 py-4 text-center">
-        <Button variant="secondary" size="sm" loading={loadingMore} onclick={() => onLoadMore?.()}>{t('mail.loadMore')}</Button>
+        <Button variant="secondary" size="sm" loading={loadingMore} onclick={handleLoadMore}>{t('mail.loadMore')}</Button>
       </div>
     {:else if paginationEnd || selectedCount > 0}
       <p class="border-t border-[var(--fm-border)] px-4 py-3 text-center text-[11px] text-[var(--fm-text-muted)]">{t('mail.allShown')}</p>
