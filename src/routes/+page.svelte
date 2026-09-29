@@ -9,8 +9,6 @@
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
   import RuntimeUnavailableView from '$lib/components/mail/RuntimeUnavailableView.svelte';
   import MessageList from '$lib/components/mail/MessageList.svelte';
-  import ProfilePane from '$lib/components/mail/ProfilePane.svelte';
-  import MailIdentityManager from '$lib/components/mail/MailIdentityManager.svelte';
   import AppSidebar from '$lib/components/shell/AppSidebar.svelte';
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
@@ -205,6 +203,17 @@
   let bulkLabelPending = $state(false);
   let deleteLabelConfirmOpen = $state(false);
   let managementView = $state<WorkspaceUrlState['managementView']>('settings');
+  type ProfilePaneComponent = (typeof import('$lib/components/mail/ProfilePane.svelte'))['default'];
+  type MailIdentityManagerComponent = (typeof import('$lib/components/mail/MailIdentityManager.svelte'))['default'];
+  let ProfilePane = $state<ProfilePaneComponent | null>(null);
+  let MailIdentityManager = $state<MailIdentityManagerComponent | null>(null);
+  let profilePaneLoading = $state(false);
+  let mailIdentityManagerLoading = $state(false);
+  let profilePaneLoadFailed = $state(false);
+  let mailIdentityManagerLoadFailed = $state(false);
+  const managementTitle = $derived(managementView === 'settings'
+    ? t('common.settings')
+    : managementView === 'domains' ? t('shell.domains') : t('shell.addresses'));
   let createAddressDomainId = $state('');
   let createAddressLocalPart = $state('');
   let selectedMessageId = $state<string | null>(null);
@@ -393,6 +402,36 @@
     selectedMessageIds = [];
     mobileDetailOpen = Boolean(urlMessageId);
   });
+
+  $effect(() => {
+    if (!authenticated || activeSection !== 'profile') return;
+    if (managementView === 'settings') void loadProfilePane();
+    else void loadMailIdentityManager();
+  });
+
+  async function loadProfilePane() {
+    if (ProfilePane || profilePaneLoading || profilePaneLoadFailed) return;
+    profilePaneLoading = true;
+    try {
+      ProfilePane = (await import('$lib/components/mail/ProfilePane.svelte')).default;
+    } catch {
+      profilePaneLoadFailed = true;
+    } finally {
+      profilePaneLoading = false;
+    }
+  }
+
+  async function loadMailIdentityManager() {
+    if (MailIdentityManager || mailIdentityManagerLoading || mailIdentityManagerLoadFailed) return;
+    mailIdentityManagerLoading = true;
+    try {
+      MailIdentityManager = (await import('$lib/components/mail/MailIdentityManager.svelte')).default;
+    } catch {
+      mailIdentityManagerLoadFailed = true;
+    } finally {
+      mailIdentityManagerLoading = false;
+    }
+  }
 
   $effect(() => {
     const workspace = serverWorkspace;
@@ -2533,7 +2572,7 @@
           <main class:settings-main={activeSection === 'profile'} class="fm-workspace-main" aria-label={t('shell.mailWorkspace')}>
             {#if activeSection === 'profile'}
               <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
-                {#if managementView === 'settings'}
+                {#if managementView === 'settings' && ProfilePane}
                   <ProfilePane
                     {metrics}
                     {pending}
@@ -2549,7 +2588,7 @@
                     onOpenDomains={() => setManagementView('domains')}
                     onOpenAddresses={() => setManagementView('addresses')}
                   />
-                {:else}
+                {:else if managementView !== 'settings' && MailIdentityManager}
                   <MailIdentityManager
                     view={managementView}
                     initialDomainId={createAddressDomainId}
@@ -2565,6 +2604,14 @@
                       if (changed) workspaceSync?.publish({ type: 'mail-identity-options-changed' });
                     }}
                   />
+                {:else if managementView === 'settings' ? profilePaneLoadFailed : mailIdentityManagerLoadFailed}
+                  <p class="mx-auto max-w-lg rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] p-5 text-sm text-[var(--fm-text-secondary)]" role="alert">
+                    {t('shell.managementLoadFailed', { section: managementTitle })}
+                  </p>
+                {:else}
+                  <p class="text-sm text-[var(--fm-text-muted)]" role="status">
+                    {t('shell.managementLoading', { section: managementTitle })}
+                  </p>
                 {/if}
               </div>
             {:else}

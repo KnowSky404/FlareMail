@@ -1807,6 +1807,37 @@ test('downloads the compose editor on demand and recovers from an unavailable ch
   await expect(compose).toBeVisible();
 });
 
+test('loads management panels on demand, supports deep links, and recovers after a failed download', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop project checks management chunk downloads and failure recovery.');
+  await login(page);
+  const scriptResources = () => page.evaluate(() => performance.getEntriesByType('resource')
+    .map((entry) => entry.name)
+    .filter((url) => new URL(url).pathname.startsWith('/_app/immutable/chunks/') && url.endsWith('.js')));
+  const inboxScripts = await scriptResources();
+
+  await openSettings(page);
+  const settingsScripts = await scriptResources();
+  expect(settingsScripts.some((url) => !inboxScripts.includes(url))).toBe(true);
+  await page.goto('/?folder=settings&view=domains');
+  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  const domainScripts = await scriptResources();
+  expect(domainScripts.some((url) => !settingsScripts.includes(url))).toBe(true);
+  await page.goto('/?folder=settings&view=addresses');
+  await expect(page.getByRole('heading', { name: '受管邮件地址', exact: true })).toBeVisible();
+
+  await page.goto('/?folder=inbox');
+  await page.route('**/_app/immutable/chunks/*.js', (route) => route.abort());
+  await page.getByRole('button', { name: '账号菜单' }).click();
+  await page.getByRole('menuitem', { name: '打开设置', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: '无法载入设置' })).toBeVisible();
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await page.screenshot({ path: '/tmp/flaremail-management-lazy-failure-desktop.png', fullPage: false });
+  await page.unroute('**/_app/immutable/chunks/*.js');
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
+});
+
 test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
   const isPhoneViewport = testInfo.project.name === 'mobile' || testInfo.project.name === 'narrow';
   await login(page);
