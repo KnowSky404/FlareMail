@@ -9,9 +9,14 @@ test.describe.configure({ mode: 'serial' });
 // split-pane coverage explicit; gmail-workflows.spec.ts covers the real list default.
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    let saved = {};
-    try { saved = JSON.parse(localStorage.getItem('flaremail-layout-v1') ?? '{}') ?? {}; } catch {}
-    localStorage.setItem('flaremail-layout-v1', JSON.stringify({ ...saved, version: 1, readingLayout: 'split' }));
+    // Mail HTML is intentionally sandboxed; never access storage in its frames.
+    if (window !== window.top) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem('flaremail-layout-v1') ?? '{}') ?? {};
+      localStorage.setItem('flaremail-layout-v1', JSON.stringify({ ...saved, version: 1, readingLayout: 'split' }));
+    } catch {
+      // Storage may be unavailable on non-application documents.
+    }
   });
 });
 

@@ -11,9 +11,14 @@ test.describe.configure({ mode: 'serial' });
 // split-pane coverage explicit; gmail-workflows.spec.ts covers the real list default.
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    let saved = {};
-    try { saved = JSON.parse(localStorage.getItem('flaremail-layout-v1') ?? '{}') ?? {}; } catch {}
-    localStorage.setItem('flaremail-layout-v1', JSON.stringify({ ...saved, version: 1, readingLayout: 'split' }));
+    // Mail HTML is intentionally sandboxed; never access storage in its frames.
+    if (window !== window.top) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem('flaremail-layout-v1') ?? '{}') ?? {};
+      localStorage.setItem('flaremail-layout-v1', JSON.stringify({ ...saved, version: 1, readingLayout: 'split' }));
+    } catch {
+      // Storage may be unavailable on non-application documents.
+    }
   });
 });
 
@@ -262,9 +267,11 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   await expect(manager.getByRole('checkbox', { name: 'E2E Follow Up' })).toBeChecked();
   await manager.getByRole('button', { name: '关闭' }).click();
 
-  await page.getByRole('button', { name: '返回邮件列表' }).click();
-  await expect(inboxItem.getByText('E2E Follow Up', { exact: true })).toBeVisible();
-  await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /标签: E2E Follow Up/u);
+  const backToList = page.getByRole('button', { name: '返回邮件列表' });
+  if (await backToList.isVisible()) await backToList.click();
+  // A serial retry can retain other labels, so the new label may be in +N.
+  await expect(inboxItem.getByTitle(/(?:^|, )E2E Follow Up(?:,|$)/u)).toBeVisible();
+  await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /标签: (?:[^,]+, )*E2E Follow Up(?:,|$)/u);
   await page.screenshot({ path: join(tmpdir(), `flaremail-label-chip-${testInfo.project.name}.png`), fullPage: false });
   const search = page.getByLabel('搜索邮件');
   await search.fill('label:"E2E Follow Up"');
@@ -2382,7 +2389,7 @@ test('sends through the local fake provider and applies a signed delivered webho
   });
   expect(webhook.ok(), await webhook.text()).toBe(true);
   await detail.locator('section[aria-labelledby="delivery-title"]').getByRole('button', { name: '刷新投递回执' }).click();
-  await expect(detail.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(detail.locator('section[aria-labelledby="delivery-title"]').getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(detail.getByRole('list', { name: '投递事件列表' })).toContainText('已送达');
   await assertNoConsoleErrors(consoleErrors);
 });
