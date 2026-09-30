@@ -1,4 +1,4 @@
-import type { MailboxIdentityFilter, MailboxSection } from '$lib/domain/mail';
+import type { MailboxIdentityFilter, MailboxSection, InboxCategoryFilter } from '$lib/domain/mail';
 import type { MailFilter, WorkspaceSection } from './mailbox-controller';
 
 export type WorkspaceUrlState = {
@@ -7,6 +7,7 @@ export type WorkspaceUrlState = {
   managementDomainId: string | null;
   query: string;
   filter: MailFilter;
+  category: InboxCategoryFilter;
   identityFilter: MailboxIdentityFilter | null;
   messageId: string | null;
   labelId: string | null;
@@ -18,6 +19,7 @@ export type WorkspaceUrlUpdates = {
   managementDomainId?: string | null;
   query?: string;
   filter?: MailFilter;
+  category?: InboxCategoryFilter;
   identityFilter?: MailboxIdentityFilter | null;
   messageId?: string | null;
   labelId?: string | null;
@@ -27,6 +29,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
   const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'starred' || folder === 'label' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
   const filter = url.searchParams.get('filter');
+  const category = url.searchParams.get('category');
   const view = url.searchParams.get('view');
   const managementDomainId = url.searchParams.get('domain');
   const identity = url.searchParams.get('identity');
@@ -38,6 +41,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
       ? managementDomainId : null,
     query: section === 'trash' || section === 'profile' ? '' : url.searchParams.get('q')?.slice(0, 200) ?? '',
     filter: section !== 'trash' && section !== 'profile' && (filter === 'unread' || filter === 'starred') ? filter : 'all',
+    category: section === 'inbox' && ['primary', 'promotions', 'social', 'updates', 'forums'].includes(category ?? '') ? category as InboxCategoryFilter : 'all',
     identityFilter: section !== 'trash' && section !== 'profile' && identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
     messageId: section === 'profile' ? null : url.searchParams.get('message'),
     labelId: section === 'label' && /^[A-Za-z0-9:._-]{1,128}$/u.test(url.searchParams.get('label') ?? '') ? url.searchParams.get('label') : null
@@ -67,6 +71,11 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
     } else {
       next.searchParams.delete('domain');
     }
+  }
+  if (updates.category !== undefined || updates.section !== undefined) {
+    const category = updates.category ?? 'all';
+    if ((updates.section ?? readWorkspaceUrl(url).section) === 'inbox' && category !== 'all') next.searchParams.set('category', category);
+    else next.searchParams.delete('category');
   }
   if (updates.query !== undefined) {
     const query = updates.query.trim().slice(0, 200);

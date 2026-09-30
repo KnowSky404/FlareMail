@@ -102,3 +102,15 @@ describe('standalone message reader', () => {
     expect(buildWorkspaceBackHref(url, message)).not.toContain('token=');
   });
 });
+
+test('reader retains validated category, identity, and label return context', () => {
+  const message = { id: 'inbox-1', folder: 'inbox', source: 'workspace', archivedAt: null } as Parameters<typeof buildWorkspaceBackHref>[1];
+  expect(buildWorkspaceBackHref(new URL('https://flaremail.test/messages/inbox-1?folder=inbox&category=promotions&identity=address%3Aaddress-1'), message))
+    .toBe('/?folder=inbox&message=inbox-1&category=promotions&identity=address%3Aaddress-1');
+  expect(buildWorkspaceBackHref(new URL('https://flaremail.test/messages/inbox-1?folder=label&label=project-1&identity=domain%3Adomain-1'), message))
+    .toBe('/?folder=label&message=inbox-1&identity=domain%3Adomain-1&label=project-1');
+  expect(buildWorkspaceBackHref(new URL('https://flaremail.test/messages/inbox-1?folder=starred&category=promotions'), message))
+    .toBe('/?folder=starred&message=inbox-1');
+  expect(buildWorkspaceBackHref(new URL('https://flaremail.test/messages/inbox-1?folder=label&label=../bad&identity=token%3Asecret&category=spam'), message))
+    .toBe('/?folder=inbox&message=inbox-1');
+});

@@ -1,12 +1,13 @@
 import type {
   DeliveryStatus,
+  InboxCategoryFilter,
   MailFolder,
   MailboxFilter,
   MailboxIdentityFilter,
   MailboxSection,
   MailSearchQuery
 } from '$lib/domain/mail';
-import { parseMailSearchQuery, SearchQueryParseError } from '$lib/domain/mail';
+import { isInboxCategoryFilter, parseMailSearchQuery, SearchQueryParseError } from '$lib/domain/mail';
 import { boundedUtf8 } from '$lib/domain/utf8';
 import { ApiError } from '$lib/server/http/api';
 
@@ -37,6 +38,7 @@ export function buildD1LikeSearchPattern(query: string): string {
 }
 
 export interface MailboxCursor {
+  category?: InboxCategoryFilter;
   version: 2;
   folder: MailFolder | 'starred' | 'label';
   section?: MailboxSection;
@@ -50,6 +52,7 @@ export interface MailboxCursor {
 }
 
 export interface MailboxCursorContext {
+  category?: InboxCategoryFilter;
   query: string;
   filter: MailboxFilter;
   identityFilter?: MailboxIdentityFilter | null;
@@ -58,6 +61,7 @@ export interface MailboxCursorContext {
 }
 
 export interface MailboxQuery {
+  category?: InboxCategoryFilter;
   folder: MailFolder | 'starred' | 'label';
   section?: MailboxSection;
   cursor: MailboxCursor | null;
@@ -131,6 +135,8 @@ export function decodeMailboxCursor(
         typeof parsed.identityFilter.id !== 'string' ||
         !/^[A-Za-z0-9:._-]{1,128}$/u.test(parsed.identityFilter.id)
       )) ||
+      (parsed.category !== undefined && !isInboxCategoryFilter(parsed.category)) ||
+      (parsed.category ?? 'all') !== (expected.category ?? 'all') ||
       parsed.query !== expected.query ||
       parsed.filter !== expected.filter ||
       !sameIdentityFilter(parsed.identityFilter, expected.identityFilter) ||
@@ -173,6 +179,11 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   }
   if (section !== 'label' && labelId !== null) {
     throw new ApiError(400, 'INVALID_LABEL_ID', '仅标签分区支持标签筛选。');
+  }
+
+  const category = params.get('category') ?? 'all';
+  if (!isInboxCategoryFilter(category) || (category !== 'all' && section !== 'inbox')) {
+    throw new ApiError(400, 'INVALID_INBOX_CATEGORY', '收件箱分类无效或不适用于当前分区。');
   }
 
   const filterValue = params.get('filter') ?? 'all';
@@ -235,7 +246,8 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
       filter: filterValue as MailboxFilter,
       identityFilter,
       deliveryStatus,
-      labelId
+      labelId,
+      category
     }) : null,
     section,
     limit,
@@ -244,6 +256,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
     filter: filterValue as MailboxFilter,
     identityFilter,
     deliveryStatus,
-    labelId
+    labelId,
+    category
   };
 }

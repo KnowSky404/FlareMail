@@ -1,3 +1,4 @@
+import { inboxCategorySql } from '$lib/server/db/inbox-categories';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError } from '$lib/server/http/api';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
@@ -30,6 +31,7 @@ import {
 import { encodeMailboxCursor, parseMailboxQuery, type MailboxQuery } from '$lib/server/workspace/mailbox-query';
 import type {
   DeliveryStatus,
+  InboxCategoryFilter,
   MailFolder,
   MailboxFilter,
   MailboxMessageSummary,
@@ -45,7 +47,7 @@ import type {
   WorkspaceMetrics,
   WorkspaceSnapshot
 } from '$lib/domain/mail';
-import { parseMailSearchQuery } from '$lib/domain/mail';
+import { isInboxCategoryFilter, parseMailSearchQuery } from '$lib/domain/mail';
 
 export function parseArchiveMailboxQuery(params: URLSearchParams): MailboxQuery {
   const normalized = new URLSearchParams(params);
@@ -57,6 +59,7 @@ export function parseArchiveMailboxQuery(params: URLSearchParams): MailboxQuery 
 export { serializeWorkspace };
 
 export interface WorkspaceSnapshotOptions {
+  category?: InboxCategoryFilter;
   activeFolder?: MailboxSection;
   limit?: number;
   query?: string;
@@ -99,6 +102,7 @@ async function resolveFilteredMailboxThreadIds(
   const repositoryQuery = {
     folder: scope.section === 'sent' ? 'sent' as const : 'inbox' as const,
     section: scope.section,
+    category: scope.category,
     limit: maxMailboxMutationIds + 1,
     query: queryText,
     search: queryText ? parseMailSearchQuery(queryText) : null,
@@ -134,6 +138,10 @@ export async function mutateWorkspaceMailbox(
   if (suppliedScope.identityFilter !== null && !isValidIdentityFilter(suppliedScope.identityFilter)) {
     throw new ApiError(400, 'INVALID_MAILBOX_SCOPE', '批量操作的地址筛选范围无效。');
   }
+  if (suppliedScope.category !== undefined && (!isInboxCategoryFilter(suppliedScope.category) ||
+    (suppliedScope.category !== 'all' && suppliedScope.section !== 'inbox'))) {
+    throw new ApiError(400, 'INVALID_INBOX_CATEGORY', '批量操作的收件箱分类范围无效。');
+  }
   const directIds = [...new Set(input.messageIds.map((id) => id.trim()).filter(Boolean))];
   const threadKeys = [...new Set((input.threadKeys ?? []).map((key) => key.trim()).filter(Boolean))];
   if (directIds.length > maxMailboxMutationIds || threadKeys.length > maxMailboxMutationIds) {
@@ -166,6 +174,7 @@ export async function mutateWorkspaceMailbox(
     section: suppliedScope.section,
     identityFilter: suppliedScope.identityFilter,
     threadScope: suppliedScope.threadScope,
+    ...(suppliedScope.category !== undefined ? { category: suppliedScope.category } : {}),
     ...(suppliedScope.section === 'label' ? { labelId: suppliedScope.labelId } : {}),
     ...(suppliedScope.threadScope === 'filtered' ? {
       query: suppliedScope.query,
@@ -325,6 +334,7 @@ export async function loadMailboxPage(
   const repositoryQuery = {
     folder: persistedFolder,
     section,
+    category: query.category ?? 'all',
     timestamp: query.cursor?.timestamp,
     cursorId: query.cursor?.id,
     limit: query.limit + 1,
@@ -369,6 +379,7 @@ export async function loadMailboxPage(
   const metrics = await metricsPromise;
   return {
     folder: section,
+    category: query.category ?? 'all',
     messages: visible,
     nextCursor: hasMore && last ? encodeMailboxCursor({
       folder: persistedFolder,
@@ -378,6 +389,7 @@ export async function loadMailboxPage(
       query: query.query,
       filter: query.filter,
       identityFilter: query.identityFilter,
+      category: query.category ?? 'all',
       deliveryStatus: query.deliveryStatus
     }) : null,
     hasMore,
@@ -386,7 +398,7 @@ export async function loadMailboxPage(
     filter: query.filter,
     identityFilter: query.identityFilter,
     deliveryStatus: query.deliveryStatus,
-    ...(query.search && !query.cursor ? { searchTotal, searchHitFields } : {}),
+    ...((query.search || (query.category && query.category !== 'all')) && !query.cursor ? { searchTotal, searchHitFields } : {}),
     ...(metrics ? { metrics } : {})
   };
 }
@@ -468,6 +480,7 @@ async function loadCrossFolderMailboxPage(
 }
 
 interface MailboxSummaryQuery {
+  category?: InboxCategoryFilter;
   section?: MailboxSection;
   timestamp?: string;
   cursorId?: string;
@@ -505,6 +518,10 @@ async function listInboundMessageSummaryPage(
   ];
   if (input.starredOnly) conditions.push('COALESCE(s.is_starred, 0) = 1');
   const bindings: unknown[] = [userId];
+  if (input.category && input.category !== 'all') {
+    conditions.push(`${inboxCategorySql('e."from"', 'e.subject', 'e.inbox_category')} = ?`);
+    bindings.push(input.category);
+  }
   if (input.identityFilter?.kind === 'address') {
     conditions.push('e.mail_address_id = ?');
     bindings.push(input.identityFilter.id);
@@ -567,7 +584,7 @@ async function listInboundMessageSummaryPage(
 
   const pageSelect = `
     SELECT e.id AS email_id, e."from", e."to", e.mail_address_id, e.mail_domain_id, e.recipient_status,
-      e.subject, e."timestamp", e.snippet,
+      e.subject, e."timestamp", e.snippet, e.inbox_category,
       e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
       EXISTS (SELECT 1 FROM workspace_attachments AS attachment WHERE attachment.user_id = e.owner_user_id AND attachment.message_id = e.id AND attachment.relation_type = 'inbound') AS has_attachments,
@@ -577,7 +594,7 @@ async function listInboundMessageSummaryPage(
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = input.search || input.labelId
+  const pageSql = input.search || input.labelId || (input.category && input.category !== 'all')
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows."timestamp" DESC, ('email:' || search_rows.email_id) DESC LIMIT ?`
     : `${pageSelect} ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC LIMIT ?`;
@@ -607,7 +624,8 @@ export async function loadWorkspaceSnapshot(
     filter: normalized.filter ?? 'all',
     identityFilter,
     deliveryStatus: normalized.deliveryStatus ?? null,
-    labelId: normalized.labelId ?? null
+    labelId: normalized.labelId ?? null,
+    category: normalized.category ?? 'all'
   }, metrics);
   const mailbox: MailboxState = { inbox: [], sent: [], drafts: [] };
   if (persistedFolder !== 'starred' && persistedFolder !== 'label') mailbox[persistedFolder] = page.messages;

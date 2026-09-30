@@ -45,6 +45,15 @@ describe('layout preferences', () => {
   test('round trips versioned values through storage', () => {
     const storage = memoryStorage();
     writeLayoutPreferences({ version: 1, sidebarCollapsed: true, listWidth: 414, density: 'compact' }, storage);
-    expect(readLayoutPreferences(storage)).toEqual({ version: 1, sidebarCollapsed: true, listWidth: 414, density: 'compact' });
+    expect(readLayoutPreferences(storage)).toEqual({ version: 1, sidebarCollapsed: true, listWidth: 414, density: 'compact', readingLayout: 'list' });
   });
+});
+
+
+test('defaults to the Gmail-style list and preserves an explicit reading pane preference', () => {
+  expect(DEFAULT_LAYOUT_PREFERENCES.readingLayout).toBe('list');
+  expect(normalizeLayoutPreferences({ readingLayout: 'invalid' }).readingLayout).toBe('list');
+  const storage = memoryStorage();
+  writeLayoutPreferences({ ...DEFAULT_LAYOUT_PREFERENCES, readingLayout: 'split' }, storage);
+  expect(readLayoutPreferences(storage).readingLayout).toBe('split');
 });

@@ -1,3 +1,4 @@
+import { changeMailboxCategories } from './categories';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
@@ -961,4 +962,133 @@ describe('D1 mailbox pages', () => {
     expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE user_id = 'user-1'`).get()).toEqual({ count: 1 });
     expect(database.query(`SELECT is_read FROM workspace_messages WHERE id = 'inbox-b'`).get()).toEqual({ is_read: 0 });
   });
+});
+
+describe('inbox category pages and manual overrides', () => {
+  function categoryFixture() {
+    const value = fixture();
+    value.database.query(`UPDATE workspace_messages SET subject = 'Special offer', thread_key = 'shared-topic' WHERE id = 'inbox-z'`).run();
+    value.database.query(`UPDATE workspace_messages SET thread_key = 'shared-topic' WHERE id = 'inbox-a'`).run();
+    value.database.query(`UPDATE email_messages SET subject = 'Special offer', thread_key = 'shared-topic' WHERE id = 'incoming-1'`).run();
+    return value;
+  }
+
+  test('filters both message sources before LIMIT and counts category matches before pagination', async () => {
+    const { env, workspace } = categoryFixture();
+    const first = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=promotions&limit=1')));
+    expect(first.messages.map((message) => message.id)).toEqual(['email:incoming-1']);
+    expect(first.messages[0]).toMatchObject({ inboxCategory: 'promotions', inboxCategoryOverride: null });
+    expect(first.searchTotal).toBe(2);
+    expect(first.category).toBe('promotions');
+    expect(first.hasMore).toBe(true);
+    const second = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams({ category: 'promotions', limit: '1', cursor: first.nextCursor! })));
+    expect(second.messages.map((message) => message.id)).toEqual(['inbox-z']);
+    expect(second.hasMore).toBe(false);
+    expect(second.searchTotal).toBeUndefined();
+    const primary = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=primary&limit=1')));
+    expect(primary.messages.map((message) => message.id)).toEqual(['inbox-a']);
+    expect(primary.hasMore).toBe(false);
+    expect(primary.searchTotal).toBe(1);
+    const unread = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=primary&filter=unread')));
+    expect(unread.messages).toEqual([]);
+    expect(unread.searchTotal).toBe(0);
+  });
+
+  test('combines category with FTS and preserves category in initial snapshots', async () => {
+    const { env, workspace } = categoryFixture();
+    const page = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=promotions&q=subject:offer')));
+    expect(page.messages).toHaveLength(2);
+    expect(page.searchTotal).toBe(2);
+    const snapshot = await loadWorkspaceSnapshot(env, workspace, { category: 'primary' });
+    expect(snapshot.workspace.activePage.category).toBe('primary');
+    expect(snapshot.workspace.activePage.messages.map((message) => message.id)).toEqual(['inbox-a']);
+  });
+
+  test('persists a manual override and resetting it restores automatic classification', async () => {
+    const { env, workspace, database } = categoryFixture();
+    const scope = { section: 'inbox' as const, identityFilter: null, category: 'promotions' as const };
+    const result = await changeMailboxCategories(env, workspace, { ids: ['email:incoming-1', 'inbox-z'], category: 'primary', scope });
+    expect(result.summaries).toHaveLength(2);
+    expect(result.summaries.every((message) => message.inboxCategory === 'primary' && message.inboxCategoryOverride === 'primary')).toBe(true);
+    const remaining = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=promotions')));
+    expect(remaining.messages).toEqual([]);
+    expect(database.query(`SELECT from_email, to_email FROM workspace_messages WHERE id = 'inbox-z'`).get())
+      .toEqual({ from_email: 'zed@example.test', to_email: 'ada@example.test' });
+    const restored = await changeMailboxCategories(env, workspace, { ids: ['email:incoming-1', 'inbox-z'], category: null, scope: { ...scope, category: 'primary' } });
+    expect(restored.summaries.every((message) => message.inboxCategory === 'promotions' && message.inboxCategoryOverride === null)).toBe(true);
+  });
+
+  test('rejects another owner or any out-of-scope selection without changing other selected mail', async () => {
+    const { env, workspace, database } = categoryFixture();
+    const scope = { section: 'inbox' as const, identityFilter: null, category: 'promotions' as const };
+    await expect(changeMailboxCategories(env, { ...workspace, userId: 'another-owner' }, { ids: ['inbox-z'], category: 'primary', scope })).rejects.toMatchObject({ status: 404 });
+    for (const otherId of ['inbox-a', 'sent-1', 'draft-1', 'missing']) {
+      await expect(changeMailboxCategories(env, workspace, { ids: ['inbox-z', otherId], category: 'primary', scope })).rejects.toMatchObject({ status: 404 });
+      expect(database.query(`SELECT inbox_category FROM workspace_messages WHERE id = 'inbox-z'`).get()).toEqual({ inbox_category: null });
+    }
+  });
+
+  test('scopes selected and filtered thread mutations to the current category', async () => {
+    const { env, workspace, database } = categoryFixture();
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'trash', messageIds: ['inbox-a'],
+      scope: { ...mutationScope(), category: 'promotions' }
+    })).rejects.toMatchObject({ status: 404 });
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['inbox-z'], threadKeys: ['shared-topic'],
+      scope: { ...mutationScope('inbox', null, 'filtered'), category: 'promotions' }
+    });
+    expect(result.summaries.map((message) => message.id).sort()).toEqual(['email:incoming-1', 'inbox-z']);
+    expect(database.query(`SELECT archived_at FROM workspace_messages WHERE id = 'inbox-a'`).get()).toEqual({ archived_at: null });
+    const remaining = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=promotions')));
+    expect(remaining.messages).toEqual([]);
+  });
+});
+
+test('category pagination keeps equal-timestamp ties deterministic across sources and excludes foreign mail', async () => {
+  const { env, workspace, database } = fixture();
+  database.exec(`UPDATE email_messages SET inbox_category = 'social', "timestamp" = '2026-08-13T12:00:00.000Z';
+    UPDATE workspace_messages SET inbox_category = 'social' WHERE folder = 'inbox';
+    INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, inbox_category)
+    VALUES ('foreign-social', 'other-owner', 'notice@linkedin.com', 'other@example.test', 'Foreign', '2026-08-13T15:00:00.000Z', 'raw/foreign', 'social');`);
+  const found: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const params = new URLSearchParams({ category: 'social', limit: '1' });
+    if (cursor) params.set('cursor', cursor);
+    const page = await loadMailboxPage(env, workspace, parseMailboxQuery(params));
+    found.push(...page.messages.map((message) => message.id));
+    cursor = page.nextCursor;
+  } while (cursor);
+  expect(found).toEqual(['inbox-z', 'email:incoming-1', 'inbox-a']);
+});
+
+test('category bulk changes support the 100-message limit with bounded D1 parameter counts', async () => {
+  const { env, workspace, database } = fixture();
+  const insert = database.query(`INSERT INTO workspace_messages
+    (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json)
+    VALUES (?, 'user-1', 'inbox', 'Sender', 'sender@example.test', 'Owner', 'owner@example.test', 'Personal', '', '', '2026-08-13T12:00:00.000Z', '[]')`);
+  const ids = Array.from({ length: 100 }, (_, index) => `bulk-category-${index}`);
+  for (const id of ids) insert.run(id);
+  const result = await changeMailboxCategories(env, workspace, {
+    ids, category: 'forums', scope: { section: 'inbox', identityFilter: null, category: 'primary' }
+  });
+  expect(result.summaries).toHaveLength(100);
+  expect(result.summaries.every((row) => row.inboxCategory === 'forums')).toBe(true);
+  expect((env.DB as unknown as TestD1).queries.every((sql) => (sql.match(/\?/gu) ?? []).length <= 100)).toBe(true);
+});
+
+test('category changes and tab pages retain the selected address boundary', async () => {
+  const { env, workspace, database } = fixture();
+  insertCrossAddressThread(database);
+  database.exec(`UPDATE email_messages SET inbox_category = 'updates';
+    UPDATE workspace_messages SET inbox_category = 'updates' WHERE folder = 'inbox';`);
+  const page = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=updates&identity=address:address-a')));
+  expect(page.messages.map((message) => message.id)).toEqual(['email:incoming-1', 'email:incoming-a-read']);
+  expect(page.searchTotal).toBe(2);
+  await expect(changeMailboxCategories(env, workspace, {
+    ids: ['email:incoming-1', 'email:incoming-b'], category: 'primary',
+    scope: { section: 'inbox', identityFilter: { kind: 'address', id: 'address-a' }, category: 'updates' }
+  })).rejects.toMatchObject({ status: 404 });
+  expect(database.query(`SELECT inbox_category FROM email_messages WHERE id = 'incoming-1'`).get()).toEqual({ inbox_category: 'updates' });
 });

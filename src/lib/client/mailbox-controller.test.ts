@@ -289,7 +289,7 @@ describe('mailbox controller', () => {
   });
 });
 
-function makePage(folder: MailMessage['folder'], messages: MailMessage[]) {
+function makePage(folder: MailboxPage['folder'], messages: MailMessage[]) {
   return {
     folder,
     messages,
@@ -302,3 +302,69 @@ function makePage(folder: MailMessage['folder'], messages: MailMessage[]) {
     deliveryStatus: null
   };
 }
+
+test('category scopes refresh and pagination and ignores stale tab responses', async () => {
+  const calls: Array<URLSearchParams> = [];
+  const applied: string[] = [];
+  let resolveFirst: ((value: { page: MailboxPage }) => void) | undefined;
+  const controller = new MailboxController(async (params) => {
+    calls.push(params);
+    if (params.get('category') === 'primary') return new Promise((resolve) => { resolveFirst = resolve; });
+    return { page: { ...makePage('inbox', []), category: 'updates', hasMore: true, nextCursor: 'updates-cursor' } };
+  }, { onPage: (page) => applied.push(page.category ?? 'all'), onLoading: () => undefined, onError: () => undefined });
+  const stale = controller.refresh('inbox', '', 'all', null, null, 'primary');
+  await controller.refresh('inbox', 'invoice', 'unread', { kind: 'address', id: 'personal' }, null, 'updates');
+  resolveFirst?.({ page: { ...makePage('inbox', []), category: 'primary' } });
+  expect(await stale).toBe(false);
+  expect(applied).toEqual(['updates']);
+  expect(calls[1].get('category')).toBe('updates');
+  expect(calls[1].get('identity')).toBe('address:personal');
+  expect(calls[1].get('q')).toBe('invoice');
+  await controller.loadMore('inbox', 'invoice', 'unread', { ...makePage('inbox', []), category: 'updates', hasMore: true, nextCursor: 'updates-cursor' }, { kind: 'address', id: 'personal' }, null, 'updates');
+  expect(calls[2].get('cursor')).toBe('updates-cursor');
+  expect(calls[2].get('category')).toBe('updates');
+});
+
+test('does not merge a message from another inbox category into the active tab', () => {
+  const incoming = { ...message('incoming', 'inbox', '2026-08-14T02:00:00.000Z'), inboxCategory: 'social' as const };
+  const page = { ...makePage('inbox', []), category: 'updates' as const };
+  const result = mergeMessageDelta({ mailbox: cloneMailbox(), mailboxPages: { inbox: page }, metrics }, delta(incoming), deltaOptions());
+  expect(result.messageApplied).toBe(false);
+  expect(result.snapshot.mailbox.inbox).toEqual([]);
+  const matched = mergeMessageDelta({ mailbox: cloneMailbox(), mailboxPages: { inbox: page }, metrics }, delta({ ...incoming, inboxCategory: 'updates' }), deltaOptions());
+  expect(matched.messageApplied).toBe(true);
+});
+
+test('keeps updated read and star flags when another page is appended', () => {
+  const first = { ...message('first', 'inbox', '2026-08-14T02:00:00.000Z'), inboxCategory: 'primary' as const };
+  const page = { ...makePage('inbox', [first]), category: 'primary' as const, nextCursor: 'next', hasMore: true };
+  const state = mergeMailboxPage(snapshot(cloneMailbox()), page, false);
+  const patched = mergeMessageDelta(state, delta({ ...first, read: true, starred: true }), deltaOptions());
+  expect(patched.snapshot.mailboxPages?.inbox?.messages[0]).toMatchObject({ read: true, starred: true });
+  const appended = mergeMailboxPage(patched.snapshot, { ...page, messages: [message('second', 'inbox', '2026-08-13T02:00:00.000Z')], nextCursor: null, hasMore: false }, true);
+  expect(appended.mailbox.inbox.find((item) => item.id === 'first')).toMatchObject({ read: true, starred: true });
+});
+
+
+test('trashing an archived inbox message purges every cached view and updates matching counts', () => {
+  const archived = { ...message('archived', 'inbox', '2026-08-14T02:00:00.000Z'), archivedAt: '2026-08-14T03:00:00.000Z', starred: true };
+  const other = { ...message('other', 'inbox', '2026-08-13T02:00:00.000Z'), archivedAt: '2026-08-13T03:00:00.000Z' };
+  const inboxPage = makePage('inbox', []);
+  const result = removeMessage({
+    mailbox: cloneMailbox(), metrics,
+    mailboxPages: {
+      inbox: inboxPage,
+      archive: { ...makePage('archive', [archived, other]), searchTotal: 2 },
+      starred: { ...makePage('starred', [archived]), searchTotal: 1 },
+      label: { ...makePage('label', [archived, other]), searchTotal: 2 }
+    }
+  }, archived.id, 'inbox', 'archive', archived.id);
+  expect(result.snapshot.mailboxPages?.archive?.messages.map((item) => item.id)).toEqual(['other']);
+  expect(result.snapshot.mailboxPages?.archive?.searchTotal).toBe(1);
+  expect(result.snapshot.mailboxPages?.starred?.messages).toEqual([]);
+  expect(result.snapshot.mailboxPages?.starred?.searchTotal).toBe(0);
+  expect(result.snapshot.mailboxPages?.label?.messages.map((item) => item.id)).toEqual(['other']);
+  expect(result.snapshot.mailboxPages?.label?.searchTotal).toBe(1);
+  expect(result.snapshot.mailboxPages?.inbox).toBe(inboxPage);
+  expect(result.selectedMessageId).toBe('other');
+});

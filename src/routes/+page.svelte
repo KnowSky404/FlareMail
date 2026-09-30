@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { goto, pushState, replaceState } from '$app/navigation';
+  import { afterNavigate, goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, tick, untrack } from 'svelte';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
   import type { PageData } from './$types';
+  import InboxCategoryTabs from '$lib/components/mail/InboxCategoryTabs.svelte';
   import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
   import LoginView from '$lib/components/mail/LoginView.svelte';
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
@@ -78,6 +79,7 @@
     updateMessageFlags,
     updateProfile,
     mutateMailbox,
+    setInboxCategory,
     fetchMailLabels,
     createMailLabel,
     renameMailLabel,
@@ -101,6 +103,7 @@
     listWidthFromKeyboard,
     readLayoutPreferences,
     writeLayoutPreferences,
+    type ReadingLayout,
     type DisplayDensity
   } from '$lib/client/layout-preferences';
   import {
@@ -120,6 +123,8 @@
     type InboundMessageDetail,
     type LoginInput,
     type MailboxSection,
+    type InboxCategoryFilter,
+    type MailInboxCategory,
     type MailboxIdentityFilter,
     type MailboxMutationScope,
     type MailMessage,
@@ -218,20 +223,26 @@
   let createAddressDomainId = $state('');
   let createAddressLocalPart = $state('');
   let selectedMessageId = $state<string | null>(null);
+  let deepLinkedMessage = $state<MailMessage | null>(null);
   let selectedMessageIds = $state<string[]>([]);
   let bulkThreadScope = $state<'selected' | 'filtered' | 'owner'>('selected');
   let bulkSelectInput = $state<HTMLInputElement>();
   let searchQuery = $state('');
   let mailFilter = $state<MailFilter>('all');
+  let inboxCategory = $state<InboxCategoryFilter>('all');
+  let categoryPending = $state(false);
+  const inboxCategories = ['primary', 'promotions', 'social', 'updates', 'forums'] as const;
   let mailIdentityFilter = $state<MailboxIdentityFilter | null>(null);
   let mailIdentityOptions = $state<WorkspaceSnapshot['mailIdentityOptions']>({ domains: [], addresses: [] });
   let mobileDetailOpen = $state(false);
+  let listReturnFocus: HTMLElement | null = null;
   let readerOpen = $state(false);
   let sidebarCollapsed = $state(false);
   let listWidth = $state(DEFAULT_LAYOUT_PREFERENCES.listWidth);
   let workspaceElement = $state<HTMLElement>();
   let workspaceWidth = $state(Number.POSITIVE_INFINITY);
   let density = $state<DisplayDensity>('comfortable');
+  let readingLayout = $state<ReadingLayout>('list');
   let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
   let remoteImagesMessageId = $state<string | null>(null);
   let shortcutHelpOpen = $state(false);
@@ -270,6 +281,7 @@
   let profileStatusError = $state(false);
   let pending = $state(false);
   let mailboxLoading = $state(false);
+  let mailboxError = $state('');
   let mailboxLoadingMore = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaceSync: WorkspaceSyncController | null = null;
@@ -326,6 +338,7 @@
   const toastController = new ToastController((messages) => (toastMessages = messages));
   const workspaceSnapshotController = new WorkspaceSnapshotController();
   const targetMessageRequest = new LatestRequest();
+  const draftOpenRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
     onResult: (result) => {
       trashItems = result.items;
@@ -390,18 +403,25 @@
     deleteLabelConfirmOpen = false;
     trashController.cancel();
     targetMessageRequest.cancel();
+    draftOpenRequest.cancel();
     inboundDetailCache.cancel();
     deliveryDetailCache.cancel();
     workspaceBodyCache.cancel();
     if (source !== 'other-tab') authSessionSync?.publish({ type: 'expired' });
   }
 
-  const urlState = $derived(readWorkspaceUrl(page.url));
+  // SvelteKit shallow pushState changes history/page.state, not page.url.
+  // Track the visible browser URL so list filters and Back/Forward share one source.
+  let browserWorkspaceUrl = $state<string | null>(null);
+  const currentWorkspaceUrl = $derived(browserWorkspaceUrl ? new URL(browserWorkspaceUrl) : page.url);
+  const urlState = $derived(readWorkspaceUrl(currentWorkspaceUrl));
+  afterNavigate(() => { browserWorkspaceUrl = window.location.href; });
   const urlSection = $derived(urlState.section);
   const urlManagementView = $derived(urlState.managementView);
   const urlManagementDomainId = $derived(urlState.managementDomainId);
   const urlQuery = $derived(urlState.query);
   const urlFilter = $derived(urlState.filter);
+  const urlCategory = $derived(urlState.category);
   const urlIdentityFilter = $derived(urlState.identityFilter);
   const urlMessageId = $derived(urlState.messageId);
   const urlLabelId = $derived(urlState.labelId);
@@ -414,10 +434,21 @@
     if (urlManagementView !== 'addresses') createAddressLocalPart = '';
     searchQuery = urlQuery;
     mailFilter = urlFilter;
+    inboxCategory = urlCategory;
     mailIdentityFilter = urlIdentityFilter;
     selectedMessageId = urlMessageId;
     selectedMessageIds = [];
     mobileDetailOpen = Boolean(urlMessageId);
+  });
+
+  $effect(() => {
+    if (!authenticated || authExpired || urlSection === 'profile' || urlSection === 'trash') return;
+    const loaded = mailboxPages?.[urlSection];
+    if (loaded && loaded.query === urlQuery && loaded.filter === urlFilter &&
+      sameIdentityScope(loaded.identityFilter, urlIdentityFilter) &&
+      (urlSection !== 'inbox' || (loaded.category ?? 'all') === urlCategory) &&
+      (urlSection !== 'label' || loaded.labelId === urlLabelId)) return;
+    untrack(() => scheduleMailboxRefresh(urlSection, urlQuery, urlFilter, loaded?.query !== urlQuery ? 250 : 0, urlIdentityFilter));
   });
 
   $effect(() => {
@@ -475,25 +506,27 @@
       !authenticated ||
       authExpired ||
       !targetId ||
-      !isInboundMessageId(targetId) ||
       section === 'profile' ||
       section === 'trash' ||
-      (section !== 'inbox' && section !== 'archive')
+      (section !== 'inbox' && section !== 'archive' && section !== 'sent' && section !== 'starred' && section !== 'label')
     ) return;
     const currentMessages = section === 'archive'
       ? mailboxPages?.archive?.messages ?? []
-      : section === 'inbox'
-        ? mailbox.inbox
-        : [];
-    if (currentMessages.some((message) => message.id === targetId)) return;
+      : section === 'inbox' ? mailbox.inbox
+        : section === 'sent' ? mailbox.sent
+        : mailboxPages?.[section]?.messages ?? [];
+    if (currentMessages.some((message) => message.id === targetId) || deepLinkedMessage?.id === targetId) return;
 
     const request = targetMessageRequest.begin();
     void (async () => {
       try {
         const result = await fetchWorkspaceMessage(targetId, request.signal);
         if (!request.isCurrent() || urlMessageId !== targetId || activeSection !== section) return;
-        const targetSection = result.message.archivedAt ? 'archive' : 'inbox';
-        applyMessageDelta(result, { section: targetSection, preferredMessageId: targetId });
+        // An explicit older-message link is independent of the current page cursor.
+        // Keep the category, search and identity scope rather than injecting a row.
+        deepLinkedMessage = result.message;
+        selectedMessageId = targetId;
+        mobileDetailOpen = true;
       } catch (error) {
         if (request.signal.aborted || !request.isCurrent()) return;
         if (error instanceof ClientApiError && (error.status === 401 || error.status === 403 || error.status === 404)) {
@@ -546,7 +579,7 @@
     })
   );
   const visibleThreads = $derived.by(() =>
-    activeThreads.filter((thread) => {
+    (activeSection === 'inbox' && (mailboxPages?.inbox?.category ?? 'all') !== inboxCategory ? [] : activeThreads).filter((thread) => {
       const matchesFilter =
         mailFilter === 'all' ||
         (mailFilter === 'unread' && thread.unreadCount > 0) ||
@@ -588,10 +621,11 @@
     }
 
     return threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
-      ?? (selectedMessageId ? null : threads[0]);
+      ?? (selectedMessageId || readingLayout === 'list' ? null : threads[0]);
   });
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
+    if (deepLinkedMessage && deepLinkedMessage.id === selectedMessageId && urlMessageId === selectedMessageId) return deepLinkedMessage;
     if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred' || activeSection === 'label') {
       const list = visibleMessages;
 
@@ -599,7 +633,7 @@
         return null;
       }
 
-      return list.find((message) => message.id === selectedMessageId) ?? (selectedMessageId ? null : list[0]);
+      return list.find((message) => message.id === selectedMessageId) ?? (selectedMessageId || readingLayout === 'list' ? null : list[0]);
     }
 
     const thread = selectedThread;
@@ -664,8 +698,8 @@
   const selectedRemoteImagesAllowed = $derived(Boolean(selectedMessage && remoteImagesMessageId === selectedMessage.id));
 
   $effect(() => {
-    const action = page.url.searchParams.get('compose');
-    const requestedMessageId = page.url.searchParams.get('message');
+    const action = currentWorkspaceUrl.searchParams.get('compose');
+    const requestedMessageId = currentWorkspaceUrl.searchParams.get('message');
     if (action !== 'reply' && action !== 'forward') {
       handledComposeAction = null;
       return;
@@ -674,9 +708,10 @@
     const actionKey = `${action}:${requestedMessageId}`;
     if (handledComposeAction === actionKey) return;
     handledComposeAction = actionKey;
-    const nextUrl = new URL(page.url);
+    const nextUrl = new URL(currentWorkspaceUrl);
     nextUrl.searchParams.delete('compose');
     replaceState(nextUrl, page.state);
+    browserWorkspaceUrl = nextUrl.href;
     if (action === 'reply') void handleReplyMessage(selectedMessage);
     else void handleForwardMessage(selectedMessage);
   });
@@ -742,6 +777,7 @@
   };
 
   function applyMessageDelta(result: MessageDelta, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
+    if (deepLinkedMessage?.id === result.message.id) deepLinkedMessage = result.message;
     if (result.message.userLabels === undefined || result.message.hasAttachments === undefined) {
       const previous = [...mailbox.inbox, ...mailbox.sent, ...mailbox.drafts, ...Object.values(mailboxPages ?? {}).flatMap((page) => page?.messages ?? [])]
         .find((message) => message.id === result.message.id);
@@ -882,6 +918,7 @@
   ) {
     mailboxController.cancel();
     if (options?.resetUserScoped) {
+      deepLinkedMessage = null;
       cancelLabelActions();
       labelEditorInterrupted = false;
       resetComposeState();
@@ -901,14 +938,15 @@
     mailboxPages = next.mailboxPages;
     activeSection = next.activeSection;
     activeLabelId = next.activeSection === 'label' ? urlLabelId : null;
-    selectedMessageId = next.selectedMessageId;
+    selectedMessageId = readingLayout === 'list' && !options?.preferredMessageId ? null : next.selectedMessageId;
     selectedMessageIds = next.selectedMessageIds;
     searchQuery = next.searchQuery;
     mailFilter = next.mailFilter;
+    inboxCategory = next.activeSection === 'inbox' && !options?.clearMailView ? urlCategory : 'all';
     mailIdentityFilter = next.identityFilter;
     mailIdentityOptions = workspace.mailIdentityOptions;
     mobileDetailOpen = next.activeSection !== 'profile' &&
-      Boolean(options?.preferredMessageId && next.selectedMessageId === options.preferredMessageId);
+      Boolean(options?.preferredMessageId);
     authenticated = true;
     void reloadMailLabels();
     workspaceSnapshotController.noteUser(workspace.profile.email);
@@ -920,7 +958,8 @@
           query: next.searchQuery,
           filter: next.mailFilter,
           identityFilter: next.identityFilter,
-          messageId: next.activeSection === 'profile' ? null : next.selectedMessageId
+          category: inboxCategory,
+          messageId: next.activeSection === 'profile' ? null : selectedMessageId
         },
         true
       );
@@ -928,12 +967,14 @@
   }
 
   function resetWorkspace() {
+    draftOpenRequest.cancel();
     const initial = createEmptyWorkspaceViewState();
     mailboxController.cancel();
     labelRequest.cancel();
     cancelLabelActions();
     trashController.cancel();
     authenticated = false;
+    deepLinkedMessage = null;
     profile = initial.profile;
     mailbox = initial.mailbox;
     activeSection = initial.activeSection;
@@ -1029,13 +1070,15 @@
       managementDomainId?: string | null;
       query?: string;
       filter?: MailFilter;
+      category?: InboxCategoryFilter;
       identityFilter?: MailboxIdentityFilter | null;
       messageId?: string | null;
       labelId?: string | null;
     },
     replaceHistory = false
   ) {
-    const next = buildWorkspaceUrl(page.url, updates);
+    const next = buildWorkspaceUrl(currentWorkspaceUrl, updates);
+    browserWorkspaceUrl = next.href;
     if (replaceHistory) {
       replaceState(next, page.state);
     } else {
@@ -1056,6 +1099,7 @@
     managementView = 'settings';
     searchQuery = '';
     mailFilter = 'all';
+    inboxCategory = 'all';
     mobileDetailOpen = false;
 
     if (section === 'inbox' || section === 'sent' || section === 'archive') {
@@ -1125,6 +1169,7 @@
     selectedMessageIds = [];
     searchQuery = '';
     mailFilter = 'all';
+    inboxCategory = 'all';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ section: 'label', labelId: id, query: '', filter: 'all', messageId: null });
     if (authenticated && !authExpired) void mailboxController.refresh('label', '', 'all', mailIdentityFilter, id);
@@ -1278,7 +1323,7 @@
     mailboxRefreshTimer = setTimeout(() => {
       mailboxRefreshTimer = undefined;
       if (authenticated && !authExpired && activeSection === folder) {
-        void mailboxController.refresh(folder, query, filter, identityFilter, folder === 'label' ? activeLabelId : null);
+        void mailboxController.refresh(folder, query, filter, identityFilter, folder === 'label' ? activeLabelId : null, folder === 'inbox' ? inboxCategory : 'all');
       }
     }, delayMs);
   }
@@ -1291,6 +1336,49 @@
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query, messageId: null }, true);
     scheduleMailboxRefresh(activeSection, query, mailFilter);
+  }
+
+  function handleCategoryChange(category: InboxCategoryFilter) {
+    if (category === inboxCategory) return;
+    inboxCategory = category;
+    selectedMessageId = null;
+    selectedMessageIds = [];
+    bulkThreadScope = 'selected';
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ category, messageId: null });
+    scheduleMailboxRefresh('inbox', searchQuery, mailFilter, 0);
+  }
+
+  async function changeSelectedCategory(category: MailInboxCategory | null) {
+    if (categoryPending || pending || activeSection !== 'inbox' || !bulkSelectedMessages.length) return;
+    categoryPending = true;
+    const ids = bulkSelectedMessages.map((message) => message.id);
+    try {
+      const changed = await setInboxCategory(ids, category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory });
+      selectedMessageIds = selectedMessageIds.filter((id) => !ids.includes(id));
+      await refreshWorkspace(false);
+      workspaceSync?.publish({ type: 'mailbox-refresh' });
+      const complete = ids.every((id) => changed.summaries.some((summary) => summary.id === id && summary.inboxCategoryOverride === category));
+      notify(complete ? t('mail.category.updated') : t('mail.category.changedElsewhere'), complete ? 'success' : 'warning');
+    } catch (error) { notifyError(error, t('notify.bulkFailed')); }
+    finally { categoryPending = false; }
+  }
+
+  async function handleRowArchive(message: MailMessage) {
+    if (pending || message.folder !== 'inbox') return;
+    pending = true;
+    try {
+      await mutateMailbox(message.archivedAt ? 'unarchive' : 'archive', [message.id], [], {
+        section: activeSection as MailboxMutationScope['section'], identityFilter: mailIdentityFilter,
+        threadScope: 'selected', ...(activeSection === 'inbox' ? { category: inboxCategory } : {}),
+        ...(activeSection === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
+      });
+      if (selectedMessageId === message.id && readingLayout === 'list') closeMobileDetail();
+      await refreshWorkspace(false);
+      workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
+      notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
+    } catch (error) { notifyError(error, t('notify.bulkFailed')); }
+    finally { pending = false; }
   }
 
   function handleFilterChange(filter: MailFilter) {
@@ -1321,7 +1409,8 @@
     selectedMessageIds = [];
     bulkThreadScope = 'selected';
     mobileDetailOpen = false;
-    updateWorkspaceUrl({ query: '', filter: 'all', identityFilter: null, messageId: null }, true);
+    inboxCategory = 'all';
+    updateWorkspaceUrl({ query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null }, true);
     scheduleMailboxRefresh(activeSection, '', 'all', 0, null);
   }
 
@@ -1340,7 +1429,8 @@
       searchQuery,
       mailFilter,
       mailIdentityFilter,
-      activeSection === 'label' ? activeLabelId : null
+      activeSection === 'label' ? activeLabelId : null,
+      activeSection === 'inbox' ? inboxCategory : 'all'
     );
     if (refreshed) {
       runtimeOperationError = false;
@@ -1412,7 +1502,7 @@
     if (event.type === 'session-ended') {
       if (!authenticated) return;
       resetWorkspace();
-      void goto(buildWorkspaceUrl(page.url, {
+      void goto(buildWorkspaceUrl(currentWorkspaceUrl, {
         section: 'inbox', query: '', filter: 'all', messageId: null
       }), { replaceState: true, noScroll: true, keepFocus: false });
       return;
@@ -1449,6 +1539,7 @@
     mailboxPages = merged.mailboxPages;
     metrics = merged.metrics;
     runtimeOperationError = false;
+    mailboxError = '';
     const currentMessages = merged.mailboxPages?.[page.folder]?.messages ?? [];
     if (activeSection === page.folder) {
       selectedMessageIds = reconcileBulkSelection(selectedMessageIds, currentMessages);
@@ -1458,7 +1549,8 @@
       activeSection === page.folder &&
       (!selectedMessageId || !currentMessages.some((message) => message.id === selectedMessageId))
     ) {
-      selectedMessageId = currentMessages[0]?.id ?? null;
+      if (readingLayout === 'split') selectedMessageId = currentMessages[0]?.id ?? null;
+      else if (selectedMessageId && !urlMessageId) selectedMessageId = null;
     }
   }
 
@@ -1501,6 +1593,7 @@
         section: activeSection as MailboxMutationScope['section'],
         identityFilter: mailIdentityFilter,
         threadScope,
+        ...(activeSection === 'inbox' ? { category: inboxCategory } : {}),
         ...(activeSection === 'label' ? { labelId: activeLabelId! } : {}),
         ...(threadScope === 'filtered' ? { query: searchQuery, filter: mailFilter } : {})
       };
@@ -1535,18 +1628,20 @@
   const mailboxController = new MailboxController(fetchMailboxPage, {
     onPage: (page, append) => applyMailboxPage(page, append),
     onLoading: (loading, append) => {
+      if (loading && !append) mailboxError = '';
       mailboxLoading = loading && !append;
       mailboxLoadingMore = loading && append;
     },
-    onError: () => notify(t('mail.listError'), 'error')
+    onError: () => { mailboxError = t('mail.listError'); }
   });
 
   async function loadMoreMailbox() {
     if (!authenticated || authExpired || mailboxLoading || mailboxLoadingMore || activeSection === 'profile' || activeSection === 'trash') return;
-    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter, activeSection === 'label' ? activeLabelId : null);
+    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter, activeSection === 'label' ? activeLabelId : null, activeSection === 'inbox' ? inboxCategory : 'all');
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
+    draftOpenRequest.cancel();
     if (composeOpen) {
       window.dispatchEvent(new Event('flaremail:restore-compose'));
       return;
@@ -1731,7 +1826,7 @@
         window.location.assign(result.logoutUrl);
         return;
       }
-      await goto(buildWorkspaceUrl(page.url, {
+      await goto(buildWorkspaceUrl(currentWorkspaceUrl, {
         section: 'inbox', query: '', filter: 'all', messageId: null
       }), { replaceState: true, noScroll: true, keepFocus: false });
       notify(t('notify.loggedOut'), 'success');
@@ -1987,11 +2082,10 @@
     try {
       const result = await updateMessageFlags(message.id, patch);
 
-      const nextSection = activeSection === 'profile' ? message.folder : activeSection;
-      applyMessageDelta(result, {
-        section: nextSection === activeSection ? undefined : nextSection,
-        preferredMessageId: result.message.id
-      });
+      // A delayed flag update must not replace a newer reader/list selection.
+      const selection = selectedMessageId;
+      applyMessageDelta(result);
+      selectedMessageId = selection;
       if (activeSection === 'starred') await mailboxController.refresh('starred', searchQuery, mailFilter, mailIdentityFilter);
 
       if (nextBanner) {
@@ -2038,6 +2132,11 @@
   }
 
   async function handleSelectMessage(message: MailMessage) {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement && document.activeElement.closest('.mail-list-panel')) listReturnFocus = document.activeElement;
+    if (message.folder === 'drafts' && activeSection !== 'trash' && readingLayout === 'list') {
+      await handleEditDraft(message);
+      return;
+    }
     selectedMessageId = message.id;
     mobileDetailOpen = true;
     updateWorkspaceUrl({ messageId: message.id });
@@ -2055,16 +2154,19 @@
     await handleSelectMessage(thread.sectionLatestMessage);
   }
 
-  function closeMobileDetail() {
+  async function closeMobileDetail() {
     mobileDetailOpen = false;
+    selectedMessageId = null;
     updateWorkspaceUrl({ messageId: null }, true);
+    await tick();
+    if (listReturnFocus?.isConnected) listReturnFocus.focus();
   }
 
   function standaloneMessageHref(message: MailMessage) {
     if (message.folder === 'drafts') return null;
     const params = new URLSearchParams();
-    for (const key of ['folder', 'q', 'filter']) {
-      const value = page.url.searchParams.get(key);
+    for (const key of ['folder', 'q', 'filter', 'category', 'identity', 'label']) {
+      const value = currentWorkspaceUrl.searchParams.get(key);
       if (value) params.set(key, value);
     }
     params.set('message', message.id);
@@ -2074,7 +2176,14 @@
 
   function persistLayoutPreferences() {
     if (typeof localStorage === 'undefined') return;
-    writeLayoutPreferences({ version: 1, sidebarCollapsed, listWidth, density }, localStorage);
+    writeLayoutPreferences({ version: 1, sidebarCollapsed, listWidth, density, readingLayout }, localStorage);
+  }
+
+  function toggleReadingLayout() {
+    readingLayout = readingLayout === 'list' ? 'split' : 'list';
+    mobileDetailOpen = false;
+    updateWorkspaceUrl({ messageId: null }, true);
+    persistLayoutPreferences();
   }
 
   function setDensity(next: DisplayDensity) {
@@ -2191,11 +2300,12 @@
       metrics = removed.snapshot.metrics;
       runtimeOperationError = false;
       trashLoaded = false;
-      selectedMessageId = removed.selectedMessageId;
+      if (readingLayout === 'list' && selectedMessageId === message.id) closeMobileDetail();
+      else selectedMessageId = readingLayout === 'list' && !mobileDetailOpen ? null : removed.selectedMessageId;
       if (!sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter)) {
         scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter);
       }
-      if (activeSection === 'starred') await refreshWorkspace(false);
+      if (activeSection === 'starred' || activeSection === 'label' || (activeSection === 'inbox' && inboxCategory !== 'all')) await refreshWorkspace(false);
       selectedMessageIds = selectedMessageIds.filter((id) => id !== result.removedId);
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
@@ -2301,8 +2411,11 @@
   }
 
   async function handleEditDraft(message: MailMessage) {
+    const request = draftOpenRequest.begin();
+    const context = currentWorkspaceUrl.href;
     try {
-      const current = await fetchDraftDetail(message.id);
+      const current = await fetchDraftDetail(message.id, request.signal);
+      if (!request.isCurrent() || currentWorkspaceUrl.href !== context || !authenticated || authExpired) return;
       openCompose('draft', composeInputFromSavedDraft(
         current.message,
         current.bodyRevision,
@@ -2310,6 +2423,7 @@
         current.attachmentRevision
       ));
     } catch (error) {
+      if (request.signal.aborted || !request.isCurrent()) return;
       notifyError(error, t('notify.loadDraftFailed'));
     }
   }
@@ -2433,10 +2547,14 @@
   });
 
   onMount(() => {
+    const syncBrowserWorkspaceUrl = () => { browserWorkspaceUrl = window.location.href; };
+    syncBrowserWorkspaceUrl();
+    window.addEventListener('popstate', syncBrowserWorkspaceUrl);
     const layout = readLayoutPreferences(localStorage);
     sidebarCollapsed = layout.sidebarCollapsed;
     listWidth = layout.listWidth;
     density = layout.density;
+    readingLayout = layout.readingLayout ?? 'list';
     document.documentElement.dataset.density = density;
     workspaceSync = createWorkspaceSync(handleWorkspaceSync);
     authSessionSync = createAuthSessionChannel((message) => {
@@ -2488,6 +2606,7 @@
     window.addEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
     return () => {
       document.removeEventListener('keydown', handleShortcut);
+      window.removeEventListener('popstate', syncBrowserWorkspaceUrl);
       window.removeEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
       window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
       workspaceSync?.close();
@@ -2498,6 +2617,7 @@
       document.body.classList.remove('fm-is-resizing');
       clearMailboxRefreshTimer();
       mailboxController.cancel();
+      draftOpenRequest.cancel();
       labelRequest.cancel();
       cancelLabelActions();
       shortcuts.dispose();
@@ -2679,6 +2799,8 @@
               <div
                 bind:this={workspaceElement}
                 class:detail-open={mobileDetailOpen}
+                class:list-layout={readingLayout === 'list'}
+                data-reading-layout={readingLayout}
                 class="mail-workspace"
                 data-list-width-preference={listWidth}
                 data-list-width-effective={effectiveListWidth}
@@ -2688,7 +2810,9 @@
                   <FolderHeader
                     activeSection={activeSection}
                     title={activeSection === 'label' ? userLabels.find((label) => label.id === activeLabelId)?.name : undefined}
-                    count={searchQuery.trim() && activeSection !== 'trash'
+                    {readingLayout}
+                    onToggleReadingLayout={toggleReadingLayout}
+                    count={(searchQuery.trim() || (activeSection === 'inbox' && inboxCategory !== 'all')) && activeSection !== 'trash'
                       ? mailboxPages?.[activeSection]?.searchTotal ?? 0
                       : activeSection === 'inbox' ? metrics.inboxCount
                         : activeSection === 'archive' ? metrics.archiveCount
@@ -2696,7 +2820,7 @@
                             : activeSection === 'label' ? mailboxPages?.label?.searchTotal ?? activeMessages.length
                           : activeSection === 'sent' ? metrics.sentCount
                             : activeSection === 'drafts' ? metrics.draftsCount : activeMessages.length}
-                    unreadCount={activeSection === 'inbox' ? unreadCount : 0}
+                    unreadCount={activeSection === 'inbox' && inboxCategory === 'all' ? unreadCount : 0}
                     query={searchQuery}
                     filter={mailFilter}
                     identityFilter={mailIdentityFilter}
@@ -2707,6 +2831,9 @@
                     onIdentityFilterChange={handleIdentityFilterChange}
                     onRefresh={refreshWorkspace}
                   />
+                  {#if activeSection === 'inbox'}
+                    <InboxCategoryTabs category={inboxCategory} onChange={handleCategoryChange} />
+                  {/if}
                   {#if activeSection === 'label'}
                     <div class="flex items-center gap-1 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-1" role="toolbar" aria-label={t('shell.labels')}>
                       <Tag class="size-3.5 text-[var(--fm-text-muted)]" aria-hidden="true" />
@@ -2729,7 +2856,7 @@
                           checked={bulkAllSelected}
                           aria-label={bulkAllSelected ? t('mail.clearSelection') : t('mail.selectPage')}
                           aria-checked={bulkSomeSelected ? 'mixed' : bulkAllSelected ? 'true' : 'false'}
-                          disabled={bulkSelectableIds.length === 0}
+                          disabled={bulkSelectableIds.length === 0 || mailboxLoading || Boolean(mailboxError)}
                           onchange={selectAllVisible}
                         />
                       </label>
@@ -2740,6 +2867,17 @@
                       </span>
                       {#if bulkSelectedVisibleCount > 0}
                         <div class="bulk-actions">
+                          {#if activeSection === 'inbox'}
+                            <DropdownMenu id="inbox-category-actions" align="end" showChevron={false} triggerAriaLabel={t('mail.category.move')} triggerTitle={t('mail.category.move')} class="bulk-action-menu">
+                              {#snippet trigger()}<Inbox class="size-4" aria-hidden="true" />{/snippet}
+                              {#snippet children()}
+                                {#each inboxCategories as category}
+                                  <button class="menu-action" role="menuitem" type="button" disabled={categoryPending || pending} onclick={() => void changeSelectedCategory(category)}>{t(`mail.category.${category}`)}</button>
+                                {/each}
+                                <button class="menu-action" role="menuitem" type="button" disabled={categoryPending || pending} onclick={() => void changeSelectedCategory(null)}>{t('mail.category.automatic')}</button>
+                              {/snippet}
+                            </DropdownMenu>
+                          {/if}
                           <IconButton ariaLabel={t('label.bulkManage')} title={t('label.bulkManage')} size="sm" disabled={pending || bulkLabelPending} onclick={openBulkLabelDialog}><Tag class="size-4" aria-hidden="true" /></IconButton>
                           {#if bulkSelectedThreadCount > 0 && activeSection !== 'starred' && activeSection !== 'label'}
                             <label class="inline-flex min-h-8 items-center gap-1.5 text-xs text-[var(--fm-text-muted)]" title={t('mail.threadScopeDescription')}>
@@ -2785,16 +2923,22 @@
                     {/if}
                   {/if}
                   <MessageList
+                    category={activeSection === 'inbox' ? inboxCategory : undefined}
+                    fullWidth={readingLayout === 'list'}
+                    {pending}
+                    onArchive={activeSection !== 'trash' ? handleRowArchive : undefined}
+                    onToggleRead={activeSection !== 'trash' ? handleToggleRead : undefined}
+                    onRemove={activeSection !== 'trash' ? handleDeleteMessage : undefined}
                     activeSection={activeSection}
                     messages={visibleMessages}
-                    selectedThreadId={selectedThreadId}
+                    selectedThreadId={readingLayout === 'list' && !mobileDetailOpen ? null : selectedThreadId}
                     threads={visibleThreads}
-                    {selectedMessageId}
+                    selectedMessageId={readingLayout === 'list' && !mobileDetailOpen ? null : selectedMessageId}
                     query={searchQuery}
                     filter={mailFilter}
                     loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
                     loadingMore={activeSection === 'trash' ? false : mailboxLoadingMore}
-                    error={activeSection === 'trash' ? trashError : ''}
+                    error={activeSection === 'trash' ? trashError : mailboxError}
                     hasMore={activeSection === 'trash' ? trashHasMore : mailboxPages?.[activeSection]?.hasMore ?? false}
                     paginationEnd={activeSection === 'trash' ? !trashHasMore : !(mailboxPages?.[activeSection]?.hasMore ?? false)}
                     onSelect={handleSelectMessage}
@@ -2857,6 +3001,7 @@
                     onReloadDeliveryDetail={handleReloadDeliveryDetail}
                     onRetryDelivery={retryMessageDelivery}
                     onReloadInboundDetail={handleReloadInboundDetail}
+                    onArchive={activeSection !== 'trash' ? handleRowArchive : undefined}
                     onRemove={handleDeleteMessage}
                     onSelectThreadMessage={handleSelectMessage}
                     onToggleRead={handleToggleRead}
@@ -2909,6 +3054,7 @@
           onReloadDeliveryDetail={handleReloadDeliveryDetail}
           onRetryDelivery={retryMessageDelivery}
           onReloadInboundDetail={handleReloadInboundDetail}
+          onArchive={activeSection !== 'trash' ? handleRowArchive : undefined}
           onRemove={handleDeleteMessage}
           onSelectThreadMessage={handleSelectMessage}
           onToggleRead={handleToggleRead}
@@ -3125,6 +3271,14 @@
     min-width: 0;
   }
 
+  .mail-workspace.list-layout { grid-template-columns: minmax(0, 1fr); }
+  .list-layout .mail-splitter, .list-layout .mail-detail-panel { display: none; }
+  .list-layout.detail-open .mail-list-panel { display: none; }
+  .list-layout.detail-open .mail-detail-panel { display: block; }
+  @media (min-width: 901px) {
+    .mail-workspace:not(.list-layout) :global(.fm-detail-back) { display: none; }
+  }
+
   .mail-list-panel {
     display: flex;
     min-width: 0;
@@ -3232,6 +3386,11 @@
   :global(.fm-app-shell[data-density='compact']) :global(.mail-list-panel article > button) {
     min-height: 60px;
     padding-block: 0.375rem;
+  }
+
+  @media (min-width: 901px) {
+    :global(.fm-app-shell[data-density='compact']) .list-layout :global(.mail-list-item),
+    :global(.fm-app-shell[data-density='compact']) .list-layout :global(.mail-list-item-button) { min-height: 40px; }
   }
 
   @media (max-width: 900px) {

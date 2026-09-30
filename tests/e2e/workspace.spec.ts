@@ -7,6 +7,21 @@ import type { Page, Route } from '@playwright/test';
 
 test.describe.configure({ mode: 'serial' });
 
+// These legacy suites exercise simultaneous list/detail previews. Keep their
+// split-pane coverage explicit; gmail-workflows.spec.ts covers the real list default.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    // Mail HTML is intentionally sandboxed; never access storage in its frames.
+    if (window !== window.top) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem('flaremail-layout-v1') ?? '{}') ?? {};
+      localStorage.setItem('flaremail-layout-v1', JSON.stringify({ ...saved, version: 1, readingLayout: 'split' }));
+    } catch {
+      // Storage may be unavailable on non-application documents.
+    }
+  });
+});
+
 const webhookSecretBytes = new TextEncoder().encode('FlareMail E2E webhook secret 2026');
 
 test('shows icon guidance on pointer and keyboard focus', async ({ page, consoleErrors }, testInfo) => {
@@ -252,11 +267,11 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   await expect(manager.getByRole('checkbox', { name: 'E2E Follow Up' })).toBeChecked();
   await manager.getByRole('button', { name: '关闭' }).click();
 
-  if (mobile) {
-    await page.getByRole('button', { name: '返回邮件列表' }).click();
-  }
-  await expect(inboxItem.getByText('E2E Follow Up', { exact: true })).toBeVisible();
-  await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /标签: E2E Follow Up/u);
+  const backToList = page.getByRole('button', { name: '返回邮件列表' });
+  if (await backToList.isVisible()) await backToList.click();
+  // A serial retry can retain other labels, so the new label may be in +N.
+  await expect(inboxItem.getByTitle(/(?:^|, )E2E Follow Up(?:,|$)/u)).toBeVisible();
+  await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /标签: (?:[^,]+, )*E2E Follow Up(?:,|$)/u);
   await page.screenshot({ path: join(tmpdir(), `flaremail-label-chip-${testInfo.project.name}.png`), fullPage: false });
   const search = page.getByLabel('搜索邮件');
   await search.fill('label:"E2E Follow Up"');
@@ -704,9 +719,14 @@ async function openDraftEditor(page: Page, subject: string) {
   const item = page.getByRole('listitem').filter({ hasText: subject });
   await expect(item).toBeVisible();
   await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
-  await page.getByRole('button', { name: '更多邮件操作' }).click();
-  await page.getByRole('menuitem', { name: '继续编辑草稿' }).click();
-  await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeVisible();
+  const editor = page.getByRole('dialog', { name: '编辑草稿' });
+  const more = page.getByRole('button', { name: '更多邮件操作' });
+  await expect(editor.or(more)).toBeVisible();
+  if (!await editor.isVisible()) {
+    await more.click();
+    await page.getByRole('menuitem', { name: '继续编辑草稿' }).click();
+  }
+  await expect(editor).toBeVisible();
 }
 
 type MockTelegramState = {
@@ -1088,7 +1108,7 @@ test('opens an older inbound message from a cold deep link without selecting the
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('keeps readable default columns, persists the layout, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
+test('keeps readable optional split columns, persists the layout, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop project covers the wide reading workspace controls.');
   test.setTimeout(75_000);
   await login(page);
@@ -1690,12 +1710,12 @@ test('archives and restores a selected mailbox message', async ({ page, consoleE
   const label = page.getByLabel('选择E2E Inbox Welcome');
   await expect(label).toBeVisible();
   await label.check();
-  await page.getByRole('button', { name: '归档', exact: true }).last().click();
+  await page.getByLabel('批量邮件操作').getByRole('button', { name: '归档', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
   await openFolder(page, '归档');
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
   await page.getByLabel('选择E2E Inbox Welcome').check();
-  await page.getByRole('button', { name: '移回收件箱', exact: true }).click();
+  await page.getByLabel('批量邮件操作').getByRole('button', { name: '移回收件箱', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: '已将所选邮件移回收件箱' })).toBeVisible();
   await openFolder(page, '收件箱');
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
@@ -1711,12 +1731,7 @@ test('moves a draft to trash, persists across refresh, restores, and permanently
     await openFolder(page, '草稿箱');
     const item = page.getByRole('listitem').filter({ hasText: subject });
     await expect(item).toBeVisible();
-    await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
-    await page.getByRole('button', { name: '更多邮件操作' }).click();
-    await page.getByRole('menuitem', { name: '移入垃圾箱' }).click();
-    const confirmation = page.getByRole('dialog', { name: '移入垃圾箱？' });
-    await confirmation.getByRole('button', { name: '移入垃圾箱' }).click();
-    await expect(confirmation).toBeHidden();
+    await item.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: '已移入垃圾箱' })).toBeVisible();
   };
 
@@ -2374,7 +2389,7 @@ test('sends through the local fake provider and applies a signed delivered webho
   });
   expect(webhook.ok(), await webhook.text()).toBe(true);
   await detail.locator('section[aria-labelledby="delivery-title"]').getByRole('button', { name: '刷新投递回执' }).click();
-  await expect(detail.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(detail.locator('section[aria-labelledby="delivery-title"]').getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(detail.getByRole('list', { name: '投递事件列表' })).toContainText('已送达');
   await assertNoConsoleErrors(consoleErrors);
 });

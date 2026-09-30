@@ -1,5 +1,10 @@
 <script lang="ts">
   import {
+    Archive,
+    Inbox,
+    Mail,
+    MailOpen,
+    Trash2,
     AlertCircle,
     Ban,
     CheckCircle2,
@@ -17,6 +22,11 @@
   type AppSection = MailboxSection | 'trash' | 'profile';
 
   let {
+    fullWidth = false,
+    pending = false,
+    onArchive,
+    onToggleRead,
+    onRemove,
     activeSection,
     message = null,
     thread = null,
@@ -27,6 +37,11 @@
     selectedForBulk = false,
     onToggleSelect
   }: {
+    fullWidth?: boolean;
+    pending?: boolean;
+    onArchive?: (message: MailMessage) => void | Promise<void>;
+    onToggleRead?: (message: MailMessage) => void | Promise<void>;
+    onRemove?: (message: MailMessage) => void | Promise<void>;
     activeSection: AppSection;
     message?: MailMessage | null;
     thread?: MailThread | null;
@@ -149,6 +164,8 @@
   <article
     class="mail-list-item group relative flex cursor-pointer items-center border-b border-[var(--fm-border)] bg-[var(--fm-surface)] text-left transition-colors hover:bg-[var(--fm-surface-hover)]"
     class:fm-selected={selected}
+    class:wide-row={fullWidth}
+    class:unread-row={isUnread}
     role="listitem"
   >
     {#if selected}<span class="absolute inset-y-0 left-0 w-[3px] bg-[var(--fm-brand-orange)]" aria-hidden="true"></span>{/if}
@@ -172,24 +189,26 @@
       aria-label={accessibleLabel}
       onclick={handleSelect}
     >
-      <span class="grid size-2 shrink-0 place-items-center" aria-hidden="true">
+      <span class="unread-dot grid size-2 shrink-0 place-items-center" aria-hidden="true">
         {#if isUnread}<span class="size-2 rounded-full bg-[var(--fm-primary)]"></span>{/if}
       </span>
+      <span class="row-avatar">
       {#if isDraft}
         <Avatar name={counterpart}><FileText class="size-4" aria-hidden="true" /></Avatar>
       {:else}
         <Avatar name={counterpart} />
       {/if}
-      <span class="min-w-0 flex-1 self-stretch py-0.5">
-        <span class="flex min-w-0 items-center gap-2">
+      </span>
+      <span class="row-content min-w-0 flex-1 self-stretch py-0.5">
+        <span class="row-sender-line flex min-w-0 items-center gap-2">
           <span class={`min-w-0 flex-1 truncate text-[13px] ${isUnread ? 'font-bold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>{counterpart}</span>
-          <time class="shrink-0 text-xs tabular-nums text-[var(--fm-text-muted)]" datetime={itemMessage.sentAt}>{formatDate(thread?.sentAt || itemMessage.sentAt)}</time>
+          <time class="row-date shrink-0 text-xs tabular-nums text-[var(--fm-text-muted)]" datetime={itemMessage.sentAt}>{formatDate(thread?.sentAt || itemMessage.sentAt)}</time>
         </span>
-        <span class={`mt-0.5 flex min-w-0 items-center gap-1 text-[15px] leading-5 ${isUnread ? 'font-semibold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>
+        <span class={`row-subject mt-0.5 flex min-w-0 items-center gap-1 text-[15px] leading-5 ${isUnread ? 'font-semibold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>
           <span class="truncate">{itemSubject}</span>
           {#if itemCount > 1}<span class="shrink-0 text-[11px] font-medium text-[var(--fm-text-muted)]">({formattedItemCount})</span>{/if}
         </span>
-        <span class="mt-0.5 flex min-w-0 items-center gap-1 text-[13px] leading-4 text-[var(--fm-text-muted)]">
+        <span class="row-preview mt-0.5 flex min-w-0 items-center gap-1 text-[13px] leading-4 text-[var(--fm-text-muted)]">
           {#if activeSection === 'starred' || activeSection === 'label'}<span class="shrink-0 rounded bg-[var(--fm-surface-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--fm-text-secondary)]">{starredSourceLabel}</span>{/if}
           {#if isDraft && activeSection !== 'starred' && activeSection !== 'label'}<span class="shrink-0 font-medium text-[var(--fm-brand-orange-strong)]">{t('mail.draft')}</span>{/if}
           {#if activeSection !== 'label' && userLabels.length}
@@ -224,6 +243,7 @@
       </span>
     </button>
     {#if activeSection !== 'trash'}
+      <span class="row-star">
       <IconButton
         ariaLabel={isStarred ? t('mail.unstar') : t('mail.star')}
         title={isStarred ? t('mail.unstar') : t('mail.star')}
@@ -231,10 +251,29 @@
         size="sm"
         tooltipSide="top"
         class="mr-1 shrink-0 text-[var(--fm-text-muted)] hover:text-[var(--fm-brand-orange-strong)]"
+        disabled={pending}
         onclick={handleStar}
       >
         <Star class={`size-4 ${isStarred ? 'fill-[var(--fm-brand-orange)]' : ''}`} color={isStarred ? 'var(--fm-brand-orange-strong)' : 'currentColor'} aria-hidden="true" />
       </IconButton>
+      </span>
+    {/if}
+    {#if activeSection !== 'trash' && (onRemove || onArchive || onToggleRead)}
+      <div class="row-actions" class:draft-actions={isDraft}>
+        {#if itemMessage.folder === 'inbox' && onArchive}
+          <span class="row-secondary-action"><IconButton ariaLabel={itemMessage.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} title={itemMessage.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} size="sm" tooltipSide="top" disabled={pending} onclick={() => itemMessage && onArchive?.(itemMessage)}>
+            {#if itemMessage.archivedAt}<Inbox class="size-4" aria-hidden="true" />{:else}<Archive class="size-4" aria-hidden="true" />{/if}
+          </IconButton></span>
+        {/if}
+        {#if itemMessage.folder === 'inbox' && onToggleRead}
+          <span class="row-secondary-action"><IconButton ariaLabel={itemMessage.read ? t('mail.markUnread') : t('mail.markRead')} title={itemMessage.read ? t('mail.markUnread') : t('mail.markRead')} size="sm" tooltipSide="top" disabled={pending} onclick={() => itemMessage && onToggleRead?.(itemMessage)}>
+            {#if itemMessage.read}<Mail class="size-4" aria-hidden="true" />{:else}<MailOpen class="size-4" aria-hidden="true" />{/if}
+          </IconButton></span>
+        {/if}
+        {#if onRemove}
+          <IconButton ariaLabel={t('mail.moveTrash')} title={t('mail.moveTrash')} size="sm" tooltipSide="top" disabled={pending} onclick={() => itemMessage && onRemove?.(itemMessage)}><Trash2 class="size-4" aria-hidden="true" /></IconButton>
+        {/if}
+      </div>
     {/if}
   </article>
 {:else}
@@ -242,6 +281,29 @@
 {/if}
 
 <style>
+  .row-actions { display: none; align-items: center; padding-right: 4px; }
+  .row-actions.draft-actions { display: flex; }
+  .row-secondary-action { display: inline-flex; }
+  @media (min-width: 901px) {
+    .wide-row { position: relative; padding-inline: 12px 8px; }
+    .mail-list-item.wide-row, .wide-row .mail-list-item-button { min-height: 52px; }
+    .wide-row.unread-row { background: var(--fm-primary-soft); }
+    .wide-row .row-avatar, .wide-row .unread-dot { display: none; }
+    .wide-row .row-star { order: -1; }
+    .wide-row > label { order: -2; }
+    .wide-row .row-content { display: grid; grid-template-columns: minmax(110px, 180px) auto minmax(0, 1fr) 58px; align-items: center; gap: 12px; }
+    .wide-row .row-sender-line { display: contents; }
+    .wide-row .row-sender-line > span { grid-column: 1; font-size: 13px; }
+    .wide-row .row-date { grid-column: 4; grid-row: 1; text-align: right; }
+    .wide-row .row-subject { grid-column: 2; grid-row: 1; max-width: min(26vw, 350px); font-size: 13px; margin-top: 0; }
+    .wide-row .row-preview { grid-column: 3; grid-row: 1; margin-top: 0; }
+    .wide-row .row-actions { display: flex; position: absolute; right: 8px; background: var(--fm-surface-hover); opacity: 0; pointer-events: none; }
+    .wide-row:hover .row-actions, .wide-row:focus-within .row-actions { opacity: 1; pointer-events: auto; }
+    .wide-row:hover, .wide-row:focus-within { background: var(--fm-surface-hover); }
+    .wide-row .row-actions.draft-actions { position: static; opacity: 1; pointer-events: auto; background: transparent; }
+  }
+  @media (max-width: 900px) { .row-actions.draft-actions .row-secondary-action { display: none; } }
+
   .mail-list-item.fm-selected,
   .mail-list-item.fm-selected:hover {
     background: var(--fm-surface-selected);

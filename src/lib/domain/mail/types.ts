@@ -1,3 +1,4 @@
+import type { InboxCategoryFilter, MailInboxCategory } from './categories';
 import type { MailAddress, MailAddressInput } from './addresses';
 
 /**
@@ -17,6 +18,8 @@ export type MailboxThreadScope = 'selected' | 'filtered' | 'owner';
 export interface MailboxMutationScope {
   section: MailboxMutationSection;
   identityFilter: MailboxIdentityFilter | null;
+  /** Inbox tab boundary, including selected and filtered thread operations. */
+  category?: InboxCategoryFilter;
   /** Required for selected-only mutations in a user label view. */
   labelId?: string;
   /** Always explicit: selected IDs, matching messages in the filtered thread, or the whole Owner thread. */
@@ -190,6 +193,10 @@ export interface MailMessage extends MailRfcHeaders {
   deliveryLastEventAt?: string | null;
   deliveryIdempotencyKey?: string | null;
   deliveryAttemptStartedAt?: string | null;
+  /** Effective metadata-based category for an inbox message. */
+  inboxCategory?: MailInboxCategory;
+  /** null means automatic metadata classification; non-null is the user override. */
+  inboxCategoryOverride?: MailInboxCategory | null;
   /** Non-null only when an inbox message is in the archive section. */
   archivedAt?: string | null;
   /** Safe plain text with private-use highlight delimiters from FTS5. */
@@ -271,6 +278,7 @@ export interface WorkspacePayload {
 export type MailboxFilter = 'all' | 'unread' | 'starred';
 
 export interface MailboxPage {
+  category?: InboxCategoryFilter;
   folder: MailboxSection;
   messages: MailMessage[];
   nextCursor: string | null;
@@ -509,4 +517,22 @@ export function createWorkspacePayload(
     mailbox: cloneMailbox(mailbox),
     metrics: getMailboxMetrics(mailbox)
   };
+}
+
+export interface MailboxCategoryMutationScope {
+  section: 'inbox';
+  identityFilter: MailboxIdentityFilter | null;
+  category?: InboxCategoryFilter;
+}
+
+export interface MailboxCategoryMutationRequest {
+  ids: string[];
+  /** null restores automatic classification. */
+  category: MailInboxCategory | null;
+  scope: MailboxCategoryMutationScope;
+}
+
+export interface MailboxCategoryMutationResult {
+  summaries: Array<{ id: string; inboxCategory: MailInboxCategory; inboxCategoryOverride: MailInboxCategory | null }>;
+  scope: MailboxCategoryMutationScope;
 }

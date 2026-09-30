@@ -1,4 +1,5 @@
-import type { DeliveryStatus, MailFolder, MailboxFilter, MailboxIdentityFilter, MailboxSection, MailSearchQuery, WorkspaceMetrics } from '$lib/domain/mail';
+import { inboxCategorySql } from './inbox-categories';
+import type { DeliveryStatus, InboxCategoryFilter, MailFolder, MailboxFilter, MailboxIdentityFilter, MailboxSection, MailSearchQuery, WorkspaceMetrics } from '$lib/domain/mail';
 import { buildFtsSearchPlan, buildLabelSearchPredicate } from '$lib/server/search/fts';
 import type {
   WorkspaceDraftRow,
@@ -7,6 +8,7 @@ import type {
 } from '$lib/server/workspace/shared';
 
 export interface MailboxRepositoryQuery {
+  category?: InboxCategoryFilter;
   folder: MailFolder;
   section?: MailboxSection;
   timestamp?: string;
@@ -91,6 +93,10 @@ export async function listWorkspaceMessagePage(
     identityPredicate('m', input.folder === 'sent' ? 'sender_address_id' : 'recipient_address_id')
   ];
   const bindings: unknown[] = [userId, input.folder];
+  if (input.category && input.category !== 'all') {
+    conditions.push(`${inboxCategorySql('m.from_email', 'm.subject', 'm.inbox_category')} = ?`);
+    bindings.push(input.category);
+  }
   if (searchPlan?.expression) {
     conditions.push('workspace_search_fts MATCH ?');
     bindings.push(searchPlan.expression);
@@ -157,7 +163,7 @@ export async function listWorkspaceMessagePage(
       m.subject, m.preview, '' AS body, m.sent_at, m.labels_json, m.is_read, m.is_starred, m.archived_at,
       EXISTS (SELECT 1 FROM workspace_attachments AS attachment WHERE attachment.user_id = m.user_id AND attachment.message_id = m.id AND attachment.relation_type IN ('inbound', 'message')) AS has_attachments,
       m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key, m.body_object_id, m.deleted_at,
-      m.sender_address_id, m.recipient_address_id, m.reply_to_json,
+      m.sender_address_id, m.recipient_address_id, m.reply_to_json, m.inbox_category,
       ${searchSnippet} AS search_snippet,
       ds.status AS delivery_status,
       ds.attempts AS delivery_attempts,
@@ -179,7 +185,7 @@ export async function listWorkspaceMessagePage(
     LEFT JOIN workspace_outbound_receipts AS r
       ON r.user_id = m.user_id AND r.message_id = m.id
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search || input.labelId
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search || input.labelId || (input.category && input.category !== 'all')
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.sent_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`);

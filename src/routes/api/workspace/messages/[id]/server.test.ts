@@ -81,3 +81,42 @@ describe('workspace message metadata API', () => {
     expect((await GET(event(value.env, 'user-1', 'email:email-deep'))).status).toBe(404);
   });
 });
+
+test('returns body-free workspace inbox/sent metadata for deep links and preserves identities/categories', async () => {
+  const { db, env } = fixture();
+  db.query(`INSERT INTO workspace_messages
+    (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
+      labels_json, sender_address_id, recipient_address_id, inbox_category)
+    VALUES ('workspace-deep', 'user-1', 'inbox', 'Sender', 'sender@example.test', 'Owner', 'owner@example.test',
+      'Deep workspace target', 'Preview', 'canonical private body must not be included', '2026-09-09T12:00:00.000Z',
+      '[]', NULL, 'address-owner', 'forums'),
+      ('workspace-sent', 'user-1', 'sent', 'Owner', 'owner@example.test', 'Reader', 'reader@example.test',
+      'Sent target', 'Sent preview', 'private sent body', '2026-09-09T13:00:00.000Z',
+      '[]', 'address-sender', NULL, NULL)`).run();
+  const inbox = await GET(event(env, 'user-1', 'workspace-deep'));
+  expect(inbox.status).toBe(200);
+  const inboxPayload = await inbox.json();
+  expect(inboxPayload).toMatchObject({ data: { message: {
+    id: 'workspace-deep', source: 'workspace', folder: 'inbox', body: '',
+    fromEmail: 'sender@example.test', recipientAddressId: 'address-owner', inboxCategory: 'forums', inboxCategoryOverride: 'forums'
+  } } });
+  expect(JSON.stringify(inboxPayload)).not.toContain('canonical private body');
+  const sent = await GET(event(env, 'user-1', 'workspace-sent'));
+  expect(sent.status).toBe(200);
+  expect(await sent.json()).toMatchObject({ data: { message: {
+    id: 'workspace-sent', folder: 'sent', body: '', senderAddressId: 'address-sender', fromEmail: 'owner@example.test'
+  } } });
+  expect((await GET(event(env, 'user-2', 'workspace-deep'))).status).toBe(404);
+  db.query(`UPDATE workspace_messages SET deleted_at = '2026-09-09T14:00:00.000Z' WHERE id = 'workspace-deep'`).run();
+  expect((await GET(event(env, 'user-1', 'workspace-deep'))).status).toBe(404);
+  db.query(`INSERT INTO workspace_drafts (id, user_id, to_email, subject, body)
+    VALUES ('draft-hidden', 'user-1', 'reader@example.test', 'Draft', 'private draft body')`).run();
+  expect((await GET(event(env, 'user-1', 'draft-hidden'))).status).toBe(404);
+});
+
+test('message metadata GET rejects unauthenticated access for workspace deep links', async () => {
+  const { env } = fixture();
+  const value = event(env, 'user-1', 'workspace-deep') as unknown as { locals: object };
+  value.locals = {};
+  expect((await GET(value as never)).status).toBe(401);
+});

@@ -136,3 +136,17 @@ describe('mailbox mutation API scope', () => {
     expect(db.query(`SELECT is_read FROM workspace_email_states WHERE email_message_id = 'inbound-a'`).get()).toEqual({ is_read: 1 });
   });
 });
+
+test('bulk mutation API retains category scope and rejects another inbox tab', async () => {
+  const { db, env } = fixture();
+  db.query(`UPDATE email_messages SET inbox_category = 'social' WHERE id = 'inbound-a'`).run();
+  const scope = { section: 'inbox', identityFilter: null, threadScope: 'selected', category: 'social' };
+  const rejected = await POST(event(env, { action: 'trash', ids: ['email:inbound-b'], scope }));
+  expect(rejected.status).toBe(404);
+  expect(db.query(`SELECT COUNT(*) AS count FROM workspace_email_states`).get()).toEqual({ count: 0 });
+  const accepted = await POST(event(env, { action: 'read', ids: ['email:inbound-a'], scope }));
+  expect(accepted.status).toBe(200);
+  expect(await accepted.json()).toMatchObject({ data: { result: { scope } } });
+  const invalid = await POST(event(env, { action: 'read', ids: ['email:inbound-a'], scope: { ...scope, category: 'invalid' } }));
+  expect(invalid.status).toBe(400);
+});
