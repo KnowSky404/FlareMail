@@ -1,3 +1,4 @@
+import { isInboxCategoryFilter } from '$lib/domain/mail';
 import type { RequestHandler } from './$types';
 import type { DeliveryStatus, MailboxFilter, MailboxMutationAction, MailboxMutationRequest, MailboxMutationScope } from '$lib/domain/mail';
 import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/http/api';
@@ -38,6 +39,11 @@ function parseMutationScope(value: unknown, hasThreadKeys: boolean): MailboxMuta
     throw new ApiError(400, 'INVALID_MAILBOX_SCOPE', '批量操作的地址筛选范围无效。');
   }
 
+  if (scope.category !== undefined && (!isInboxCategoryFilter(scope.category) ||
+    (scope.category !== 'all' && scope.section !== 'inbox'))) {
+    throw new ApiError(400, 'INVALID_INBOX_CATEGORY', '批量操作的收件箱分类范围无效。');
+  }
+
   const threadScope = scope.threadScope;
   if (!threadScopes.has(String(threadScope))) {
     throw new ApiError(400, 'MAILBOX_THREAD_SCOPE_REQUIRED', '批量操作必须明确选择已选邮件、当前筛选会话或整个 Owner 会话。');
@@ -73,6 +79,7 @@ function parseMutationScope(value: unknown, hasThreadKeys: boolean): MailboxMuta
     section: scope.section as MailboxMutationScope['section'],
     identityFilter,
     threadScope: threadScope as MailboxMutationScope['threadScope'],
+    ...(scope.category !== undefined ? { category: scope.category as MailboxMutationScope['category'] } : {}),
     ...(scope.section === 'label' ? { labelId: scope.labelId as string } : {}),
     ...(threadScope === 'filtered' ? {
       query: scope.query as string,

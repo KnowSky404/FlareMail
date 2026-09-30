@@ -1,3 +1,5 @@
+export type ReadingLayout = 'list' | 'split';
+
 export type DisplayDensity = 'comfortable' | 'compact';
 
 export type LayoutPreferences = {
@@ -5,6 +7,7 @@ export type LayoutPreferences = {
   sidebarCollapsed: boolean;
   listWidth: number;
   density: DisplayDensity;
+  readingLayout?: ReadingLayout;
 };
 
 export const LAYOUT_PREFERENCES_KEY = 'flaremail-layout-v1';
@@ -12,7 +15,8 @@ export const DEFAULT_LAYOUT_PREFERENCES: LayoutPreferences = {
   version: 1,
   sidebarCollapsed: false,
   listWidth: 440,
-  density: 'comfortable'
+  density: 'comfortable',
+  readingLayout: 'list'
 };
 
 const MIN_LIST_WIDTH = 280;
@@ -47,7 +51,8 @@ export function normalizeLayoutPreferences(value: unknown): LayoutPreferences {
     version: 1,
     sidebarCollapsed: input.sidebarCollapsed === true,
     listWidth: clampListWidth(typeof input.listWidth === 'number' ? input.listWidth : DEFAULT_LAYOUT_PREFERENCES.listWidth),
-    density: input.density === 'compact' ? 'compact' : 'comfortable'
+    density: input.density === 'compact' ? 'compact' : 'comfortable',
+    readingLayout: input.readingLayout === 'split' ? 'split' : 'list'
   };
 }
 

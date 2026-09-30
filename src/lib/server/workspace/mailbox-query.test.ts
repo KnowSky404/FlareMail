@@ -112,3 +112,28 @@ describe('mailbox query contract', () => {
     }
   });
 });
+
+describe('inbox category query boundaries', () => {
+  test('keeps all as the backward-compatible default and validates tab names', () => {
+    expect(parseMailboxQuery(new URLSearchParams()).category).toBe('all');
+    expect(parseMailboxQuery(new URLSearchParams('category=promotions')).category).toBe('promotions');
+    expect(() => parseMailboxQuery(new URLSearchParams('category=invalid'))).toThrow();
+    expect(() => parseMailboxQuery(new URLSearchParams('folder=sent&category=social'))).toThrow();
+    expect(() => parseMailboxQuery(new URLSearchParams('folder=archive&category=primary'))).toThrow();
+  });
+
+  test('binds each cursor to the category that produced it', () => {
+    const cursor = encodeMailboxCursor({
+      folder: 'inbox', section: 'inbox', timestamp: '2026-09-01T12:00:00.000Z', id: 'message-1',
+      query: '', filter: 'all', deliveryStatus: null, category: 'social'
+    });
+    expect(parseMailboxQuery(new URLSearchParams({ category: 'social', cursor })).cursor?.category).toBe('social');
+    expect(() => parseMailboxQuery(new URLSearchParams({ category: 'primary', cursor }))).toThrow();
+    expect(() => parseMailboxQuery(new URLSearchParams({ cursor }))).toThrow();
+    const legacyCursor = encodeMailboxCursor({
+      folder: 'inbox', section: 'inbox', timestamp: '2026-09-01T12:00:00.000Z', id: 'message-1',
+      query: '', filter: 'all', deliveryStatus: null
+    });
+    expect(parseMailboxQuery(new URLSearchParams({ cursor: legacyCursor })).category).toBe('all');
+  });
+});

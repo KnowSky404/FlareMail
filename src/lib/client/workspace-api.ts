@@ -354,3 +354,9 @@ export function emptyTrash() {
     body: JSON.stringify({ action: 'empty' })
   });
 }
+
+export function setInboxCategory(ids: string[], category: import('$lib/domain/mail').MailInboxCategory | null, scope: { section: 'inbox'; identityFilter: import('$lib/domain/mail').MailboxIdentityFilter | null; category: import('$lib/domain/mail').InboxCategoryFilter }) {
+  return requestJson<{ summaries: Array<Pick<MailMessage, 'id' | 'inboxCategory' | 'inboxCategoryOverride'>> }>('/api/workspace/mailbox/categories', {
+    method: 'PATCH', body: JSON.stringify({ ids, category, scope })
+  });
+}

@@ -129,7 +129,8 @@ describe('versioned D1 migrations', () => {
       '0024_managed_mail_identities.sql',
       '0025_mail_domain_health_refresh.sql',
       '0026_mail_address_delete_policy.sql',
-      '0027_persistent_mail_labels.sql'
+      '0027_persistent_mail_labels.sql',
+      '0028_inbox_categories.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -138,7 +139,7 @@ describe('versioned D1 migrations', () => {
         'in_reply_to', 'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key',
         'provider_message_id', 'idempotency_key', 'owner_user_id', 'body_object_id', 'to_json', 'cc_json',
         'reply_to_json', 'return_path', 'delivered_to', 'headers_json', 'authentication_results_json',
-        'mail_domain_id', 'mail_address_id', 'recipient_status'
+        'mail_domain_id', 'mail_address_id', 'recipient_status', 'inbox_category'
       ])
     );
     expect(tableColumns(db, 'workspace_messages')).toEqual(
@@ -147,7 +148,7 @@ describe('versioned D1 migrations', () => {
         'sent_at', 'labels_json', 'is_read', 'is_starred', 'created_at', 'updated_at', 'message_id', 'in_reply_to',
         'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'to_json', 'cc_json', 'bcc_json', 'dedupe_key', 'provider_message_id',
         'idempotency_key', 'archived_at', 'deleted_at', 'body_object_id', 'sender_address_id',
-        'recipient_address_id', 'reply_to_json'
+        'recipient_address_id', 'reply_to_json', 'inbox_category'
       ])
     );
     expect(tableColumns(db, 'workspace_users')).toEqual(
@@ -263,7 +264,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 27 }
+      { schema_name: 'flaremail', schema_version: 28 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())

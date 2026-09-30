@@ -31,6 +31,7 @@
     onToggleStar,
     onManageLabels,
     onToggleRead,
+    onArchive,
     onRemove,
     onRestore,
     onPermanentDelete,
@@ -73,6 +74,7 @@
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
     onManageLabels?: (message: MailMessage) => void;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
+    onArchive?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
     onRestore?: (message: MailMessage) => void | Promise<void>;
     onPermanentDelete?: (message: MailMessage) => void | Promise<void>;
@@ -136,6 +138,7 @@
     {onToggleStar}
     {onManageLabels}
     {onToggleRead}
+    {onArchive}
     {onRemove}
     {onRestore}
     {onPermanentDelete}

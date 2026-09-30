@@ -27,7 +27,7 @@ async function findTrashRow(db: D1Database, userId: string, id: string, includeA
   if (emailId !== null) {
     const row = await db.prepare(`
       SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet,
-        e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at,
+        e.inbox_category, e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at,
         s.deleted_at, COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
         e.raw_key, e.body_object_id
       FROM email_messages AS e
@@ -42,7 +42,7 @@ async function findTrashRow(db: D1Database, userId: string, id: string, includeA
   const workspace = await db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, to_json, subject, preview, '' AS body,
       sent_at, labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key,
-      cc, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at
+      cc, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at, inbox_category
     FROM workspace_messages WHERE user_id = ? AND id = ? ${includeActive ? '' : 'AND deleted_at IS NOT NULL'}
   `).bind(userId, id).first<WorkspaceMessageRow>();
   if (workspace) {
@@ -127,9 +127,9 @@ export async function listWorkspaceTrash(env: CloudflareEnv | undefined, session
   const queryLimit = bounded + 1;
   const rows: TrashRow[] = [];
   const [messages, drafts, inbound] = await Promise.all([
-    db.prepare(`SELECT id, folder, from_name, from_email, to_name, to_email, to_json, subject, '' AS body, sent_at, labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at FROM workspace_messages WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT ?`).bind(session.userId, queryLimit).all<WorkspaceMessageRow>(),
+    db.prepare(`SELECT id, folder, from_name, from_email, to_name, to_email, to_json, subject, '' AS body, sent_at, labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at, inbox_category FROM workspace_messages WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT ?`).bind(session.userId, queryLimit).all<WorkspaceMessageRow>(),
     db.prepare(`SELECT id, to_email, cc, to_json, cc_json, bcc_json, subject, '' AS body, is_starred, created_at, updated_at, message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id, deleted_at FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT ?`).bind(session.userId, queryLimit).all<WorkspaceDraftRow>(),
-    db.prepare(`SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet, e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at, s.deleted_at, COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred FROM email_messages AS e JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id WHERE e.owner_user_id = ? AND s.deleted_at IS NOT NULL ORDER BY s.deleted_at DESC, e.id DESC LIMIT ?`).bind(session.userId, session.userId, queryLimit).all<WorkspaceInboundRow & { deleted_at: string }>()
+    db.prepare(`SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet, e.inbox_category, e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at, s.deleted_at, COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred FROM email_messages AS e JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id WHERE e.owner_user_id = ? AND s.deleted_at IS NOT NULL ORDER BY s.deleted_at DESC, e.id DESC LIMIT ?`).bind(session.userId, session.userId, queryLimit).all<WorkspaceInboundRow & { deleted_at: string }>()
   ]);
   for (const row of messages.results ?? []) rows.push({ id: row.id, kind: 'workspace', deletedAt: row.deleted_at!, message: mapWorkspaceMessageRow(row), r2Keys: [] });
   for (const row of drafts.results ?? []) rows.push({ id: row.id, kind: 'draft', deletedAt: row.deleted_at!, message: mapDraftRow(row, session.profile), r2Keys: [] });

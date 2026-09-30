@@ -188,12 +188,13 @@ export async function findOwnedInboundState(
   const bodyColumn = options.includeBody === false ? "''" : 'e.text_body';
   return db.prepare(`
     SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet, e.mail_address_id, e.mail_domain_id,
-      e.message_id, e.in_reply_to, e."references", e.thread_key, ${bodyColumn} AS text_body, s.archived_at,
+      e.inbox_category, e.message_id, e.in_reply_to, e."references", e.thread_key, ${bodyColumn} AS text_body, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
     WHERE e.id = ? AND e.owner_user_id = ? AND s.deleted_at IS NULL
   `).bind(userId, messageId, userId).first<{
+    inbox_category: import('$lib/domain/mail').MailInboxCategory | null;
     email_id: string; from: string; to: string; subject: string; timestamp: string; snippet: string;
     mail_address_id: string | null; mail_domain_id: string | null;
     message_id: string | null; in_reply_to: string | null; references: string | null; thread_key: string | null;

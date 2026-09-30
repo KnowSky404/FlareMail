@@ -70,8 +70,8 @@ jobs:
       - run: bun run test:a11y
         env:
           CI: true
-      - name: upload Playwright diagnostics
-        if: ${{ failure() }}
+      - name: upload Playwright diagnostics and UI evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-diagnostics-${{ github.run_id }}

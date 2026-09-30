@@ -1,7 +1,7 @@
 <script lang="ts">
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { Button, Skeleton } from '$lib/components/ui';
-  import type { MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
+  import type { InboxCategoryFilter, MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
   import EmptyMailbox from './EmptyMailbox.svelte';
   import MessageListItem from './MessageListItem.svelte';
@@ -11,6 +11,12 @@
   type ListItem = { kind: 'thread'; value: MailThread } | { kind: 'message'; value: MailMessage };
 
   let {
+    category,
+    fullWidth = false,
+    pending = false,
+    onArchive,
+    onToggleRead,
+    onRemove,
     activeSection,
     messages = [],
     threads = [],
@@ -35,6 +41,12 @@
     selectedMessageIds = new Set<string>(),
     onToggleSelect
   }: {
+    category?: InboxCategoryFilter;
+    fullWidth?: boolean;
+    pending?: boolean;
+    onArchive?: (message: MailMessage) => void | Promise<void>;
+    onToggleRead?: (message: MailMessage) => void | Promise<void>;
+    onRemove?: (message: MailMessage) => void | Promise<void>;
     activeSection: AppSection;
     messages?: MailMessage[];
     threads?: MailThread[];
@@ -118,7 +130,7 @@
   });
 </script>
 
-<section bind:this={listElement} class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" class:fm-list-loading={loadingMore} aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
+<section id={category ? "inbox-category-panel" : undefined} role={category ? "tabpanel" : undefined} aria-labelledby={category ? `inbox-tab-${category}` : undefined} bind:this={listElement} class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" class:fm-list-loading={loadingMore} aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
   {#if loading}
     <div class="divide-y divide-[var(--fm-border)]" role="status" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}
@@ -164,6 +176,7 @@
       {#each visibleItems as item (itemKey(item))}
         {#if item.kind === 'thread'}
           <MessageListItem
+            {fullWidth} {pending} {onArchive} {onToggleRead} {onRemove}
             activeSection={activeSection}
             thread={item.value}
             selected={selectedThreadId === item.value.id}
@@ -175,6 +188,7 @@
           />
         {:else}
           <MessageListItem
+            {fullWidth} {pending} {onArchive} {onToggleRead} {onRemove}
             {activeSection}
             message={item.value}
             selected={selectedMessageId === item.value.id}

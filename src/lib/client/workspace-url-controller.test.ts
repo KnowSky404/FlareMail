@@ -4,7 +4,7 @@ import { readWorkspaceUrl, updateWorkspaceUrl } from './workspace-url-controller
 describe('workspace URL controller', () => {
   test('normalizes invalid state without dropping unrelated parameters', () => {
     const url = new URL('https://flaremail.example/?folder=unknown&q=123456789&filter=bad&keep=yes');
-    expect(readWorkspaceUrl(url)).toEqual({ section: 'inbox', managementView: 'settings', managementDomainId: null, query: '123456789', filter: 'all', identityFilter: null, messageId: null, labelId: null });
+    expect(readWorkspaceUrl(url)).toEqual({ section: 'inbox', managementView: 'settings', managementDomainId: null, query: '123456789', filter: 'all', category: 'all', identityFilter: null, messageId: null, labelId: null });
     const next = updateWorkspaceUrl(url, { section: 'profile', query: '', filter: 'all', messageId: null });
     expect(next.toString()).toBe('https://flaremail.example/?folder=settings&keep=yes');
   });
@@ -18,10 +18,10 @@ describe('workspace URL controller', () => {
       messageId: 'message-1'
     });
     expect(readWorkspaceUrl(next)).toEqual({
-      section: 'sent', managementView: 'settings', managementDomainId: null, query: 'invoice', filter: 'starred', identityFilter: { kind: 'address', id: 'address-1' }, messageId: 'message-1', labelId: null
+      section: 'sent', managementView: 'settings', managementDomainId: null, query: 'invoice', filter: 'starred', category: 'all', identityFilter: { kind: 'address', id: 'address-1' }, messageId: 'message-1', labelId: null
     });
     expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=trash&q=invoice&filter=starred&identity=address:address-1')))
-      .toEqual({ section: 'trash', managementView: 'settings', managementDomainId: null, query: '', filter: 'all', identityFilter: null, messageId: null, labelId: null });
+      .toEqual({ section: 'trash', managementView: 'settings', managementDomainId: null, query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null, labelId: null });
   });
 
   test('preserves a global Starred deep link and its address scope', () => {
@@ -35,7 +35,7 @@ describe('workspace URL controller', () => {
 
   test('keeps domain and address management deep links separate from mailbox folders', () => {
     const domainUrl = updateWorkspaceUrl(new URL('https://flaremail.example/?folder=inbox'), {
-      section: 'profile', managementView: 'domains', query: '', filter: 'all', identityFilter: null, messageId: null
+      section: 'profile', managementView: 'domains', query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null
     });
     expect(readWorkspaceUrl(domainUrl).managementView).toBe('domains');
     expect(domainUrl.searchParams.get('view')).toBe('domains');
@@ -53,4 +53,14 @@ describe('workspace URL controller', () => {
     expect(updateWorkspaceUrl(settingsUrl, { section: 'inbox' }).hash).toBe('');
     expect(updateWorkspaceUrl(settingsUrl, { section: 'profile', managementView: 'domains' }).hash).toBe('');
   });
+});
+
+
+test('inbox category round trips with search and identity, and clears when leaving inbox', () => {
+  const url = updateWorkspaceUrl(new URL('https://flaremail.example/?folder=inbox&q=invoice&identity=address:personal'), { category: 'updates', messageId: null });
+  expect(readWorkspaceUrl(url)).toMatchObject({ category: 'updates', query: 'invoice', identityFilter: { kind: 'address', id: 'personal' } });
+  expect(readWorkspaceUrl(updateWorkspaceUrl(url, { messageId: 'message-1' })).category).toBe('updates');
+  expect(updateWorkspaceUrl(url, { section: 'drafts' }).searchParams.has('category')).toBe(false);
+  expect(readWorkspaceUrl(new URL('https://flaremail.example/?category=unknown')).category).toBe('all');
+  expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=sent&category=updates')).category).toBe('all');
 });

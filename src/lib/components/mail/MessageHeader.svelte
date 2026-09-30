@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     Archive,
+    Inbox,
     ArrowLeft,
     ArrowUpRight,
     Forward,
@@ -40,6 +41,7 @@
     onToggleStar,
     onManageLabels,
     onToggleRead,
+    onArchive,
     onRemove,
     onRestore,
     onPermanentDelete,
@@ -67,6 +69,7 @@
     onToggleStar?: (message: MailMessage) => void | Promise<void>;
     onManageLabels?: (message: MailMessage) => void;
     onToggleRead?: (message: MailMessage) => void | Promise<void>;
+    onArchive?: (message: MailMessage) => void | Promise<void>;
     onRemove?: (message: MailMessage) => void | Promise<void>;
     onRestore?: (message: MailMessage) => void | Promise<void>;
     onPermanentDelete?: (message: MailMessage) => void | Promise<void>;
@@ -195,7 +198,7 @@
   <header class="message-detail-header flex-none border-b border-[var(--fm-border)] bg-[var(--fm-surface)]">
     <div class="message-header-row flex min-h-12 items-center gap-1 border-b border-[var(--fm-border)] px-3 py-1 sm:px-5">
       {#if showBack}
-        <IconButton ariaLabel={t('mail.backToList')} title={t('mail.backToList')} size="sm" tooltipSide="right" containerClass="fm-detail-back xl:!hidden" class="shrink-0 xl:hidden" onclick={() => onBack?.()}>
+        <IconButton ariaLabel={t('mail.backToList')} title={t('mail.backToList')} size="sm" tooltipSide="right" containerClass="fm-detail-back" class="shrink-0" onclick={() => onBack?.()}>
           <ArrowLeft class="size-4" aria-hidden="true" />
         </IconButton>
       {/if}
@@ -225,6 +228,11 @@
               <ArrowUpRight class="size-4" aria-hidden="true" />
             </a>
           {/if}
+        {/if}
+        {#if !trashMode && message.folder === 'inbox' && onArchive}
+          <IconButton ariaLabel={message.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} title={message.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} size="sm" onclick={() => onArchive?.(message)} disabled={pending}>
+            {#if message.archivedAt}<Inbox class="size-4" aria-hidden="true" />{:else}<Archive class="size-4" aria-hidden="true" />{/if}
+          </IconButton>
         {/if}
         {#if !trashMode && onToggleStar}
           <IconButton ariaLabel={message.starred ? t('mail.unstar') : t('mail.star')} title={message.starred ? t('mail.unstar') : t('mail.star')} size="sm" ariaPressed={message.starred} class="text-[var(--fm-text-muted)]" onclick={() => onToggleStar?.(message)} disabled={pending}>

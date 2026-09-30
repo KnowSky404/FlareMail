@@ -1,4 +1,5 @@
-import type { MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
+import { inboxCategorySql } from './inbox-categories';
+import type { InboxCategoryFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
 import { fromInboundMessageId, isInboundMessageId } from '$lib/domain/mail';
 import type { WorkspaceCapabilities, WorkspaceInboundRow, WorkspaceMessageRow } from '$lib/server/workspace/shared';
 
@@ -15,15 +16,16 @@ export interface OwnedMailboxMutationRow {
 const placeholders = (values: string[]) => values.map(() => '?').join(', ');
 
 export interface MailboxMutationSqlScope {
+  category?: InboxCategoryFilter;
   section: MailboxMutationSection;
   identityFilter: MailboxIdentityFilter | null;
   labelId?: string;
 }
 
-function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
+export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
   if (!scope) return { sql: '', bindings: [] as unknown[] };
   const mixed = scope.section === 'starred' || scope.section === 'label';
-  const sectionSql = scope.section === 'sent'
+  let sectionSql = scope.section === 'sent'
     ? `${alias}.folder = 'sent'`
     : scope.section === 'archive'
       ? `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NOT NULL`
@@ -35,6 +37,10 @@ function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null)
                 AND mutation_label.message_id = ${alias}.id AND mutation_label.label_id = ?)`
           : `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NULL`;
   const bindings: unknown[] = scope.section === 'label' ? [scope.labelId ?? ''] : [];
+  if (scope.category && scope.category !== 'all') {
+    sectionSql += ` AND ${inboxCategorySql(`${alias}.from_email`, `${alias}.subject`, `${alias}.inbox_category`)} = ?`;
+    bindings.push(scope.category);
+  }
   if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings };
   const addressColumn = mixed
     ? `(CASE WHEN ${alias}.folder = 'sent' THEN ${alias}.sender_address_id ELSE ${alias}.recipient_address_id END)`
@@ -55,10 +61,10 @@ function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null)
   return { sql: ` AND ${sectionSql}${identitySql}`, bindings: [...bindings, scope.identityFilter.id] };
 }
 
-function inboundScopeSql(alias: string, stateAlias: string, scope: MailboxMutationSqlScope | null) {
+export function inboundScopeSql(alias: string, stateAlias: string, scope: MailboxMutationSqlScope | null) {
   if (!scope) return { sql: '', bindings: [] as unknown[] };
   if (scope.section === 'sent') return { sql: ' AND 1 = 0', bindings: [] as unknown[] };
-  const sectionSql = scope.section === 'archive'
+  let sectionSql = scope.section === 'archive'
     ? `${stateAlias}.archived_at IS NOT NULL`
     : scope.section === 'starred'
       ? `COALESCE(${stateAlias}.is_starred, 0) = 1`
@@ -68,6 +74,10 @@ function inboundScopeSql(alias: string, stateAlias: string, scope: MailboxMutati
               AND mutation_label.message_id = ${alias}.id AND mutation_label.label_id = ?)`
         : `${stateAlias}.archived_at IS NULL`;
   const bindings: unknown[] = scope.section === 'label' ? [scope.labelId ?? ''] : [];
+  if (scope.category && scope.category !== 'all') {
+    sectionSql += ` AND ${inboxCategorySql(`${alias}."from"`, `${alias}.subject`, `${alias}.inbox_category`)} = ?`;
+    bindings.push(scope.category);
+  }
   if (!scope.identityFilter) return { sql: ` AND ${sectionSql}`, bindings };
   const identitySql = scope.identityFilter.kind === 'address'
     ? ` AND ${alias}.mail_address_id = ?`
@@ -226,7 +236,7 @@ export async function listMessages(db: D1Database, userId: string) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, labels_json, is_read, is_starred,
       message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at,
-      sender_address_id, recipient_address_id, reply_to_json
+      sender_address_id, recipient_address_id, reply_to_json, inbox_category
     FROM workspace_messages WHERE user_id = ? AND deleted_at IS NULL AND (folder <> 'inbox' OR archived_at IS NULL)
     ORDER BY sent_at DESC, created_at DESC
   `).bind(userId).all<WorkspaceMessageRow>();
@@ -236,7 +246,7 @@ export async function listInboundMessages(db: D1Database, userId: string, _login
   if (!capabilities.inboundStates) return { results: [] as WorkspaceInboundRow[] };
   return db.prepare(`
     SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet, e.mail_address_id, e.mail_domain_id,
-      e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
+      e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at, e.inbox_category,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
@@ -262,7 +272,7 @@ export async function findMessageByIdempotencyKey(db: D1Database, userId: string
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
       labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at,
-      sender_address_id, recipient_address_id, reply_to_json
+      sender_address_id, recipient_address_id, reply_to_json, inbox_category
     FROM workspace_messages WHERE user_id = ? AND idempotency_key = ?
   `).bind(userId, idempotencyKey).first<WorkspaceMessageRow>();
 }
@@ -271,7 +281,7 @@ export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, 
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
       labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at,
-      sender_address_id, recipient_address_id, reply_to_json
+      sender_address_id, recipient_address_id, reply_to_json, inbox_category
     FROM workspace_messages WHERE user_id = ? AND id = ?
   `).bind(userId, messageId).first<WorkspaceMessageRow>();
 }

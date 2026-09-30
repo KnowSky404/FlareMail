@@ -71,7 +71,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
   try {
     const activeFolder = requestedFolder(url.searchParams.get('folder'));
     const params = new URLSearchParams({ limit: '40', folder: activeFolder });
-    for (const key of ['q', 'filter', 'status', 'identity', 'label']) {
+    for (const key of ['q', 'filter', 'status', 'identity', 'label', 'category']) {
       const value = url.searchParams.get(key);
       if (value) params.set(key, value);
     }
@@ -83,6 +83,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
       filter: activeQuery.filter,
       identityFilter: activeQuery.identityFilter,
       deliveryStatus: activeQuery.deliveryStatus,
+      category: activeQuery.category,
       labelId: activeQuery.labelId
     });
     const workspace = loaded.workspace;
