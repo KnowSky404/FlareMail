@@ -289,7 +289,7 @@ describe('mailbox controller', () => {
   });
 });
 
-function makePage(folder: MailMessage['folder'], messages: MailMessage[]) {
+function makePage(folder: MailboxPage['folder'], messages: MailMessage[]) {
   return {
     folder,
     messages,
@@ -343,4 +343,28 @@ test('keeps updated read and star flags when another page is appended', () => {
   expect(patched.snapshot.mailboxPages?.inbox?.messages[0]).toMatchObject({ read: true, starred: true });
   const appended = mergeMailboxPage(patched.snapshot, { ...page, messages: [message('second', 'inbox', '2026-08-13T02:00:00.000Z')], nextCursor: null, hasMore: false }, true);
   expect(appended.mailbox.inbox.find((item) => item.id === 'first')).toMatchObject({ read: true, starred: true });
+});
+
+
+test('trashing an archived inbox message purges every cached view and updates matching counts', () => {
+  const archived = { ...message('archived', 'inbox', '2026-08-14T02:00:00.000Z'), archivedAt: '2026-08-14T03:00:00.000Z', starred: true };
+  const other = { ...message('other', 'inbox', '2026-08-13T02:00:00.000Z'), archivedAt: '2026-08-13T03:00:00.000Z' };
+  const inboxPage = makePage('inbox', []);
+  const result = removeMessage({
+    mailbox: cloneMailbox(), metrics,
+    mailboxPages: {
+      inbox: inboxPage,
+      archive: { ...makePage('archive', [archived, other]), searchTotal: 2 },
+      starred: { ...makePage('starred', [archived]), searchTotal: 1 },
+      label: { ...makePage('label', [archived, other]), searchTotal: 2 }
+    }
+  }, archived.id, 'inbox', 'archive', archived.id);
+  expect(result.snapshot.mailboxPages?.archive?.messages.map((item) => item.id)).toEqual(['other']);
+  expect(result.snapshot.mailboxPages?.archive?.searchTotal).toBe(1);
+  expect(result.snapshot.mailboxPages?.starred?.messages).toEqual([]);
+  expect(result.snapshot.mailboxPages?.starred?.searchTotal).toBe(0);
+  expect(result.snapshot.mailboxPages?.label?.messages.map((item) => item.id)).toEqual(['other']);
+  expect(result.snapshot.mailboxPages?.label?.searchTotal).toBe(1);
+  expect(result.snapshot.mailboxPages?.inbox).toBe(inboxPage);
+  expect(result.selectedMessageId).toBe('other');
 });

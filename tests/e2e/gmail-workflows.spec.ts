@@ -345,7 +345,7 @@ test('keeps reply, reply-all, and forward tied to the selected delivery identity
 });
 
 
-test('keeps row read, star, and archive actions in the list and preserves delivery identity', async ({ page, consoleErrors }, testInfo) => {
+test('keeps row read, star, archive, trash and undo actions in the list and preserves identity', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop hover reveals the Gmail-style row actions.');
   await login(page);
   const id = 'e2e-bulk-03';
@@ -366,6 +366,14 @@ test('keeps row read, star, and archive actions in the list and preserves delive
     await openFolder(page, '归档');
     await expect(target).toBeVisible();
     await target.hover();
+    await target.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+    await expect(target).toHaveCount(0);
+    await expect(page.locator('.mail-list-panel')).toBeVisible();
+    await expect(page.getByRole('region', { name: '邮件详情' })).toBeHidden();
+    await page.getByRole('status').filter({ hasText: '已移入垃圾箱' }).getByRole('button', { name: '撤销' }).click();
+    await expect(target).toBeVisible();
+    await expect(page).toHaveURL(/folder=archive/u);
+    await target.hover();
     await target.getByRole('button', { name: '移回收件箱', exact: true }).click();
     await expect(target).toHaveCount(0);
     await openFolder(page, '收件箱');
@@ -374,6 +382,13 @@ test('keeps row read, star, and archive actions in the list and preserves delive
     expect(after).toMatchObject({ fromEmail: before.fromEmail, recipientAddressId: before.recipientAddressId });
     await expect(page.getByRole('region', { name: '邮件详情' })).toBeHidden();
   } finally {
+    // Recover only our seeded target if an assertion failed before Undo.
+    const trashResponse = await page.request.get('/api/workspace/trash?limit=500');
+    expect(trashResponse.ok()).toBe(true);
+    const trash = await trashResponse.json() as { data: { items: Array<{ id: string }> } };
+    if (trash.data.items.some((item) => item.id === id)) {
+      await mutateLocal(page, `/api/workspace/trash/${id}`, 'POST');
+    }
     const archived = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
     const payload = await archived.json() as { data: { page: { messages: Message[] } } };
     if (payload.data.page.messages.some((message) => message.id === id)) {
