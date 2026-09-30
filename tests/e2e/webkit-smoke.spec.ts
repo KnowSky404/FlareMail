@@ -8,6 +8,16 @@ import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openF
 // controls as unstable; these paths assert visibility before triggering them.
 test.describe.configure({ mode: 'serial', timeout: 75_000 });
 
+// These legacy suites exercise simultaneous list/detail previews. Keep their
+// split-pane coverage explicit; gmail-workflows.spec.ts covers the real list default.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem('flaremail-layout-v1') ?? '{}') ?? {}; } catch {}
+    localStorage.setItem('flaremail-layout-v1', JSON.stringify({ ...saved, version: 1, readingLayout: 'split' }));
+  });
+});
+
 const projectIsPhone = (name: string) => name.includes('iphone');
 const projectIsMobile = (name: string) => projectIsPhone(name) || name.includes('ipad');
 
@@ -389,6 +399,8 @@ test('opens the compose attachment modal and restores an autosaved draft', async
   const draft = page.getByRole('listitem').filter({ hasText: subject });
   await expect(draft).toBeVisible();
   await clickHeadlessControl(draft.getByRole('button', { name: new RegExp(subject, 'u') }).first());
+  await clickHeadlessControl(page.getByRole('button', { name: '更多邮件操作' }));
+  await clickHeadlessControl(page.getByRole('menuitem', { name: '继续编辑草稿' }));
   const editDialog = page.getByRole('dialog', { name: '编辑草稿' });
   await expect(editDialog).toBeVisible();
   await expect(editDialog.getByLabel('HTML 源码（可选）', { exact: true })).toHaveValue('<p>WebKit <strong>HTML</strong> autosave fixture.</p>');
@@ -519,7 +531,6 @@ test('restores a draft from the trash', async ({ page, consoleErrors }) => {
   const draft = page.getByRole('listitem').filter({ hasText: subject });
   await expect(draft).toBeVisible();
   await clickHeadlessControl(draft.getByRole('button', { name: '移入垃圾箱', exact: true }));
-  await clickHeadlessControl(page.getByRole('dialog', { name: '移入垃圾箱？' }).getByRole('button', { name: '移入垃圾箱' }));
   await expect(page.getByRole('status').filter({ hasText: '已移入垃圾箱' })).toBeVisible();
   await openFolder(page, '垃圾箱');
   const trashed = page.getByRole('listitem').filter({ hasText: subject });

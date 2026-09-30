@@ -291,8 +291,6 @@ test('opens a draft directly with its saved sender and supports row trash with u
     await editor.getByRole('button', { name: '关闭', exact: true }).click();
     await expect(editor).toBeHidden();
     await draft.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
-    const confirmation = page.getByRole('dialog', { name: '移入垃圾箱？' });
-    await confirmation.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
     await expect(draft).toHaveCount(0);
     await expect(editor).toBeHidden();
     await page.getByRole('status').filter({ hasText: '已移入垃圾箱' }).getByRole('button', { name: '撤销' }).click();
@@ -466,5 +464,57 @@ test('opens a category deep link beyond the first page without selecting a visib
   await expect(page.getByRole('tab', { name: '主要', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page).not.toHaveURL(/message=/u);
   await expect(page.locator('.mail-list-panel')).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('opens only the newest draft and ignores a delayed draft after leaving its folder', async ({ page, consoleErrors }) => {
+  await login(page);
+  await openFolder(page, '草稿箱');
+  const draftPath = '/api/workspace/drafts/e2e-draft-1';
+  const delayedDraft = row(page, 'E2E Existing Concurrent');
+  const newerDraft = row(page, 'E2E Conflict Load');
+
+  async function delayDraftLoad() {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route(`**${draftPath}`, async (route) => {
+      await gate;
+      // Latest-request cancellation is expected when another draft or folder wins.
+      await route.continue().catch(() => {});
+    });
+    const requested = page.waitForRequest((request) => new URL(request.url()).pathname === draftPath);
+    await delayedDraft.getByRole('button', { name: /E2E Existing Concurrent/u }).first().click();
+    await requested;
+    return release;
+  }
+
+  let release = await delayDraftLoad();
+  try {
+    await newerDraft.getByRole('button', { name: /E2E Conflict Load/u }).first().click();
+    const editor = page.getByRole('dialog', { name: '编辑草稿' });
+    await expect(editor.getByRole('textbox', { name: '主题', exact: true })).toHaveValue('E2E Conflict Load');
+    release();
+    await page.waitForLoadState('networkidle');
+    await expect(editor.getByRole('textbox', { name: '主题', exact: true })).toHaveValue('E2E Conflict Load');
+    await editor.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(editor).toBeHidden();
+  } finally {
+    release();
+    await page.unroute(`**${draftPath}`);
+  }
+
+  release = await delayDraftLoad();
+  try {
+    await openFolder(page, '收件箱');
+    release();
+    await page.waitForLoadState('networkidle');
+    await expect(row(page, 'E2E Inbox Welcome')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeHidden();
+    await expect(page).toHaveURL(/folder=inbox/u);
+    await expect(page).not.toHaveURL(/message=/u);
+  } finally {
+    release();
+    await page.unroute(`**${draftPath}`);
+  }
   await assertNoConsoleErrors(consoleErrors);
 });
