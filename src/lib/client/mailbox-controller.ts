@@ -345,16 +345,30 @@ export function removeMessage(
   const nextMailbox = cloneMailbox(snapshot.mailbox);
   if (folder !== 'archive' && folder !== 'starred' && folder !== 'label') nextMailbox[folder] = nextMailbox[folder].filter((message) => message.id !== removedId);
   const section = currentSection === 'profile' ? folder : currentSection;
-  const currentPage = snapshot.mailboxPages?.[folder];
+  // One persisted inbox message can also appear in archive, Starred and label
+  // caches. Purge every cached occurrence so Back and the active archive cannot
+  // resurrect a trashed row without a server refresh.
+  const mailboxPages = snapshot.mailboxPages
+    ? Object.fromEntries(Object.entries(snapshot.mailboxPages).map(([key, page]) => {
+      if (!page || !page.messages.some((message) => message.id === removedId)) return [key, page];
+      return [key, {
+        ...page,
+        messages: page.messages.filter((message) => message.id !== removedId),
+        ...(page.searchTotal !== undefined ? { searchTotal: Math.max(0, page.searchTotal - 1) } : {})
+      }];
+    })) as Partial<Record<MailboxSection, MailboxPage>>
+    : null;
+  const crossFolderPage = section === 'archive' || section === 'starred' || section === 'label'
+    ? mailboxPages?.[section] : undefined;
   return {
     snapshot: {
       mailbox: nextMailbox,
-      mailboxPages: currentPage
-        ? { ...(snapshot.mailboxPages ?? {}), [folder]: { ...currentPage, messages: currentPage.messages.filter((message) => message.id !== removedId) } }
-        : snapshot.mailboxPages,
+      mailboxPages,
       metrics: metrics ?? snapshot.metrics
     },
-    selectedMessageId: selectNextMessage(nextMailbox, section, currentSelectedMessageId),
+    selectedMessageId: crossFolderPage
+      ? crossFolderPage.messages.find((message) => message.id === currentSelectedMessageId)?.id ?? crossFolderPage.messages[0]?.id ?? null
+      : selectNextMessage(nextMailbox, section, currentSelectedMessageId),
     section
   };
 }
