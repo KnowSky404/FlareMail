@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { goto, pushState, replaceState } from '$app/navigation';
+  import { afterNavigate, goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, tick, untrack } from 'svelte';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
@@ -338,6 +338,7 @@
   const toastController = new ToastController((messages) => (toastMessages = messages));
   const workspaceSnapshotController = new WorkspaceSnapshotController();
   const targetMessageRequest = new LatestRequest();
+  const draftOpenRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
     onResult: (result) => {
       trashItems = result.items;
@@ -402,13 +403,19 @@
     deleteLabelConfirmOpen = false;
     trashController.cancel();
     targetMessageRequest.cancel();
+    draftOpenRequest.cancel();
     inboundDetailCache.cancel();
     deliveryDetailCache.cancel();
     workspaceBodyCache.cancel();
     if (source !== 'other-tab') authSessionSync?.publish({ type: 'expired' });
   }
 
-  const urlState = $derived(readWorkspaceUrl(page.url));
+  // SvelteKit shallow pushState changes history/page.state, not page.url.
+  // Track the visible browser URL so list filters and Back/Forward share one source.
+  let browserWorkspaceUrl = $state<string | null>(null);
+  const currentWorkspaceUrl = $derived(browserWorkspaceUrl ? new URL(browserWorkspaceUrl) : page.url);
+  const urlState = $derived(readWorkspaceUrl(currentWorkspaceUrl));
+  afterNavigate(() => { browserWorkspaceUrl = window.location.href; });
   const urlSection = $derived(urlState.section);
   const urlManagementView = $derived(urlState.managementView);
   const urlManagementDomainId = $derived(urlState.managementDomainId);
@@ -519,6 +526,7 @@
         // Keep the category, search and identity scope rather than injecting a row.
         deepLinkedMessage = result.message;
         selectedMessageId = targetId;
+        mobileDetailOpen = true;
       } catch (error) {
         if (request.signal.aborted || !request.isCurrent()) return;
         if (error instanceof ClientApiError && (error.status === 401 || error.status === 403 || error.status === 404)) {
@@ -690,8 +698,8 @@
   const selectedRemoteImagesAllowed = $derived(Boolean(selectedMessage && remoteImagesMessageId === selectedMessage.id));
 
   $effect(() => {
-    const action = page.url.searchParams.get('compose');
-    const requestedMessageId = page.url.searchParams.get('message');
+    const action = currentWorkspaceUrl.searchParams.get('compose');
+    const requestedMessageId = currentWorkspaceUrl.searchParams.get('message');
     if (action !== 'reply' && action !== 'forward') {
       handledComposeAction = null;
       return;
@@ -700,9 +708,10 @@
     const actionKey = `${action}:${requestedMessageId}`;
     if (handledComposeAction === actionKey) return;
     handledComposeAction = actionKey;
-    const nextUrl = new URL(page.url);
+    const nextUrl = new URL(currentWorkspaceUrl);
     nextUrl.searchParams.delete('compose');
     replaceState(nextUrl, page.state);
+    browserWorkspaceUrl = nextUrl.href;
     if (action === 'reply') void handleReplyMessage(selectedMessage);
     else void handleForwardMessage(selectedMessage);
   });
@@ -933,11 +942,11 @@
     selectedMessageIds = next.selectedMessageIds;
     searchQuery = next.searchQuery;
     mailFilter = next.mailFilter;
-    inboxCategory = next.activeSection === 'inbox' ? workspace.activePage.category ?? 'all' : 'all';
+    inboxCategory = next.activeSection === 'inbox' && !options?.clearMailView ? urlCategory : 'all';
     mailIdentityFilter = next.identityFilter;
     mailIdentityOptions = workspace.mailIdentityOptions;
     mobileDetailOpen = next.activeSection !== 'profile' &&
-      Boolean(options?.preferredMessageId && next.selectedMessageId === options.preferredMessageId);
+      Boolean(options?.preferredMessageId);
     authenticated = true;
     void reloadMailLabels();
     workspaceSnapshotController.noteUser(workspace.profile.email);
@@ -958,6 +967,7 @@
   }
 
   function resetWorkspace() {
+    draftOpenRequest.cancel();
     const initial = createEmptyWorkspaceViewState();
     mailboxController.cancel();
     labelRequest.cancel();
@@ -1067,7 +1077,8 @@
     },
     replaceHistory = false
   ) {
-    const next = buildWorkspaceUrl(page.url, updates);
+    const next = buildWorkspaceUrl(currentWorkspaceUrl, updates);
+    browserWorkspaceUrl = next.href;
     if (replaceHistory) {
       replaceState(next, page.state);
     } else {
@@ -1491,7 +1502,7 @@
     if (event.type === 'session-ended') {
       if (!authenticated) return;
       resetWorkspace();
-      void goto(buildWorkspaceUrl(page.url, {
+      void goto(buildWorkspaceUrl(currentWorkspaceUrl, {
         section: 'inbox', query: '', filter: 'all', messageId: null
       }), { replaceState: true, noScroll: true, keepFocus: false });
       return;
@@ -1630,6 +1641,7 @@
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
+    draftOpenRequest.cancel();
     if (composeOpen) {
       window.dispatchEvent(new Event('flaremail:restore-compose'));
       return;
@@ -1814,7 +1826,7 @@
         window.location.assign(result.logoutUrl);
         return;
       }
-      await goto(buildWorkspaceUrl(page.url, {
+      await goto(buildWorkspaceUrl(currentWorkspaceUrl, {
         section: 'inbox', query: '', filter: 'all', messageId: null
       }), { replaceState: true, noScroll: true, keepFocus: false });
       notify(t('notify.loggedOut'), 'success');
@@ -2154,7 +2166,7 @@
     if (message.folder === 'drafts') return null;
     const params = new URLSearchParams();
     for (const key of ['folder', 'q', 'filter', 'category', 'identity', 'label']) {
-      const value = page.url.searchParams.get(key);
+      const value = currentWorkspaceUrl.searchParams.get(key);
       if (value) params.set(key, value);
     }
     params.set('message', message.id);
@@ -2289,7 +2301,7 @@
       runtimeOperationError = false;
       trashLoaded = false;
       if (readingLayout === 'list' && selectedMessageId === message.id) closeMobileDetail();
-      else selectedMessageId = removed.selectedMessageId;
+      else selectedMessageId = readingLayout === 'list' && !mobileDetailOpen ? null : removed.selectedMessageId;
       if (!sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter)) {
         scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter);
       }
@@ -2399,8 +2411,11 @@
   }
 
   async function handleEditDraft(message: MailMessage) {
+    const request = draftOpenRequest.begin();
+    const context = currentWorkspaceUrl.href;
     try {
-      const current = await fetchDraftDetail(message.id);
+      const current = await fetchDraftDetail(message.id, request.signal);
+      if (!request.isCurrent() || currentWorkspaceUrl.href !== context || !authenticated || authExpired) return;
       openCompose('draft', composeInputFromSavedDraft(
         current.message,
         current.bodyRevision,
@@ -2408,6 +2423,7 @@
         current.attachmentRevision
       ));
     } catch (error) {
+      if (request.signal.aborted || !request.isCurrent()) return;
       notifyError(error, t('notify.loadDraftFailed'));
     }
   }
@@ -2531,6 +2547,9 @@
   });
 
   onMount(() => {
+    const syncBrowserWorkspaceUrl = () => { browserWorkspaceUrl = window.location.href; };
+    syncBrowserWorkspaceUrl();
+    window.addEventListener('popstate', syncBrowserWorkspaceUrl);
     const layout = readLayoutPreferences(localStorage);
     sidebarCollapsed = layout.sidebarCollapsed;
     listWidth = layout.listWidth;
@@ -2587,6 +2606,7 @@
     window.addEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
     return () => {
       document.removeEventListener('keydown', handleShortcut);
+      window.removeEventListener('popstate', syncBrowserWorkspaceUrl);
       window.removeEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
       window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
       workspaceSync?.close();
@@ -2597,6 +2617,7 @@
       document.body.classList.remove('fm-is-resizing');
       clearMailboxRefreshTimer();
       mailboxController.cancel();
+      draftOpenRequest.cancel();
       labelRequest.cancel();
       cancelLabelActions();
       shortcuts.dispose();

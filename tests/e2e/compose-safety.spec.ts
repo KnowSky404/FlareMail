@@ -2,15 +2,22 @@ import { assertNoConsoleErrors, expect, login, test } from './fixtures';
 
 // Each project shares its local database across spec files. Do not change the
 // seeded counts expected by the general workspace suite that runs afterwards.
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ page, baseURL }, testInfo) => {
+  if (testInfo.status === 'skipped') return;
+  expect(baseURL, 'Compose fixture cleanup needs the configured local app origin').toBeDefined();
+  const origin = new URL(baseURL!).origin;
   await page.goto('about:blank');
   for (const folder of ['drafts', 'sent']) {
     const response = await page.request.get(`/api/workspace/mailbox?folder=${folder}&q=E2E%20Compose%20Safety&limit=100`);
-    if (!response.ok()) continue;
+    expect(response.ok(), `List ${folder} fixtures: ${response.status()} ${await response.text()}`).toBe(true);
     const messages = (await response.json()).data.page.messages as Array<{ id: string; subject: string }>;
     for (const message of messages.filter((entry) => entry.subject.startsWith('E2E Compose Safety'))) {
-      const deleted = await page.request.delete(`/api/workspace/messages/${encodeURIComponent(message.id)}`);
-      expect(deleted.ok()).toBe(true);
+      // APIRequestContext does not add the Origin header that browser fetch
+      // supplies for mutations. Exercise the same CSRF contract as the UI.
+      const deleted = await page.request.delete(`/api/workspace/messages/${encodeURIComponent(message.id)}`, {
+        headers: { origin }
+      });
+      expect(deleted.ok(), `Trash fixture ${message.id}: ${deleted.status()} ${await deleted.text()}`).toBe(true);
     }
   }
 });
@@ -20,7 +27,7 @@ test('keeps send shortcuts separate from recipient suggestions and IME input', a
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
   const compose = page.getByRole('dialog', { name: '新邮件' });
-  const recipient = compose.getByLabel('收件人');
+  const recipient = compose.getByRole('combobox', { name: '收件人', exact: true });
   const body = compose.getByRole('textbox', { name: '正文', exact: true });
   await compose.getByRole('textbox', { name: '主题', exact: true }).fill('E2E Compose Safety shortcut');
   await body.fill('Only send to the address explicitly entered by the user.');
@@ -78,7 +85,8 @@ test('preserves newer draft edits while preparing an attachment', async ({ page,
   const compose = page.getByRole('dialog', { name: '新邮件' });
   const subject = compose.getByRole('textbox', { name: '主题', exact: true });
   const body = compose.getByRole('textbox', { name: '正文', exact: true });
-  await compose.getByLabel('收件人').fill('attachment-race@flaremail.test');
+  const recipient = compose.getByRole('combobox', { name: '收件人', exact: true });
+  await recipient.fill('attachment-race@flaremail.test');
   await subject.fill('E2E Compose Safety preparation old subject');
   await body.fill('Body before attachment preparation');
   await expect(compose.getByRole('status').filter({ hasText: '已自动保存于' })).toBeVisible();
@@ -97,8 +105,8 @@ test('preserves newer draft edits while preparing an attachment', async ({ page,
     await expect.poll(() => intercepted).toBe(1);
     await subject.fill('E2E Compose Safety preparation latest subject');
     await body.fill('Latest body typed while preparing the attachment');
-    await compose.getByLabel('收件人').fill('added-during-prepare@flaremail.test');
-    await compose.getByLabel('收件人').press('Enter');
+    await recipient.fill('added-during-prepare@flaremail.test');
+    await recipient.press('Enter');
   } finally {
     releasePrepare();
   }

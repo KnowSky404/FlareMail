@@ -69,7 +69,7 @@
     "@cloudflare/workerd-linux-arm64": "1.20260820.1",
     "@cloudflare/workerd-windows-64": "1.20260820.1",
     "sharp": "0.35.4",
-    "undici": "7.29.0",
+    "undici": "7.29.1",
     "workerd": "1.20260820.1"
   }
 }
