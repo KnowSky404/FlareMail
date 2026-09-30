@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import AxeBuilder from '@axe-core/playwright';
-import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, test } from './fixtures';
+import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, enableSplitReading, test } from './fixtures';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -264,6 +264,7 @@ test('keeps domain dashboard responsive in light and dark Firefox', async ({ pag
 
 test('keeps an exceptionally long subject and message readable at desktop, tablet, and phone widths', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
+  await enableSplitReading(page);
   const subject = `E2E Long Subject ${'UnbrokenSubject'.repeat(28)}`;
   const body = Array.from({ length: 400 }, (_, index) => `Long message line ${index + 1}: ${'content '.repeat(12)}`).join('\n');
   const created = await page.evaluate(async ({ subject, body }) => {

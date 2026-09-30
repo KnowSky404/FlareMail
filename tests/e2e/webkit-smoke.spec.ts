@@ -389,8 +389,6 @@ test('opens the compose attachment modal and restores an autosaved draft', async
   const draft = page.getByRole('listitem').filter({ hasText: subject });
   await expect(draft).toBeVisible();
   await clickHeadlessControl(draft.getByRole('button', { name: new RegExp(subject, 'u') }).first());
-  await clickHeadlessControl(page.getByRole('button', { name: '更多邮件操作' }));
-  await clickHeadlessControl(page.getByRole('menuitem', { name: '继续编辑草稿' }));
   const editDialog = page.getByRole('dialog', { name: '编辑草稿' });
   await expect(editDialog).toBeVisible();
   await expect(editDialog.getByLabel('HTML 源码（可选）', { exact: true })).toHaveValue('<p>WebKit <strong>HTML</strong> autosave fixture.</p>');
@@ -520,9 +518,7 @@ test('restores a draft from the trash', async ({ page, consoleErrors }) => {
   await openFolder(page, '草稿箱');
   const draft = page.getByRole('listitem').filter({ hasText: subject });
   await expect(draft).toBeVisible();
-  await clickHeadlessControl(draft.getByRole('button', { name: new RegExp(subject, 'u') }).first());
-  await clickHeadlessControl(page.getByRole('button', { name: '更多邮件操作' }));
-  await clickHeadlessControl(page.getByRole('menuitem', { name: '移入垃圾箱' }));
+  await clickHeadlessControl(draft.getByRole('button', { name: '移入垃圾箱', exact: true }));
   await clickHeadlessControl(page.getByRole('dialog', { name: '移入垃圾箱？' }).getByRole('button', { name: '移入垃圾箱' }));
   await expect(page.getByRole('status').filter({ hasText: '已移入垃圾箱' })).toBeVisible();
   await openFolder(page, '垃圾箱');

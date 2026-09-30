@@ -16,6 +16,7 @@
     mobileStatusTone = 'text-[var(--fm-text-muted)]',
     children,
     footer,
+    closeDisabled = false,
     onClose
   }: {
     id: string;
@@ -25,6 +26,7 @@
     mobileStatusTone?: string;
     children?: Snippet;
     footer?: Snippet;
+    closeDisabled?: boolean;
     onClose: () => void;
   } = $props();
 
@@ -156,7 +158,7 @@
       if (event.shiftKey && document.activeElement === first && last) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last && first) { event.preventDefault(); first.focus(); }
     }
-    if (event.key === 'Escape' && !event.defaultPrevented) {
+    if (event.key === 'Escape' && !event.defaultPrevented && !closeDisabled) {
       event.stopPropagation();
       onClose();
     }
@@ -201,7 +203,7 @@
 >
   <div class="compose-window-header">
     <div class="mobile-close">
-      <IconButton ariaLabel={t('common.close')} title={t('common.close')} size="sm" onclick={onClose}><X class="size-5" aria-hidden="true" /></IconButton>
+      <IconButton ariaLabel={t('common.close')} title={t('common.close')} size="sm" disabled={closeDisabled} onclick={onClose}><X class="size-5" aria-hidden="true" /></IconButton>
     </div>
     <button
       class={buttonClass('ghost', 'sm', 'resize-handle !min-w-8 !p-0 max-sm:!hidden')}
@@ -239,7 +241,7 @@
         <IconButton ariaLabel={t('compose.minimizeWindow')} title={t('compose.minimizeWindow')} size="sm" containerClass="max-sm:!hidden" class="max-sm:!hidden" onclick={toggleMinimized}><Minimize2 class="size-4" aria-hidden="true" /></IconButton>
         <IconButton ariaLabel={maximized ? t('compose.restoreWindow') : t('compose.maximizeWindow')} title={maximized ? t('compose.restoreWindow') : t('compose.maximizeWindow')} size="sm" containerClass="max-sm:!hidden" class="max-sm:!hidden" onclick={() => (maximized = !maximized)}><Maximize2 class="size-4" aria-hidden="true" /></IconButton>
       {/if}
-      <IconButton ariaLabel={t('common.close')} title={t('common.close')} size="sm" onclick={onClose}><X class="size-4" aria-hidden="true" /></IconButton>
+      <IconButton ariaLabel={t('common.close')} title={t('common.close')} size="sm" disabled={closeDisabled} onclick={onClose}><X class="size-4" aria-hidden="true" /></IconButton>
     </div>
   </div>
   {#if !minimized}

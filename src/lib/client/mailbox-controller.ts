@@ -3,6 +3,7 @@ import {
   cloneMailbox,
   cloneProfile,
   type MailboxSection,
+  type InboxCategoryFilter,
   type MailboxIdentityFilter,
   type MailboxMetricsScope,
   type MailMessage,
@@ -239,7 +240,8 @@ export function mergeMessageDelta(
   const pageMatchesCurrentScope = !targetPage || sameIdentityFilter(targetPage.identityFilter, identityFilter);
   const query = targetPage?.query ?? (section === options.currentSection ? options.query ?? '' : '');
   const filter = targetPage?.filter ?? (section === options.currentSection ? options.filter ?? 'all' : 'all');
-  const canMergeMessage = section !== 'starred' && section !== 'label' && identityMatches && pageMatchesCurrentScope && !query.trim() && filter === 'all';
+  const categoryMatches = section !== 'inbox' || !targetPage?.category || targetPage.category === 'all' || result.message.inboxCategory === targetPage.category;
+  const canMergeMessage = categoryMatches && section !== 'starred' && section !== 'label' && identityMatches && pageMatchesCurrentScope && !query.trim() && filter === 'all';
 
   if (options.removeDraftId && snapshot.mailboxPages?.drafts) {
     const draftsPage = snapshot.mailboxPages.drafts;
@@ -316,7 +318,9 @@ export function mergeMessageDelta(
   return {
     snapshot: {
       mailbox: nextMailbox,
-      mailboxPages: snapshot.mailboxPages,
+      mailboxPages: targetPage && section === folder
+        ? { ...snapshot.mailboxPages, [folder]: { ...targetPage, messages: nextMailbox[folder] } }
+        : snapshot.mailboxPages,
       metrics: metricsApplied ? result.metrics : snapshot.metrics
     },
     selectedMessageId: selectNextMessage(
@@ -377,12 +381,12 @@ export class MailboxController {
     private readonly callbacks: MailboxControllerCallbacks
   ) {}
 
-  async refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null) {
+  async refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
     const request = this.request.begin();
     this.setLoading(true, false);
     try {
       const params = new URLSearchParams({ folder, limit: '40' });
-      this.addFilters(params, query, filter, identityFilter, labelId);
+      this.addFilters(params, query, filter, identityFilter, labelId, category);
       const result = await this.fetchPage(params, request.signal);
       if (request.isCurrent()) {
         this.callbacks.onPage(result.page, false);
@@ -396,7 +400,7 @@ export class MailboxController {
     return false;
   }
 
-  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null) {
+  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return;
     const request = this.request.begin();
     this.setLoading(true, true);
@@ -406,7 +410,7 @@ export class MailboxController {
         cursor: currentPage.nextCursor,
         limit: String(currentPage.limit)
       });
-      this.addFilters(params, query, filter, identityFilter, labelId);
+      this.addFilters(params, query, filter, identityFilter, labelId, category);
       const result = await this.fetchPage(params, request.signal);
       if (request.isCurrent()) {
         this.callbacks.onPage(result.page, true);
@@ -431,7 +435,8 @@ export class MailboxController {
     this.callbacks.onLoading(loading, append);
   }
 
-  private addFilters(params: URLSearchParams, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null) {
+  private addFilters(params: URLSearchParams, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null, category: InboxCategoryFilter) {
+    if (params.get('folder') === 'inbox' && category !== 'all') params.set('category', category);
     if (query.trim()) params.set('q', query.trim());
     if (filter !== 'all') params.set('filter', filter);
     if (identityFilter) params.set('identity', `${identityFilter.kind}:${identityFilter.id}`);

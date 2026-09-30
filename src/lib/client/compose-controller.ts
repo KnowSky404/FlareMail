@@ -45,6 +45,19 @@ export function withComposePersistence(
   };
 }
 
+/** Attachment preparation persists an older snapshot; only its server metadata is authoritative. */
+export function mergePreparedComposeInput(current: ComposeInput, prepared: ComposeInput): ComposeInput {
+  return {
+    ...withComposePersistence(current, {
+      draftId: prepared.draftId,
+      expectedUpdatedAt: prepared.expectedUpdatedAt,
+      bodyRevision: prepared.bodyRevision ?? null
+    }),
+    attachments: prepared.attachments ?? [],
+    attachmentRevision: prepared.attachmentRevision ?? 0
+  };
+}
+
 export function hasComposeContent(input: ComposeInput | null) {
   return Boolean(input && (parseAddressList(input.to ?? input.toEmail ?? '').length || parseAddressList(input.cc ?? '').length || parseAddressList(input.bcc ?? '').length || input.subject.trim() || input.body.trim() || input.html?.trim() || input.attachments?.length));
 }

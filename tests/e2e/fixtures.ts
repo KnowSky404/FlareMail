@@ -86,3 +86,13 @@ export async function openFolder(page: Page, folder: '收件箱' | '星标邮件
   await expect(mobileFolder).toBeHidden();
   await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
 }
+
+/** Opt legacy preview-specific scenarios into the optional split preference. */
+export async function enableSplitReading(page: Page) {
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width <= 900) await page.setViewportSize({ width: 1280, height: viewport.height });
+  const enable = page.getByRole('button', { name: '显示分栏预览', exact: true });
+  if (await enable.isVisible()) await enable.click({ force: page.context().browser()?.browserType().name() === 'webkit' });
+  await expect(page.getByRole('button', { name: '关闭分栏预览', exact: true })).toBeVisible();
+  if (viewport && viewport.width <= 900) await page.setViewportSize(viewport);
+}

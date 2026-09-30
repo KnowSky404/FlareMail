@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS email_messages (
+  inbox_category TEXT CHECK (inbox_category IS NULL OR inbox_category IN ('primary', 'promotions', 'social', 'updates', 'forums')),
   id TEXT PRIMARY KEY,
   message_id TEXT,
   "from" TEXT NOT NULL,
@@ -188,6 +189,7 @@ CREATE TABLE IF NOT EXISTS workspace_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS workspace_messages (
+  inbox_category TEXT CHECK (inbox_category IS NULL OR inbox_category IN ('primary', 'promotions', 'social', 'updates', 'forums')),
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
   folder TEXT NOT NULL CHECK (folder IN ('inbox', 'sent')),

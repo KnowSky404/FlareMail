@@ -6,6 +6,7 @@ import {
   createEmptyComposeInput,
   formatComposeSavedAt,
   hasComposeContent,
+  mergePreparedComposeInput,
   mergeSavedDraftMetadata,
   serializeComposeInput,
   withComposeDraftId,
@@ -87,6 +88,31 @@ describe('compose controller', () => {
     expect(merged.body).toBe('newer local edit');
     expect(merged.expectedUpdatedAt).toBe('2026-08-19T10:00:01.000Z');
     expect(merged.bodyRevision).toBe('body-object-2');
+  });
+
+  test('attachment preparation preserves newer editor content and only adopts server metadata', () => {
+    const attachment = { id: 'attachment-1', filename: 'evidence.txt', contentType: 'text/plain', size: 8, inline: false };
+    const current = {
+      ...createEmptyComposeInput(),
+      to: [{ name: 'New recipient', email: 'new@example.com' }],
+      subject: 'Latest subject', body: 'Latest body', html: '<p>Latest HTML</p>',
+      senderAddressId: 'latest-sender', bodyRevision: 'old-body',
+      forwardAttachmentCandidates: [attachment]
+    };
+    const prepared = {
+      ...current, draftId: 'draft-1', expectedUpdatedAt: '2026-09-30T10:00:00.000Z',
+      to: [{ name: 'Old recipient', email: 'old@example.com' }],
+      subject: 'Old subject', body: 'Old body', html: '<p>Old HTML</p>',
+      senderAddressId: 'old-sender', bodyRevision: 'prepared-body',
+      attachments: [attachment], attachmentRevision: 3,
+      forwardAttachmentCandidates: undefined
+    };
+    expect(mergePreparedComposeInput(current, prepared)).toEqual({
+      ...current, draftId: 'draft-1', expectedUpdatedAt: prepared.expectedUpdatedAt,
+      bodyRevision: 'prepared-body', attachments: [attachment], attachmentRevision: 3
+    });
+    expect(mergePreparedComposeInput(current, { ...prepared, bodyRevision: undefined }).bodyRevision).toBeUndefined();
+    expect(current.bodyRevision).toBe('old-body');
   });
 
   test('treats attachments as content and preserves their optimistic revision in draft metadata', () => {

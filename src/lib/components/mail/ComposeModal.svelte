@@ -13,7 +13,8 @@
   import type { ComposeInput, ComposeMode, MailMessage, UserProfile, WorkspaceSnapshot } from '$lib/domain/mail';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
   import { MAIL_HEALTH_MAX_AGE_MS } from '$lib/domain/mail/health';
-  import { withComposePersistence } from '$lib/client/compose-controller';
+  import { mergePreparedComposeInput, withComposePersistence } from '$lib/client/compose-controller';
+  import { isComposeSendShortcut, isRecipientCommitKey, shouldHandleRecipientKey } from '$lib/client/compose-shortcuts';
   import { matchRecipientSuggestions } from '$lib/client/recipient-suggestions';
   import {
     deleteDraftAttachment,
@@ -131,6 +132,7 @@
   let baseline = $state('');
   let touched = $state<Record<string, boolean>>({});
   let attempted = $state(false);
+  let sending = $state(false);
   let showCc = $state(false);
   let showBcc = $state(false);
   let showHtml = $state(false);
@@ -146,6 +148,10 @@
   let dragActive = $state(false);
   let attachmentMutationError = $state('');
   let forwardAttachmentImporting = $state(false);
+  let activeAttachmentOperations = $state(0);
+  let cancellingAttachmentIds = $state<string[]>([]);
+  type AttachmentUploadSession = { cancelled: boolean; finished: Promise<void>; cancel?: () => void };
+  const attachmentUploadSessions = new Map<string, AttachmentUploadSession>();
   let senderFreshnessNow = $state(Date.now());
   let attachmentTasks = $state<Array<{
     id: string;
@@ -243,10 +249,12 @@
         autosaveStatus === 'saving' ||
         autosaveStatus === 'error')
   );
-  const attachmentBusy = $derived(attachmentTasks.some((task) => task.state !== 'failed'));
+  const attachmentBusy = $derived(activeAttachmentOperations > 0 || attachmentTasks.some((task) => task.state !== 'failed'));
+  const closeDisabled = $derived(sending || forwardAttachmentImporting || attachmentBusy);
+  const saveDisabled = $derived(authExpired || pending || closeDisabled);
   const attachmentFailed = $derived(attachmentTasks.some((task) => task.state === 'failed'));
   const persistedAttachmentBlocked = $derived((input.attachments ?? []).some((attachment) => attachment.state && attachment.state !== 'ready'));
-  const sendDisabled = $derived(authExpired || pending || forwardAttachmentImporting || attachmentBusy || attachmentFailed || persistedAttachmentBlocked || !validation.ok || !selectedSender || selectedSenderBlockReason !== null);
+  const sendDisabled = $derived(authExpired || pending || sending || showCloseConfirm || Boolean(draftConflict) || forwardAttachmentImporting || attachmentBusy || attachmentFailed || persistedAttachmentBlocked || !validation.ok || !selectedSender || selectedSenderBlockReason !== null);
   const autosaveTone = $derived(
     autosaveStatus === 'error'
       ? 'text-[var(--fm-danger)]'
@@ -307,12 +315,15 @@
   async function preparedAttachmentInput() {
     if (!onPrepareAttachments) throw new Error(t('compose.attachmentServiceUnavailable'));
     const prepared = await onPrepareAttachments(inputWithRecipientDrafts);
-    input = createComposeState(prepared, prepared.draftId);
-    onInputChange?.(input);
-    return input;
+    // Keep edits made while the preparation request was in flight. Pending
+    // recipient text stays in its input, rather than becoming a duplicate chip.
+    input = mergePreparedComposeInput(input, prepared);
+    onInputChange?.(inputWithRecipientDrafts);
+    return inputWithRecipientDrafts;
   }
 
   async function startAttachmentUpload(id: string, file: File) {
+    if (attachmentUploadSessions.has(id) || cancellingAttachmentIds.includes(id)) return false;
     if (!attachmentTasks.some((task) => task.id === id)) {
       attachmentTasks = [...attachmentTasks, { id, file, progress: 0, state: 'queued', error: '' }];
     }
@@ -320,9 +331,17 @@
       updateAttachmentTask(id, { state: 'failed', cancel: undefined, error: t('compose.authExpiredDraftPreserved') });
       return false;
     }
+    let finishSession!: () => void;
+    const session: AttachmentUploadSession = {
+      cancelled: false,
+      finished: new Promise<void>((resolve) => (finishSession = resolve))
+    };
+    attachmentUploadSessions.set(id, session);
+    activeAttachmentOperations += 1;
     updateAttachmentTask(id, { state: 'uploading', progress: 0, error: '' });
     try {
       const prepared = await preparedAttachmentInput();
+      if (session.cancelled) return false;
       if (!prepared.draftId) throw new Error(t('compose.draftUnavailable'));
       const operation = uploadDraftAttachment(
         prepared.draftId,
@@ -331,18 +350,26 @@
         prepared.attachmentRevision ?? 0,
         (progress) => updateAttachmentTask(id, { progress })
       );
+      session.cancel = operation.cancel;
       updateAttachmentTask(id, { cancel: operation.cancel });
       const result = await operation.promise;
+      if (session.cancelled) return false;
       applyAttachmentResult(result);
       attachmentTasks = attachmentTasks.filter((task) => task.id !== id);
       return true;
     } catch (error) {
-      updateAttachmentTask(id, {
-        state: 'failed',
-        cancel: undefined,
-        error: displayError(error, t('compose.uploadFailed'))
-      });
+      if (!session.cancelled) {
+        updateAttachmentTask(id, {
+          state: 'failed',
+          cancel: undefined,
+          error: displayError(error, t('compose.uploadFailed'))
+        });
+      }
       return false;
+    } finally {
+      attachmentUploadSessions.delete(id);
+      activeAttachmentOperations -= 1;
+      finishSession();
     }
   }
 
@@ -417,23 +444,33 @@
   }
 
   async function cancelAttachmentTask(task: (typeof attachmentTasks)[number]) {
-    if (authExpired) return;
-    task.cancel?.();
-    const draftId = input.draftId;
-    if (draftId) {
-      try {
-        applyAttachmentResult(await deleteDraftAttachment(draftId, task.id, input.attachmentRevision ?? 0));
-        attachmentTasks = attachmentTasks.filter((candidate) => candidate.id !== task.id);
-      } catch (error) {
-        const message = error instanceof Error
-          ? t('compose.cancelAttachmentUnconfirmed', { error: error.message })
-          : t('compose.cancelAttachmentRetry');
-        updateAttachmentTask(task.id, { state: 'failed', cancel: undefined, error: message });
-        attachmentMutationError = message;
-      }
-      return;
+    if (authExpired || cancellingAttachmentIds.includes(task.id)) return;
+    cancellingAttachmentIds = [...cancellingAttachmentIds, task.id];
+    activeAttachmentOperations += 1;
+    const session = attachmentUploadSessions.get(task.id);
+    if (session) {
+      session.cancelled = true;
+      session.cancel?.();
     }
-    attachmentTasks = attachmentTasks.filter((candidate) => candidate.id !== task.id);
+    try {
+      // Let preparation settle before cleanup so its late response cannot
+      // overwrite the cancellation's revision or restart the upload.
+      await session?.finished;
+      const draftId = input.draftId;
+      if (draftId) {
+        applyAttachmentResult(await deleteDraftAttachment(draftId, task.id, input.attachmentRevision ?? 0));
+      }
+      attachmentTasks = attachmentTasks.filter((candidate) => candidate.id !== task.id);
+    } catch (error) {
+      const message = error instanceof Error
+        ? t('compose.cancelAttachmentUnconfirmed', { error: error.message })
+        : t('compose.cancelAttachmentRetry');
+      updateAttachmentTask(task.id, { state: 'failed', cancel: undefined, error: message });
+      attachmentMutationError = message;
+    } finally {
+      cancellingAttachmentIds = cancellingAttachmentIds.filter((id) => id !== task.id);
+      activeAttachmentOperations -= 1;
+    }
   }
 
   function choosePersistedRetry(attachmentId: string) {
@@ -450,21 +487,27 @@
   }
 
   async function removeAttachment(attachmentId: string) {
-    if (authExpired || !input.draftId) return;
+    if (authExpired || attachmentBusy || !input.draftId) return;
+    activeAttachmentOperations += 1;
     try {
       applyAttachmentResult(await deleteDraftAttachment(input.draftId, attachmentId, input.attachmentRevision ?? 0));
     } catch (error) {
       attachmentMutationError = displayError(error, t('compose.deleteAttachmentFailed'));
+    } finally {
+      activeAttachmentOperations -= 1;
     }
   }
 
   async function renameAttachment(attachmentId: string) {
-    if (authExpired || !input.draftId) return;
+    if (authExpired || attachmentBusy || !input.draftId) return;
+    activeAttachmentOperations += 1;
     const filename = renameValues[attachmentId]?.trim() ?? '';
     try {
       applyAttachmentResult(await renameDraftAttachment(input.draftId, attachmentId, filename, input.attachmentRevision ?? 0));
     } catch (error) {
       attachmentMutationError = displayError(error, t('compose.renameAttachmentFailed'));
+    } finally {
+      activeAttachmentOperations -= 1;
     }
   }
 
@@ -521,6 +564,7 @@
   }
 
   function handleToKeydown(event: KeyboardEvent) {
+    if (!shouldHandleRecipientKey(event)) return;
     if (toSuggestionsOpen && toSuggestions.length > 0) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -539,7 +583,7 @@
       toSuggestionsOpen = false;
       return;
     }
-    if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') {
+    if (isRecipientCommitKey(event)) {
       event.preventDefault();
       commitRecipient('to');
     }
@@ -568,7 +612,7 @@
   }
 
   function requestClose() {
-    if (showCloseConfirm) return;
+    if (showCloseConfirm || closeDisabled) return;
     if (isDirty) {
       showCloseConfirm = true;
       return;
@@ -582,11 +626,13 @@
   }
 
   function saveAndClose() {
+    if (authExpired || closeDisabled) return;
     showCloseConfirm = false;
     void onClose(inputWithRecipientDrafts);
   }
 
   function discardAndClose() {
+    if (closeDisabled) return;
     showCloseConfirm = false;
     if (onDiscard) {
       onDiscard();
@@ -598,10 +644,22 @@
 
   function handleShortcut(event: KeyboardEvent) {
     const dialog = document.querySelector<HTMLElement>('.compose-dialog');
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && dialog?.dataset.minimized !== 'true' && dialog?.contains(event.target as Node)) {
+    if (isComposeSendShortcut(event) && dialog?.dataset.minimized !== 'true' && dialog?.contains(event.target as Node)) {
       event.preventDefault();
-      attempted = true;
-      if (!sendDisabled) void onSend(validation.value);
+      void sendCompose();
+    }
+  }
+
+  async function sendCompose() {
+    attempted = true;
+    if (sendDisabled) return;
+    // Lock synchronously: another click or shortcut may arrive before the parent's
+    // pending prop has propagated back to this component.
+    sending = true;
+    try {
+      await onSend(validation.value);
+    } finally {
+      sending = false;
     }
   }
 
@@ -620,6 +678,7 @@
   description={profile.name || t('compose.workspaceIdentity')}
   mobileStatus={mobileAutosaveStatus}
   mobileStatusTone={autosaveTone}
+  {closeDisabled}
   onClose={requestClose}
 >
   <form class="compose-form flex min-h-[34rem] flex-col gap-3 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
@@ -704,7 +763,7 @@
             {#each parseAddressList(input.cc ?? '') as address (address.email)}
               <RecipientChip {address} field="cc" onRemove={() => removeRecipient('cc', address.email)} />
             {/each}
-            <input id="compose-cc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
+            <input id="compose-cc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.cc} oninput={(event) => updateRecipientDraft('cc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('cc', event)} onkeydown={(event) => { if (isRecipientCommitKey(event)) { event.preventDefault(); commitRecipient('cc'); } }} onblur={() => commitRecipient('cc')} />
           </div>
           {#if fieldError('cc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('cc')}</p>{/if}
         </div>
@@ -717,7 +776,7 @@
             {#each parseAddressList(input.bcc ?? '') as address (address.email)}
               <RecipientChip {address} field="bcc" onRemove={() => removeRecipient('bcc', address.email)} />
             {/each}
-            <input id="compose-bcc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ',' || event.key === '，' || event.key === ';' || event.key === '；') { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
+            <input id="compose-bcc" class="min-h-11 min-w-0 flex-[1_1_8rem] border-0 bg-transparent px-1 py-1 text-sm outline-none sm:min-h-0" placeholder={t('compose.recipientListPlaceholder')} value={recipientDraft.bcc} oninput={(event) => updateRecipientDraft('bcc', event.currentTarget.value)} onpaste={(event) => pasteRecipients('bcc', event)} onkeydown={(event) => { if (isRecipientCommitKey(event)) { event.preventDefault(); commitRecipient('bcc'); } }} onblur={() => commitRecipient('bcc')} />
           </div>
           {#if fieldError('bcc')}<p class="text-xs text-[var(--fm-danger)]">{fieldError('bcc')}</p>{/if}
         </div>
@@ -784,7 +843,7 @@
         ondragover={(event) => event.preventDefault()}
         ondragleave={() => (dragActive = false)}
         ondrop={(event) => { event.preventDefault(); dragActive = false; void addFiles([...event.dataTransfer?.files ?? []]); }}
-        onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') fileInput?.click(); }}
+        onkeydown={(event) => { if (shouldHandleRecipientKey(event) && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); fileInput?.click(); } }}
       >
         <span><Upload class="mx-auto mb-1 size-4" aria-hidden="true" />{t('compose.attachmentLimits')}</span>
       </div>
@@ -809,9 +868,9 @@
               <span class="compose-attachment-size shrink-0 text-[11px] text-[var(--fm-text-muted)]">{formatAttachmentSize(attachment.size)}</span>
               {#if attachment.state && attachment.state !== 'ready'}<span class="compose-attachment-state text-[11px] text-[var(--fm-danger)]">{attachment.state === 'failed' ? t('compose.uploadFailed') : t('compose.uploadIncomplete')}</span>{/if}
               <div class="compose-attachment-actions ml-auto flex items-center gap-1">
-                {#if attachment.id && attachment.state === 'failed'}<IconButton ariaLabel={t('compose.retryUpload', { filename: attachment.filename })} title={t('compose.retryUpload', { filename: attachment.filename })} size="sm" class="compose-attachment-retry" disabled={authExpired} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></IconButton>{/if}
-                {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="fm-touch-target min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired} onclick={() => void renameAttachment(attachment.id!)}>{t('compose.rename')}</button>{/if}
-                {#if attachment.id}<IconButton ariaLabel={t('compose.deleteAttachment', { filename: attachment.filename })} title={t('compose.deleteAttachment', { filename: attachment.filename })} size="sm" class="compose-attachment-delete" disabled={authExpired} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></IconButton>{/if}
+                {#if attachment.id && attachment.state === 'failed'}<IconButton ariaLabel={t('compose.retryUpload', { filename: attachment.filename })} title={t('compose.retryUpload', { filename: attachment.filename })} size="sm" class="compose-attachment-retry" disabled={authExpired || attachmentBusy} onclick={() => choosePersistedRetry(attachment.id!)}><RefreshCw class="size-4" aria-hidden="true" /></IconButton>{/if}
+                {#if attachment.id && (!attachment.state || attachment.state === 'ready')}<button class="fm-touch-target min-h-8 rounded px-2 text-xs text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired || attachmentBusy} onclick={() => void renameAttachment(attachment.id!)}>{t('compose.rename')}</button>{/if}
+                {#if attachment.id}<IconButton ariaLabel={t('compose.deleteAttachment', { filename: attachment.filename })} title={t('compose.deleteAttachment', { filename: attachment.filename })} size="sm" class="compose-attachment-delete" disabled={authExpired || attachmentBusy} onclick={() => void removeAttachment(attachment.id!)}><Trash2 class="size-4" aria-hidden="true" /></IconButton>{/if}
               </div>
             </li>
           {/each}
@@ -821,7 +880,7 @@
         <ul class="grid gap-2" aria-label={t('compose.uploadStatus')}>
           {#each attachmentTasks as task (task.id)}
             <li class="grid gap-1 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 py-2 text-xs">
-                <div class="flex min-w-0 items-center gap-2"><span class="min-w-0 flex-1 truncate" title={task.file.name}>{task.file.name}</span><span class="shrink-0">{task.state === 'failed' ? t('compose.failed') : `${task.progress}%`}</span>{#if task.state === 'failed'}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired} aria-label={t('compose.retryUpload', { filename: task.file.name })} onclick={() => void startAttachmentUpload(task.id, task.file)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={authExpired} aria-label={t('compose.cancelUpload', { filename: task.file.name })} onclick={() => void cancelAttachmentTask(task)}><X class="size-4" aria-hidden="true" /></button></div>
+                <div class="flex min-w-0 items-center gap-2"><span class="min-w-0 flex-1 truncate" title={task.file.name}>{task.file.name}</span><span class="shrink-0">{task.state === 'failed' ? t('compose.failed') : `${task.progress}%`}</span>{#if task.state === 'failed'}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired || attachmentBusy} aria-label={t('compose.retryUpload', { filename: task.file.name })} onclick={() => void startAttachmentUpload(task.id, task.file)}><RefreshCw class="size-4" aria-hidden="true" /></button>{/if}<button class="fm-touch-target grid size-8 place-items-center rounded text-[var(--fm-danger)] hover:bg-[var(--fm-danger-soft)]" type="button" disabled={authExpired || cancellingAttachmentIds.includes(task.id)} aria-label={t('compose.cancelUpload', { filename: task.file.name })} onclick={() => void cancelAttachmentTask(task)}><X class="size-4" aria-hidden="true" /></button></div>
               {#if task.state === 'failed'}<p class="text-[var(--fm-danger)]" role="alert">{task.error}</p>{:else}<progress class="h-1.5 w-full" max="100" value={task.progress}>{task.progress}%</progress>{/if}
             </li>
           {/each}
@@ -839,9 +898,9 @@
         <strong>{t('compose.conflictTitle')}</strong>
         <span class="text-xs text-[var(--fm-text-secondary)]">{t('compose.conflictDescription', { local: formatConflictDate(localEditedAt, t('time.justNow')), server: formatConflictDate(draftConflict.sentAt, t('compose.unknown')) })}</span>
         <div class="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" disabled={authExpired || pending} onclick={() => onLoadServerDraft?.()}>{t('compose.loadServerDraft')}</Button>
-          <Button variant="outline" size="sm" disabled={authExpired || pending} onclick={() => onSaveDraftCopy?.()}>{t('compose.saveDraftCopy')}</Button>
-          <Button variant="primary" size="sm" disabled={authExpired || pending} onclick={() => onOverwriteServerDraft?.()}>{t('compose.overwriteDraft')}</Button>
+            <Button variant="outline" size="sm" disabled={saveDisabled} onclick={() => onLoadServerDraft?.()}>{t('compose.loadServerDraft')}</Button>
+          <Button variant="outline" size="sm" disabled={saveDisabled} onclick={() => onSaveDraftCopy?.()}>{t('compose.saveDraftCopy')}</Button>
+          <Button variant="primary" size="sm" disabled={saveDisabled} onclick={() => onOverwriteServerDraft?.()}>{t('compose.overwriteDraft')}</Button>
         </div>
       </div>
     {/if}
@@ -860,7 +919,7 @@
           </div>
           <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton>
         </div>
-        <div class="max-sm:hidden"><Button variant="ghost" size="sm" disabled={authExpired || pending} onclick={() => onSaveDraft(inputWithRecipientDrafts)}>{t('compose.saveDraft')}</Button></div>
+        <div class="max-sm:hidden"><Button variant="ghost" size="sm" disabled={saveDisabled} onclick={() => { if (!saveDisabled) void onSaveDraft(inputWithRecipientDrafts); }}>{t('compose.saveDraft')}</Button></div>
         <span class={`min-w-0 truncate text-xs ${autosaveTone}`} role="status" aria-live="polite">{autosaveMessage}</span>
         <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> {t('compose.send')}</span>
       </div>
@@ -873,9 +932,9 @@
           <span id="compose-footer-attachment-count" class="sr-only" role="status" aria-live="polite">{readyAttachmentCount ? t('compose.addedAttachmentCount', { count: readyAttachmentCount }) : ''}</span>
         </div>
         <div class="max-sm:hidden"><IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton></div>
-        <Button variant="outline" disabled={pending} onclick={requestClose}>{t('common.cancel')}</Button>
-        <div class="hidden max-sm:block"><Button variant="outline" disabled={authExpired || pending} onclick={() => onSaveDraft(inputWithRecipientDrafts)}>{t('compose.saveDraft')}</Button></div>
-        <Button variant="primary" loading={pending} disabled={sendDisabled} onclick={() => { attempted = true; if (!sendDisabled) void onSend(validation.value); }}>{t('compose.sendMail')}</Button>
+        <Button variant="outline" disabled={pending || closeDisabled} onclick={requestClose}>{t('common.cancel')}</Button>
+        <div class="hidden max-sm:block"><Button variant="outline" disabled={saveDisabled} onclick={() => { if (!saveDisabled) void onSaveDraft(inputWithRecipientDrafts); }}>{t('compose.saveDraft')}</Button></div>
+        <Button variant="primary" loading={pending || sending} disabled={sendDisabled} onclick={sendCompose}>{t('compose.sendMail')}</Button>
       </div>
     </div>
   {/snippet}
@@ -894,8 +953,8 @@
     {#snippet footer()}
       <div class="flex w-full flex-wrap justify-end gap-2">
         <Button variant="ghost" onclick={() => (showCloseConfirm = false)}>{t('compose.continueEditing')}</Button>
-        <Button variant="outline" disabled={authExpired} onclick={saveAndClose}>{t('compose.saveAndClose')}</Button>
-        <Button variant="danger" onclick={discardAndClose}>{t('compose.discardChanges')}</Button>
+        <Button variant="outline" disabled={authExpired || closeDisabled} onclick={saveAndClose}>{t('compose.saveAndClose')}</Button>
+        <Button variant="danger" disabled={closeDisabled} onclick={discardAndClose}>{t('compose.discardChanges')}</Button>
       </div>
     {/snippet}
   </Dialog>

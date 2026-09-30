@@ -1,4 +1,4 @@
-import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, test } from './fixtures';
+import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, enableSplitReading, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -223,6 +223,7 @@ test('keeps loaded mail and scroll position while appending the next page', asyn
 test('shows one illustration in the empty mail detail pane', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop workspace keeps the detail pane beside the list.');
   await login(page);
+  await enableSplitReading(page);
   await page.setViewportSize({ width: 1505, height: 1045 });
   await page.getByLabel('搜索邮件').fill('zzzznomatchzzzz');
   await expect(page.getByRole('heading', { name: '没有匹配的邮件' })).toBeVisible();
@@ -704,9 +705,14 @@ async function openDraftEditor(page: Page, subject: string) {
   const item = page.getByRole('listitem').filter({ hasText: subject });
   await expect(item).toBeVisible();
   await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
-  await page.getByRole('button', { name: '更多邮件操作' }).click();
-  await page.getByRole('menuitem', { name: '继续编辑草稿' }).click();
-  await expect(page.getByRole('dialog', { name: '编辑草稿' })).toBeVisible();
+  const editor = page.getByRole('dialog', { name: '编辑草稿' });
+  const more = page.getByRole('button', { name: '更多邮件操作' });
+  await expect(editor.or(more)).toBeVisible();
+  if (!await editor.isVisible()) {
+    await more.click();
+    await page.getByRole('menuitem', { name: '继续编辑草稿' }).click();
+  }
+  await expect(editor).toBeVisible();
 }
 
 type MockTelegramState = {
@@ -1088,10 +1094,11 @@ test('opens an older inbound message from a cold deep link without selecting the
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('keeps readable default columns, persists the layout, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
+test('keeps readable optional split columns, persists the layout, and opens one focused reader', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop project covers the wide reading workspace controls.');
   test.setTimeout(75_000);
   await login(page);
+  await enableSplitReading(page);
 
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-preference', '440');
   await page.setViewportSize({ width: 1505, height: 1045 });
@@ -1206,6 +1213,7 @@ test('keeps long messages readable in the focused reader across viewport sizes',
   test.skip(testInfo.project.name !== 'desktop', 'The desktop project drives the reader viewport matrix.');
   test.setTimeout(90_000);
   await login(page);
+  await enableSplitReading(page);
   const subject = `E2E Long Reader ${Date.now()}`;
   const lastLine = 'End of the long reader fixture.';
   const body = [...Array.from({ length: 90 }, (_, index) => `Paragraph ${index + 1}: A readable line with enough content to test wrapping and scrolling across viewport widths.`), lastLine].join('\n\n');
@@ -1329,6 +1337,7 @@ test('opens a private standalone reader document without duplicating the message
 
 test('logs in, reads the seeded message, and persists a star', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
+  await enableSplitReading(page);
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   await expect(item).toBeVisible();
   const itemButton = item.getByRole('button', { name: /E2E Inbox Welcome/ }).first();
@@ -1379,6 +1388,7 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
 
 test('announces list selection, star, attachment and delivery states', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
+  await enableSplitReading(page);
   const reset = await page.evaluate(async () => {
     const response = await fetch('/api/workspace/messages/e2e-inbox-message/flags', {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ read: false, starred: false })
@@ -1634,6 +1644,7 @@ test('keeps reading space when a message has many labels', async ({ page, consol
 test('keeps a reply-all sender tied to the selected delivery after changing identity filter', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'A mobile full-screen compose dialog covers the mailbox identity filter.');
   await login(page);
+  await enableSplitReading(page);
   const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
   await item.getByRole('button', { name: /E2E HTML Safety/u }).first().click();
   const detail = page.getByRole('region', { name: '邮件详情' });
@@ -1690,12 +1701,12 @@ test('archives and restores a selected mailbox message', async ({ page, consoleE
   const label = page.getByLabel('选择E2E Inbox Welcome');
   await expect(label).toBeVisible();
   await label.check();
-  await page.getByRole('button', { name: '归档', exact: true }).last().click();
+  await page.getByLabel('批量邮件操作').getByRole('button', { name: '归档', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
   await openFolder(page, '归档');
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
   await page.getByLabel('选择E2E Inbox Welcome').check();
-  await page.getByRole('button', { name: '移回收件箱', exact: true }).click();
+  await page.getByLabel('批量邮件操作').getByRole('button', { name: '移回收件箱', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: '已将所选邮件移回收件箱' })).toBeVisible();
   await openFolder(page, '收件箱');
   await expect(page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' })).toBeVisible();
@@ -1711,9 +1722,7 @@ test('moves a draft to trash, persists across refresh, restores, and permanently
     await openFolder(page, '草稿箱');
     const item = page.getByRole('listitem').filter({ hasText: subject });
     await expect(item).toBeVisible();
-    await item.getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
-    await page.getByRole('button', { name: '更多邮件操作' }).click();
-    await page.getByRole('menuitem', { name: '移入垃圾箱' }).click();
+    await item.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
     const confirmation = page.getByRole('dialog', { name: '移入垃圾箱？' });
     await confirmation.getByRole('button', { name: '移入垃圾箱' }).click();
     await expect(confirmation).toBeHidden();
@@ -2511,6 +2520,7 @@ test('supports mobile detail drill-in and back navigation', async ({ page, conso
 test('uses shared decorative avatars across account, mailbox, and reading views', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name === 'narrow', 'Desktop and 390 px mobile cover the avatar scale.');
   await login(page);
+  await enableSplitReading(page);
   if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
   const accountAvatar = page.locator('.topbar .fm-avatar');
   if (testInfo.project.name === 'desktop') {
