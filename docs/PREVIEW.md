@@ -21,9 +21,10 @@
    后续 schema 变更同时影响两套代码，必须按远程迁移授权流程核验并保证当前
    生产版本兼容；不要为发布 Preview 自动迁移或重置数据库。
 4. 使用现有生产 Owner 账号登录，不初始化或覆盖 Owner，不导入原临时 Preview
-   账号。不同 hostname 的 Cookie 独立，需要分别登录。原独立 Preview 资源不再
-   用于当前地址；清理前核对旧版本引用，不自动删除它们。
-   Preview 不继承生产 secrets，也无法从 Cloudflare 读取其明文；需单独输入或
+   账号。不同 hostname 的 Cookie 独立，需要分别登录。此前创建的独立 Preview
+   数据库、临时账号、空 R2 桶及本机登录文件已按用户要求删除。旧部署历史仍可
+   保留代码记录，但其旧数据绑定已不可用；不再使用旧部署地址。
+   **原生 Worker Preview** 不继承生产 secrets，也无法从 Cloudflare 读取其明文；需单独输入或
    使用权限 `0600` 的私有 secrets 文件配置。缺少对应 Key 时，该服务不可用。
    缺少 Telegram Token 时将 Preview 的 `TELEGRAM_ENABLED` 设为 `false`，
    避免配置校验阻止网页访问；生产 Telegram 功能及其他生产配置保持不变。
@@ -37,6 +38,34 @@
 6. 核对 Preview 部署 ID、D1/R2 与生产一致、应用版本、登录、身份管理页面及
    `/api/health`，再确认生产 deployment ID 没有变化。不要执行 `wrangler deploy`
    来发布原生 Preview，它会部署生产。
+
+## 直接复用生产密钥的版本预览
+
+如果需要与生产共用数据库和现有密钥，可使用 **Version URL**。这是与上述
+原生 Worker Preview 不同的发布方式：`wrangler versions upload` 上传新版本，
+保留当前 Worker 的既有 secret 绑定，但不改变生产流量分配。密钥不会被读取、
+导出或重新输入；缺少的密钥也不会自动生成。
+
+1. 从 `wrangler.version-preview.deploy.toml.example` 创建被忽略的私有
+   `wrangler.version-preview.deploy.toml`。填入生产 D1/R2 绑定和线上非敏感变量，
+   包括 Telegram 开关、Bot 用户名等；不要只依据可能过时的本机生产配置。
+2. 将 `APP_ENV`、`APP_BASE_URL`、`APP_VERSION` 设置为此预览的值，
+   `MAIL_IDENTITY_WORKER_NAME` 仍指向生产收信 Worker。保留当前生产的
+   compatibility date/flags。不要配置新的 routes、DNS 或 Cron。
+3. 完成构建和校验，使用 `--dry-run` 检查版本打包，再执行：
+
+   ```sh
+   wrangler versions upload --config wrangler.version-preview.deploy.toml --preview-alias function-check --message "git <commit>"
+   ```
+
+4. 用返回的 `https://function-check-<worker>.<account-subdomain>.workers.dev`
+   入口验证，核对新版本的 D1/R2、secret **名称**、Telegram 开关和生产 deployment
+   ID。不执行 `wrangler versions deploy`、`wrangler deploy` 或 `wrangler triggers deploy`。
+
+Version URL 使用 `workers.dev` 地址。已有的 `<preview-name>.<preview-domain>`
+仍对应原生 Worker Preview，不会自动切换到此版本，也不会因此取得生产密钥。
+两种入口均使用生产 Owner，但需要分别登录。生产密钥轮换后需重新上传版本，
+既有预览不会自动同步新值。Email Routing 和 Cron 仍执行生产部署的代码。
 
 ## 从网页接入邮件域名
 
@@ -72,4 +101,5 @@ Worker 收信及执行定时任务，Preview 网页可查看其写入的邮件�
 
 参考：[Worker Previews](https://developers.cloudflare.com/workers/previews/)、
 [自定义域名](https://developers.cloudflare.com/workers/previews/custom-domains/)、
-[资源隔离](https://developers.cloudflare.com/workers/previews/resources/)。
+[资源隔离](https://developers.cloudflare.com/workers/previews/resources/)、
+[Version URLs](https://developers.cloudflare.com/workers/versions-and-deployments/version-urls/)。
