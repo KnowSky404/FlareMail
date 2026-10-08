@@ -116,6 +116,42 @@ test('uses a full-width list by default and restores the same inbox after readin
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps sidebar collapse at the bottom with scrollable navigation and persists its state', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The sidebar is a desktop-only control.');
+  await login(page);
+  const sidebar = page.locator('#fm-main-sidebar');
+  const footer = sidebar.locator('.sidebar-footer');
+  const collapse = footer.getByRole('button', { name: '折叠侧边栏' });
+  const assertFooterVisible = async () => {
+    await expect(footer).toBeVisible();
+    const bounds = await footer.boundingBox();
+    const rail = await sidebar.boundingBox();
+    expect(bounds!.y).toBeGreaterThan(rail!.y + rail!.height / 2);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(rail!.y + rail!.height);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  };
+  await assertFooterVisible();
+  await expect(collapse).toHaveAttribute('aria-expanded', 'true');
+  await page.setViewportSize({ width: 1280, height: 480 });
+  await sidebar.locator('.sidebar-navigation').evaluate((navigation) => navigation.scrollTop = navigation.scrollHeight);
+  await assertFooterVisible();
+  await collapse.focus();
+  await page.keyboard.press('Enter');
+  const expand = footer.getByRole('button', { name: '展开侧边栏' });
+  await expect(expand).toHaveAttribute('aria-expanded', 'false');
+  await assertFooterVisible();
+  await page.reload();
+  await expect(expand).toBeVisible();
+  await expand.click();
+  await expect(collapse).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(sidebar).toBeHidden();
+  await page.getByRole('button', { name: '打开导航' }).click();
+  await expect(page.getByRole('dialog', { name: '移动端导航' })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('keeps category navigation in one horizontal accessible tab strip', async ({ page, consoleErrors }) => {
   await login(page);
   const tabs = page.getByRole('tablist', { name: '收件箱分类' });
@@ -322,6 +358,12 @@ test('keeps reply, reply-all, and forward tied to the selected delivery identity
   });
   await row(page, 'E2E HTML Safety').getByRole('button', { name: /E2E HTML Safety/u }).first().click();
   const detail = page.getByRole('region', { name: '邮件详情' });
+  if (page.viewportSize()!.width >= 640) {
+    const replies = detail.locator('.message-reply-actions');
+    await expect(replies).toBeVisible();
+    const [replyBounds, headerBounds] = await Promise.all([replies.boundingBox(), detail.locator('.message-detail-header').boundingBox()]);
+    expect(replyBounds!.y).toBeGreaterThanOrEqual(headerBounds!.y + headerBounds!.height);
+  }
   try {
     for (const [action, title] of [['回复', '回复邮件'], ['回复全部', '回复邮件'], ['转发', '转发邮件']] as const) {
       await detail.getByRole('button', { name: action, exact: true }).click();

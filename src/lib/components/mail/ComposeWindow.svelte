@@ -31,7 +31,7 @@
   } = $props();
 
   const { t } = useLocale();
-  const defaultWidth = 760;
+  const defaultWidth = 560;
   const defaultHeight = 640;
   const minWidth = 480;
   const minHeight = 360;
@@ -259,7 +259,7 @@
     flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--fm-border);
-    border-radius: var(--radius-lg);
+    border-radius: 12px 12px 0 0;
     background: var(--fm-surface);
     box-shadow: var(--fm-shadow-overlay);
   }
@@ -268,22 +268,27 @@
     flex: none;
     align-items: center;
     gap: var(--space-2);
-    min-height: 56px;
+    min-height: 40px;
     padding: var(--space-2) var(--space-3);
     border-bottom: 1px solid var(--fm-border);
-    background: var(--fm-surface-subtle);
+    background: var(--fm-compose-header);
+    --fm-text: #ffffff;
+    --fm-text-muted: #e3e3e3;
+    --fm-text-secondary: #e3e3e3;
+    --fm-surface-hover: #55595c;
     cursor: default;
   }
   .compose-window-header button { cursor: pointer; }
   .mobile-close, .mobile-status { display: none; }
   .compose-window-header .resize-handle { cursor: nwse-resize; touch-action: none; }
   .compose-window-header .move-handle { cursor: move; touch-action: none; }
+  .header-heading > p:not(.mobile-status) { display: none; }
   .compose-window-body { min-height: 0; flex: 1; overflow: auto; padding: var(--space-4); }
-  .compose-window-footer { flex: none; border-top: 1px solid var(--fm-border); padding: var(--space-3) var(--space-4); }
+  .compose-window-footer { flex: none; padding: var(--space-3) var(--space-4); }
   .minimized .compose-window-header { border-bottom: 0; }
   @media (max-width: 640px) {
     .compose-window { inset: 0 !important; width: 100vw !important; height: 100dvh !important; border: 0; border-radius: 0; }
-    .compose-window-header { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; min-height: 64px; padding: calc(var(--space-2) + env(safe-area-inset-top)) var(--space-3) var(--space-2); background: var(--fm-surface); cursor: default; touch-action: auto; }
+    .compose-window-header { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; min-height: 64px; padding: calc(var(--space-2) + env(safe-area-inset-top)) var(--space-3) var(--space-2); background: var(--fm-surface); --fm-text: inherit; --fm-text-muted: inherit; --fm-text-secondary: inherit; --fm-surface-hover: inherit; cursor: default; touch-action: auto; }
     .mobile-close, .mobile-status { display: block; }
     .header-heading { text-align: center; }
     .header-heading h2 { font-size: 1rem; }

@@ -30,10 +30,10 @@
   {#each options as option (option.value)}
     <button
       type="button"
-      class={`min-h-11 rounded-[var(--radius-md)] border px-3 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40 focus-visible:ring-offset-1 sm:min-h-8 ${
+      class={`min-h-11 rounded-full border border-transparent px-3 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40 focus-visible:ring-offset-1 sm:min-h-8 ${
         filter === option.value
-          ? 'border-[var(--fm-primary)] bg-[var(--fm-primary-soft)] text-[var(--fm-primary)]'
-          : 'border-[var(--fm-border)] bg-[var(--fm-surface)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)]'
+          ? 'bg-[var(--fm-primary-soft)] text-[var(--fm-primary)]'
+          : 'bg-[var(--fm-surface)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)] hover:text-[var(--fm-text)]'
       }`}
       aria-pressed={filter === option.value}
       {disabled}

@@ -131,11 +131,6 @@
 <header class="topbar">
   <div class="identity">
     <BrandMark />
-    <span class="divider" aria-hidden="true"></span>
-    <button class="workspace" type="button" title={`${profile.company || t('shell.workspaceFallback')} · ${profile.email}`} onclick={onEditProfile}>
-      <span>{profile.company || t('shell.workspaceFallback')}</span>
-      <span class="workspace-account">{profile.email}</span>
-    </button>
   </div>
 
   <div class="topbar-search">
@@ -255,13 +250,12 @@
     position: relative;
     z-index: 40;
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(240px, 1.8fr) minmax(136px, 1fr);
+    grid-template-columns: 216px minmax(240px, 720px) minmax(136px, 1fr);
     align-items: center;
     height: var(--fm-desktop-topbar-height);
     gap: var(--space-4);
     padding: 0 var(--space-4);
-    border-bottom: 1px solid var(--fm-border);
-    background: var(--fm-surface);
+    background: var(--fm-canvas);
   }
 
   .identity,
@@ -282,8 +276,8 @@
     position: relative;
     justify-content: center;
     width: 100%;
-    max-width: 34rem;
-    justify-self: center;
+    max-width: 45rem;
+    justify-self: start;
   }
 
   .topbar-search :global(.mail-search-root) {
@@ -301,14 +295,17 @@
     border: 1px solid var(--fm-border);
     border-radius: var(--radius-sm);
     color: var(--fm-text-muted);
-    background: var(--fm-surface);
+    background: transparent;
     font: 12px/1 var(--font-sans);
     pointer-events: none;
   }
 
   .topbar-search :global(input) {
-    height: 42px;
+    height: 48px;
     padding-right: 2.75rem;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--fm-search-surface);
   }
 
   .actions {
@@ -316,48 +313,13 @@
     gap: var(--space-2);
   }
 
-  .divider {
-    width: 1px;
-    height: 24px;
-    flex: 0 0 auto;
-    background: var(--fm-border);
-  }
-
-  .workspace {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 2px 0;
-    border: 0;
-    color: var(--fm-text);
-    background: transparent;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 1.2;
-    text-align: start;
-  }
-
-  .workspace > span:first-child,
-  .workspace-account {
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .workspace-account {
-    display: none;
-  }
-
   :global(.topbar-icon-trigger),
   :global(.account-trigger) {
     height: 40px;
-    border: 1px solid var(--fm-border);
-    border-radius: var(--radius-md);
+    border: 0;
+    border-radius: var(--radius-pill);
     color: var(--fm-text-secondary);
-    background: var(--fm-surface);
+    background: transparent;
   }
 
   :global(.topbar-icon-trigger) {
@@ -372,8 +334,7 @@
   }
 
   :global(.topbar-icon-trigger:hover),
-  :global(.account-trigger:hover),
-  .workspace:hover {
+  :global(.account-trigger:hover) {
     background: var(--fm-surface-hover);
   }
 
@@ -490,9 +451,6 @@
       gap: var(--space-3);
     }
 
-    .workspace > span:first-child {
-      max-width: 150px;
-    }
 
   }
 

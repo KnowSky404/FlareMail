@@ -129,7 +129,7 @@
         <label class="sr-only" for="mail-identity-filter">{t('mail.identityFilter')}</label>
         <select
           id="mail-identity-filter"
-          class="min-h-11 w-full rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 text-sm text-[var(--fm-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
+          class="min-h-11 w-full rounded-full border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 text-sm text-[var(--fm-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
           value={identityValue}
           onchange={(event) => changeIdentity(event.currentTarget.value)}
         >

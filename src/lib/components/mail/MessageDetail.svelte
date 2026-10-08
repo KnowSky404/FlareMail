@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
-  import { Avatar, EmptyState } from '$lib/components/ui';
+  import { Avatar, Button, EmptyState } from '$lib/components/ui';
+  import { Forward, Reply, ReplyAll } from '@lucide/svelte';
   import AttachmentList from './AttachmentList.svelte';
   import DeliveryTimeline from './DeliveryTimeline.svelte';
   import MessageBody from './MessageBody.svelte';
@@ -153,7 +154,7 @@
 
   {#if message}
     <div class="fm-detail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <article class="mx-auto min-w-0 w-full max-w-none px-4 py-4 sm:px-6 sm:py-5 lg:px-8" aria-label={t('mail.bodyDetail')}>
+      <article class="message-content mx-auto min-w-0 w-full max-w-none px-4 py-4 sm:px-6 sm:py-5 lg:px-8" aria-label={t('mail.bodyDetail')}>
         {#if inboundDetailError || deliveryDetailError || workspaceBodyError}
           <div class="mb-5 grid gap-2" aria-live="polite">
             {#if inboundDetailError}<p class="rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">{t('mail.bodyLoadError', { error: inboundDetailError })}</p>{/if}
@@ -210,6 +211,13 @@
             </ol>
           </section>
         {/if}
+        {#if !trashMode && message.folder !== 'drafts' && (onReply || onReplyAll || onForward)}
+          <nav class="message-reply-actions" aria-label={t('mail.actions')}>
+            {#if onReply}<Button variant="outline" class="rounded-full px-5" disabled={pending} onclick={() => message && onReply?.(message)}><Reply class="size-4" aria-hidden="true" />{t('mail.reply')}</Button>{/if}
+            {#if onReplyAll}<Button variant="outline" class="rounded-full px-5" disabled={pending} onclick={() => message && onReplyAll?.(message)}><ReplyAll class="size-4" aria-hidden="true" />{t('mail.replyAll')}</Button>{/if}
+            {#if onForward}<Button variant="outline" class="rounded-full px-5" disabled={pending} onclick={() => message && onForward?.(message)}><Forward class="size-4" aria-hidden="true" />{t('mail.forward')}</Button>{/if}
+          </nav>
+        {/if}
       </article>
       <MessageMetadata {message} {inboundDetail} />
     </div>
@@ -221,6 +229,13 @@
 </div>
 
 <style>
+  .message-reply-actions { display: none; }
+  @media (min-width: 640px) {
+    .message-reply-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 32px; }
+  }
+  @media (min-width: 901px) {
+    .message-content { padding: 24px 32px 32px 72px; }
+  }
   .fm-reader-body :global(.message-html-frame) {
     min-height: clamp(18rem, 68dvh, 56rem);
   }

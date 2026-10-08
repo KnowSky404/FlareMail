@@ -2831,9 +2831,6 @@
                     onIdentityFilterChange={handleIdentityFilterChange}
                     onRefresh={refreshWorkspace}
                   />
-                  {#if activeSection === 'inbox'}
-                    <InboxCategoryTabs category={inboxCategory} onChange={handleCategoryChange} />
-                  {/if}
                   {#if activeSection === 'label'}
                     <div class="flex items-center gap-1 border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-1" role="toolbar" aria-label={t('shell.labels')}>
                       <Tag class="size-3.5 text-[var(--fm-text-muted)]" aria-hidden="true" />
@@ -2921,6 +2918,9 @@
                     {#if bulkHasDraftSelection}
                       <p class="border-b border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-1 text-xs text-[var(--fm-text-muted)]" role="status">{t('mail.bulkDraftRestriction')}</p>
                     {/if}
+                  {/if}
+                  {#if activeSection === 'inbox'}
+                    <InboxCategoryTabs category={inboxCategory} onChange={handleCategoryChange} />
                   {/if}
                   <MessageList
                     category={activeSection === 'inbox' ? inboxCategory : undefined}
@@ -3294,7 +3294,7 @@
     align-items: center;
     gap: 0.5rem;
     border-bottom: 1px solid var(--fm-border);
-    background: var(--fm-surface-subtle);
+    background: var(--fm-surface);
     padding: 0.25rem 0.75rem;
   }
 

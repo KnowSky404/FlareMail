@@ -89,15 +89,6 @@
 </script>
 
 <aside id="fm-main-sidebar" class:collapsed class="sidebar" aria-label={t('shell.mailNavigation')}>
-  <div class="sidebar-toolbar">
-    <Tooltip content={collapsed ? t('shell.expand') : t('shell.collapse')} side="right" floating>
-      {#snippet trigger(tooltipId)}
-        <button class="collapse-toggle fm-touch-target" type="button" aria-expanded={!collapsed} aria-controls="fm-main-sidebar" aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} aria-describedby={tooltipId} onclick={() => onToggleCollapsed?.()}>
-          {#if collapsed}<PanelLeftOpen size={18} aria-hidden="true" />{:else}<PanelLeftClose size={18} aria-hidden="true" />{/if}
-        </button>
-      {/snippet}
-    </Tooltip>
-  </div>
   <Tooltip content={t('shell.compose')} side="right" floating disabled={!collapsed} class="w-full">
     {#snippet trigger(tooltipId)}
       <button class="compose" type="button" aria-label={t('shell.compose')} aria-describedby={collapsed ? tooltipId : undefined} disabled={pending} onclick={onCompose}>
@@ -107,10 +98,11 @@
     {/snippet}
   </Tooltip>
 
+  <div class="sidebar-navigation">
   <nav aria-label={t('shell.mainNavigation')}>
     {#each navigation as item}
       {@const Icon = item.icon}
-      <Tooltip content={item.label} side="right" floating disabled={!collapsed} class="w-full">
+      <Tooltip content={item.label} side="right" floating disabled={!collapsed} class={item.id === 'domains' ? 'w-full management-start' : 'w-full'}>
         {#snippet trigger(tooltipId)}
           <button
             type="button"
@@ -151,8 +143,19 @@
       </Tooltip>
     {/each}
   </div>
+  </div>
 
-  <p class="powered">{t('shell.powered')}</p>
+  <footer class="sidebar-footer">
+    <p class="powered">{t('shell.powered')}</p>
+    <Tooltip content={collapsed ? t('shell.expand') : t('shell.collapse')} side="right" floating disabled={!collapsed} class="w-full">
+      {#snippet trigger(tooltipId)}
+        <button class="sidebar-collapse fm-touch-target" type="button" aria-expanded={!collapsed} aria-controls="fm-main-sidebar" aria-label={collapsed ? t('shell.expand') : t('shell.collapse')} aria-describedby={collapsed ? tooltipId : undefined} onclick={() => onToggleCollapsed?.()}>
+          {#if collapsed}<PanelLeftOpen size={18} aria-hidden="true" />{:else}<PanelLeftClose size={18} aria-hidden="true" />{/if}
+          <span class="label">{collapsed ? t('shell.expand') : t('shell.collapse')}</span>
+        </button>
+      {/snippet}
+    </Tooltip>
+  </footer>
 </aside>
 
 <style>
@@ -162,15 +165,18 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-2);
-    border-right: 1px solid var(--fm-border);
+    overflow: hidden;
     background: var(--fm-canvas);
   }
 
-  .sidebar-toolbar {
-    display: flex;
-    justify-content: flex-end;
-    min-height: 32px;
-  }
+  .sidebar-navigation { flex: 1; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+  .sidebar-footer { flex: none; width: 100%; padding-top: var(--space-2); }
+  .sidebar-collapse { display: flex; width: 100%; min-height: 40px; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-pill); color: var(--fm-text-secondary); background: transparent; font: 400 13px/1.4 var(--font-sans); cursor: pointer; }
+  .sidebar-collapse:hover { background: var(--fm-surface-hover); }
+  .collapsed .sidebar-collapse { justify-content: center; padding: 0; }
+  .collapsed .label-navigation-heading { justify-content: center; padding-left: 0; }
+  .collapsed .label-item { justify-content: center; padding-inline: 0; }
+  nav :global(.management-start) { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--fm-border); }
 
   .collapse-toggle {
     display: inline-grid;
@@ -186,25 +192,26 @@
 
   .collapse-toggle:hover { color: var(--fm-text); background: var(--fm-surface-hover); }
 
-  .label-navigation { min-height: 0; overflow-y: auto; }
+  .label-navigation { min-height: 0; max-height: 35dvh; overflow-y: auto; margin-top: var(--space-4); scrollbar-width: thin; }
   .label-navigation-heading { display: flex; align-items: center; justify-content: space-between; padding-left: var(--space-3); color: var(--fm-text-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-  .label-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-md); color: var(--fm-text-secondary); background: transparent; text-align: left; cursor: pointer; }
+  .label-item { display: flex; width: 100%; min-width: 0; min-height: 32px; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-pill); color: var(--fm-text-secondary); background: transparent; text-align: left; cursor: pointer; font-size: 14px; }
   .label-item:hover { background: var(--fm-surface-hover); }
   .label-item.active { color: var(--fm-primary); background: var(--fm-primary-soft); }
   .label-item .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .compose {
     display: flex;
-    width: 100%;
-    min-height: var(--control-prominent);
+    width: fit-content;
+    min-width: 144px;
+    min-height: 56px;
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
     padding: 0 var(--space-4);
-    border: 1px solid var(--fm-primary);
-    border-radius: var(--radius-md);
-    color: var(--fm-text-inverse);
-    background: var(--fm-primary);
+    border: 0;
+    border-radius: 16px;
+    color: var(--fm-compose-text);
+    background: var(--fm-compose-surface);
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
@@ -215,13 +222,9 @@
     align-items: center;
   }
 
-  .collapsed .sidebar-toolbar {
-    justify-content: center;
-    width: 100%;
-  }
-
   .collapsed .compose {
     width: 44px;
+    min-width: 44px;
     padding: 0;
   }
 
@@ -253,8 +256,8 @@
   }
 
   .compose:hover:not(:disabled) {
-    border-color: var(--fm-primary-hover);
-    background: var(--fm-primary-hover);
+    background: var(--fm-compose-hover);
+    box-shadow: 0 2px 5px rgb(60 64 67 / 0.2);
   }
 
   .compose:disabled {
@@ -273,12 +276,12 @@
     display: grid;
     width: 100%;
     grid-template-columns: 20px minmax(0, 1fr) auto;
-    min-height: 40px;
+    min-height: 32px;
     align-items: center;
     gap: var(--space-3);
     padding: 0 var(--space-3);
     border: 0;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-pill);
     color: var(--fm-text-secondary);
     background: transparent;
     cursor: pointer;
@@ -292,20 +295,9 @@
   }
 
   nav button.active {
-    color: var(--fm-primary);
+    color: var(--fm-text);
     background: var(--fm-surface-selected);
     font-weight: 600;
-  }
-
-  nav button.active::before {
-    position: absolute;
-    top: 8px;
-    bottom: 8px;
-    left: 0;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: var(--fm-brand-orange);
-    content: '';
   }
 
   .label {
@@ -317,23 +309,23 @@
 
   .count {
     min-width: 22px;
-    padding: 1px 6px;
+    padding: 0;
     border-radius: var(--radius-pill);
     color: var(--fm-text-secondary);
-    background: var(--fm-surface-subtle);
+    background: transparent;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     text-align: center;
   }
 
   .active .count {
-    color: var(--fm-primary);
-    background: var(--fm-primary-soft);
+    color: var(--fm-text);
+    background: transparent;
   }
 
   .powered {
-    margin: auto 0 0;
-    padding: var(--space-3);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
     color: var(--fm-text-muted);
     font-size: 11px;
     line-height: 1.5;

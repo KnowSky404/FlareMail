@@ -682,10 +682,6 @@
   onClose={requestClose}
 >
   <form class="compose-form flex min-h-[34rem] flex-col gap-3 max-sm:min-h-0" onsubmit={(event) => event.preventDefault()} onpaste={pastedFiles}>
-    <div class="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--fm-border)] bg-[var(--fm-surface-subtle)] px-3 py-2.5 text-xs text-[var(--fm-text-secondary)] max-sm:hidden">
-      <span>{t('compose.workspaceIdentity')}：<strong class="font-medium text-[var(--fm-text)]">{profile.name || t('compose.workspaceIdentity')}</strong></span>
-      <span class="hidden shrink-0 sm:inline">{t('compose.actualDelivery')}：{selectedSender?.email ?? t('compose.unconfigured')} · {t('compose.plainTextFallback')}</span>
-    </div>
 
     <div class="compose-fields grid gap-3">
       <div class="compose-from grid gap-2">
@@ -704,7 +700,7 @@
             </option>
           {/each}
         </select>
-        <p id="compose-from-status" class={`text-xs ${selectedSenderBlockReason !== null ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-text-muted)]'} ${selectedSenderBlockReason === null && input.senderAddressId ? 'max-sm:sr-only' : ''}`} role="status">
+        <p id="compose-from-status" class={`text-xs ${selectedSenderBlockReason !== null ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-text-muted)]'} ${selectedSenderBlockReason === null && input.senderAddressId ? 'sr-only' : ''}`} role="status">
           {senderStatusMessage}
         </p>
       </div>
@@ -825,7 +821,7 @@
       </div>
     </details>
 
-    <section class="grid gap-3" aria-labelledby="compose-attachments-title">
+    <section class="compose-attachments grid gap-3" aria-labelledby="compose-attachments-title">
       <div class="flex items-center justify-between gap-3">
         <h2 id="compose-attachments-title" class="text-sm font-medium text-[var(--fm-text)]">{t('mail.attachments')} <span class="font-normal text-[var(--fm-text-muted)]">({input.attachments?.length ?? 0}/10)</span></h2>
         <button class="fm-touch-target inline-flex min-h-9 items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 text-xs font-medium text-[var(--fm-primary)] hover:bg-[var(--fm-primary-soft)]" type="button" disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" />{t('compose.chooseFile')}</button>
@@ -833,7 +829,7 @@
         <input bind:this={retryFileInput} class="sr-only" type="file" aria-label={t('compose.retryChooseAttachment')} onchange={(event) => retryPersistedAttachment(event.currentTarget.files?.[0])} />
       </div>
       <div
-        class="fm-touch-target grid min-h-20 place-items-center rounded-[var(--radius-md)] border border-dashed px-4 py-3 text-center text-xs text-[var(--fm-text-muted)]"
+        class="compose-dropzone fm-touch-target grid min-h-20 place-items-center rounded-[var(--radius-md)] border border-dashed px-4 py-3 text-center text-xs text-[var(--fm-text-muted)]"
         class:border-[var(--fm-primary)]={dragActive}
         class:bg-[var(--fm-primary-soft)]={dragActive}
         role="button"
@@ -909,7 +905,7 @@
   {#snippet footer()}
     <div class="compose-footer-layout flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div class="compose-footer-meta flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <div class="hidden shrink-0 items-center max-sm:flex">
+        <div class="compose-meta-tools hidden shrink-0 items-center max-sm:flex">
           <div class="relative">
             <IconButton ariaLabel={t('compose.attachFile')} ariaDescribedBy={readyAttachmentCount ? 'compose-mobile-attachment-count' : undefined} title={t('compose.attachFile')} tooltipSide="top" disabled={authExpired || pending || attachmentBusy} onclick={() => fileInput?.click()}><Paperclip class="size-4" aria-hidden="true" /></IconButton>
             {#if readyAttachmentCount}
@@ -919,9 +915,9 @@
           </div>
           <IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton>
         </div>
-        <div class="max-sm:hidden"><Button variant="ghost" size="sm" disabled={saveDisabled} onclick={() => { if (!saveDisabled) void onSaveDraft(inputWithRecipientDrafts); }}>{t('compose.saveDraft')}</Button></div>
+        <div class="compose-save max-sm:hidden"><Button variant="ghost" size="sm" disabled={saveDisabled} onclick={() => { if (!saveDisabled) void onSaveDraft(inputWithRecipientDrafts); }}>{t('compose.saveDraft')}</Button></div>
         <span class={`min-w-0 truncate text-xs ${autosaveTone}`} role="status" aria-live="polite">{autosaveMessage}</span>
-        <span class="hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> {t('compose.send')}</span>
+        <span class="compose-shortcut hidden text-[11px] text-[var(--fm-text-muted)] md:inline"><kbd class="rounded border border-[var(--fm-border)] px-1 py-0.5 font-mono">⌘/Ctrl + Enter</kbd> {t('compose.send')}</span>
       </div>
       <div class="compose-footer-actions flex shrink-0 items-center justify-end gap-2 pb-[env(safe-area-inset-bottom)] sm:pb-0">
         <div class="relative shrink-0 max-sm:hidden">
@@ -934,7 +930,7 @@
         <div class="max-sm:hidden"><IconButton ariaLabel={t('compose.htmlOptions')} title={t('compose.htmlOptions')} tooltipSide="top" ariaPressed={showHtml} ariaControls="compose-html-options" onclick={toggleHtmlOptions}><Code2 class="size-4" aria-hidden="true" /></IconButton></div>
         <Button variant="outline" disabled={pending || closeDisabled} onclick={requestClose}>{t('common.cancel')}</Button>
         <div class="hidden max-sm:block"><Button variant="outline" disabled={saveDisabled} onclick={() => { if (!saveDisabled) void onSaveDraft(inputWithRecipientDrafts); }}>{t('compose.saveDraft')}</Button></div>
-        <Button variant="primary" loading={pending || sending} disabled={sendDisabled} onclick={sendCompose}>{t('compose.sendMail')}</Button>
+        <Button variant="primary" class="compose-send" loading={pending || sending} disabled={sendDisabled} onclick={sendCompose}>{t('compose.sendMail')}</Button>
       </div>
     </div>
   {/snippet}
@@ -998,6 +994,34 @@
 
   .recipient-suggestion small { color: var(--fm-text-muted); }
   .recipient-suggestion:hover, .recipient-suggestion.active { background: var(--fm-surface-selected); }
+
+  @media (min-width: 641px) {
+    .compose-form { gap: 12px; min-height: 100%; }
+    .compose-fields { gap: 0; }
+    .compose-from, .compose-row { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: center; gap: 0; min-height: 40px; border-bottom: 1px solid var(--fm-border); }
+    .compose-from > label, .compose-row > label { color: var(--fm-text-secondary); font-size: 13px; font-weight: 400; }
+    .compose-from > select { min-width: 0; min-height: 36px; border: 0; padding: 0; background: transparent; font-size: 13px; }
+    .compose-from > p, .compose-row > p { grid-column: 1 / -1; }
+    .recipient-field { min-width: 0; min-height: 36px; border: 0; padding: 4px 0; }
+    .compose-ccbcc { justify-content: flex-end; min-height: 28px; }
+    .compose-subject :global(label) { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); align-items: center; min-height: 40px; border-bottom: 1px solid var(--fm-border); }
+    .compose-subject :global(input) { min-width: 0; border: 0; border-radius: 0; padding-inline: 4px; }
+    .compose-subject :global(label > span:first-child) { color: var(--fm-text-secondary); font-size: 13px; font-weight: 400; }
+    .compose-subject :global(label > span:last-child:not(:first-child)) { grid-column: 2; }
+    .compose-body { flex: 1; min-height: 160px; }
+    .compose-body :global(label) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .compose-body :global(textarea) { min-height: 180px; border: 0; padding: 8px 0; resize: vertical; font-size: 14px; line-height: 1.6; }
+    .compose-body :global(textarea:focus-visible) { box-shadow: none; }
+    .compose-advanced:not([open]) { display: none; }
+    .compose-dropzone { min-height: 36px; padding: 8px; border: 0; background: var(--fm-surface-subtle); }
+    .compose-dropzone :global(svg) { display: none; }
+    .compose-attachments { gap: 6px; }
+    .compose-footer-layout { flex-wrap: wrap; gap: 8px; }
+    .compose-footer-actions { order: -1; flex: 1; justify-content: flex-start; }
+    .compose-footer-actions :global(.compose-send) { order: -1; min-height: 40px; padding-inline: 24px; border-radius: var(--radius-pill); }
+    .compose-footer-meta { width: 100%; justify-content: flex-end; }
+    .compose-shortcut { display: none; }
+  }
 
   @media (max-width: 900px) {
     .recipient-suggestion { min-height: 44px; }

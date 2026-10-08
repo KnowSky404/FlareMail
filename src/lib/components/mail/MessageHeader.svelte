@@ -203,21 +203,7 @@
         </IconButton>
       {/if}
       {#if showBack}<span class="mobile-folder-label">{folderTitle}</span>{/if}
-      <div class="message-subject min-w-0 flex-1">
-        <div class="flex min-w-0 items-center gap-2">
-          <h1 class:subject-collapsed={longSubject && !subjectExpanded} class="min-w-0 flex-1 text-base font-semibold text-[var(--fm-text)] sm:text-lg" title={message.subject || t('mail.noSubject')}>{message.subject || t('mail.noSubject')}</h1>
-          {#if longSubject}
-            <button class="subject-toggle fm-touch-target shrink-0" type="button" aria-expanded={subjectExpanded} onclick={() => (subjectExpanded = !subjectExpanded)}>
-              {subjectExpanded ? t('mail.collapseSubject') : t('mail.expandSubject')}
-            </button>
-          {/if}
-          {#if message.folder === 'sent' && deliveryStatus}
-            <span class="hidden shrink-0 sm:inline-flex">
-              <StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge>
-            </span>
-          {/if}
-        </div>
-      </div>
+      <div class="header-spacer min-w-0 flex-1"></div>
       <div class="message-header-tools flex shrink-0 items-center gap-0.5">
         {#if !trashMode && onOpenReader}
           <IconButton id="fm-open-reader-trigger" ariaLabel={t('mail.openReader')} title={t('mail.openReader')} size="sm" containerClass="!hidden sm:!inline-flex" class="hidden sm:inline-flex" onclick={() => onOpenReader?.(message)}>
@@ -232,6 +218,11 @@
         {#if !trashMode && message.folder === 'inbox' && onArchive}
           <IconButton ariaLabel={message.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} title={message.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} size="sm" onclick={() => onArchive?.(message)} disabled={pending}>
             {#if message.archivedAt}<Inbox class="size-4" aria-hidden="true" />{:else}<Archive class="size-4" aria-hidden="true" />{/if}
+          </IconButton>
+        {/if}
+        {#if !trashMode && onRemove}
+          <IconButton ariaLabel={t('mail.moveTrash')} title={t('mail.moveTrash')} size="sm" onclick={() => (removeConfirmOpen = true)} disabled={pending}>
+            <Trash2 class="size-4" aria-hidden="true" />
           </IconButton>
         {/if}
         {#if !trashMode && onToggleStar}
@@ -277,7 +268,23 @@
           </IconButton>
         {/if}
       </div>
-      {@render primaryActions(false)}
+      {#if trashMode}{@render primaryActions(false)}{/if}
+    </div>
+
+    <div class="message-subject min-w-0 flex-1">
+      <div class="flex min-w-0 items-center gap-2">
+        <h1 class:subject-collapsed={longSubject && !subjectExpanded} class="min-w-0 flex-1 text-base font-semibold text-[var(--fm-text)] sm:text-lg" title={message.subject || t('mail.noSubject')}>{message.subject || t('mail.noSubject')}</h1>
+        {#if longSubject}
+          <button class="subject-toggle fm-touch-target shrink-0" type="button" aria-expanded={subjectExpanded} onclick={() => (subjectExpanded = !subjectExpanded)}>
+            {subjectExpanded ? t('mail.collapseSubject') : t('mail.expandSubject')}
+          </button>
+        {/if}
+        {#if message.folder === 'sent' && deliveryStatus}
+          <span class="hidden shrink-0 sm:inline-flex">
+            <StatusBadge status={deliveryStatus} tone={deliveryTone(deliveryStatus)}>{deliveryLabel(deliveryStatus)}</StatusBadge>
+          </span>
+        {/if}
+      </div>
     </div>
 
     <div class="message-sender px-4 pb-3 pt-2 sm:px-5 sm:pb-3 sm:pt-3">
@@ -343,7 +350,11 @@
     line-clamp: 2;
   }
 
+  .message-subject { padding: 24px 32px 12px 72px; }
   .message-subject h1 {
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 1.4;
     overflow-wrap: anywhere;
   }
 
@@ -399,6 +410,7 @@
   @media (max-width: 639px) {
     .message-detail-header { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; }
     .message-header-row { display: contents; }
+    .header-spacer { display: none; }
     :global(.fm-detail-back) { grid-column: 1; grid-row: 1; align-self: center; justify-self: start; margin-left: var(--space-2); }
     .mobile-folder-label { display: block; grid-column: 2; grid-row: 1; align-self: center; min-width: 0; overflow: hidden; font-size: 0.875rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
     .message-header-tools { grid-column: 3; grid-row: 1; min-height: 52px; justify-self: end; padding-right: var(--space-2); }

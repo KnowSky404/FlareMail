@@ -168,7 +168,6 @@
     class:unread-row={isUnread}
     role="listitem"
   >
-    {#if selected}<span class="absolute inset-y-0 left-0 w-[3px] bg-[var(--fm-brand-orange)]" aria-hidden="true"></span>{/if}
     {#if selectable}
       <label class="fm-touch-target grid min-h-8 min-w-8 shrink-0 place-items-center">
         <span class="sr-only">{t('mail.select', { subject: itemSubject })}</span>
@@ -286,12 +285,13 @@
   .row-secondary-action { display: inline-flex; }
   @media (min-width: 901px) {
     .wide-row { position: relative; padding-inline: 12px 8px; }
-    .mail-list-item.wide-row, .wide-row .mail-list-item-button { min-height: 52px; }
-    .wide-row.unread-row { background: var(--fm-primary-soft); }
+    .mail-list-item.wide-row, .wide-row .mail-list-item-button { min-height: 44px; }
+    .wide-row { background: var(--fm-surface-subtle); }
+    .wide-row.unread-row { background: var(--fm-surface); }
     .wide-row .row-avatar, .wide-row .unread-dot { display: none; }
     .wide-row .row-star { order: -1; }
     .wide-row > label { order: -2; }
-    .wide-row .row-content { display: grid; grid-template-columns: minmax(110px, 180px) auto minmax(0, 1fr) 58px; align-items: center; gap: 12px; }
+    .wide-row .row-content { display: grid; grid-template-columns: minmax(110px, 180px) auto minmax(0, 1fr) 58px; align-items: center; gap: 8px; }
     .wide-row .row-sender-line { display: contents; }
     .wide-row .row-sender-line > span { grid-column: 1; font-size: 13px; }
     .wide-row .row-date { grid-column: 4; grid-row: 1; text-align: right; }
@@ -299,7 +299,7 @@
     .wide-row .row-preview { grid-column: 3; grid-row: 1; margin-top: 0; }
     .wide-row .row-actions { display: flex; position: absolute; right: 8px; background: var(--fm-surface-hover); opacity: 0; pointer-events: none; }
     .wide-row:hover .row-actions, .wide-row:focus-within .row-actions { opacity: 1; pointer-events: auto; }
-    .wide-row:hover, .wide-row:focus-within { background: var(--fm-surface-hover); }
+    .wide-row:hover, .wide-row:focus-within { background: var(--fm-surface-hover); box-shadow: inset 0 -1px var(--fm-border-strong), 0 1px 3px rgb(60 64 67 / 0.15); z-index: 1; }
     .wide-row .row-actions.draft-actions { position: static; opacity: 1; pointer-events: auto; background: transparent; }
   }
   @media (max-width: 900px) { .row-actions.draft-actions .row-secondary-action { display: none; } }
@@ -307,6 +307,7 @@
   .mail-list-item.fm-selected,
   .mail-list-item.fm-selected:hover {
     background: var(--fm-surface-selected);
+    --fm-text-muted: var(--fm-text-secondary);
   }
 
   .mail-list-item,
