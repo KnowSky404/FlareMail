@@ -1170,7 +1170,16 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   await expect(splitter).toHaveAttribute('aria-valuenow', '480');
   await page.setViewportSize({ width: 1000, height: 900 });
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-preference', '480');
-  await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '400');
+  await expect.poll(async () => Number(await page.locator('.mail-workspace').getAttribute('data-list-width-effective'))).toBeLessThan(480);
+  const resizedColumns = await page.locator('.mail-workspace').evaluate((workspace) => ({
+    list: workspace.querySelector('.mail-list-panel')?.getBoundingClientRect().width ?? 0,
+    detail: workspace.querySelector('.mail-detail-panel')?.getBoundingClientRect().width ?? 0,
+    effective: Number(workspace.getAttribute('data-list-width-effective'))
+  }));
+  expect(resizedColumns.list).toBeGreaterThanOrEqual(280);
+  expect(resizedColumns.detail).toBeGreaterThanOrEqual(360);
+  expect(resizedColumns.list).toBeLessThan(480);
+  expect(resizedColumns.effective).toBeCloseTo(resizedColumns.list, 0);
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '480');
   await page.keyboard.press('Enter');

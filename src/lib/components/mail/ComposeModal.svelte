@@ -992,7 +992,7 @@
     text-align: left;
   }
 
-  .recipient-suggestion small { color: var(--fm-text-muted); }
+  .recipient-suggestion small { color: var(--fm-text-secondary); }
   .recipient-suggestion:hover, .recipient-suggestion.active { background: var(--fm-surface-selected); }
 
   @media (min-width: 641px) {
