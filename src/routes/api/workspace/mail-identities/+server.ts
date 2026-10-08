@@ -2,6 +2,7 @@ import type { RequestHandler } from './$types';
 import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/http/api';
 import { listManagedMailAddresses, listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { createManagedMailAddress } from '$lib/server/mail-identities/routing';
+import { domainOnboardingConfiguration } from '$lib/server/mail-identities/domains';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
@@ -15,8 +16,10 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   return apiSuccess(event, {
     domains,
     addresses,
+    domainOnboarding: domainOnboardingConfiguration(env),
     providerConfiguration: {
       cloudflare: Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
+      cloudflareManagement: Boolean(env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
       resend: Boolean(env.RESEND_API_KEY?.trim())
     }
   });

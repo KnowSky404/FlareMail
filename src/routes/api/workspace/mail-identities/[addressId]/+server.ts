@@ -11,6 +11,8 @@ import {
 import type { MailAddressDeletePolicy } from '$lib/server/mail-identities/routing';
 import { updateManagedMailAddressSending, type MailAddressSendingAction } from '$lib/server/mail-identities/sending';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
+import { getManagedMailAddress } from '$lib/server/db/mail-identities';
+import { MailIdentityValidationError, normalizeDisplayName, normalizeAddressSignature } from '$lib/server/mail-identities/validation';
 
 type AddressAction = 'disable' | 'enable' | 'import' | 'restore' | 'retry' | MailAddressSendingAction;
 
@@ -61,4 +63,30 @@ export const DELETE: RequestHandler = withApiHandler(async (event) => {
     env, session.userId, addressId, undefined, input.policy as MailAddressDeletePolicy | undefined
   );
   return apiSuccess(event, result);
+});
+
+export const PATCH: RequestHandler = withApiHandler(async (event) => {
+  const session = requireWorkspaceSession(event);
+  const addressId = addressIdFromRoute(event.params.addressId);
+  const input = await readJsonBody<Record<string, unknown> | null>(event, { maxBytes: 20 * 1024 });
+  if (!input || typeof input.displayName !== 'string' || typeof input.signature !== 'string' ||
+    Object.keys(input).some((key) => !['displayName', 'signature'].includes(key))) {
+    throw new ApiError(400, 'MAIL_ADDRESS_INPUT_INVALID', '邮件地址字段无效。', undefined, undefined, false);
+  }
+  const env = getRequestEnv(event);
+  if (!env?.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂不可用。');
+  let displayName: string;
+  let signature: string;
+  try {
+    displayName = normalizeDisplayName(input.displayName);
+    signature = normalizeAddressSignature(input.signature);
+  } catch (error) {
+    if (error instanceof MailIdentityValidationError) throw new ApiError(400, 'MAIL_ADDRESS_INPUT_INVALID', '名称或签名格式无效。', undefined, undefined, false);
+    throw error;
+  }
+  const result = await env.DB.prepare(`UPDATE mail_addresses SET display_name = ?, signature = ?, updated_at = ?
+    WHERE id = ? AND owner_user_id = ? AND lifecycle_status <> 'deleted'`)
+    .bind(displayName, signature, new Date().toISOString(), addressId, session.userId).run();
+  if (result.meta.changes !== 1) throw new ApiError(404, 'MAIL_ADDRESS_NOT_FOUND', '可编辑的邮件地址不存在。', undefined, undefined, false);
+  return apiSuccess(event, { address: await getManagedMailAddress(env.DB, session.userId, addressId) });
 });

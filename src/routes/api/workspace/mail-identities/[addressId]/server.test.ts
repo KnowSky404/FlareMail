@@ -1,7 +1,7 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { DELETE } from './+server';
+import { DELETE, PATCH } from './+server';
 import { GET as getDeletePreview } from './delete-preview/+server';
 
 const ownerId = '20000000-0000-4000-8000-000000000001';
@@ -106,6 +106,20 @@ afterEach(() => {
 });
 
 describe('mail address deletion endpoints', () => {
+  test('edits names and signatures without changing routing or send settings', async () => {
+    const { database, env } = fixture();
+    const response = await PATCH(event(env, 'PATCH', { displayName: 'Support', signature: 'Line 1\r\nLine 2' }));
+    expect(response.status).toBe(200);
+    expect(database.query('SELECT display_name, signature, routing_state, receive_enabled FROM mail_addresses WHERE id = ?').get(addressId))
+      .toEqual({ display_name: 'Support', signature: 'Line 1\nLine 2', routing_state: 'active', receive_enabled: 1 });
+    expect((await PATCH(event(env, 'PATCH', { displayName: 'Invalid\nName', signature: '' }))).status).toBe(400);
+    expect((await PATCH(event(env, 'PATCH', { displayName: '', signature: '', email: 'other@example.test' }))).status).toBe(400);
+    expect((await PATCH(event(env, 'PATCH', { displayName: '', signature: '' }, false))).status).toBe(401);
+    database.query("UPDATE mail_addresses SET owner_user_id = 'other-owner' WHERE id = ?").run(addressId);
+    expect((await PATCH(event(env, 'PATCH', { displayName: 'Intruder', signature: '' }))).status).toBe(404);
+    database.query("UPDATE mail_addresses SET owner_user_id = ?, lifecycle_status = 'deleted' WHERE id = ?").run(ownerId, addressId);
+    expect((await PATCH(event(env, 'PATCH', { displayName: 'Deleted', signature: '' }))).status).toBe(404);
+  });
   test('returns an authenticated fresh preview with explicit route and catch-all consequences', async () => {
     const { database, env } = fixture();
     const provider = cloudflareMock();

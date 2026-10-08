@@ -1,0 +1,42 @@
+# Requires Wrangler >= 4.135.0. Copy to ignored wrangler.preview.deploy.toml.
+# Deploy only with `wrangler preview`; `wrangler deploy` targets production.
+name = "flaremail"
+main = "worker/index.ts"
+compatibility_date = "2026-08-19"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "build"
+binding = "ASSETS"
+
+[previews.vars]
+APP_ENV = "preview"
+AUTH_MODE = "local"
+OUTBOUND_PROVIDER = "resend"
+ALLOW_FAKE_SERVICES = "false"
+AUTO_REPLY_ENABLED = "false"
+INBOUND_NOTIFICATION_ENABLED = "false"
+TELEGRAM_ENABLED = "false"
+APP_BASE_URL = "https://mail-identities.previews.example.com"
+APP_VERSION = "preview+replace-with-commit"
+# Set to a reviewed receiving Worker and its account. Email Routing targets
+# production handlers; use a separate receiving Worker for real preview mail.
+# MAIL_IDENTITY_WORKER_NAME = "replace-with-preview-receiving-worker"
+# MAIL_IDENTITY_ACCOUNT_ID = "replace-with-account-id"
+
+[[previews.d1_databases]]
+binding = "DB"
+database_name = "replace-with-preview-database"
+database_id = "replace-with-preview-database-id"
+
+[[previews.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "replace-with-preview-bucket"
+
+[previews.observability]
+enabled = true
+[previews.observability.logs]
+enabled = true
+[previews.observability.traces]
+# Provider URLs may contain notification tokens.
+enabled = false

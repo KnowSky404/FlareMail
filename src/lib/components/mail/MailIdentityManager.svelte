@@ -6,6 +6,7 @@
   import TextField from '$lib/components/ui/TextField.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
+  import MailDomainSetup from './MailDomainSetup.svelte';
   import { requestJson } from '$lib/client/api';
   import { mailHealthState } from '$lib/domain/mail/health';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
@@ -17,6 +18,8 @@
     id: string;
     domain_name: string;
     enabled: number;
+    cloudflare_zone_id: string;
+    worker_name: string;
     unknown_recipient_policy: 'reject' | 'collect';
     catch_all_target: 'unknown' | 'this_worker' | 'external' | 'drop' | 'none';
     resend_status: 'unknown' | 'pending' | 'verified' | 'failed';
@@ -114,6 +117,14 @@
   let errorMessage = $state('');
   let notice = $state('');
   let noticeNeedsAttention = $state(false);
+  let onboarding = $state<{ available: boolean; workerName: string | null; canManageRouting: boolean }>({ available: false, workerName: null, canManageRouting: false });
+  let domainSettingsTarget = $state<MailDomain | null>(null);
+  let domainEnabled = $state(true);
+  let unknownPolicy = $state<'reject' | 'collect'>('reject');
+  let settingsError = $state('');
+  let editAddressTarget = $state<MailAddress | null>(null);
+  let editDisplayName = $state('');
+  let editSignature = $state('');
   let deleteTarget = $state<MailAddress | null>(null);
   let deletePreview = $state<DeletePreview | null>(null);
   let deletePreviewLoading = $state(false);
@@ -153,7 +164,9 @@
         domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[];
         addresses: MailAddress[];
         providerConfiguration: { cloudflare: boolean; resend: boolean };
+        domainOnboarding?: typeof onboarding;
       }>('/api/workspace/mail-identities');
+      onboarding = loaded.domainOnboarding ?? { available: false, workerName: null, canManageRouting: false };
       domains = loaded.domains.map((domain) => ({
         ...domain,
         cloudflare_configured: loaded.providerConfiguration.cloudflare,
@@ -201,6 +214,61 @@
   onMount(() => {
     void load();
   });
+
+  async function domainCreated(domainId: string) {
+    selectedDomainId = domainId;
+    notice = t('settings.mailDomainConnected');
+    noticeNeedsAttention = false;
+    await load();
+  }
+
+  function openDomainSettings(domain: MailDomain) {
+    domainSettingsTarget = domain;
+    domainEnabled = Boolean(domain.enabled);
+    unknownPolicy = domain.unknown_recipient_policy;
+    settingsError = '';
+  }
+
+  async function saveDomainSettings(event: SubmitEvent) {
+    event.preventDefault();
+    if (!domainSettingsTarget || pendingAction) return;
+    pendingAction = 'domain-settings';
+    settingsError = '';
+    try {
+      await requestJson(`/api/workspace/mail-identities/domains/${encodeURIComponent(domainSettingsTarget.id)}`, {
+        method: 'PATCH', body: JSON.stringify({ enabled: domainEnabled, unknownRecipientPolicy: unknownPolicy })
+      });
+      domainSettingsTarget = null;
+      notice = t('settings.domainSettingsSaved');
+      noticeNeedsAttention = false;
+      await load();
+    } catch (error) { settingsError = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed'); }
+    finally { pendingAction = ''; }
+  }
+
+  function openAddressSettings(address: MailAddress) {
+    editAddressTarget = address;
+    editDisplayName = address.display_name;
+    editSignature = address.signature;
+    settingsError = '';
+  }
+
+  async function saveAddressSettings(event: SubmitEvent) {
+    event.preventDefault();
+    if (!editAddressTarget || pendingAction) return;
+    pendingAction = 'address-settings';
+    settingsError = '';
+    try {
+      await requestJson(`/api/workspace/mail-identities/${encodeURIComponent(editAddressTarget.id)}`, {
+        method: 'PATCH', body: JSON.stringify({ displayName: editDisplayName, signature: editSignature })
+      });
+      editAddressTarget = null;
+      notice = t('settings.addressSettingsSaved');
+      noticeNeedsAttention = false;
+      await load();
+    } catch (error) { settingsError = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed'); }
+    finally { pendingAction = ''; }
+  }
 
   function checkFor(domain: MailDomain, addressId: string): RouteStatus | undefined {
     return checks[domain.id]?.cloudflare.addresses.find((entry) => entry.addressId === addressId)?.status;
@@ -565,10 +633,16 @@
 
   {#if loading}
     <p class="muted" role="status">{t('common.loading')}</p>
-  {:else if domains.length === 0}
-    <p class="muted">{t('settings.noMailDomains')}</p>
-    <p class="setup-hint">{t('settings.mailDomainSetupHint')} <code>bun run mail:domain:configure</code></p>
   {:else}
+    {#if view === 'domains' || domains.length === 0}
+      <MailDomainSetup available={onboarding.available} workerName={onboarding.workerName} onCreated={domainCreated} onRefresh={load} />
+    {/if}
+    {#if !onboarding.canManageRouting}
+      <p class="setup-hint" role="status">{t('settings.routingManagementMissing')}</p>
+    {/if}
+    {#if domains.length === 0}
+    <p class="muted">{t('settings.noMailDomains')}</p>
+    {:else}
     {#if view === 'addresses'}
     <form class="create-form" onsubmit={createAddress}>
       <div class="form-title"><Mail size={16} aria-hidden="true" /><strong>{t('settings.addMailAddress')}</strong></div>
@@ -600,6 +674,7 @@
             </div>
             <div class="domain-header-actions">
               {#if view === 'domains'}
+                <Button variant="secondary" size="sm" disabled={Boolean(pendingAction)} onclick={() => openDomainSettings(domain)}>{t('settings.domainSettings')}</Button>
                 <Button id={`quick-create-trigger-${domain.id}`} variant="secondary" size="sm" disabled={!domain.enabled || Boolean(pendingAction)} ariaExpanded={quickCreateDomainId === domain.id} ariaControls={quickCreateDomainId === domain.id ? `quick-create-form-${domain.id}` : undefined} onclick={() => void toggleQuickCreate(domain.id)}>{t('settings.createAddressForDomain')}</Button>
                 <Button variant="secondary" size="sm" loading={pendingAction === 'check:' + domain.id} onclick={() => void checkDomain(domain)}>
                   <RefreshCw size={14} aria-hidden="true" /> {t('settings.checkMailDomain')}
@@ -680,6 +755,9 @@
                   </div>
                   {#if view === 'addresses'}
                   <div class="address-actions" aria-label={t('settings.mailAddressActions')}>
+                    {#if address.lifecycle_status !== 'deleted'}
+                      <Button size="sm" variant="secondary" disabled={Boolean(pendingAction)} onclick={() => openAddressSettings(address)}>{t('settings.editAddressDetails')}</Button>
+                    {/if}
                     {#if route === 'importable' && address.lifecycle_status !== 'deleted'}
                       <Button size="sm" variant="secondary" loading={pendingAction === `${address.id}:import`} onclick={() => void runAction(address, 'import')}><CheckCircle2 size={14} aria-hidden="true" /> {t('settings.importRule')}</Button>
                     {/if}
@@ -716,8 +794,38 @@
         </section>
       {/each}
     </div>
+    {/if}
   {/if}
 </Panel>
+
+{#if domainSettingsTarget}
+  <Dialog open title={t('settings.domainSettings')} description={domainSettingsTarget.domain_name} dismissible={!pendingAction} onClose={() => domainSettingsTarget = null}>
+    <form class="identity-settings-form" onsubmit={saveDomainSettings}>
+      <p class="muted">{t('settings.domainMappingLocked')}</p>
+      <label><input type="checkbox" bind:checked={domainEnabled} disabled={Boolean(pendingAction)} /> {t('settings.domainEnabled')}</label>
+      <p class="muted">{t('settings.domainDisableHelp')}</p>
+      <label for="domain-unknown-policy">{t('settings.unknownRecipients')}</label>
+      <select id="domain-unknown-policy" bind:value={unknownPolicy} disabled={Boolean(pendingAction)}>
+        <option value="reject">{t('settings.unknownReject')}</option>
+        <option value="collect">{t('settings.unknownCollect')}</option>
+      </select>
+      <p class="muted">{t('settings.collectRequiresWorkerCatchAll')}</p>
+      {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
+      <Button type="submit" loading={pendingAction === 'domain-settings'}>{t('settings.saveIdentitySettings')}</Button>
+    </form>
+  </Dialog>
+{/if}
+
+{#if editAddressTarget}
+  <Dialog open title={t('settings.editAddressDetails')} description={editAddressTarget.email} dismissible={!pendingAction} onClose={() => editAddressTarget = null}>
+    <form class="identity-settings-form" onsubmit={saveAddressSettings}>
+      <TextField id="edit-address-name" label={t('settings.mailAddressDisplayName')} value={editDisplayName} maxlength={128} disabled={Boolean(pendingAction)} oninput={(event) => editDisplayName = event.currentTarget.value} />
+      <TextArea id="edit-address-signature" label={t('settings.mailAddressSignature')} value={editSignature} rows={5} disabled={Boolean(pendingAction)} oninput={(event) => editSignature = event.currentTarget.value} />
+      {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
+      <Button type="submit" loading={pendingAction === 'address-settings'}>{t('settings.saveIdentitySettings')}</Button>
+    </form>
+  </Dialog>
+{/if}
 
 {#if deleteTarget}
   <Dialog
@@ -780,12 +888,12 @@
 {/if}
 
 <style>
+  .identity-settings-form { display: grid; gap: 0.75rem; }
   .message { margin: 0 0 var(--space-3); font-size: 13px; }
   .error, .safe-error { color: var(--fm-danger); }
   .success { color: var(--fm-success); }
   .attention { color: var(--fm-warning); }
   .muted, .setup-hint { color: var(--fm-text-muted); font-size: 13px; }
-  .setup-hint code { overflow-wrap: anywhere; }
   .create-form { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface-subtle); }
   .form-title { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; }
   .create-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: var(--space-3); }

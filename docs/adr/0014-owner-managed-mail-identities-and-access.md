@@ -63,6 +63,15 @@ zone/account and Worker target, plus independent Cloudflare-routing and
 Resend-sending check state. A subdomain must be configured as its own explicit
 mapping. Zone visibility from an API token never enrolls a domain.
 
+The Owner may explicitly enroll a domain through the workspace. The deployment
+fixes the receiving Worker and account; the server verifies the submitted Zone
+ID and domain boundary before inserting a mapping, with unknown recipients
+rejected by default. The browser cannot choose the Worker or account, alter an
+existing mapping, or supply credentials. Zone Read permission is required.
+Domain enable/disable and unknown-recipient settings preserve addresses and mail
+history; switching to collect requires fresh verified catch-all targeting this
+Worker. Address names and signatures are editable without changing routing.
+
 `mail_addresses` stores a stable address ID, Owner/domain, receive/send
 switches, lifecycle and routing state, exact remote rule ID, display name,
 signature, and optional default-sender flag. Creating addresses never creates
