@@ -1,5 +1,6 @@
 # Requires Wrangler >= 4.135.0. Copy to ignored wrangler.preview.deploy.toml.
 # Deploy only with `wrangler preview`; `wrangler deploy` targets production.
+# This project's Preview shares production data; writes affect production.
 name = "flaremail"
 main = "worker/index.ts"
 compatibility_date = "2026-08-19"
@@ -10,6 +11,8 @@ directory = "build"
 binding = "ASSETS"
 
 [previews.vars]
+# Copy production's non-secret provider/authentication settings here.
+# Keep APP_ENV, APP_BASE_URL and APP_VERSION specific to the Preview.
 APP_ENV = "preview"
 AUTH_MODE = "local"
 OUTBOUND_PROVIDER = "resend"
@@ -19,19 +22,19 @@ INBOUND_NOTIFICATION_ENABLED = "false"
 TELEGRAM_ENABLED = "false"
 APP_BASE_URL = "https://mail-identities.previews.example.com"
 APP_VERSION = "preview+replace-with-commit"
-# Set to a reviewed receiving Worker and its account. Email Routing targets
-# production handlers; use a separate receiving Worker for real preview mail.
-# MAIL_IDENTITY_WORKER_NAME = "replace-with-preview-receiving-worker"
+# Shared data uses the production receiving Worker and its account.
+# Email Routing continues to execute production's handler code.
+MAIL_IDENTITY_WORKER_NAME = "flaremail"
 # MAIL_IDENTITY_ACCOUNT_ID = "replace-with-account-id"
 
 [[previews.d1_databases]]
 binding = "DB"
-database_name = "replace-with-preview-database"
-database_id = "replace-with-preview-database-id"
+database_name = "replace-with-production-database"
+database_id = "replace-with-production-database-id"
 
 [[previews.r2_buckets]]
 binding = "BUCKET"
-bucket_name = "replace-with-preview-bucket"
+bucket_name = "replace-with-production-bucket"
 
 [previews.observability]
 enabled = true

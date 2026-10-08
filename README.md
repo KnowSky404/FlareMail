@@ -39,7 +39,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的个人自托管邮件工�
 | 环境 | 出站 provider | 数据与凭据 | 约束 |
 | --- | --- | --- | --- |
 | development/test | 显式 `demo`/fake | 本地 D1/R2；管理员需 bootstrap | 必须设置 `ALLOW_FAKE_SERVICES=true` |
-| preview | 按私有配置 | 独立 preview 资源 | 不应复用生产凭据或 D1 |
+| preview | 按私有配置 | 与生产共用 D1/R2 和 Owner 账号 | 代码独立部署；数据修改直接影响生产；secrets 需单独配置，见 [Preview 文档](./docs/PREVIEW.md) |
 | production | 仅 `resend` | 真实 D1/R2 与 Wrangler secrets | 缺少必要 binding/secret 时 fail closed |
 
 仓库不包含固定登录密码。使用 `scripts/bootstrap-admin.ts` 将 Owner 的本地用户名/凭据写入本地或远程 D1；登录名使用 `FLAREMAIL_ADMIN_USERNAME`，资料邮箱 `FLAREMAIL_PROFILE_EMAIL` 可选且不授予收发信权限。Access-only 初始化可通过 `bun run auth:bootstrap:access` 建立同一稳定 Owner，而无需设置本地密码。

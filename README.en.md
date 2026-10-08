@@ -27,7 +27,7 @@ The repository is pinned to Bun `1.4.0`. The application preserves the existing 
 | Environment | Outbound provider | Data and credentials | Constraint |
 | --- | --- | --- | --- |
 | development/test | Explicit `demo`/fake | Local D1/R2; bootstrap required | Set `ALLOW_FAKE_SERVICES=true` |
-| preview | Private configuration | Isolated preview resources | Do not reuse production credentials or D1 |
+| preview | Private configuration | Production D1/R2 and Owner account | Code deploys independently; data writes affect production; configure secrets separately ([Preview guide](./docs/PREVIEW.md)) |
 | production | `resend` only | Real D1/R2 and Wrangler secrets | Missing bindings/secrets fail closed |
 
 The repository contains no fixed login password. Use `scripts/bootstrap-admin.ts` with `FLAREMAIL_ADMIN_USERNAME` and environment variables in the current shell; an optional `FLAREMAIL_PROFILE_EMAIL` is profile data and grants no mail identity. Access-only initialization uses `bun run auth:bootstrap:access` and does not require a local password.
