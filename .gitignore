@@ -1,4 +1,6 @@
 node_modules
+# Local cloud environment tools and caches
+/.flaremail-tools/
 .svelte-kit
 .wrangler
 build
