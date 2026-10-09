@@ -112,21 +112,6 @@ function migrationVersion(file: string) {
   return Number(file.match(/^(\d{4})_/u)?.[1] ?? NaN);
 }
 
-function parseVersion(value: string) {
-  const match = value.match(/^(\d+)\.(\d+)\.(\d+)/u);
-  return match ? match.slice(1).map(Number) : null;
-}
-
-function versionAtLeast(actual: string, minimum: string) {
-  const current = parseVersion(actual);
-  const required = parseVersion(minimum);
-  if (!current || !required) return false;
-  for (let index = 0; index < 3; index += 1) {
-    if (current[index] !== required[index]) return current[index] > required[index];
-  }
-  return true;
-}
-
 function safeCommandEnvironment() {
   const source = process.env;
   const environment: Record<string, string> = {};
@@ -175,20 +160,26 @@ export async function runCommand(
   };
 }
 
-async function checkBun(root: string): Promise<PreflightCheck> {
-  const packageJson = JSON.parse(await readText(root, 'package.json')) as {
-    packageManager?: string;
-    engines?: { bun?: string };
-  };
-  const version = process.versions.bun;
+export function checkBunRuntime(packageJson: {
+  packageManager?: string;
+  engines?: { bun?: string };
+}, version: string | undefined = process.versions.bun): PreflightCheck {
   const declared = packageJson.packageManager ?? '';
   const minimum = packageJson.engines?.bun ?? '';
   const declaredVersion = declared.startsWith('bun@') ? declared.slice(4) : '';
-  const minimumVersion = minimum.startsWith('>=') ? minimum.slice(2) : '';
-  if (!version || !declaredVersion || !minimumVersion || version !== declaredVersion || !versionAtLeast(version, minimumVersion)) {
-    return fail('bun', 'Bun package metadata is incomplete.');
+  if (!/^\d+\.\d+\.\d+$/u.test(declaredVersion) || !/^>=\d+\.\d+\.\d+$/u.test(minimum) ||
+      !Bun.semver.satisfies(declaredVersion, minimum)) {
+    return fail('bun', 'Bun package metadata must declare a stable CI baseline and a compatible engine minimum.');
   }
-  return pass('bun', `Bun ${version} is available.`, { version, packageManager: declared, engine: minimum });
+  const details = { version: version ?? null, packageManager: declared, engine: minimum };
+  if (!version || !/^\d+\.\d+\.\d+$/u.test(version) || !Bun.semver.satisfies(version, minimum)) {
+    return fail('bun', `A stable Bun runtime satisfying ${minimum} is required.`, details);
+  }
+  return pass('bun', `Bun ${version} satisfies ${minimum}; ${declared} is the CI baseline.`, details);
+}
+
+async function checkBun(root: string): Promise<PreflightCheck> {
+  return checkBunRuntime(JSON.parse(await readText(root, 'package.json')));
 }
 
 export async function inspectGit(root: string, commandRunner: CommandRunner = runCommand): Promise<GitState> {

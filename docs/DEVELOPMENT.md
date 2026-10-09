@@ -4,7 +4,13 @@
 
 ## Prepare the checkout
 
-Use Bun **1.4.0**, matching `package.json` and CI. From the repository root:
+Use the newest stable Bun already installed on your machine, satisfying
+`engines.bun` in `package.json` (currently **>=1.4.0**). Do not download an older
+runtime just to match `packageManager`: that field records the reproducible CI
+baseline, currently **1.4.2**, and CI reads it directly. Release preflight checks
+the stable runtime against the engine minimum, rather than requiring equality
+with the CI baseline. This policy does not automatically upgrade the machine's
+Bun installation or project dependencies. From the repository root:
 
 ```bash
 bun --version
@@ -15,7 +21,7 @@ bun run db:migrate:local
 
 The checked-in `wrangler.toml` uses local D1/R2, `AUTH_MODE=local`, and the demo outbound provider with `ALLOW_FAKE_SERVICES=true`. Optional local overrides belong in the ignored `.dev.vars`; see `.dev.vars.example`. Keep real credentials out of Git.
 
-The repository's configured preview environments share production D1/R2 and the Owner account; writes there affect production. Use local state for development and read the [preview guide](./PREVIEW.md) before using a remote preview. Production uses Resend and rejects missing required bindings or secrets.
+The workflow is local implementation and verification, then an authorized remote Preview deployment, then a separately authorized production release. Ordinary development does not automatically deploy. The repository's configured preview environments share production D1/R2 and the Owner account; writes there affect production. Use local state for development and read the [preview guide](./PREVIEW.md) before using a remote preview. Production uses Resend and rejects missing required bindings or secrets.
 
 ## Initialize the local Owner
 
@@ -43,7 +49,7 @@ bun run dev --host :: --port 5173
 bun run preview --ip :: --port 8787
 ```
 
-`::` enables IPv6 and, on systems with dual-stack sockets, IPv4. Open your development machine's hostname with port `5173` or `8787`. Check the actual listener with `ss -lntp` if remote access fails; a local-only listener is insufficient for browser access from another machine.
+`::` enables IPv6 and, on systems with dual-stack sockets, IPv4. On this project's VPS, open `http://oc-de-fra-1.knowsky.uk:5173` or `http://oc-de-fra-1.knowsky.uk:8787`. Check the actual listener with `ss -lntp` if remote access fails; a local-only listener is insufficient for browser access from another machine. `bun run preview` is a local Worker process; it does not publish a remote Preview.
 
 ### Test inbound mail locally
 
@@ -55,10 +61,12 @@ The demo/fake provider validates the UI, persistence, and mail state transitions
 
 ## Verify changes
 
-Run the repository gates before committing:
+For code, tests, or runtime configuration changes, run these gates in order
+before committing. Pure documentation changes need diff, command and link
+review; changes to validation scripts or CI still require the code gates:
 
 ```bash
-bun test
+bun run test
 bun run check
 bun run build
 ```
@@ -73,9 +81,18 @@ bun run test:e2e:firefox
 bun run test:a11y
 ```
 
-Browser tests create isolated D1/R2 state in the operating system's temporary directory and use fake providers and signed test webhooks. Linux WebKit results cover simulated viewports, rather than physical iOS/iPadOS Safari devices. Missing browser binaries are a test environment failure.
+Browser tests create isolated D1/R2 state in the operating system's temporary directory and use fake providers and signed test webhooks. Run check, typegen, build, dry-run and browser suites sequentially because they share generated output. Use separate worktrees and test state directories for concurrent verification. Linux WebKit results cover simulated viewports, rather than physical iOS/iPadOS Safari devices. Missing browser binaries are a test environment failure.
 
 `bun run deploy:dry-run` builds a temporary configuration from the public development config without reading the private production config or publishing a Worker. Local checks do not establish production deployment, remote migration, or real mail/Telegram delivery.
+
+Publish the verified commit to remote Preview only when deployment is requested
+or already authorized, following [PREVIEW.md](./PREVIEW.md). Record the SHA, URL,
+deployment/version ID and relevant checks; confirm production traffic still
+points to its previous deployment. Shared Preview data is read-only for ordinary
+acceptance checks; writes and real provider tests require authorization covering
+their production effects. Production publication follows the
+[production checklist](./PRODUCTION_CHECKLIST.md), with Preview evidence or a
+documented alternative when Preview cannot cover the changed handler.
 
 ## Repository map
 

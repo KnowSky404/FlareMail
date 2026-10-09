@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { renderHuman, runPreflight, type CommandRunner } from './release-preflight';
+import { checkBunRuntime, renderHuman, runPreflight, type CommandRunner } from './release-preflight';
 
 const successfulCommands: CommandRunner = async (_executable, args) => {
   if (args.includes('search:index')) return { exitCode: 0, stdout: JSON.stringify({ expectedDocuments: 0, projectedDocuments: 0, missingDocuments: 0, orphanedDocuments: 0 }) };
@@ -10,6 +10,36 @@ const successfulCommands: CommandRunner = async (_executable, args) => {
 const cleanGit = async () => ({ exitCode: 0, status: '', head: '0123456789abcdef0123456789abcdef01234567' });
 
 describe('release preflight', () => {
+  const bunMetadata = { packageManager: 'bun@1.4.2', engines: { bun: '>=1.4.0' } };
+
+  test('accepts stable local Bun versions independently of the CI baseline', () => {
+    for (const version of ['1.4.0', '1.4.2', '1.4.3', '1.5.0', '2.0.0']) {
+      expect(checkBunRuntime(bunMetadata, version)).toMatchObject({
+        category: 'bun', status: 'PASS', details: { version, packageManager: 'bun@1.4.2', engine: '>=1.4.0' }
+      });
+    }
+  });
+
+  test('rejects unsupported or unstable runtimes with the required version in the report', () => {
+    for (const version of ['1.3.99', '1.4.0-canary.1', '1.5.0-beta.1', '', 'invalid']) {
+      const check = checkBunRuntime(bunMetadata, version);
+      expect(check.status).toBe('FAIL');
+      expect(check.summary).toContain('>=1.4.0');
+      expect(check.details?.version).toBe(version);
+    }
+  });
+
+  test('rejects missing or inconsistent Bun package metadata', () => {
+    for (const metadata of [
+      {}, { packageManager: 'npm@11.0.0', engines: { bun: '>=1.4.0' } },
+      { packageManager: 'bun@1.3.0', engines: { bun: '>=1.4.0' } },
+      { packageManager: 'bun@latest', engines: { bun: '>=1.4.0' } },
+      { packageManager: 'bun@1.4.2', engines: { bun: 'invalid' } }
+    ]) {
+      expect(checkBunRuntime(metadata, '1.4.2').status).toBe('FAIL');
+    }
+  });
+
   test('is local/read-only and emits stable categories without running commands in unit mode', async () => {
     const report = await runPreflight({ runCommands: false, gitInspector: cleanGit });
     expect(report).toMatchObject({ version: 1, target: 'local', readOnly: true, ok: true });

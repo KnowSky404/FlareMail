@@ -4,19 +4,36 @@
 
 `src/` 是 SvelteKit 主应用目录。页面放在 `src/routes/`，接口使用 `+server.ts`，例如 `src/routes/api/messages/+server.ts`。纯邮件契约放在 `src/lib/domain/mail/`；仅服务端可用的认证、D1、入站、出站与工作区逻辑放在 `src/lib/server/`。Worker 包装入口位于 `worker/index.ts`，统一承载网页/API 的 `fetch` 与 Email Routing 的 `email()`。D1 变更以 `migrations/` 为权威顺序，`schema.sql` 只是最新结构快照。`build/`、`.svelte-kit/`、`.wrangler/` 均为构建产物，不要手改。
 
+## 工具与依赖版本
+
+- Bun 默认使用本机最新已安装的稳定版；开工时核对 `command -v bun` 与 `bun --version`，确保非交互 shell 解析到预期版本。不要为了匹配旧记录下载或切换旧版，也不要把“本机最新”理解为每次任务都执行全局升级。
+- `package.json` 的 `engines.bun` 是最低支持版本；`packageManager` 是 CI 的可复现基准，不要求本地版本与之完全相等。CI 从 `package.json` 读取版本，避免多个位置重复硬编码。更新基准时先在本机完成相关验证。
+- 项目依赖安装默认使用 `bun install --frozen-lockfile`。只有明确调整依赖时才用 `bun install` 或 `bun update` 更新 `bun.lock`，并将依赖声明和锁文件一起提交。Bun 运行时更新不意味着批量更新依赖。
+- 本地构建、迁移和测试优先使用项目脚本及锁定的 Wrangler。原生 Worker Preview 要求 Wrangler >= 4.135.0；此时按 [Preview 指南](docs/PREVIEW.md) 检查较新全局 CLI 的版本和命令帮助，不把该例外扩展到其他命令，也不为普通任务自动升级依赖。
+- 库、SDK、CLI 或云服务的用法、配置和版本迁移先查 Context7：先 `resolve-library-id`，再用匹配的库 ID 调用 `query-docs`；用户给出精确 ID 时可直接查询。工具未列出时先发现工具，确认不可用后再用官方文档及已安装版本的帮助/类型核对。纯业务逻辑调试、重构和代码审查无需为此查询文档。
+- 安装全局 JavaScript CLI 时依次优先 Bun、pnpm、npm，并确认非交互 shell 能找到二进制；不要将本机工具安装混入项目依赖更新。
+
 ## 构建、测试与开发命令
 
-- `bun install`：安装依赖并更新 `bun.lock`
+- `bun install --frozen-lockfile`：按现有锁文件安装依赖
 - `bun run dev`：启动本地 SvelteKit 开发环境
 - `bun run check`：执行类型检查与路由校验
 - `bun run build`：构建 Cloudflare Workers 产物
 - `bun run preview`：用 Wrangler 本地预览 Worker
-- `bun test`：运行 Bun unit/integration 测试
+- `bun run test`：运行 `src/` 与 `scripts/` 的 Bun unit/integration 测试
 - `bun run db:migrate:local`：顺序应用 `migrations/` 到本地 D1
-- `bun run deploy:dry-run`：使用私有部署配置构建并校验 Worker，不发布
-- `bun run deploy`：构建并部署到 Cloudflare
+- `bun run deploy:dry-run`：从公开本地配置生成临时配置，构建并校验 Worker 打包；不读取私有生产配置、不发布
+- `bun run release:preflight -- --json`：检查干净提交及本地发布门禁，不执行远程部署或远程迁移
+- `bun run deploy`：使用私有 `wrangler.deploy.toml` 构建并发布生产 Worker，仅在明确授权生产发布时使用
 
-提交前至少运行 `bun test` 与 `bun run check`；涉及 Worker、D1、R2、Resend 或 Email Routing 时，再执行 `bun run build`。浏览器交互变更还应运行 Playwright/Chromium QA；真实 deploy、远程 migration 或邮件 smoke test 必须得到明确授权。
+## 本地优先与发布顺序
+
+1. 先在隔离本地 D1/R2 和 demo/fake provider 上实现、验证，再提交当前任务。不要用共享 Preview 数据做 fixture、自动化测试或破坏性验收。
+2. 需要远程验收且用户已授权发布 Preview 时，先通过本地门禁和打包检查，再按 [Preview 指南](docs/PREVIEW.md) 发布已验证的提交。未指定生产的发布请求优先使用 Preview，不直接调用 `bun run deploy`。普通修复、审查或约束更新不自动触发部署。
+3. 区分 `bun run preview`（本地 Worker）、`wrangler preview`（原生远程 Preview）和 `wrangler versions upload`（版本预览）。原生 Preview 是默认远程验收方式；需要复用生产既有 secrets 检查上传版本时，按指南使用版本预览。不得用 `wrangler deploy` 代替 Preview 发布，也不得擅自执行 `versions deploy` 或 `triggers deploy`。
+4. 当前 Preview 有意共用生产 D1/R2 和 Owner，发布代码不切换生产流量，但写入会影响生产数据。默认只读验收；写入、真实邮件/Telegram、远程迁移或路由/DNS 变更必须在用户授权范围内。已明确授权的同一范围无需重复确认。不要为发布 Preview 初始化 Owner、重置数据库或自动创建/删除云资源。
+5. Preview 发布后记录提交 SHA、URL、部署/版本 ID，核对登录、相关页面/API、绑定和生产流量指向。`/api/health` 只证明存活；数据库/绑定就绪另查已认证的 `/api/readiness`。Preview HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
+6. 生产发布是后续独立步骤，需要明确生产授权；按 [生产清单](docs/PRODUCTION_CHECKLIST.md) 核对同一提交的 CI、迁移兼容性及回退边界。原则上先保留对应 Preview 验收证据；首次部署、事件处理或 Preview 无法覆盖的 handler 变更需说明替代验证路径。
 
 ## 编码风格与命名约定
 
@@ -24,12 +41,27 @@
 
 ## 测试与验证要求
 
-仓库使用 Bun test runner，测试与目标模块相邻并使用 `*.test.ts` 命名。默认门禁是 `bun test`、`bun run check` 与 `bun run build`；接口变更还应补充本地验证路径，例如 `GET /api/health`。D1 migration 必须同时验证空库、legacy fixture 与 `schema.sql` 快照一致性。
+- 代码、测试或运行配置改动提交前运行 `bun run test`、`bun run check`、`bun run build`。纯文档/约束改动检查差异、命令和链接即可；若同时修改校验脚本或 CI，仍执行代码门禁。不要重复运行已经通过且不受后续改动影响的检查。
+- 测试与目标模块相邻，使用 `*.test.ts` 命名，覆盖行为和回归边界，避免仅复制实现的断言。接口变更验证实际涉及的接口及认证/错误路径，不以健康接口代替业务验收。
+- 浏览器交互变更运行相关 Chromium 桌面、手机和窄屏 QA；键盘、弹层、布局和可访问性变更补充相关 a11y 及 WebKit/Firefox 验证。发布时遵循 CI 和生产清单。保留必要截图；Linux WebKit 不等于真实 iOS/Safari，环境缺失和跳过项需如实报告。
+- `check`、`build`、typegen、dry-run 和浏览器套件会共享 `.svelte-kit/`、`build/` 等状态，串行执行；多个验证进程需独立 worktree 和测试状态目录。不要为通过预检暂存、丢弃或提交他人的未完成改动，可在干净的隔离 worktree 验证目标提交。
+- D1 migration 只追加，不修改已发布文件；同步 `schema.sql`、schema version 与相关类型/契约，同时验证空库、legacy fixture 和快照一致性。远程执行前核对目标、待应用列表、恢复点及当前生产代码兼容性，完成后核对迁移记录和 schema。
+- 绑定或 compatibility date/flags 变更同步相关公开配置/模板；运行 `bun run cf:typegen` 更新 `worker-configuration.d.ts`，不要手改生成类型。私有部署配置按目标环境核对，不复制真实资源标识到公开文件。
 
 ## 提交与 Pull Request 规范
 
-每次改动完成后都必须立即执行一次 `git commit`，不要把多个不相关改动混入同一提交。提交信息必须符合业务开发最佳实践，推荐使用 `type(scope): summary`，例如 `feat(email): persist inbound message metadata`、`fix(api): handle missing D1 binding`、`docs(repo): update contributor rules`。PR 需说明变更目的、影响范围、验证命令；涉及 UI 时附截图，涉及 D1 或 Wrangler 绑定时写清迁移和配置变更。
+- 开工先检查 cwd、分支、上游、工作树和已有改动；保留无关用户改动，不擅自清理、reset、stash、rebase 或 force-push。
+- 除非用户明确要求不提交，当前任务的相关改动完成验证后创建原子提交，使用 `type(scope): summary`。不要为每次文件编辑立即提交，不创建空提交，不混入无关或私有文件；验证失败或无法安全提交时报告原因。
+- 本地提交、push、PR、Preview 与生产发布分别处理。push/PR 按用户授权执行；要求观察 CI 时跟踪推送的确切 SHA 到所需任务的终态，不能以 push 成功代替 CI 成功。
+- PR 写清问题、最终行为、影响和验证；UI 附截图，D1/绑定写明迁移与配置。GitHub CLI 的正文默认先写受引号保护的 heredoc 临时文件，再传 `--body-file`。
+- 更新公开行为或操作契约时同步相应开发、Preview、部署/API 和中英文说明；历史验收记录保留当时版本与证据，不改写成当前结论。大段验收历史放专门记录，不堆入 README 或本文件。
 
 ## 安全与配置提示
 
 不要提交真实的 Cloudflare 凭据、`database_id`、生产桶名称或密钥。修改 `wrangler.toml`、`schema.sql`、邮件接收逻辑时，保持 D1、R2 与 API 字段定义一致。
+
+私有 `.env`、`.dev.vars` 和部署配置保持 Git 忽略，密钥文件权限使用 `0600`。命令输出、截图和共享记录不得暴露密码、Token、Cookie、邮件正文或完整收件地址。未经明确授权不进行生产数据清理、恢复、资源删除、密钥轮换或邮件路由变更。
+
+给用户访问的开发服务优先监听 `::` 并用 `ss -lntp` 核对 IPv4/IPv6；提供 `http://oc-de-fra-1.knowsky.uk:<port>`，不要提供只能在本机打开的 localhost 地址。无人使用的临时验证服务及时停止。
+
+交付时区分本地/mock、CI、Preview、生产部署、远程迁移和真实供应商证据，报告已验证项、未验证项及提交 SHA，不把构建或健康检查成功扩展为真实收发信成功。

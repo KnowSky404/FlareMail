@@ -29,7 +29,7 @@ git pull --ff-only origin main
 test -z "$(git status --porcelain=v1)"
 RELEASE_SHA="$(git rev-parse HEAD)"
 git merge-base --is-ancestor "$RELEASE_SHA" origin/main
-bun --version                         # must print 1.4.0
+bun --version                         # record the newest locally installed stable version; satisfy engines.bun
 bun install --frozen-lockfile
 ```
 
@@ -206,20 +206,24 @@ existence of a run.
 
 ### 2. Bun and Wrangler versions
 
-`package.json` declares `packageManager: "bun@1.4.0"` and an engine minimum of
-`>=1.4.0`. `scripts/release-preflight.ts` additionally requires the running
-Bun version to equal the exact `packageManager` version. Use Bun 1.4.0 for a
-production release; do not infer an acceptable version from the looser engine
-range and do not upgrade Bun or Wrangler as part of deployment.
+Use the newest stable Bun already installed locally, satisfying `engines.bun`
+in `package.json` (currently `>=1.4.0`). `packageManager` records the reproducible
+CI baseline (currently `bun@1.4.2`), and CI reads that field directly.
+`scripts/release-preflight.ts` accepts supported stable runtimes without
+requiring equality with the CI baseline. Record the actual local version;
+do not automatically install, upgrade or downgrade Bun during deployment.
 
 ```bash
 bun --version
 bun install --frozen-lockfile
 ```
 
-The current lockfile resolves the `^4.125.0` Wrangler development dependency
-to `4.125.0`. The deploy and remote migration scripts run the repository's
-configured Wrangler through Bun; do not silently substitute a global version.
+Use the Wrangler version recorded in `package.json` and `bun.lock` for build
+and local validation. Remote commands may call a global Wrangler, so verify
+its version and target before use; do not assume it matches the project CLI.
+Native Preview requires a newer Wrangler as documented in
+[docs/PREVIEW.md](./docs/PREVIEW.md); this exception does not silently upgrade
+project dependencies or change the production deployment workflow.
 
 ### 3. Cloudflare authentication
 
@@ -685,8 +689,8 @@ bun run deploy:dry-run
 git diff --check
 ```
 
-The preflight is read-only and checks the clean Git worktree, exact Bun
-version, local-safe/public config boundaries, bindings, migration order,
+The preflight is read-only and checks the clean Git worktree, stable Bun
+runtime compatibility, local-safe/public config boundaries, bindings, migration order,
 schema version and snapshot, FTS/cleanup contracts, type generation and build
 commands. `deploy:dry-run` builds a temporary config from public local
 settings; it does not read or publish the private production config.
@@ -894,7 +898,12 @@ For every later release:
 
 1. Lock a clean `main` checkout and record the immutable SHA and exact CI
    result.
-2. Confirm Bun 1.4.0, run the release gates and review the private config.
+2. Record the newest locally installed stable Bun satisfying `engines.bun`,
+   run the local release gates and review the private config. Complete an
+   authorized Preview deployment and acceptance for this commit before the
+   separately authorized production release; record an alternative validation
+   path for incidents or handlers that Preview cannot cover. Preview shares
+   production D1/R2, so ordinary acceptance is read-only.
 3. Record the D1 target and a current Time Travel bookmark/timestamp before
    any migration.
 4. Review and apply new migrations in order with `bun run db:migrate:remote`.

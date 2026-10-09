@@ -2,13 +2,30 @@
 
 使用 Cloudflare 原生 Worker Previews 部署，要求 Wrangler >= 4.135.0。
 已有较新全局 Wrangler 时可直接使用全局命令。仓库本地构建、迁移与测试继续遵循
-`package.json` 的 Bun 和 Wrangler 版本；不要使用本地旧版 Wrangler 执行新 Preview 命令。
+本机最新已安装的 Bun 稳定版（满足 `engines.bun` 最低版本）及项目锁定的 Wrangler；
+`packageManager` 仅记录 CI 基准，不强制本地 Bun 与之完全相等。
+不要使用本地旧版 Wrangler 执行新 Preview 命令。
+
+## 默认验收顺序
+
+先在隔离本地数据和 fake/demo provider 上完成实现、测试、检查和构建，提交后
+再在已授权的范围内发布远程 Preview；生产发布另需明确授权。普通开发或文档
+修改不自动部署。`bun run preview` 是本地 Worker，`wrangler preview` 才发布
+原生远程 Preview；版本预览用于需要复用生产 secrets 检查某个上传版本的场景。
+`bun run deploy:dry-run` 只检查公开本地配置的打包，不能代替目标 Preview 的
+绑定、变量和 secrets 核对。
 
 本项目采用**共用生产数据、独立发布代码**的 Preview 模式。`previews.d1_databases`
 的 `database_id` 与生产 `DB` 相同，`previews.r2_buckets` 的 `bucket_name` 与生产
 `BUCKET` 相同。邮件、域名、地址、Owner 账号及持久化设置共用；在 Preview 中
 保存、删除或配置规则会直接影响生产。新代码可单独发布到 Preview，无需同时
 发布生产代码。
+
+默认远程验收使用只读页面/API。保存、删除、域名同步、真实发信/Telegram 及
+路由变更需要覆盖相应生产影响的用户授权；不要运行自动化 fixture 或初始化
+Owner。需要写入测试时优先回到隔离本地环境，或使用另行授权的独立测试资源。
+发布后记录提交 SHA、URL、部署/版本 ID、目标绑定及验证结果，核对生产流量未
+切换；`/api/health` 只证明存活，已认证的 `/api/readiness` 才检查就绪状态。
 
 1. 将 `wrangler.preview.deploy.toml.example` 复制为被忽略的
    `wrangler.preview.deploy.toml`，从当前生产绑定填写 D1/R2 标识及账号 ID，
@@ -18,7 +35,7 @@
 2. 默认使用 Cloudflare 返回的
    `https://<preview-name>-<worker>.<account-subdomain>.workers.dev`，
    并将 `APP_BASE_URL` 设置为该地址。不创建 Preview 自定义域名关联。
-3. 检查共享数据库的 schema 版本与待发布代码兼容。此次切换无需 migration。
+3. 检查共享数据库的 schema 版本与待发布代码兼容。
    后续 schema 变更同时影响两套代码，必须按远程迁移授权流程核验并保证当前
    生产版本兼容；不要为发布 Preview 自动迁移或重置数据库。
 4. 使用现有生产 Owner 账号登录，不初始化或覆盖 Owner，不导入原临时 Preview

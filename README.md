@@ -21,7 +21,7 @@ A personal, self-hosted mail workspace on Cloudflare Workers. Manage multiple do
 
 For self-hosting, follow the [deployment guide](./DEPLOY.md). You will need a Cloudflare account, a domain configured for Email Routing, and Resend for outbound mail.
 
-For local development, use the [development guide](./docs/DEVELOPMENT.md). The repository pins Bun **1.4.0** and includes a local demo mail provider.
+For local development, use the [development guide](./docs/DEVELOPMENT.md). Use the newest stable Bun already installed locally (minimum **1.4.0**); CI uses the version recorded in `package.json`. A local demo mail provider is included.
 
 Mail addresses are managed resources under one workspace Owner; login credentials and profile email are configured separately.
 

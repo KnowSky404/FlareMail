@@ -26,8 +26,10 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] The exact SHA's required GitHub Actions jobs are completed and green.
 - [ ] No gate depends on a historical RC branch, old base SHA, closed PR, or
   feature-branch relationship.
-- [ ] The checkout uses Bun `1.4.0`, the exact `packageManager` version in
-  `package.json`.
+- [ ] The checkout uses the newest locally installed stable Bun satisfying
+  `engines.bun`; its actual version is recorded. CI reads its reproducible
+  baseline from `packageManager` in `package.json`. Local Bun need not equal
+  that baseline, and release preflight accepts supported stable versions.
 - [ ] `bun.lock` is committed and `bun install --frozen-lockfile` succeeds.
 - [ ] `bun run audit:dependencies` reports no high-severity dependency issue.
 
@@ -163,6 +165,13 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] Local, mock, browser and CI evidence is labeled as such; none is claimed
   as proof of Cloudflare production capacity, Resend delivery, Email Routing,
   production webhook registration or real-device Safari.
+- [ ] The same commit passed local verification before the authorized remote
+  Preview deployment. Its URL, deployment/version ID and relevant acceptance
+  evidence are recorded, along with confirmation that Preview publication did
+  not switch production traffic. If this is a first deployment, incident, or
+  handler change that Preview cannot cover, the alternative verification path
+  is documented. Shared Preview writes require authorization for their
+  production data effects; production publication is separately authorized.
 
 ## First deployment or production runtime changes
 

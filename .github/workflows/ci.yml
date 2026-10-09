@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - name: dependency security audit
         run: bun run audit:dependencies
@@ -52,7 +52,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.0
+          bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium webkit firefox
       - name: Chromium E2E smoke with isolated synthetic fixtures
