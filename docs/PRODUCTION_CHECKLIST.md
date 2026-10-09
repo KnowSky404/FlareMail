@@ -205,9 +205,10 @@ recipient addresses or full R2 keys into shared evidence.
   Email Routing → Enable/Get started → verify the zone's current DNS
   ```
 
-- [ ] The exact actual domain-to-zone/Worker mapping is recorded with
+- [ ] The exact actual domain-to-zone/Worker mapping is recorded by authenticated
+  Cloudflare configuration sync, verified browser enrollment, or
   `bun run mail:domain:configure -- --remote` after separate approval. The
-  application identity manager created or explicitly imported each exact
+  application identity manager created or imported each exact
   literal `to` Worker rule; it did not create a destination-address forwarding
   rule or overwrite a conflicting route.
 - [ ] The receiving address is active and receive-enabled. Its rule and any

@@ -113,6 +113,9 @@
   let quickCreateNotice = $state('');
   let quickCreateNeedsAttention = $state(false);
   let loading = $state(true);
+  let syncing = $state(false);
+  let syncNotice = $state('');
+  let syncError = $state('');
   let pendingAction = $state('');
   let errorMessage = $state('');
   let notice = $state('');
@@ -156,16 +159,33 @@
     if (requestedLocalPart) untrack(() => { localPart = requestedLocalPart; });
   });
 
-  async function load() {
+  async function load(discover = false) {
     loading = true;
     errorMessage = '';
     try {
-      const loaded = await requestJson<{
+      type Identities = {
         domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[];
         addresses: MailAddress[];
         providerConfiguration: { cloudflare: boolean; resend: boolean };
         domainOnboarding?: typeof onboarding;
-      }>('/api/workspace/mail-identities');
+      };
+      let loaded = await requestJson<Identities>('/api/workspace/mail-identities');
+      if (discover && loaded.domainOnboarding?.available) {
+        syncing = true;
+        syncError = '';
+        syncNotice = '';
+        try {
+          const result = await requestJson<{ sync: { domainsCreated: number; addressesCreated: number;
+            warnings: Array<{ domainName: string; code: string }> } }>('/api/workspace/mail-identities/sync', { method: 'POST' });
+          loaded = await requestJson<Identities>('/api/workspace/mail-identities');
+          syncNotice = t('settings.providerSyncComplete', { domains: result.sync.domainsCreated, addresses: result.sync.addressesCreated });
+          if (result.sync.warnings.length) syncError = t('settings.providerSyncPartial', {
+            domains: result.sync.warnings.map((warning) => warning.domainName).join(', ')
+          });
+        } catch (error) {
+          syncError = error instanceof Error ? error.message : t('settings.providerSyncFailed');
+        } finally { syncing = false; }
+      }
       onboarding = loaded.domainOnboarding ?? { available: false, workerName: null, canManageRouting: false };
       domains = loaded.domains.map((domain) => ({
         ...domain,
@@ -212,7 +232,7 @@
   }
 
   onMount(() => {
-    void load();
+    void load(true);
   });
 
   async function domainCreated(domainId: string) {
@@ -628,14 +648,25 @@
 <svelte:window onkeydown={handleQuickCreateKeydown} />
 
 <Panel class="mx-auto max-w-[72rem]" title={view === 'domains' ? t('settings.domainDashboard') : t('settings.mailIdentities')} description={view === 'domains' ? t('settings.domainDashboardDescription') : t('settings.mailIdentitiesDescription')}>
+  <div class="provider-sync">
+    <p class="muted">{t('settings.providerSyncDescription')}</p>
+    <Button variant="secondary" loading={syncing} disabled={loading || Boolean(pendingAction)} onclick={() => void load(true)}><RefreshCw size={14} aria-hidden="true" />{t('settings.syncCloudflare')}</Button>
+  </div>
+  {#if syncNotice}<p class="message success" role="status">{syncNotice}</p>{/if}
+  {#if syncError}<p class="message attention" role="alert">{syncError}</p>{/if}
   {#if errorMessage}<p class="message error" role="alert">{errorMessage}</p>{/if}
   {#if notice}<p class="message" class:success={!noticeNeedsAttention} class:attention={noticeNeedsAttention} role="status" aria-live="polite">{notice}</p>{/if}
 
   {#if loading}
     <p class="muted" role="status">{t('common.loading')}</p>
   {:else}
-    {#if view === 'domains' || domains.length === 0}
+    {#if domains.length === 0}
       <MailDomainSetup available={onboarding.available} workerName={onboarding.workerName} onCreated={domainCreated} onRefresh={load} />
+    {:else if view === 'domains'}
+      <details class="manual-domain-setup">
+        <summary>{t('settings.addMailDomainManually')}</summary>
+        <MailDomainSetup available={onboarding.available} workerName={onboarding.workerName} onCreated={domainCreated} onRefresh={load} />
+      </details>
     {/if}
     {#if !onboarding.canManageRouting}
       <p class="setup-hint" role="status">{t('settings.routingManagementMissing')}</p>
@@ -888,6 +919,10 @@
 {/if}
 
 <style>
+  .provider-sync { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .provider-sync p { flex: 1; min-width: 12rem; margin: 0; }
+  .manual-domain-setup { margin-bottom: 1rem; }
+  .manual-domain-setup summary { cursor: pointer; margin-bottom: 0.75rem; }
   .identity-settings-form { display: grid; gap: 0.75rem; }
   .message { margin: 0 0 var(--space-3); font-size: 13px; }
   .error, .safe-error { color: var(--fm-danger); }

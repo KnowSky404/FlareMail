@@ -21,6 +21,23 @@ const response = (result: unknown, resultInfo?: unknown) => new Response(JSON.st
 }), { status: 200, headers: { 'content-type': 'application/json' } });
 
 describe('Cloudflare Email Routing API client', () => {
+  test('discovers all scoped account zones and rejects foreign account results or incomplete pagination', async () => {
+    const calls: string[] = [];
+    const client = new CloudflareEmailRoutingClient({ token: 'test-token', fetcher: async (input, init) => {
+      const url = new URL(String(input)); calls.push(url.toString());
+      expect(init?.method).toBe('GET');
+      expect(url.searchParams.get('account.id')).toBe('account-1');
+      expect(url.searchParams.get('per_page')).toBe('50');
+      return response([{ id: 'zone-' + url.searchParams.get('page'), name: 'example.test', account: { id: 'account-1' } }], { total_pages: 2 });
+    } });
+    expect((await client.listZones('account-1')).map((zone) => zone.id)).toEqual(['zone-1', 'zone-2']);
+    expect(calls.length).toBe(2);
+    await expect(new CloudflareEmailRoutingClient({ token: 'test-token', maxRulePages: 1,
+      fetcher: async () => response([], { total_pages: 2 }) }).listZones('account-1')).rejects.toMatchObject({ code: 'too_many_zones' });
+    await expect(new CloudflareEmailRoutingClient({ token: 'test-token', fetcher: async () =>
+      response([{ id: 'foreign', name: 'example.test', account: { id: 'other-account' } }])
+    }).listZones('account-1')).rejects.toMatchObject({ code: 'invalid_response' });
+  });
   test('uses the fixed API origin, a bearer token and a zone-scoped lookup', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const client = new CloudflareEmailRoutingClient({

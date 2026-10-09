@@ -91,6 +91,20 @@ account, API origin, or Cloudflare endpoint. The operator command
 never return a token or key; `cloudflareManagement` separately reports whether
 the management credential is present.
 
+- `POST /api/workspace/mail-identities/sync` discovers accessible zones in the
+  deployment account and imports existing literal recipient rules targeting
+  the configured Worker. It requires the authenticated workspace Owner and
+  Zone Read / Email Routing Rules Read permissions. The UI invokes it on entry
+  and offers a retry button; GET remains a database read. Provider requests are
+  read-only, paginated and bounded. Other Worker/forward/drop rules, malformed
+  recipients and competing exact rules are skipped. Worker catch-all imports
+  a domain without inventing addresses; a new domain collects unknown recipients
+  only when its catch-all is verified to target this Worker. Existing settings,
+  tombstones and operations are preserved. Imported addresses are never granted
+  send permission or remote rule ownership. Returns `sync.domainsCreated`,
+  `addressesCreated`, `skippedRules` and per-domain `warnings` with safe error
+  categories. Provider failures retain local configuration. This writes shared
+  D1 identity metadata, without rewriting historical mail or remote routing.
 - `POST /api/workspace/mail-identities/domains` accepts only `domainName` and
   `zoneId`. It requires Zone Read permission, checks the zone ID, domain suffix
   boundary and deployment account, and enrolls with unknown recipients rejected.

@@ -12,7 +12,8 @@ export type CloudflareEmailRoutingErrorCode =
   | 'not_found'
   | 'invalid_response'
   | 'upstream_failed'
-  | 'too_many_rules';
+  | 'too_many_rules'
+  | 'too_many_zones';
 
 export class CloudflareEmailRoutingError extends Error {
   constructor(
@@ -242,6 +243,27 @@ export class CloudflareEmailRoutingClient {
     }
     const accountId = isRecord(result.account) && typeof result.account.id === 'string' ? result.account.id : null;
     return { id: result.id, name: result.name, accountId };
+  }
+
+  async listZones(accountId: string): Promise<CloudflareZoneInfo[]> {
+    const zones: CloudflareZoneInfo[] = [];
+    for (let page = 1; page <= this.maxRulePages; page += 1) {
+      const query = new URLSearchParams({ 'account.id': accountId, page: String(page), per_page: '50' });
+      const envelope = parseApiEnvelope(await this.request('/zones?' + query));
+      if (!Array.isArray(envelope.result)) throw new CloudflareEmailRoutingError('invalid_response');
+      for (const row of envelope.result) {
+        if (!isRecord(row) || typeof row.id !== 'string' || typeof row.name !== 'string' ||
+          !isRecord(row.account) || row.account.id !== accountId) {
+          throw new CloudflareEmailRoutingError('invalid_response');
+        }
+        zones.push({ id: row.id, name: row.name, accountId });
+      }
+      const info = envelope.result_info;
+      const pages = isRecord(info) && typeof info.total_pages === 'number' && Number.isInteger(info.total_pages)
+        ? info.total_pages : null;
+      if (pages !== null ? page >= pages : envelope.result.length < 50) return zones;
+    }
+    throw new CloudflareEmailRoutingError('too_many_zones');
   }
 
   async listRules(zoneId: string): Promise<CloudflareEmailRoutingRule[]> {

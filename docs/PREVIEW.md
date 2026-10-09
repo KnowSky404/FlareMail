@@ -102,7 +102,18 @@ wrangler preview secret put CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN --name mail-iden
 所需 secrets 的受限文件和 `--secrets-file`，并核对部署后的 secret 名称；当前
 命令采用 `--ignore-base-config`，不从 Previews Base 自动补入 secrets。
 
-网页中的“添加邮件域名”核验域名及所属 Zone，不自动修改 MX/SPF/DKIM 等 DNS。
+进入“域名”或“邮箱地址”时，页面先读取本地配置，再通过已登录的
+`POST /api/workspace/mail-identities/sync` 自动发现 Token 可访问的本账号 Zone。
+同步识别指向配置收信 Worker 的精确邮箱规则及 catch-all，导入对应域名与地址；
+无需手动填写已有配置的 Zone ID。也可以点击“同步 Cloudflare 配置”重新发现。
+属于其他 Worker、转发目标、重复或无效的规则不会导入，catch-all 不会虚构邮箱地址。
+Cloudflare 接口只执行读取，不创建/修改/删除路由或 DNS。导入的规则标记为
+`imported`，不取得规则删除权限，也不会自动启用发信。重复同步保留已有名称、
+签名、启停、删除及操作状态，不恢复已删除地址。同步失败时仍展示本地配置和重试提示。
+新接入且确认指向本应用的 catch-all 域名初始采用未知地址收集；既有域名的
+未知地址策略保持不变。此同步写入的是共用 D1 的身份记录，两种环境都能看到。
+
+“手动接入其他域名”用于尚未发现的配置；其中“添加邮件域名”核验域名及所属 Zone，不自动修改 MX/SPF/DKIM 等 DNS。
 接入后检查域名状态，再创建邮箱地址。缺少 Token 或部署映射时，页面会显示
 配置提示；已有域名/地址的本地设置仍可以编辑。域名设置可启停域名及切换未知
 地址策略，地址可编辑名称和签名；已有的地址启停、删除、恢复及发信操作继续可用。

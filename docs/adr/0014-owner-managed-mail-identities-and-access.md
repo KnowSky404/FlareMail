@@ -90,7 +90,10 @@ saved ID and reconciles the result before reporting completion. Cloudflare's
 documented DELETE route is ID-based and exposes no conditional version
 precondition; this narrows but cannot eliminate a change made between the
 final read and DELETE. A matching existing Worker rule can be explicitly
-imported; imported and conflicting rules are preserved by normal delete and
+imported; the authenticated configuration sync also discovers existing zones
+and imports exact rules targeting the deployment Worker without remote writes.
+Repeated discovery preserves local settings, tombstones and operation leases.
+Imported and conflicting rules are preserved by normal delete and
 retry operations.
 
 Create, check, enable, disable, delete, restore, and retry share the existing

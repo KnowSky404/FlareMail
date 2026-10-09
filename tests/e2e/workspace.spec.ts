@@ -3111,6 +3111,9 @@ test('connects the first mail domain and edits domain and address settings', asy
       return fulfill({ ...original.data, domains: domain ? [domain] : [], addresses: address ? [address] : [],
         domainOnboarding: { available: true, workerName: 'flaremail', canManageRouting: true } });
     }
+    if (path.endsWith('/sync') && request.method() === 'POST') {
+      return fulfill({ sync: { domainsCreated: 0, addressesCreated: 0, warnings: [] } });
+    }
     if (path.endsWith('/domains') && request.method() === 'POST') {
       enrollmentCount++;
       expect(body).toEqual({ domainName: 'first.example.test', zoneId: 'a'.repeat(32) });
@@ -3200,5 +3203,57 @@ test('shows an actionable domain setup state when provider permissions are missi
   await assertNoHorizontalOverflow(page);
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
   await page.screenshot({ path: `/tmp/flaremail-identity-setup-${testInfo.project.name}.png` });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('automatically discovers existing Cloudflare domains and addresses on entry and supports repeat sync', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const original = await (await page.request.get('/api/workspace/mail-identities')).json();
+  const domain = { ...original.data.domains[0], domain_name: 'synced.example.test', worker_name: 'flaremail' };
+  const address = { ...original.data.addresses[0], email: 'existing@synced.example.test', domain_id: domain.id,
+    send_enabled: 0, routing_state: 'imported', routing_owner: 'imported' };
+  let syncCount = 0;
+  let partial = false;
+  await page.route(/\/api\/workspace\/mail-identities(?:\/.*)?$/u, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('/sync') && request.method() === 'POST') {
+      syncCount++;
+      return route.fulfill({ json: { ok: true, data: { sync: {
+        domainsCreated: syncCount === 1 ? 1 : 0, addressesCreated: syncCount === 1 ? 1 : 0,
+        warnings: partial ? [{ domainName: 'another.example.test', code: 'permission_denied' }] : []
+      } } } });
+    }
+    if (path === '/api/workspace/mail-identities' && request.method() === 'GET') {
+      return route.fulfill({ json: { ok: true, data: { ...original.data,
+        domains: syncCount ? [domain] : [], addresses: syncCount ? [address] : [],
+        domainOnboarding: { available: true, workerName: 'flaremail', canManageRouting: true }
+      } } });
+    }
+    return route.continue();
+  });
+  await page.goto('/?folder=settings&view=domains');
+  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  await expect(page.locator('.domain-card')).toContainText('synced.example.test');
+  await expect(page.getByText('同步完成：新增 1 个域名、1 个邮箱地址。', { exact: true })).toBeVisible();
+  expect(syncCount).toBe(1);
+  await expect(page.getByRole('textbox', { name: 'Cloudflare Zone ID', exact: true })).toBeHidden();
+  await page.locator('.manual-domain-setup summary').click();
+  await expect(page.getByRole('textbox', { name: 'Cloudflare Zone ID', exact: true })).toBeVisible();
+  await page.locator('.manual-domain-setup summary').click();
+  await page.screenshot({ path: `/tmp/flaremail-cloudflare-sync-domains-${testInfo.project.name}.png` });
+  await assertNoHorizontalOverflow(page);
+  await page.goto('/?folder=settings&view=addresses');
+  await expect(page.locator('.address-list')).toContainText('existing@synced.example.test');
+  await expect(page.getByText('同步完成：新增 0 个域名、0 个邮箱地址。', { exact: true })).toBeVisible();
+  expect(syncCount).toBe(2);
+  partial = true;
+  await page.getByRole('button', { name: '同步 Cloudflare 配置', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('another.example.test');
+  await expect(page.locator('.address-list')).toContainText('existing@synced.example.test');
+  expect(syncCount).toBe(3);
+  await assertNoHorizontalOverflow(page);
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await page.screenshot({ path: `/tmp/flaremail-cloudflare-sync-addresses-${testInfo.project.name}.png` });
   await assertNoConsoleErrors(consoleErrors);
 });
