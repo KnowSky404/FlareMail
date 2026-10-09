@@ -27,7 +27,7 @@
 
 | 要求 | 实现与验证入口 | 结论与边界 |
 | --- | --- | --- |
-| 架构审查、设计规范与使用文档 | 本文现状表、`DESIGN.md`、`README.md` 的 UI 说明 | 已交付；本次将规范中的浅色 muted 颜色同步为实际的 `#5d6978` |
+| 架构审查、设计规范与使用文档 | 本文现状表、`DESIGN.md`、`docs/USER_GUIDE.md` 的 UI 说明 | 已交付；本次将规范中的浅色 muted 颜色同步为实际的 `#5d6978` |
 | 统一组件、主题与布局 | `src/lib/components/ui/`、`shell/`、`src/app.css`；`workspace.spec.ts` 的主题、头像、侧栏持久化用例 | 已实现；卡片复用 Panel，工具栏组合共享按钮，不另引入 UI 框架 |
 | 邮箱列表、选择与批量操作 | `tests/e2e/workspace.spec.ts` 的列表语义、全局星标、混合选择及跨文件夹批量用例 | 已有本地浏览器证据；草稿混选只开放适用操作，批量目标为当前已选邮件 |
 | 标签持久化 | `migrations/0027_persistent_mail_labels.sql`、标签 API 与 CRUD/批量/会话恢复用例 | 创建、重命名、删除、单封及批量应用已实现；未执行生产迁移 |

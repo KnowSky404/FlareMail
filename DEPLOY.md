@@ -950,8 +950,11 @@ canonical; the FTS virtual layer is rebuilt after export/import or restore.
 
 ## Production documentation roles
 
-- `README.md`: project overview, local quick start and links to production
-  documentation.
+- `README.md` / `README.zh-CN.md`: concise English/Chinese project overviews
+  and links to the guides.
+- `docs/README.md`: documentation index with guide languages and roles.
+- `docs/DEVELOPMENT.md`: local setup, Owner bootstrap and verification.
+- `docs/USER_GUIDE.md`: everyday workspace operations.
 - `DEPLOY.md`: this authoritative first-deployment and upgrade procedure.
 - `docs/PRODUCTION_CHECKLIST.md`: checkable release gate for any future release.
 - `docs/DEPLOYMENT.md`: maintenance CLI, search/FTS export, cleanup and
