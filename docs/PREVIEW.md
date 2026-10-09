@@ -15,8 +15,9 @@
    核对线上实际绑定；真实资源标识不得提交。域名接入的
    `MAIL_IDENTITY_WORKER_NAME` 指向生产收信 Worker。复制生产非敏感变量，
    保留 Preview 专用的 `APP_ENV`、`APP_BASE_URL`、`APP_VERSION`。
-2. Preview 专用域名配置为 `enabled=false`、`previews_enabled=true`。
-   地址格式是 `<preview-name>.<preview-domain>`，不是 Preview 域名本身。
+2. 默认使用 Cloudflare 返回的
+   `https://<preview-name>-<worker>.<account-subdomain>.workers.dev`，
+   并将 `APP_BASE_URL` 设置为该地址。不创建 Preview 自定义域名关联。
 3. 检查共享数据库的 schema 版本与待发布代码兼容。此次切换无需 migration。
    后续 schema 变更同时影响两套代码，必须按远程迁移授权流程核验并保证当前
    生产版本兼容；不要为发布 Preview 自动迁移或重置数据库。
@@ -62,13 +63,11 @@
    入口验证，核对新版本的 D1/R2、secret **名称**、Telegram 开关和生产 deployment
    ID。不执行 `wrangler versions deploy`、`wrangler deploy` 或 `wrangler triggers deploy`。
 
-两个入口分别核验。原生 Preview 的资源元数据 `urls` 应包含已配置的自定义
-域名入口，并且 DNS/HTTPS、登录页与健康接口均可访问；`workers.dev` 正常不代表
-自定义入口正常。若入口丢失，先只读核对 Worker 的 Custom Domains 关联：
-Preview 专用域名应为 `enabled=false`、`previews_enabled=true`。恢复已配置入口时，
-先检查域名 changeset 只新增该 Preview 域名、没有删除/冲突及生产域名修改，
-再恢复关联，保留其他域名、生产 deployment 和流量。不通过发布 Preview 代码到
-生产来修复入口；域名恢复只涉及 Preview 网站入口，不调整邮件 MX 或邮件路由。
+两个入口分别核验。原生 Preview 的资源元数据 `urls` 应包含默认的 `workers.dev`
+入口，HTTPS、登录页与健康接口均应可访问。此前的 Preview 自定义域名已按用户
+要求移除，不在后续发布中自动恢复。移除旧关联时先核对域名 changeset 只删除目标
+Preview 域名，没有新增/冲突及生产域名修改；保留生产域名、其他域名和流量。
+此清理只涉及 Preview 网站入口，不调整邮件 MX 或邮件路由。
 
 本机项目根目录的 `.env` 用于保存有明文来源的应用密钥，权限必须为 `0600`，
 且已被 Git 忽略。当前保存 `CLOUDFLARE_EMAIL_ROUTING_TOKEN`；后续对话和版本
@@ -85,8 +84,8 @@ Preview 专用域名应为 `enabled=false`、`previews_enabled=true`。恢复已
 核对生产配置时，先读取生产 deployment 指向的 version，再检查该 version 的
 bindings；Worker settings 可能显示最新上传的预览配置，不代表生产流量配置。
 
-Version URL 使用 `workers.dev` 地址。已有的 `<preview-name>.<preview-domain>`
-仍对应原生 Worker Preview，不会自动切换到此版本，也不会因此取得生产密钥。
+Version URL 与原生 Worker Preview 都使用各自的 `workers.dev` 地址；原生 Preview
+不会自动切换到 Version URL 的版本，也不会因此取得生产密钥。
 两种入口均使用生产 Owner，但需要分别登录。生产密钥轮换后需重新上传版本，
 既有预览不会自动同步新值。Email Routing 和 Cron 仍执行生产部署的代码。
 

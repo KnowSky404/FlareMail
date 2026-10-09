@@ -20,7 +20,7 @@ ALLOW_FAKE_SERVICES = "false"
 AUTO_REPLY_ENABLED = "false"
 INBOUND_NOTIFICATION_ENABLED = "false"
 TELEGRAM_ENABLED = "false"
-APP_BASE_URL = "https://mail-identities.previews.example.com"
+APP_BASE_URL = "https://mail-identities-flaremail.example.workers.dev"
 APP_VERSION = "preview+replace-with-commit"
 # Shared data uses the production receiving Worker and its account.
 # Email Routing continues to execute production's handler code.

@@ -33,8 +33,9 @@ recipient addresses or full R2 keys into shared evidence.
 
 ## Target, configuration and invariants
 
-- [ ] The target is explicitly recorded as production; no Preview command
-  resolves to production D1, R2, Worker, Resend credentials or webhook.
+- [ ] The target is explicitly recorded as production and uses production
+  application variables. Preview deliberately shares D1/R2 and the Owner under
+  [PREVIEW.md](./PREVIEW.md), but its code release does not switch production traffic.
 - [ ] The private `wrangler.deploy.toml` was created from
   `wrangler.deploy.toml.example` and `git check-ignore wrangler.deploy.toml`
   confirms it is ignored.
@@ -122,7 +123,7 @@ recipient addresses or full R2 keys into shared evidence.
   implied by local plan/apply/verify evidence.
 
 - [ ] The checkout's latest migration filename and schema version are recorded
-  (currently migrations `0001` through `0027` and schema version `27`); the
+  (currently migrations `0001` through `0028` and schema version `28`); the
   repository's `schema-version.ts` and preflight output were checked rather
   than relying on an old number.
 - [ ] Every unapplied migration is approved and applied in numeric order:
