@@ -33,7 +33,8 @@
 3. 区分 `bun run preview`（本地 Worker）、`wrangler preview`（原生远程 Preview）和 `wrangler versions upload`（版本预览）。原生 Preview 是默认远程验收方式；需要复用生产既有 secrets 检查上传版本时，按指南使用版本预览。不得用 `wrangler deploy` 代替 Preview 发布，也不得擅自执行 `versions deploy` 或 `triggers deploy`。
 4. 当前 Preview 有意共用生产 D1/R2 和 Owner，发布代码不切换生产流量，但写入会影响生产数据。默认只读验收；写入、真实邮件/Telegram、远程迁移或路由/DNS 变更必须在用户授权范围内。已明确授权的同一范围无需重复确认。不要为发布 Preview 初始化 Owner、重置数据库或自动创建/删除云资源。
 5. Preview 发布后记录提交 SHA、URL、部署/版本 ID，核对登录、相关页面/API、绑定和生产流量指向。`/api/health` 只证明存活；数据库/绑定就绪另查已认证的 `/api/readiness`。Preview HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
-6. 生产发布是后续独立步骤，需要明确生产授权；按 [生产清单](docs/PRODUCTION_CHECKLIST.md) 核对同一提交的 CI、迁移兼容性及回退边界。原则上先保留对应 Preview 验收证据；首次部署、事件处理或 Preview 无法覆盖的 handler 变更需说明替代验证路径。
+6. 生产发布是后续独立步骤，需要明确生产授权；按 [生产清单](docs/PRODUCTION_CHECKLIST.md) 核对同一提交的本地验证、依赖审计、迁移兼容性及回退边界。原则上先保留对应 Preview 验收证据；首次部署、事件处理或 Preview 无法覆盖的 handler 变更需说明替代验证路径。
+7. GitHub Actions 仅在发布 Release 或手动触发时扫描依赖安全，普通 push/PR 不触发。测试、浏览器 QA、构建和部署在本机执行，仍需按当前提交保留验证证据。发版后触发的扫描不能代替生产部署前的本地依赖审计。
 
 ## 编码风格与命名约定
 
@@ -43,7 +44,7 @@
 
 - 代码、测试或运行配置改动提交前运行 `bun run test`、`bun run check`、`bun run build`。纯文档/约束改动检查差异、命令和链接即可；若同时修改校验脚本或 CI，仍执行代码门禁。不要重复运行已经通过且不受后续改动影响的检查。
 - 测试与目标模块相邻，使用 `*.test.ts` 命名，覆盖行为和回归边界，避免仅复制实现的断言。接口变更验证实际涉及的接口及认证/错误路径，不以健康接口代替业务验收。
-- 浏览器交互变更运行相关 Chromium 桌面、手机和窄屏 QA；键盘、弹层、布局和可访问性变更补充相关 a11y 及 WebKit/Firefox 验证。发布时遵循 CI 和生产清单。保留必要截图；Linux WebKit 不等于真实 iOS/Safari，环境缺失和跳过项需如实报告。
+- 浏览器交互变更运行相关 Chromium 桌面、手机和窄屏 QA；键盘、弹层、布局和可访问性变更补充相关 a11y 及 WebKit/Firefox 验证。发布时遵循本地门禁和生产清单，另记录已触发的 GitHub 发版安全扫描。保留必要截图；Linux WebKit 不等于真实 iOS/Safari，环境缺失和跳过项需如实报告。
 - `check`、`build`、typegen、dry-run 和浏览器套件会共享 `.svelte-kit/`、`build/` 等状态，串行执行；多个验证进程需独立 worktree 和测试状态目录。不要为通过预检暂存、丢弃或提交他人的未完成改动，可在干净的隔离 worktree 验证目标提交。
 - D1 migration 只追加，不修改已发布文件；同步 `schema.sql`、schema version 与相关类型/契约，同时验证空库、legacy fixture 和快照一致性。远程执行前核对目标、待应用列表、恢复点及当前生产代码兼容性，完成后核对迁移记录和 schema。
 - 绑定或 compatibility date/flags 变更同步相关公开配置/模板；运行 `bun run cf:typegen` 更新 `worker-configuration.d.ts`，不要手改生成类型。私有部署配置按目标环境核对，不复制真实资源标识到公开文件。

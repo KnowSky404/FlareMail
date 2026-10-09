@@ -96,6 +96,31 @@ their production effects. Production publication follows the
 [production checklist](./PRODUCTION_CHECKLIST.md), with Preview evidence or a
 documented alternative when Preview cannot cover the changed handler.
 
+## GitHub release security checks
+
+Ordinary pushes and pull requests do not trigger GitHub Actions. The
+`Release security` workflow runs only when a GitHub Release is published
+(including a prerelease), or when manually dispatched. Creating a draft
+Release or pushing a tag alone does not trigger it.
+
+The workflow checks out the event's immutable SHA, reads the Bun version from
+`package.json`, and runs `bun run audit:dependencies` directly against
+`bun.lock`, without installing project dependencies. High and critical findings
+fail the check. Tests, browser QA, builds, Preview and production deployments
+are local operator steps, following the gates above and the production checklist.
+
+To run the scan before publishing a Release:
+
+```bash
+gh workflow run release-security.yml --ref main
+gh run list --workflow release-security.yml --limit 5
+gh run view <RUN_ID> --json headSha,status,conclusion
+```
+
+Match the run's `headSha` to the intended release commit and wait for its final
+result. A published-Release scan runs after publication; it does not replace
+the local dependency audit required before a production deployment.
+
 ## Repository map
 
 | Path | Responsibility |

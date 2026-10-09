@@ -21,7 +21,7 @@
 
 自托管请按[部署指南](./DEPLOY.md)操作。需要 Cloudflare 账号、已配置 Email Routing 的域名，以及用于发件的 Resend。
 
-本地开发请参阅[开发指南](./docs/DEVELOPMENT.md)。默认使用本机最新已安装的 Bun 稳定版（最低 **1.4.0**）；CI 使用 `package.json` 记录的版本。项目提供本地演示邮件服务。
+本地开发请参阅[开发指南](./docs/DEVELOPMENT.md)。默认使用本机最新已安装的 Bun 稳定版（最低 **1.4.0**）。测试和部署在本机执行；GitHub 仅在发布 Release 或手动触发时扫描依赖安全，使用 `package.json` 记录的 Bun 版本。项目提供本地演示邮件服务。
 
 邮件地址是由同一工作区 Owner 管理的收发资源；登录凭据和资料邮箱单独配置。
 

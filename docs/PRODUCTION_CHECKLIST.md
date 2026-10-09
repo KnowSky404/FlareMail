@@ -23,7 +23,12 @@ recipient addresses or full R2 keys into shared evidence.
   git merge-base --is-ancestor <RELEASE_SHA> origin/main
   ```
 
-- [ ] The exact SHA's required GitHub Actions jobs are completed and green.
+- [ ] Local tests, browser QA, build and release preflight evidence match the
+  exact SHA. Ordinary pushes and PRs do not run GitHub Actions.
+- [ ] Any manually triggered or published-Release dependency scan is recorded
+  with its exact SHA and final result. A published-Release scan is a
+  post-publication check; the local dependency audit remains required before
+  production deployment.
 - [ ] No gate depends on a historical RC branch, old base SHA, closed PR, or
   feature-branch relationship.
 - [ ] The checkout uses the newest locally installed stable Bun satisfying

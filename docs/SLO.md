@@ -63,7 +63,8 @@ unavailable and expose a screen-reader-readable state.
 - External uptime probe: public `/api/health` from outside Cloudflare. It cannot
   replace authenticated mailbox, inbound, outbound, or integrity probes.
 - Operator reports: release preflight, search verify, cleanup backlog,
-  attachment repair, deterministic fixture hashes, and exact-SHA CI.
+  attachment repair, deterministic fixture hashes, exact-SHA local gates, and
+  any GitHub release dependency scan.
 
 ## Preview measurement record
 
@@ -94,7 +95,8 @@ or R2 fields.
 
 ## Release decision
 
-- Pass: all exact-SHA CI gates pass; Preview has no blocker; proposed warning
+- Pass: all exact-SHA local gates pass and any release dependency scan passes;
+  Preview has no blocker; proposed warning
   thresholds are understood; integrity/search/cleanup reports are clean or
   explicitly accepted with bounded remediation; rollback evidence exists.
 - Warn: a proposed latency/backlog threshold is exceeded without correctness or
@@ -102,4 +104,5 @@ or R2 fields.
 - Block: any secret/PII exposure, ownership failure, corrupt attachment served,
   data loss, duplicate send, fail-open auth/config/schema, unsafe cleanup key,
   unexplained search drift, Workers resource failure at the approved limits,
-  failed exact-SHA CI, missing rollback, or unverified required manual gate.
+  failed exact-SHA local gates or release dependency scan, missing rollback,
+  or unverified required manual gate.

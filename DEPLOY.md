@@ -33,8 +33,8 @@ bun --version                         # record the newest locally installed stab
 bun install --frozen-lockfile
 ```
 
-PAUSE: record `RELEASE_SHA`, confirm the matching GitHub Actions checks are
-green, and stop if the worktree is dirty or the SHA is not reachable from
+PAUSE: record `RELEASE_SHA`, retain the matching local verification results,
+and stop if the worktree is dirty or the SHA is not reachable from
 `origin/main`. A release may use a separately approved immutable commit, but
 that SHA must still be recorded and verified as an ancestor of `origin/main`.
 
@@ -198,11 +198,15 @@ $releaseSha = git rev-parse HEAD
 git merge-base --is-ancestor $releaseSha origin/main
 ```
 
-The status command must print nothing. Record the 40-character SHA and check
-the CI results for that exact SHA in GitHub Actions before any remote change.
-If using GitHub CLI, `gh run list --commit <RELEASE_SHA>` is a convenient view;
-the release gate is the actual completed status of every required job, not the
-existence of a run.
+The status command must print nothing. Record the 40-character SHA and the
+local tests, browser QA, build, dependency audit and release-preflight results
+for that exact commit before any remote change. Ordinary pushes and pull
+requests do not run GitHub Actions. GitHub only scans dependency security on
+published Releases or manual dispatch; see the
+[workflow guide](./docs/DEVELOPMENT.md#github-release-security-checks).
+If such a scan is run for the release, record its exact SHA and completed
+result. A scan triggered by publishing a Release is a post-publication check,
+so the local dependency audit remains the pre-deployment gate.
 
 ### 2. Bun and Wrangler versions
 
@@ -898,8 +902,9 @@ suppression event contradicts the result.
 
 For every later release:
 
-1. Lock a clean `main` checkout and record the immutable SHA and exact CI
-   result.
+1. Lock a clean `main` checkout and record the immutable SHA and exact local
+   verification results. Record any manually triggered or published-Release
+   dependency scan separately.
 2. Record the newest locally installed stable Bun satisfying `engines.bun`,
    run the local release gates and review the private config. Complete an
    authorized Preview deployment and acceptance for this commit before the
