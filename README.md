@@ -38,4 +38,4 @@ Mail addresses are managed resources under one workspace Owner; login credential
 
 ## License
 
-[GNU General Public License v3.0](./LICENSE).
+[GNU Affero General Public License v3.0 only](./LICENSE) (`AGPL-3.0-only`).

@@ -40,4 +40,4 @@
 
 ## 许可证
 
-[GNU General Public License v3.0](./LICENSE)。
+[GNU Affero General Public License v3.0，仅限此版本](./LICENSE)（`AGPL-3.0-only`）。
