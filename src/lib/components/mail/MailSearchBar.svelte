@@ -47,7 +47,7 @@
     {disabled}
     autocomplete="off"
     enterkeyhint="search"
-    class="fm-field h-9 min-h-11 w-full pl-9 pr-10 text-sm sm:min-h-0"
+    class="fm-field h-9 min-h-11 w-full pl-9 pr-10 text-sm min-[901px]:min-h-0"
     aria-label={t('mail.search')}
     aria-describedby={`${id}-hint`}
     oninput={(event) => onQueryChange?.(event.currentTarget.value)}

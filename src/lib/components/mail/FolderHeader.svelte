@@ -92,7 +92,7 @@
   });
 </script>
 
-<header class:wide-layout={readingLayout === 'list'} class="folder-header border-b border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-3 sm:px-5">
+<header class:wide-layout={readingLayout === 'list'} class="folder-header border-b border-[var(--fm-border)] bg-[var(--fm-surface)] px-4 py-2 sm:px-5">
   <div class="flex min-h-8 items-center justify-between gap-3">
     <div class="flex min-w-0 items-baseline gap-2">
       <h1 class="truncate text-lg font-semibold tracking-tight text-[var(--fm-text)]">{heading}</h1>
@@ -119,7 +119,7 @@
   </div>
 
   {#if activeSection !== 'profile'}
-    <div class="folder-search mt-3 grid gap-2">
+    <div class="folder-search">
       {#if showMobileSearch}
         <div class="folder-search-field">
           <MailSearchBar {query} onQueryChange={onQueryChange} />
@@ -129,7 +129,7 @@
         <label class="sr-only" for="mail-identity-filter">{t('mail.identityFilter')}</label>
         <select
           id="mail-identity-filter"
-          class="min-h-11 w-full rounded-full border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 text-sm text-[var(--fm-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
+          class="min-h-11 min-w-0 w-full rounded-full border border-[var(--fm-border)] bg-[var(--fm-surface)] px-3 text-xs text-[var(--fm-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fm-focus)]/40"
           value={identityValue}
           onchange={(event) => changeIdentity(event.currentTarget.value)}
         >
@@ -148,12 +148,21 @@
 </header>
 
 <style>
+  .folder-search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 8px;
+    margin-top: 4px;
+  }
+  .folder-search-field { grid-column: 1 / -1; }
   .reading-layout-control { display: none; }
   @media (min-width: 901px) {
     .reading-layout-control { display: inline-flex; }
-    .folder-header.wide-layout { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px; }
+    .folder-search select { min-height: 32px; }
+    .folder-header.wide-layout { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 24px; }
     .wide-layout > div:first-child { flex: 1 1 220px; }
     .wide-layout .folder-search { display: flex; align-items: center; margin-top: 0; }
-    .wide-layout select { max-width: 260px; min-height: 34px; }
+    .wide-layout select { max-width: 260px; }
   }
 </style>

@@ -203,7 +203,7 @@ summary {
 @layer components {
 
 .fm-app-shell {
-  --fm-desktop-topbar-height: 64px;
+  --fm-desktop-topbar-height: 48px;
   min-height: 100dvh;
   background: var(--fm-canvas);
 }

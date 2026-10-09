@@ -268,8 +268,8 @@
 
   .identity {
     gap: var(--space-3);
-    --brand-mark-size: 38px;
-    --brand-wordmark-size: 19px;
+    --brand-mark-size: 32px;
+    --brand-wordmark-size: 18px;
   }
 
   .topbar-search {
@@ -301,7 +301,7 @@
   }
 
   .topbar-search :global(input) {
-    height: 48px;
+    height: 36px;
     padding-right: 2.75rem;
     border: 0;
     border-radius: var(--radius-pill);

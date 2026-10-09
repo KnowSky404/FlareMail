@@ -1116,7 +1116,7 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-preference', '440');
   await page.setViewportSize({ width: 1505, height: 1045 });
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
-  await expect(page.locator('.topbar')).toHaveCSS('height', '64px');
+  await expect(page.locator('.topbar')).toHaveCSS('height', '48px');
   const workspaceBounds = await page.locator('.fm-workspace-body').evaluate((body) => ({
     bottom: body.getBoundingClientRect().bottom,
     viewport: window.innerHeight,
