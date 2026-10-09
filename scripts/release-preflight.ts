@@ -124,6 +124,8 @@ function safeCommandEnvironment() {
   environment.CI ??= 'true';
   environment.NODE_ENV ??= 'test';
   environment.BUN_INSTALL_CACHE_DIR = join(tmpdir(), 'flaremail-preflight-bun-cache');
+  // Private .env secret names must not change the checked-in binding types.
+  environment.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV = 'false';
   return environment;
 }
 

@@ -85,6 +85,8 @@ Browser tests create isolated D1/R2 state in the operating system's temporary di
 
 `bun run deploy:dry-run` builds a temporary configuration from the public development config without reading the private production config or publishing a Worker. Local checks do not establish production deployment, remote migration, or real mail/Telegram delivery.
 
+Release preflight disables Wrangler's `.env` loading for its child commands so private deployment secret names do not alter the checked-in binding types. It retains the type generation check against the public Worker configuration.
+
 Publish the verified commit to remote Preview only when deployment is requested
 or already authorized, following [PREVIEW.md](./PREVIEW.md). Record the SHA, URL,
 deployment/version ID and relevant checks; confirm production traffic still

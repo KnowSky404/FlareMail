@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { checkBunRuntime, renderHuman, runPreflight, type CommandRunner } from './release-preflight';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { checkBunRuntime, renderHuman, runCommand, runPreflight, type CommandRunner } from './release-preflight';
 
 const successfulCommands: CommandRunner = async (_executable, args) => {
   if (args.includes('search:index')) return { exitCode: 0, stdout: JSON.stringify({ expectedDocuments: 0, projectedDocuments: 0, missingDocuments: 0, orphanedDocuments: 0 }) };
@@ -11,6 +14,36 @@ const cleanGit = async () => ({ exitCode: 0, status: '', head: '0123456789abcdef
 
 describe('release preflight', () => {
   const bunMetadata = { packageManager: 'bun@1.4.2', engines: { bun: '>=1.4.0' } };
+
+  test('checks binding types without inferring secrets from a private dotenv file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'flaremail-preflight-typegen-'));
+    try {
+      await writeFile(join(directory, '.env'), 'TYPEGEN_PRIVATE_SECRET=synthetic-fixture\n', { mode: 0o600 });
+      await writeFile(join(directory, 'worker.js'), 'export default { fetch() { return new Response("ok"); } };\n');
+      await writeFile(join(directory, 'wrangler.toml'), [
+        'name = "typegen-fixture"',
+        'main = "worker.js"',
+        'compatibility_date = "2026-08-19"',
+        '[vars]',
+        'APP_ENV = "development"'
+      ].join('\n'));
+      const output = join(directory, 'worker-configuration.d.ts');
+      const args = [
+        '--no-env-file', resolve(import.meta.dir, '../node_modules/wrangler/bin/wrangler.js'),
+        'types', output, '--config', join(directory, 'wrangler.toml'),
+        '--env-interface', 'FixtureEnv', '--include-runtime', 'false'
+      ];
+      const generated = await runCommand(process.execPath, args);
+      expect(generated.exitCode, generated.stderr).toBe(0);
+      const types = await readFile(output, 'utf8');
+      expect(types).toContain('APP_ENV: "development"');
+      expect(types).not.toContain('TYPEGEN_PRIVATE_SECRET');
+      const checked = await runCommand(process.execPath, [...args, '--check']);
+      expect(checked.exitCode, checked.stderr).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test('accepts stable local Bun versions independently of the CI baseline', () => {
     for (const version of ['1.4.0', '1.4.2', '1.4.3', '1.5.0', '2.0.0']) {

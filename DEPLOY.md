@@ -694,6 +694,8 @@ runtime compatibility, local-safe/public config boundaries, bindings, migration 
 schema version and snapshot, FTS/cleanup contracts, type generation and build
 commands. `deploy:dry-run` builds a temporary config from public local
 settings; it does not read or publish the private production config.
+Preflight child commands disable Wrangler's `.env` loading so private
+deployment secret names do not change the public binding type contract.
 
 For a fuller browser release gate, run the isolated local suites:
 
