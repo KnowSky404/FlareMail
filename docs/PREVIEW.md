@@ -62,6 +62,14 @@
    入口验证，核对新版本的 D1/R2、secret **名称**、Telegram 开关和生产 deployment
    ID。不执行 `wrangler versions deploy`、`wrangler deploy` 或 `wrangler triggers deploy`。
 
+两个入口分别核验。原生 Preview 的资源元数据 `urls` 应包含已配置的自定义
+域名入口，并且 DNS/HTTPS、登录页与健康接口均可访问；`workers.dev` 正常不代表
+自定义入口正常。若入口丢失，先只读核对 Worker 的 Custom Domains 关联：
+Preview 专用域名应为 `enabled=false`、`previews_enabled=true`。恢复已配置入口时，
+先检查域名 changeset 只新增该 Preview 域名、没有删除/冲突及生产域名修改，
+再恢复关联，保留其他域名、生产 deployment 和流量。不通过发布 Preview 代码到
+生产来修复入口；域名恢复只涉及 Preview 网站入口，不调整邮件 MX 或邮件路由。
+
 本机项目根目录的 `.env` 用于保存有明文来源的应用密钥，权限必须为 `0600`，
 且已被 Git 忽略。当前保存 `CLOUDFLARE_EMAIL_ROUTING_TOKEN`；后续对话和版本
 预览部署从此文件读取，无需重新传递 Token。`--secrets-file .env` 将它作为 secret
