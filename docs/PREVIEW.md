@@ -55,12 +55,27 @@
 3. 完成构建和校验，使用 `--dry-run` 检查版本打包，再执行：
 
    ```sh
-   wrangler versions upload --config wrangler.version-preview.deploy.toml --preview-alias function-check --message "git <commit>"
+   wrangler versions upload --config wrangler.version-preview.deploy.toml --preview-alias function-check --secrets-file .env --message "git <commit>"
    ```
 
 4. 用返回的 `https://function-check-<worker>.<account-subdomain>.workers.dev`
    入口验证，核对新版本的 D1/R2、secret **名称**、Telegram 开关和生产 deployment
    ID。不执行 `wrangler versions deploy`、`wrangler deploy` 或 `wrangler triggers deploy`。
+
+本机项目根目录的 `.env` 用于保存有明文来源的应用密钥，权限必须为 `0600`，
+且已被 Git 忽略。当前保存 `CLOUDFLARE_EMAIL_ROUTING_TOKEN`；后续对话和版本
+预览部署从此文件读取，无需重新传递 Token。`--secrets-file .env` 将它作为 secret
+上传，已有的 Resend/Telegram secret 绑定继续保留。不要把 `.env` 当作已保存所有
+远程密钥的备份：Cloudflare 上现有 secret 的明文无法读取回本机。
+
+配置 Token 时先只读验证有效性、目标 Zone 和规则读取能力；验证不创建邮件
+路由、不改 catch-all 或 DNS。设置 secret 不等于验证真实收发信。
+存在未发布的新版本时，`wrangler secret put` 会拒绝直接更新生产，
+`wrangler versions secret put` 则基于最新上传版本创建版本。使用上述版本上传
+命令更新 Preview，避免为配置 Token 将预览代码发布生产。
+
+核对生产配置时，先读取生产 deployment 指向的 version，再检查该 version 的
+bindings；Worker settings 可能显示最新上传的预览配置，不代表生产流量配置。
 
 Version URL 使用 `workers.dev` 地址。已有的 `<preview-name>.<preview-domain>`
 仍对应原生 Worker Preview，不会自动切换到此版本，也不会因此取得生产密钥。

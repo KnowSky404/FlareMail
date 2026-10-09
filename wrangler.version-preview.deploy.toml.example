@@ -1,5 +1,5 @@
 # Copy to ignored wrangler.version-preview.deploy.toml and fill production bindings.
-# Use only `wrangler versions upload --preview-alias function-check`.
+# Use only `wrangler versions upload --preview-alias function-check --secrets-file .env`.
 # Uploads retain existing Worker secrets without switching production traffic.
 # Never use deploy, versions deploy or triggers deploy with this config.
 name = "flaremail"
