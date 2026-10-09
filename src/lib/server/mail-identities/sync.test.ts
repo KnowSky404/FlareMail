@@ -36,6 +36,24 @@ function fixture(rules = [rule()], collect = false) {
 afterEach(() => { while (databases.length) databases.pop()?.close(); });
 
 describe('Cloudflare mail identity discovery', () => {
+  test('distinguishes permission errors from transport and provider failures without exposing provider details', async () => {
+    const { db, env, client } = fixture();
+    for (const code of ['permission_denied', 'network_failure', 'timeout', 'rate_limited', 'invalid_response'] as const) {
+      try {
+        await syncCloudflareMailIdentities(env, owner, { ...client, listZones: async () => {
+          throw new CloudflareEmailRoutingError(code);
+        } });
+        throw new Error('Expected discovery failure');
+      } catch (error) {
+        expect(error).toMatchObject({ code: 'MAIL_IDENTITY_DISCOVERY_FAILED', details: { reason: code },
+          status: code === 'permission_denied' ? 403 : 502 });
+        expect((error as Error).message.includes('Zone Read')).toBe(code === 'permission_denied');
+        expect((error as Error).message).not.toContain('read-token');
+      }
+    }
+    expect(db.query('SELECT COUNT(*) AS count FROM mail_domains').get()).toEqual({ count: 0 });
+  });
+
   test('imports existing Worker addresses without taking ownership or enabling sending, and records an external catch-all', async () => {
     const { db, env, client } = fixture([rule(), rule('disabled@mail.example.com', 'flaremail', false, 'rule-2'), rule('other@example.com', 'other-worker')]);
     expect(await syncCloudflareMailIdentities(env, owner, client)).toMatchObject({ domainsCreated: 2, addressesCreated: 2, skippedRules: 1, warnings: [] });

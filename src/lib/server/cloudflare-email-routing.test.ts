@@ -21,6 +21,20 @@ const response = (result: unknown, resultInfo?: unknown) => new Response(JSON.st
 }), { status: 200, headers: { 'content-type': 'application/json' } });
 
 describe('Cloudflare Email Routing API client', () => {
+  test('preserves the global receiver required by Workers native fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(function (this: unknown, ..._args: Parameters<typeof fetch>) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      return Promise.resolve(response([{ id: 'zone-1', name: 'example.test', account: { id: 'account-1' } }]));
+    }, { preconnect: originalFetch.preconnect });
+    try {
+      expect(await new CloudflareEmailRoutingClient({ token: 'test-token' }).listZones('account-1'))
+        .toEqual([{ id: 'zone-1', name: 'example.test', accountId: 'account-1' }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test('discovers all scoped account zones and rejects foreign account results or incomplete pagination', async () => {
     const calls: string[] = [];
     const client = new CloudflareEmailRoutingClient({ token: 'test-token', fetcher: async (input, init) => {

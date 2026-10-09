@@ -185,7 +185,8 @@ export class CloudflareEmailRoutingClient {
 
   constructor(private readonly options: ClientOptions) {
     if (!options.token.trim()) throw new CloudflareEmailRoutingError('token_missing');
-    this.fetcher = options.fetcher ?? fetch;
+    // Workers' native fetch requires its global receiver when called as a class property.
+    this.fetcher = options.fetcher ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRulePages = Math.max(1, Math.min(MAX_RULE_PAGES, options.maxRulePages ?? MAX_RULE_PAGES));
     this.deadlineAt = options.deadlineAt ?? null;

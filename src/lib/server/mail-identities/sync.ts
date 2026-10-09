@@ -42,8 +42,17 @@ export async function syncCloudflareMailIdentities(env: CloudflareEnv, ownerUser
   let zones;
   try { zones = await provider.listZones(env.MAIL_IDENTITY_ACCOUNT_ID!.trim()); } catch (error) {
     if (error instanceof CloudflareEmailRoutingError) {
+      const message = error.code === 'permission_denied'
+        ? '无法读取 Cloudflare 域名，请检查 Token 的有效性和 Zone Read 权限后重试。'
+        : error.code === 'timeout'
+          ? 'Cloudflare 域名同步超时，请稍后重试；已有配置仍可查看。'
+          : error.code === 'rate_limited'
+            ? 'Cloudflare 请求过于频繁，请稍后重试；已有配置仍可查看。'
+            : error.code === 'network_failure'
+              ? '暂时无法连接 Cloudflare，请稍后重试；已有配置仍可查看。'
+              : 'Cloudflare 域名同步暂不可用，请稍后重试；已有配置仍可查看。';
       throw new ApiError(error.code === 'permission_denied' ? 403 : 502, 'MAIL_IDENTITY_DISCOVERY_FAILED',
-        '无法读取 Cloudflare 域名，请检查 Token 的 Zone Read 权限后重试。', undefined, undefined, error.retryable);
+        message, undefined, { reason: error.code }, error.retryable);
     }
     throw error;
   }
