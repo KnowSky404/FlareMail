@@ -141,8 +141,18 @@ export function withApiHandler(
   handler: (event: RequestEvent) => Response | Promise<Response>
 ) {
   return async (event: RequestEvent) => {
+    const started = performance.now();
     try {
-      return await handler(event);
+      const response = await handler(event);
+      const path = event.url?.pathname ?? '';
+      if (event.locals?.workspaceSession && (path === '/api/workspace/mailbox' || path === '/api/workspace/mailbox/metrics' || /^\/api\/workspace\/messages\/[^/]+\/flags$/u.test(path))) {
+        const durations = { ...event.locals.mailboxTimings, total: performance.now() - (event.locals.requestStartedAt ?? started) };
+        response.headers.set('server-timing', Object.entries(durations).map(([phase, duration]) => `${phase};dur=${duration.toFixed(2)}`).join(', '));
+        console.log(JSON.stringify({ event: 'mailbox_request_timing', requestId: getRequestId(event),
+          operation: path.endsWith('/flags') ? 'flags' : path.endsWith('/metrics') ? 'metrics' : 'page',
+          status: response.status, durations }));
+      }
+      return response;
     } catch (error) {
       const classified = classifyRuntimeError(error);
       const requestId = getRequestId(event);

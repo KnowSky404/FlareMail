@@ -54,9 +54,11 @@ export async function getWorkspaceSession(
   try {
     if (!(await hasWorkspaceCoreTables(env))) throw new WorkspaceAuthUnavailableError();
     const tokenHash = await hashSessionToken(token);
-    const ownerId = await findWorkspaceOwnerId(env.DB);
+    const [ownerId, session] = await Promise.all([
+      findWorkspaceOwnerId(env.DB),
+      loadD1WorkspaceContextByTokenHash(env, tokenHash, authContext)
+    ]);
     if (!ownerId) return null;
-    const session = await loadD1WorkspaceContextByTokenHash(env, tokenHash, authContext);
     if (session?.userId !== ownerId) return null;
     if (session) await touchSession(env!.DB, session.id).run();
     return session;

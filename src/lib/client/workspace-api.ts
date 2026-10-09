@@ -18,6 +18,7 @@ import type {
   MailboxMutationScope,
   MailboxMutationResult,
   MailboxMetricsScope,
+  MailboxIdentityFilter,
   MailMessage,
   MailUserLabel,
   MailLabelMessageKind,
@@ -230,6 +231,14 @@ export function fetchMailboxPage(params: URLSearchParams, signal?: AbortSignal) 
   return requestJson<{ page: MailboxPage }>(`/api/workspace/mailbox?${params}`, { signal });
 }
 
+export function fetchMailboxMetrics(identityFilter: MailboxIdentityFilter | null = null, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (identityFilter) params.set('identity', `${identityFilter.kind}:${identityFilter.id}`);
+  return requestJson<{ metrics: WorkspacePayload['metrics']; metricsScope: MailboxMetricsScope }>(
+    `/api/workspace/mailbox/metrics?${params}`, { signal }
+  );
+}
+
 export function fetchMailLabels(signal?: AbortSignal) {
   return requestJson<{ labels: MailUserLabel[] }>('/api/workspace/labels', { signal });
 }
@@ -304,9 +313,11 @@ export function retryDelivery(messageId: string) {
   );
 }
 
-export function updateMessageFlags(messageId: string, patch: MessagePatch) {
+export function updateMessageFlags(messageId: string, patch: MessagePatch, identityFilter: MailboxIdentityFilter | null = null) {
+  const params = new URLSearchParams();
+  if (identityFilter) params.set('identity', `${identityFilter.kind}:${identityFilter.id}`);
   return requestJson<MessageResponse>(
-    `/api/workspace/messages/${encodeURIComponent(messageId)}/flags`,
+    `/api/workspace/messages/${encodeURIComponent(messageId)}/flags${params.size ? `?${params}` : ''}`,
     { method: 'PATCH', body: JSON.stringify(patch) }
   );
 }

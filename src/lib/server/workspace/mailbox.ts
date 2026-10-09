@@ -320,7 +320,8 @@ export async function loadMailboxPage(
   env: CloudflareEnv,
   workspace: WorkspaceContext,
   query: MailboxQuery,
-  knownMetrics?: WorkspaceMetrics
+  knownMetrics?: WorkspaceMetrics | Promise<WorkspaceMetrics>,
+  timing?: (phase: string, duration: number) => void
 ): Promise<MailboxPage> {
   const section = query.section ?? query.folder;
   if (query.identityFilter && !(await mailboxIdentityFilterExists(env.DB, workspace.userId, query.identityFilter))) {
@@ -344,11 +345,16 @@ export async function loadMailboxPage(
     identityFilter: query.identityFilter,
     deliveryStatus: query.deliveryStatus
   };
-  const metricsPromise = query.cursor
+  const metricsStarted = performance.now();
+  const metricsPromise = (query.cursor
     ? Promise.resolve<WorkspaceMetrics | undefined>(undefined)
     : knownMetrics
       ? Promise.resolve(knownMetrics)
-      : getMailboxMetrics(env.DB, workspace.userId, query.identityFilter);
+      : getMailboxMetrics(env.DB, workspace.userId, query.identityFilter)).then((metrics) => {
+        if (metrics) timing?.('metrics', performance.now() - metricsStarted);
+        return metrics;
+      });
+  const listStarted = performance.now();
   let messages;
   const searchHitFields = query.search ? buildFtsSearchPlan(query.search).hitFields : [];
   let searchTotal = 0;
@@ -373,8 +379,11 @@ export async function loadMailboxPage(
   }
 
   const hasMore = messages.length > query.limit;
+  timing?.('list', performance.now() - listStarted);
   const visible = messages.slice(0, query.limit);
+  const labelsStarted = performance.now();
   await attachMailLabels(env.DB, workspace.userId, visible);
+  timing?.('labels', performance.now() - labelsStarted);
   const last = visible.at(-1);
   const metrics = await metricsPromise;
   return {
@@ -408,7 +417,7 @@ async function loadCrossFolderMailboxPage(
   env: CloudflareEnv,
   workspace: WorkspaceContext,
   query: MailboxQuery,
-  knownMetrics?: WorkspaceMetrics
+  knownMetrics?: WorkspaceMetrics | Promise<WorkspaceMetrics>
 ): Promise<MailboxPage> {
   const searchHitFields = query.search ? buildFtsSearchPlan(query.search).hitFields : [];
   const metricsPromise = query.cursor
@@ -594,7 +603,7 @@ async function listInboundMessageSummaryPage(
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = input.search || input.labelId || (input.category && input.category !== 'all')
+  const pageSql = !input.timestamp && (input.search || input.labelId || (input.category && input.category !== 'all'))
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows."timestamp" DESC, ('email:' || search_rows.email_id) DESC LIMIT ?`
     : `${pageSelect} ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC LIMIT ?`;
@@ -610,11 +619,9 @@ export async function loadWorkspaceSnapshot(
   const activeFolder = normalized.activeFolder ?? 'inbox';
   const persistedFolder = activeFolder === 'archive' ? 'inbox' : activeFolder;
   const identityFilter = normalized.identityFilter ?? null;
-  const [metrics, mailIdentityOptions] = await Promise.all([
-    getMailboxMetrics(env.DB, workspace.userId, identityFilter),
-    listMailboxIdentityOptions(env.DB, workspace.userId)
-  ]);
-  const page = await loadMailboxPage(env, workspace, {
+  const metricsPromise = getMailboxMetrics(env.DB, workspace.userId, identityFilter);
+  const identityOptionsPromise = listMailboxIdentityOptions(env.DB, workspace.userId);
+  const pagePromise = loadMailboxPage(env, workspace, {
     folder: persistedFolder,
     section: activeFolder,
     cursor: null,
@@ -626,7 +633,8 @@ export async function loadWorkspaceSnapshot(
     deliveryStatus: normalized.deliveryStatus ?? null,
     labelId: normalized.labelId ?? null,
     category: normalized.category ?? 'all'
-  }, metrics);
+  }, metricsPromise);
+  const [metrics, mailIdentityOptions, page] = await Promise.all([metricsPromise, identityOptionsPromise, pagePromise]);
   const mailbox: MailboxState = { inbox: [], sent: [], drafts: [] };
   if (persistedFolder !== 'starred' && persistedFolder !== 'label') mailbox[persistedFolder] = page.messages;
   const mailboxPages: Partial<Record<MailboxSection, MailboxPage>> = { [activeFolder]: page };

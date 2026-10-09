@@ -17,6 +17,13 @@ Unknown recipients are rejected by default for manually connected domains. Colle
 - The inbox opens as a full-width list. Select a message to read it and return to the same filter. On desktop, the header control can show an optional reading pane; focused reading and standalone message links are also available.
 - Inbox tabs include **All**, **Primary**, **Promotions**, **Social**, **Updates**, and **Forums**. Automatic categories use local sender/subject matching. Select messages to change their category or reset automatic classification.
 - Filter by domain/address, search, or change pages. The selected identity applies to messages, drafts, counts, and search results.
+- Opening received mail marks it read, including the reading pane and direct links.
+  Marking it unread while reading keeps it unread until you close and reopen it.
+  The Inbox badge shows unread received mail in the selected domain/address,
+  independent of category and search.
+- Returning to a recently visited mailbox/category restores the cached list and
+  loaded pages immediately. Older views refresh in the background; use Refresh
+  to fetch changes immediately.
 - Star messages, mark them read/unread, archive them, or move them to Trash. A recent delete can be undone; messages in Trash can be restored. Trash spans the Owner's workspace.
 - Create, rename, or delete labels from the sidebar. Labels and Starred provide views across folders. Bulk label changes apply to selected messages on the current page.
 - Bulk actions normally affect selected loaded messages. Thread-wide operations require an explicit scope choice. Selections containing drafts have fewer available actions.

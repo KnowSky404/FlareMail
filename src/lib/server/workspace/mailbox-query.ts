@@ -74,7 +74,7 @@ export interface MailboxQuery {
   labelId?: string | null;
 }
 
-function parseIdentityFilter(value: string | null): MailboxIdentityFilter | null {
+export function parseIdentityFilter(value: string | null): MailboxIdentityFilter | null {
   if (value === null || value === '') return null;
   const separator = value.indexOf(':');
   const kind = value.slice(0, separator);

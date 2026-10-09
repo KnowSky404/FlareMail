@@ -42,6 +42,7 @@ export const isAccessExemptPath = (pathname: string): boolean =>
   pathname === '/api/health' || pathname === '/api/webhooks/resend' || pathname === '/api/webhooks/telegram';
 
 export const handle: Handle = async ({ event, resolve }) => {
+  event.locals.requestStartedAt = performance.now();
   const requestId = getRequestId(event);
   const env = event.platform?.env as CloudflareEnv | undefined;
   const isResendWebhook = event.url.pathname === '/api/webhooks/resend';
@@ -106,6 +107,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     accessExpiresAt = verified.expiresAt;
   }
 
+  const authStarted = performance.now();
   let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
   let authConfigured = false;
   let sessionToken = sessionCookieNamesForRequest(event.url)
@@ -173,6 +175,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   event.locals.workspaceSessionToken = sessionToken;
   event.locals.workspaceSessionId = session?.id ?? null;
   event.locals.workspaceSession = session;
+  event.locals.mailboxTimings = { auth: performance.now() - authStarted };
   event.locals.authMode = environment.config.authMode;
   event.locals.authPrincipalId = accessPrincipalId;
   event.locals.authConfigured = authConfigured;

@@ -277,18 +277,33 @@ export async function findMessageByIdempotencyKey(db: D1Database, userId: string
   `).bind(userId, idempotencyKey).first<WorkspaceMessageRow>();
 }
 
-export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, messageId: string) {
+export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, messageId: string, options: { includeBody?: boolean } = {}) {
   return db.prepare(`
-    SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
+    SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, ${options.includeBody === false ? "''" : 'body'} AS body, sent_at,
       labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at,
       sender_address_id, recipient_address_id, reply_to_json, inbox_category
     FROM workspace_messages WHERE user_id = ? AND id = ?
   `).bind(userId, messageId).first<WorkspaceMessageRow>();
 }
 
-export function updateMessageFlags(db: D1Database, userId: string, messageId: string, read: boolean, starred: boolean, timestamp: string) {
-  return db.prepare(`UPDATE workspace_messages SET is_read = ?, is_starred = ?, updated_at = ? WHERE user_id = ? AND id = ?`)
-    .bind(read ? 1 : 0, starred ? 1 : 0, timestamp, userId, messageId);
+export function updateMessageFlags(db: D1Database, userId: string, messageId: string, patch: { read?: boolean; starred?: boolean }, timestamp: string) {
+  return db.prepare(`UPDATE workspace_messages SET is_read = COALESCE(?, is_read), is_starred = COALESCE(?, is_starred), updated_at = ? WHERE user_id = ? AND id = ? AND deleted_at IS NULL`)
+    .bind(patch.read === undefined ? null : Number(patch.read), patch.starred === undefined ? null : Number(patch.starred), timestamp, userId, messageId);
+}
+
+/** Patch only supplied flags; never resurrect a concurrently trashed email. */
+export function patchInboundFlags(db: D1Database, userId: string, emailMessageId: string, patch: { read?: boolean; starred?: boolean }, timestamp: string) {
+  const read = patch.read === undefined ? null : Number(patch.read);
+  const starred = patch.starred === undefined ? null : Number(patch.starred);
+  return db.prepare(`
+    INSERT INTO workspace_email_states (id, user_id, email_message_id, is_read, is_starred, created_at, updated_at)
+    SELECT ?, ?, e.id, COALESCE(?, 0), COALESCE(?, 0), ?, ? FROM email_messages AS e
+    WHERE e.id = ? AND e.owner_user_id = ?
+    ON CONFLICT(user_id, email_message_id) DO UPDATE SET
+      is_read = COALESCE(?, workspace_email_states.is_read),
+      is_starred = COALESCE(?, workspace_email_states.is_starred), updated_at = excluded.updated_at
+    WHERE workspace_email_states.deleted_at IS NULL
+  `).bind(crypto.randomUUID(), userId, read, starred, timestamp, timestamp, emailMessageId, userId, read, starred);
 }
 
 export function deleteMessage(db: D1Database, userId: string, messageId: string) {

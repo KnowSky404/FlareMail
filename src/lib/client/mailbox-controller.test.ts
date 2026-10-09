@@ -368,3 +368,115 @@ test('trashing an archived inbox message purges every cached view and updates ma
   expect(result.snapshot.mailboxPages?.inbox).toBe(inboxPage);
   expect(result.selectedMessageId).toBe('other');
 });
+
+describe('mailbox view cache', () => {
+  const page = (category: MailboxPage['category'] = 'all'): MailboxPage => ({
+    folder: 'inbox', category, messages: [message('cached', 'inbox', '2026-10-09T00:00:00.000Z')],
+    limit: 40, nextCursor: 'next', hasMore: true, query: '', filter: 'all', deliveryStatus: null
+  });
+
+  test('restores categories and their cursor without requests while fresh', async () => {
+    let calls = 0;
+    const shown: MailboxPage[] = [];
+    const controller = new MailboxController(async () => { calls++; return { page: page() }; }, {
+      onPage: (value) => shown.push(value), onLoading: () => {}, onError: () => {}
+    }, () => 100);
+    controller.seed(page('primary'));
+    controller.seed(page('updates'));
+    await controller.navigate('inbox', '', 'all', null, null, 'primary');
+    await controller.navigate('inbox', '', 'all', null, null, 'updates');
+    await controller.navigate('inbox', '', 'all', null, null, 'primary');
+    expect(calls).toBe(0);
+    expect(shown.map((value) => value.category)).toEqual(['primary', 'updates', 'primary']);
+    expect(shown[2].nextCursor).toBe('next');
+  });
+
+  test('shows expired content before revalidation and keeps it on failure', async () => {
+    let now = 0;
+    let fail!: (error: Error) => void;
+    const shown: MailboxPage[] = [];
+    const loading: boolean[] = [];
+    const errors: string[] = [];
+    const controller = new MailboxController(() => new Promise((_resolve, reject) => { fail = reject; }), {
+      onPage: (value) => shown.push(value), onLoading: (value) => loading.push(value), onError: (value) => errors.push(value)
+    }, () => now);
+    controller.seed(page());
+    now = 30_001;
+    const pending = controller.navigate('inbox', '', 'all');
+    expect(shown).toHaveLength(1);
+    expect(loading).not.toContain(true);
+    fail(new Error('offline'));
+    expect(await pending).toBe(false);
+    expect(shown[0].messages[0].id).toBe('cached');
+    expect(errors).toEqual(['offline']);
+  });
+
+  test('deduplicates the same pending view and discards responses after invalidation', async () => {
+    let resolve!: (value: { page: MailboxPage }) => void;
+    let calls = 0;
+    const shown: MailboxPage[] = [];
+    const controller = new MailboxController(() => { calls++; return new Promise((done) => { resolve = done; }); }, {
+      onPage: (value) => shown.push(value), onLoading: () => {}, onError: () => {}
+    });
+    const first = controller.navigate('inbox', '', 'all');
+    const second = controller.navigate('inbox', '', 'all');
+    expect(calls).toBe(1);
+    controller.invalidate();
+    resolve({ page: page() });
+    expect(await first).toBe(false);
+    expect(await second).toBe(false);
+    expect(shown).toEqual([]);
+  });
+
+  test('isolates address scopes and clears the cache on auth reset', async () => {
+    let calls = 0;
+    const controller = new MailboxController(async () => { calls++; return { page: page() }; }, {
+      onPage: () => {}, onLoading: () => {}, onError: () => {}
+    });
+    controller.seed({ ...page(), identityFilter: { kind: 'address', id: 'a' } });
+    await controller.navigate('inbox', '', 'all', { kind: 'address', id: 'a' });
+    expect(calls).toBe(0);
+    await controller.navigate('inbox', '', 'all', { kind: 'address', id: 'b' });
+    expect(calls).toBe(1);
+    controller.reset();
+    await controller.navigate('inbox', '', 'all', { kind: 'address', id: 'a' });
+    expect(calls).toBe(2);
+  });
+
+  test('updates flags in every category cache without losing the cursor', async () => {
+    const shown: MailboxPage[] = [];
+    const controller = new MailboxController(async () => { throw new Error('offline'); }, {
+      onPage: (value) => shown.push(value), onLoading: () => {}, onError: () => {}
+    });
+    controller.seed(page('primary'));
+    controller.seed(page('all'));
+    controller.patchFlags('cached', { read: true });
+    await controller.navigate('inbox', '', 'all', null, null, 'primary');
+    await controller.navigate('inbox', '', 'all');
+    expect(shown.every((value) => value.messages[0].read)).toBe(true);
+    expect(shown.every((value) => value.nextCursor === 'next')).toBe(true);
+  });
+
+  test('evicts the least recently used view after sixteen contexts', async () => {
+    let calls = 0;
+    const controller = new MailboxController(async () => { calls++; return { page: page() }; }, {
+      onPage: () => {}, onLoading: () => {}, onError: () => {}
+    });
+    for (let index = 0; index < 17; index++) controller.seed({ ...page(), query: `query-${index}` });
+    await controller.navigate('inbox', 'query-16', 'all');
+    expect(calls).toBe(0);
+    await controller.navigate('inbox', 'query-0', 'all');
+    expect(calls).toBe(1);
+  });
+});
+
+test('signals a page interrupted by flags so navigation can resume after the write', async () => {
+  let resolvePage!: (value: { page: MailboxPage }) => void;
+  const pending = new Promise<{ page: MailboxPage }>((resolve) => { resolvePage = resolve; });
+  const controller = new MailboxController(() => pending, { onPage: () => {}, onLoading: () => {}, onError: () => {} });
+  const navigation = controller.navigate('sent', '', 'all');
+  expect(controller.patchFlags('inbox-message', { read: true })).toBe(true);
+  resolvePage({ page: makePage('sent', [message('sent', 'sent', '2026-10-09T00:00:00Z')]) });
+  expect(await navigation).toBe(false);
+  expect(controller.patchFlags('inbox-message', { read: true })).toBe(false);
+});

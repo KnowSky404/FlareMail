@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick, untrack } from 'svelte';
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { Button, Skeleton } from '$lib/components/ui';
   import type { InboxCategoryFilter, MailboxSection, MailMessage, MailThread } from '$lib/domain/mail';
@@ -25,6 +26,8 @@
     query = '',
     filter = 'all',
     loading = false,
+    refreshing = false,
+    viewKey = '',
     loadingMore = false,
     error = '',
     paginationEnd = false,
@@ -55,6 +58,8 @@
     query?: string;
     filter?: MailFilter;
     loading?: boolean;
+    refreshing?: boolean;
+    viewKey?: string;
     loadingMore?: boolean;
     error?: string;
     paginationEnd?: boolean;
@@ -74,6 +79,19 @@
 
   let listElement = $state<HTMLElement | null>(null);
   let preservedScrollTop = $state<number | null>(null);
+  const scrollPositions = new Map<string, number>();
+  let previousViewKey: string | null = null;
+  $effect.pre(() => {
+    const key = viewKey;
+    const element = listElement;
+    untrack(() => {
+      if (!element || key === previousViewKey) return;
+      if (previousViewKey !== null) scrollPositions.set(previousViewKey, element.scrollTop);
+      previousViewKey = key;
+      while (scrollPositions.size > 16) scrollPositions.delete(scrollPositions.keys().next().value!);
+      void tick().then(() => { if (previousViewKey === key && listElement) listElement.scrollTop = scrollPositions.get(key) ?? 0; });
+    });
+  });
 
   const { t } = useLocale();
 
@@ -131,6 +149,14 @@
 </script>
 
 <section id={category ? "inbox-category-panel" : undefined} role={category ? "tabpanel" : undefined} aria-labelledby={category ? `inbox-tab-${category}` : undefined} bind:this={listElement} class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" class:fm-list-loading={loadingMore} aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
+  {#if refreshing}
+    <div class="flex items-center gap-2 px-4 py-2 text-xs text-[var(--fm-text-muted)]" role="status"><RefreshCw class="size-3 animate-spin" aria-hidden="true" />{t('mail.refreshingList')}</div>
+  {:else if error && !loading && visibleItems.length > 0}
+    <div class="flex items-center justify-between gap-2 px-4 py-2 text-xs text-[var(--fm-danger)]" role="alert">
+      <span>{t('mail.cachedListError')}</span>
+      <Button size="sm" variant="secondary" onclick={() => onRefresh?.()}>{t('mail.retry')}</Button>
+    </div>
+  {/if}
   {#if loading}
     <div class="divide-y divide-[var(--fm-border)]" role="status" aria-label={t('mail.loadingList')} aria-busy="true">
       {#each Array(7) as _, index (index)}
@@ -146,7 +172,7 @@
         </div>
       {/each}
     </div>
-  {:else if error}
+  {:else if error && visibleItems.length === 0}
     <div class="grid min-h-56 place-items-center px-6 py-10 text-center" role="alert">
       <div class="grid max-w-sm justify-items-center">
         <div class="mb-3 grid size-11 place-items-center rounded-full bg-[var(--fm-danger-soft)] text-[var(--fm-danger)]">

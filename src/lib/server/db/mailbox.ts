@@ -157,6 +157,7 @@ export async function listWorkspaceMessagePage(
       : `substr(search_document.subject_text, 1, 160)`
     : `NULL`;
 
+  const includeDelivery = input.folder === 'sent' || Boolean(input.deliveryStatus || input.search?.filters.status.length);
   const pageSelect = `
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
@@ -165,7 +166,7 @@ export async function listWorkspaceMessagePage(
       m.message_id, m.in_reply_to, m."references", m.thread_key, m.cc, m.to_json, m.cc_json, m.bcc_json, m.idempotency_key, m.body_object_id, m.deleted_at,
       m.sender_address_id, m.recipient_address_id, m.reply_to_json, m.inbox_category,
       ${searchSnippet} AS search_snippet,
-      ds.status AS delivery_status,
+      ${includeDelivery ? `ds.status AS delivery_status,
       ds.attempts AS delivery_attempts,
       ds.delivered_at AS delivery_delivered_at,
       ds.last_error AS delivery_last_error,
@@ -177,15 +178,27 @@ export async function listWorkspaceMessagePage(
       r.last_event AS delivery_last_event,
       r.last_event_at AS delivery_last_event_at,
       ds.idempotency_key AS delivery_idempotency_key,
-      (SELECT MAX(a.started_at) FROM workspace_delivery_attempts AS a WHERE a.message_id = m.id) AS delivery_attempt_started_at
+      (SELECT MAX(a.started_at) FROM workspace_delivery_attempts AS a WHERE a.message_id = m.id) AS delivery_attempt_started_at` : `NULL AS delivery_status,
+      NULL AS delivery_attempts,
+      NULL AS delivery_delivered_at,
+      NULL AS delivery_last_error,
+      NULL AS delivery_provider_message_id,
+      NULL AS delivery_provider,
+      NULL AS delivery_result_kind,
+      NULL AS delivery_remote_status,
+      NULL AS delivery_response_preview,
+      NULL AS delivery_last_event,
+      NULL AS delivery_last_event_at,
+      NULL AS delivery_idempotency_key,
+      NULL AS delivery_attempt_started_at`}
     FROM workspace_messages AS m
     ${searchJoins}
-    LEFT JOIN workspace_delivery_statuses AS ds
+    ${includeDelivery ? `    LEFT JOIN workspace_delivery_statuses AS ds
       ON ds.user_id = m.user_id AND ds.message_id = m.id
     LEFT JOIN workspace_outbound_receipts AS r
-      ON r.user_id = m.user_id AND r.message_id = m.id
+      ON r.user_id = m.user_id AND r.message_id = m.id` : ''}
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search || input.labelId || (input.category && input.category !== 'all')
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || input.labelId || (input.category && input.category !== 'all'))
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.sent_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`);
@@ -266,7 +279,7 @@ export async function listDraftPage(
     FROM workspace_drafts AS d
     ${searchJoins}
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.search || input.labelId
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || input.labelId)
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.updated_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?`);
@@ -279,97 +292,55 @@ export async function getMailboxMetrics(
   identityFilter: MailboxIdentityFilter | null = null
 ): Promise<WorkspaceMetrics> {
   const row = await db.prepare(`
-    WITH identity_scope AS (SELECT ? AS kind, ? AS id), owner_scope AS (SELECT ? AS id)
+    WITH identity_scope AS (SELECT ? AS kind, ? AS id), owner_scope AS (SELECT ? AS id),
+    message_counts AS (
+      SELECT
+        SUM(m.folder = 'inbox' AND m.deleted_at IS NULL AND m.archived_at IS NULL) AS inbox_count,
+        SUM(m.folder = 'sent' AND m.deleted_at IS NULL) AS sent_count,
+        SUM(m.folder = 'inbox' AND m.deleted_at IS NULL AND m.archived_at IS NOT NULL) AS archive_count,
+        SUM(m.deleted_at IS NOT NULL) AS trash_count,
+        SUM(m.folder = 'inbox' AND m.deleted_at IS NULL AND m.archived_at IS NULL AND m.is_read = 0) AS unread_count,
+        SUM(m.deleted_at IS NULL AND m.is_starred = 1) AS starred_count
+      FROM workspace_messages AS m
+      WHERE m.user_id = (SELECT id FROM owner_scope)
+        AND ${identityPredicate('m', "CASE WHEN m.folder = 'sent' THEN m.sender_address_id ELSE m.recipient_address_id END")}
+    ), inbound_counts AS (
+      SELECT
+        SUM(s.deleted_at IS NULL AND s.archived_at IS NULL) AS inbox_count,
+        SUM(s.deleted_at IS NULL AND s.archived_at IS NOT NULL) AS archive_count,
+        SUM(s.deleted_at IS NOT NULL) AS trash_count,
+        SUM(s.deleted_at IS NULL AND s.archived_at IS NULL AND COALESCE(s.is_read, 0) = 0) AS unread_count,
+        SUM(s.deleted_at IS NULL AND s.is_starred = 1) AS starred_count
+      FROM email_messages AS e
+      LEFT JOIN workspace_email_states AS s ON s.user_id = (SELECT id FROM owner_scope) AND s.email_message_id = e.id
+      WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND ${inboundIdentityPredicate('e')}
+    ), draft_counts AS (
+      SELECT SUM(d.deleted_at IS NULL) AS drafts_count, SUM(d.deleted_at IS NOT NULL) AS trash_count,
+        SUM(d.deleted_at IS NULL AND d.is_starred = 1) AS starred_count
+      FROM workspace_drafts AS d WHERE d.user_id = (SELECT id FROM owner_scope)
+        AND ${identityPredicate('d', 'sender_address_id')}
+    ), delivery_counts AS (
+      SELECT
+        SUM(ds.status IN ('queued', 'submitting')) AS queued_count,
+        SUM(ds.status = 'delayed') AS delayed_count,
+        SUM(ds.status IN ('failed', 'suppressed')) AS failed_count,
+        SUM(ds.status = 'bounced') AS bounced_count,
+        SUM(ds.status = 'complained') AS complained_count,
+        SUM(ds.status = 'submitting' AND datetime(COALESCE(ds.last_event_at, ds.updated_at, ds.created_at)) <= datetime('now', '-15 minutes')) AS stale_delivery_count
+      FROM workspace_delivery_statuses AS ds
+      LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
+      WHERE ds.user_id = (SELECT id FROM owner_scope) AND ${identityPredicate('m', 'sender_address_id')}
+    )
     SELECT
-      (
-        SELECT COUNT(*) FROM workspace_messages AS m
-        WHERE m.user_id = (SELECT id FROM owner_scope) AND m.folder = 'inbox' AND m.deleted_at IS NULL AND m.archived_at IS NULL
-          AND ${identityPredicate('m', 'recipient_address_id')}
-      ) + (
-        SELECT COUNT(*) FROM email_messages AS e
-        LEFT JOIN workspace_email_states AS s ON s.user_id = (SELECT id FROM owner_scope) AND s.email_message_id = e.id
-        WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND s.deleted_at IS NULL AND s.archived_at IS NULL
-          AND ${inboundIdentityPredicate('e')}
-      ) AS inbox_count,
-      (
-        SELECT COUNT(*) FROM workspace_messages AS m
-        WHERE m.user_id = (SELECT id FROM owner_scope) AND m.folder = 'sent' AND m.deleted_at IS NULL
-          AND ${identityPredicate('m', 'sender_address_id')}
-      ) AS sent_count,
-      (
-        SELECT COUNT(*) FROM workspace_messages AS m
-        WHERE m.user_id = (SELECT id FROM owner_scope) AND m.folder = 'inbox' AND m.deleted_at IS NULL AND m.archived_at IS NOT NULL
-          AND ${identityPredicate('m', 'recipient_address_id')}
-      ) + (
-        SELECT COUNT(*) FROM email_messages AS e
-        JOIN workspace_email_states AS s ON s.user_id = (SELECT id FROM owner_scope) AND s.email_message_id = e.id
-        WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND s.deleted_at IS NULL AND s.archived_at IS NOT NULL
-          AND ${inboundIdentityPredicate('e')}
-      ) AS archive_count,
-      (
-        SELECT COUNT(*) FROM workspace_drafts AS d WHERE d.user_id = (SELECT id FROM owner_scope) AND d.deleted_at IS NULL
-          AND ${identityPredicate('d', 'sender_address_id')}
-      ) AS drafts_count,
-      (
-        SELECT COUNT(*) FROM workspace_messages AS m
-        WHERE m.user_id = (SELECT id FROM owner_scope) AND m.deleted_at IS NOT NULL
-          AND ${identityPredicate('m', "CASE WHEN m.folder = 'sent' THEN m.sender_address_id ELSE m.recipient_address_id END")}
-      ) + (
-        SELECT COUNT(*) FROM workspace_drafts AS d WHERE d.user_id = (SELECT id FROM owner_scope) AND d.deleted_at IS NOT NULL
-          AND ${identityPredicate('d', 'sender_address_id')}
-      ) + (
-        SELECT COUNT(*) FROM email_messages AS e
-        JOIN workspace_email_states AS s ON s.user_id = (SELECT id FROM owner_scope) AND s.email_message_id = e.id
-        WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND s.deleted_at IS NOT NULL
-          AND ${inboundIdentityPredicate('e')}
-      ) AS trash_count,
-      (
-        SELECT COUNT(*) FROM workspace_messages AS m
-        WHERE m.user_id = (SELECT id FROM owner_scope) AND m.folder = 'inbox' AND m.deleted_at IS NULL AND m.archived_at IS NULL AND m.is_read = 0
-          AND ${identityPredicate('m', 'recipient_address_id')}
-      ) + (
-        SELECT COUNT(*) FROM email_messages AS e
-        LEFT JOIN workspace_email_states AS s ON s.user_id = (SELECT id FROM owner_scope) AND s.email_message_id = e.id
-        WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND s.deleted_at IS NULL AND s.archived_at IS NULL AND COALESCE(s.is_read, 0) = 0
-          AND ${inboundIdentityPredicate('e')}
-      ) AS unread_count,
-      (
-        SELECT COUNT(*) FROM workspace_messages AS m WHERE m.user_id = (SELECT id FROM owner_scope) AND m.deleted_at IS NULL AND m.is_starred = 1
-          AND ${identityPredicate('m', "CASE WHEN m.folder = 'sent' THEN m.sender_address_id ELSE m.recipient_address_id END")}
-      ) + (
-        SELECT COUNT(*) FROM workspace_drafts AS d WHERE d.user_id = (SELECT id FROM owner_scope) AND d.deleted_at IS NULL AND d.is_starred = 1
-          AND ${identityPredicate('d', 'sender_address_id')}
-      ) + (
-        SELECT COUNT(*) FROM email_messages AS e
-        JOIN workspace_email_states AS s ON s.user_id = (SELECT id FROM owner_scope) AND s.email_message_id = e.id
-        WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND s.deleted_at IS NULL AND s.is_starred = 1
-          AND ${inboundIdentityPredicate('e')}
-      ) AS starred_count,
-      (SELECT COUNT(*) FROM workspace_delivery_statuses AS ds
-       LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
-       WHERE ds.user_id = (SELECT id FROM owner_scope) AND ds.status IN ('queued', 'submitting')
-         AND ${identityPredicate('m', 'sender_address_id')}) AS queued_count,
-      (SELECT COUNT(*) FROM workspace_delivery_statuses AS ds
-       LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
-       WHERE ds.user_id = (SELECT id FROM owner_scope) AND ds.status = 'delayed'
-         AND ${identityPredicate('m', 'sender_address_id')}) AS delayed_count,
-      (SELECT COUNT(*) FROM workspace_delivery_statuses AS ds
-       LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
-       WHERE ds.user_id = (SELECT id FROM owner_scope) AND ds.status IN ('failed', 'suppressed')
-         AND ${identityPredicate('m', 'sender_address_id')}) AS failed_count,
-      (SELECT COUNT(*) FROM workspace_delivery_statuses AS ds
-       LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
-       WHERE ds.user_id = (SELECT id FROM owner_scope) AND ds.status = 'bounced'
-         AND ${identityPredicate('m', 'sender_address_id')}) AS bounced_count,
-      (SELECT COUNT(*) FROM workspace_delivery_statuses AS ds
-       LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
-       WHERE ds.user_id = (SELECT id FROM owner_scope) AND ds.status = 'complained'
-         AND ${identityPredicate('m', 'sender_address_id')}) AS complained_count,
-      (SELECT COUNT(*) FROM workspace_delivery_statuses AS ds
-       LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
-       WHERE ds.user_id = (SELECT id FROM owner_scope) AND ds.status = 'submitting'
-         AND datetime(COALESCE(ds.last_event_at, ds.updated_at, ds.created_at)) <= datetime('now', '-15 minutes')
-         AND ${identityPredicate('m', 'sender_address_id')}) AS stale_delivery_count
+      COALESCE(m.inbox_count, 0) + COALESCE(e.inbox_count, 0) AS inbox_count,
+      COALESCE(m.sent_count, 0) AS sent_count,
+      COALESCE(m.archive_count, 0) + COALESCE(e.archive_count, 0) AS archive_count,
+      COALESCE(d.drafts_count, 0) AS drafts_count,
+      COALESCE(m.trash_count, 0) + COALESCE(e.trash_count, 0) + COALESCE(d.trash_count, 0) AS trash_count,
+      COALESCE(m.unread_count, 0) + COALESCE(e.unread_count, 0) AS unread_count,
+      COALESCE(m.starred_count, 0) + COALESCE(e.starred_count, 0) + COALESCE(d.starred_count, 0) AS starred_count,
+      ds.queued_count, ds.delayed_count, ds.failed_count, ds.bounced_count, ds.complained_count, ds.stale_delivery_count
+    FROM message_counts AS m CROSS JOIN inbound_counts AS e CROSS JOIN draft_counts AS d CROSS JOIN delivery_counts AS ds
   `).bind(
     identityFilter?.kind ?? null,
     identityFilter?.id ?? null,

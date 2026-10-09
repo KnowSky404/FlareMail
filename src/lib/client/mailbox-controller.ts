@@ -384,64 +384,131 @@ type MailboxControllerCallbacks = {
   onPage: (page: MailboxPage, append: boolean) => void;
   onLoading: (loading: boolean, append: boolean) => void;
   onError: (message: string) => void;
+  onRefreshing?: (refreshing: boolean) => void;
 };
 
+/** Session-local view cache. No mailbox data is stored in browser persistence. */
 export class MailboxController {
   private readonly request = new LatestRequest();
+  private readonly cache = new Map<string, { page: MailboxPage; updatedAt: number }>();
   private loadingAppend: boolean | null = null;
+  private inFlight: { key: string; promise: Promise<boolean> } | null = null;
 
   constructor(
     private readonly fetchPage: MailboxPageFetcher,
-    private readonly callbacks: MailboxControllerCallbacks
+    private readonly callbacks: MailboxControllerCallbacks,
+    private readonly now: () => number = Date.now
   ) {}
 
-  async refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
+  seed(page: MailboxPage) {
+    this.remember(this.keyForPage(page), page);
+  }
+
+  navigate(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
+    return this.fetch(folder, query, filter, identityFilter, labelId, category, false);
+  }
+
+  refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
+    return this.fetch(folder, query, filter, identityFilter, labelId, category, true);
+  }
+
+  private fetch(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null, category: InboxCategoryFilter, force: boolean): Promise<boolean> {
+    const params = this.params(folder, query, filter, identityFilter, labelId, category);
+    const key = params.toString();
+    if (this.inFlight?.key === key) return this.inFlight.promise;
+    this.cancel();
+    const cached = this.cache.get(key);
+    if (cached) {
+      this.cache.delete(key);
+      this.cache.set(key, cached);
+      this.callbacks.onPage(cached.page, false);
+      if (!force && this.now() - cached.updatedAt < 30_000) return Promise.resolve(true);
+    }
     const request = this.request.begin();
-    this.setLoading(true, false);
-    try {
-      const params = new URLSearchParams({ folder, limit: '40' });
-      this.addFilters(params, query, filter, identityFilter, labelId, category);
-      const result = await this.fetchPage(params, request.signal);
-      if (request.isCurrent()) {
+    this.setLoading(!cached, false);
+    this.callbacks.onRefreshing?.(Boolean(cached));
+    const promise = (async () => {
+      try {
+        const result = await this.fetchPage(params, request.signal);
+        if (!request.isCurrent()) return false;
+        this.remember(key, result.page);
         this.callbacks.onPage(result.page, false);
         return true;
+      } catch (error) {
+        if (request.isCurrent()) this.callbacks.onError(error instanceof Error ? error.message : '刷新邮件列表失败。');
+        return false;
+      } finally {
+        if (request.isCurrent()) {
+          this.inFlight = null;
+          this.setLoading(false, false);
+          this.callbacks.onRefreshing?.(false);
+        }
       }
-    } catch (error) {
-      if (!request.signal.aborted) this.callbacks.onError(error instanceof Error ? error.message : '刷新邮件列表失败。');
-    } finally {
-      if (request.isCurrent()) this.setLoading(false, false);
-    }
-    return false;
+    })();
+    this.inFlight = { key, promise };
+    return promise;
   }
 
   async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return;
+    this.cancel();
     const request = this.request.begin();
     this.setLoading(true, true);
+    const params = this.params(folder, query, filter, identityFilter, labelId, category, currentPage.limit);
+    const key = params.toString();
+    params.set('cursor', currentPage.nextCursor);
     try {
-      const params = new URLSearchParams({
-        folder,
-        cursor: currentPage.nextCursor,
-        limit: String(currentPage.limit)
-      });
-      this.addFilters(params, query, filter, identityFilter, labelId, category);
       const result = await this.fetchPage(params, request.signal);
-      if (request.isCurrent()) {
-        this.callbacks.onPage(result.page, true);
-        return true;
-      }
+      if (!request.isCurrent()) return false;
+      const merged = mergeMailboxPage({ mailbox: cloneMailbox(), mailboxPages: { [folder]: currentPage }, metrics: createEmptyWorkspaceViewState().metrics }, result.page, true);
+      this.remember(key, merged.mailboxPages![folder]!);
+      this.callbacks.onPage(result.page, true);
+      return true;
     } catch (error) {
-      if (!request.signal.aborted) this.callbacks.onError(error instanceof Error ? error.message : '加载更多邮件失败。');
+      if (request.isCurrent()) this.callbacks.onError(error instanceof Error ? error.message : '加载更多邮件失败。');
     } finally {
       if (request.isCurrent()) this.setLoading(false, true);
     }
     return false;
   }
 
+  /** Invalidates requests as well as freshness: old pages cannot undo a write. */
+  invalidate() {
+    this.cancel();
+    for (const entry of this.cache.values()) {
+      entry.updatedAt = Number.NEGATIVE_INFINITY;
+      entry.page = { ...entry.page, metrics: undefined };
+    }
+  }
+
+  patchFlags(id: string, patch: FlagDelta) {
+    const interrupted = this.inFlight !== null || this.loadingAppend !== null;
+    this.invalidate();
+    for (const entry of this.cache.values()) entry.page = patchPageFlags(entry.page, id, patch);
+    return interrupted;
+  }
+
+  reset() {
+    this.cancel();
+    this.cache.clear();
+  }
+
   cancel() {
     const append = this.loadingAppend;
     this.request.cancel();
+    this.inFlight = null;
     if (append !== null) this.setLoading(false, append);
+    this.callbacks.onRefreshing?.(false);
+  }
+
+  private remember(key: string, page: MailboxPage) {
+    this.cache.delete(key);
+    this.cache.set(key, { page: { ...page, messages: [...page.messages] }, updatedAt: this.now() });
+    while (this.cache.size > 16) this.cache.delete(this.cache.keys().next().value!);
+  }
+
+  private keyForPage(page: MailboxPage) {
+    return this.params(page.folder, page.query, page.filter, page.identityFilter ?? null, page.labelId ?? null, page.category ?? 'all', page.limit).toString();
   }
 
   private setLoading(loading: boolean, append: boolean) {
@@ -449,11 +516,33 @@ export class MailboxController {
     this.callbacks.onLoading(loading, append);
   }
 
-  private addFilters(params: URLSearchParams, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null, category: InboxCategoryFilter) {
-    if (params.get('folder') === 'inbox' && category !== 'all') params.set('category', category);
+  private params(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null, category: InboxCategoryFilter, limit = 40) {
+    const params = new URLSearchParams({ folder, limit: String(limit) });
+    if (folder === 'inbox' && category !== 'all') params.set('category', category);
     if (query.trim()) params.set('q', query.trim());
     if (filter !== 'all') params.set('filter', filter);
     if (identityFilter) params.set('identity', `${identityFilter.kind}:${identityFilter.id}`);
     if (labelId) params.set('label', labelId);
+    return params;
   }
+}
+
+function patchPageFlags(page: MailboxPage, id: string, patch: FlagDelta): MailboxPage {
+  return { ...page, messages: page.messages.map((message) => message.id === id ? { ...message, ...patch } : message)
+    .filter((message) => message.id !== id || (
+      (page.filter !== 'unread' || !message.read) && (page.filter !== 'starred' || message.starred) &&
+      (page.folder !== 'starred' || message.starred)
+    )) };
+}
+
+/** Flags update existing rows only, preserving body/labels and the page cursor. */
+export function patchMailboxFlags(snapshot: MailboxSnapshot, id: string, patch: FlagDelta): MailboxSnapshot {
+  const pages = snapshot.mailboxPages ? Object.fromEntries(Object.entries(snapshot.mailboxPages).map(([key, page]) =>
+    [key, page ? patchPageFlags(page, id, patch) : page]
+  )) as Partial<Record<MailboxSection, MailboxPage>> : null;
+  const mailbox = cloneMailbox(snapshot.mailbox);
+  for (const folder of ['inbox', 'sent', 'drafts'] as const) {
+    mailbox[folder] = pages?.[folder]?.messages ?? mailbox[folder].map((message) => message.id === id ? { ...message, ...patch } : message);
+  }
+  return { ...snapshot, mailbox, mailboxPages: pages };
 }

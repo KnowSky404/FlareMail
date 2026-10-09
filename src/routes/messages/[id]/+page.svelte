@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { MessageFlagsController, ReadActivationController } from '$lib/client/message-flags-controller';
   import type { PageData } from './$types';
   import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
@@ -49,7 +50,9 @@
   let authRecoveryError = $state('');
   let authSessionSync: ReturnType<typeof createAuthSessionChannel> | null = null;
   let activeController: AbortController | null = null;
-  let mounted = false;
+  let mounted = $state(false);
+  let flagRevision = 0;
+  const readActivation = new ReadActivationController();
   let authRecoveryPromise: Promise<boolean> | null = null;
   let pending = $derived(authExpired || inboundDetailPending || workspaceBodyPending || deliveryDetailPending || mutationPending);
 
@@ -60,26 +63,31 @@
         ? value.message
         : fallback;
 
+  const flagController = new MessageFlagsController({
+    onPatch: (_id, patch) => { flagRevision++; messageOverride = { ...message, ...patch }; },
+    onConfirmed: (result) => sync?.publish({ type: 'message-updated', id: result.message.id }),
+    onError: (error) => { mutationError = errorMessage(error, t('mail.flagUpdateError')); },
+    onSettled: () => { mutationPending = flagController.busy; }
+  });
+
   async function updateFlags(patch: { read?: boolean; starred?: boolean }) {
     mutationPending = true;
     mutationError = '';
-    try {
-      const result = await updateMessageFlags(message.id, patch);
-      messageOverride = result.message;
-      sync?.publish({ type: 'message-updated', id: result.message.id });
-    } catch (error) {
-      mutationError = errorMessage(error, t('mail.flagUpdateError'));
-    } finally {
-      mutationPending = false;
-    }
+    await flagController.update(message, patch, () => updateMessageFlags(message.id, patch));
   }
+
+  $effect(() => {
+    const visibleMessage = mounted && !authExpired ? message : null;
+    untrack(() => { if (readActivation.activate(visibleMessage)) void updateFlags({ read: true }); });
+  });
 
   let sync: ReturnType<typeof createWorkspaceSync> | null = null;
 
   async function refreshMessageFromWorkspace() {
     try {
+      const revision = flagRevision;
       const result = await fetchWorkspaceMessage(message.id);
-      messageOverride = result.message;
+      if (mounted && !authExpired && revision === flagRevision && !flagController.busy) messageOverride = result.message;
     } catch (error) {
       if (error instanceof ClientApiError && error.code === 'AUTH_SESSION_EXPIRED') return;
       if (error instanceof ClientApiError && [401, 403, 404].includes(error.status)) {
@@ -91,6 +99,9 @@
   function enterAuthExpired(source: AuthExpirySource) {
     if (authExpired) return;
     authExpired = true;
+    flagController.reset();
+    readActivation.reset();
+    mutationPending = false;
     authRecoveryError = '';
     activeController?.abort();
     activeController = null;
@@ -254,6 +265,8 @@
     return () => {
       controller.abort();
       mounted = false;
+      flagController.reset();
+      readActivation.reset();
       activeController = null;
       window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
       sync?.close();

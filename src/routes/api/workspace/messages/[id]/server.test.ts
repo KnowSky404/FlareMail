@@ -2,6 +2,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { GET } from './+server';
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import type { WorkspaceContext } from '$lib/server/workspace/shared';
 
 class Statement {
@@ -40,6 +41,7 @@ function fixture() {
   const db = new Database(':memory:');
   databases.push(db);
   db.exec(readFileSync(new URL('../../../../../../schema.sql', import.meta.url), 'utf8'));
+  db.query("INSERT INTO workspace_schema_metadata VALUES ('flaremail', ?, '2026-10-09T00:00:00Z')").run(FLAREMAIL_SCHEMA_VERSION);
   db.query(`INSERT INTO workspace_users
     (id, login_email, name, role, email, company, location, timezone, forwarding_enabled, signature, incoming_sequence)
     VALUES ('user-1', 'owner@example.test', 'Owner', 'Owner', 'owner@example.test', '', '', 'UTC', 0, '', 0),
@@ -119,4 +121,62 @@ test('message metadata GET rejects unauthenticated access for workspace deep lin
   const value = event(env, 'user-1', 'workspace-deep') as unknown as { locals: object };
   value.locals = {};
   expect((await GET(value as never)).status).toBe(401);
+});
+
+describe('mailbox metrics and partial flags API', () => {
+  function identities(db: Database) {
+    db.exec(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name)
+      VALUES ('domain-owner', 'user-1', 'owner.test', 'zone-owner', 'flaremail'),
+        ('domain-other', 'user-2', 'other.test', 'zone-other', 'flaremail');
+      INSERT INTO mail_addresses (id, owner_user_id, domain_id, email, local_part)
+      VALUES ('address-owner', 'user-1', 'domain-owner', 'mail@owner.test', 'mail'),
+        ('address-other', 'user-2', 'domain-other', 'mail@other.test', 'mail');
+      UPDATE email_messages SET mail_address_id = 'address-owner', mail_domain_id = 'domain-owner', inbox_category = 'updates';`);
+  }
+  function apiEvent(env: { DB: D1 }, path: string, body?: unknown, authenticated = true) {
+    const value = event(env, 'user-1', 'email:email-deep') as unknown as Record<string, unknown>;
+    value.url = new URL(`https://flaremail.test${path}`);
+    value.request = new Request(value.url as URL, body === undefined ? {} : {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!authenticated) value.locals = {};
+    return value as never;
+  }
+
+  test('reports identity-wide unread counts independently of category/search without mutating reads', async () => {
+    const { db, env } = fixture();
+    identities(db);
+    const { GET: metrics } = await import('../../mailbox/metrics/+server');
+    for (const scope of ['address:address-owner', 'domain:domain-owner']) {
+      const response = await metrics(apiEvent(env, `/api/workspace/mailbox/metrics?identity=${scope}&category=primary&q=missing`));
+      expect(response.status).toBe(200);
+      expect(response.headers.get('server-timing')).toContain('total;dur=');
+      expect(await response.json()).toMatchObject({ data: { metrics: { inboxCount: 1, unreadCount: 1 },
+        metricsScope: { identityFilter: { kind: scope.split(':')[0], id: scope.split(':')[1] } } } });
+    }
+    expect(db.query('SELECT COUNT(*) AS count FROM workspace_email_states').get()).toEqual({ count: 0 });
+    expect((await metrics(apiEvent(env, '/api/workspace/mailbox/metrics', undefined, false))).status).toBe(401);
+    expect((await metrics(apiEvent(env, '/api/workspace/mailbox/metrics?identity=address:address-other'))).status).toBe(404);
+    expect((await metrics(apiEvent(env, '/api/workspace/mailbox/metrics?identity=invalid'))).status).toBe(400);
+  });
+
+  test('validates flags/identity before writing and returns scoped body-free partial updates', async () => {
+    const { db, env } = fixture();
+    identities(db);
+    const { PATCH } = await import('./flags/+server');
+    const path = '/api/workspace/messages/email%3Aemail-deep/flags';
+    expect((await PATCH(apiEvent(env, path, { read: true }, false))).status).toBe(401);
+    expect((await PATCH(apiEvent(env, path, { read: 'yes' }))).status).toBe(400);
+    expect((await PATCH(apiEvent(env, path, {}))).status).toBe(400);
+    expect((await PATCH(apiEvent(env, `${path}?identity=address:address-other`, { read: true }))).status).toBe(404);
+    expect(db.query('SELECT COUNT(*) AS count FROM workspace_email_states').get()).toEqual({ count: 0 });
+    const read = await PATCH(apiEvent(env, `${path}?identity=address:address-owner`, { read: true }));
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ data: { message: { read: true, starred: false, body: '' },
+      metrics: { inboxCount: 1, unreadCount: 0 }, metricsScope: { identityFilter: { kind: 'address', id: 'address-owner' } } } });
+    const star = await PATCH(apiEvent(env, path, { starred: true }));
+    expect(await star.json()).toMatchObject({ data: { message: { read: true, starred: true, body: '' } } });
+    db.exec("UPDATE workspace_email_states SET deleted_at = '2026-10-09T00:00:00Z'");
+    expect((await PATCH(apiEvent(env, path, { read: false }))).status).toBe(404);
+  });
 });

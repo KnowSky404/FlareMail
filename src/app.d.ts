@@ -27,6 +27,8 @@ declare global {
       authPrincipalId?: string | null;
       authConfigured?: boolean;
       locale?: Locale;
+      mailboxTimings?: Record<string, number>;
+      requestStartedAt?: number;
     }
 
     interface Error {

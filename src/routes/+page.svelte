@@ -45,6 +45,7 @@
     MailboxController,
     createEmptyWorkspaceViewState,
     mergeMailboxPage,
+    patchMailboxFlags,
     mergeMessageDelta,
     moveSelection,
     reconcileBulkSelection,
@@ -57,6 +58,7 @@
     type WorkspaceSection
   } from '$lib/client/mailbox-controller';
   import { LatestRequest } from '$lib/client/latest-request';
+  import { MessageFlagsController, ReadActivationController } from '$lib/client/message-flags-controller';
   import { selectedVisibleMessages } from '$lib/client/mailbox-selection';
   import {
     createSession,
@@ -67,6 +69,7 @@
     fetchDraftDetail,
     fetchInboundDetail,
     fetchMailboxPage,
+    fetchMailboxMetrics,
     fetchWorkspaceMessage,
     fetchMessageBody,
     fetchTrash,
@@ -178,6 +181,11 @@
   let mailbox = $state<MailboxState>(cloneMailbox());
   let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, archiveCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
     queuedCount: 0, delayedCount: 0, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0 });
+  let metricsIdentity = $state<MailboxIdentityFilter | null>(null);
+  let mailboxRefreshing = $state(false);
+  const metricsCache = new Map<string, { value: WorkspaceMetrics; updatedAt: number }>();
+  const metricsRequest = new LatestRequest();
+  const readActivation = new ReadActivationController();
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let trashItems = $state<TrashItem[]>([]);
   let trashHasMore = $state(false);
@@ -345,7 +353,7 @@
       trashHasMore = result.hasMore;
       trashLoaded = true;
       trashError = '';
-      metrics = result.metrics;
+      acceptMetrics(result.metrics, null);
       if (activeSection === 'trash' && (!selectedMessageId || !result.items.some((item) => item.id === selectedMessageId))) {
         selectedMessageId = result.items[0]?.id ?? null;
       }
@@ -394,7 +402,11 @@
     composeAutosavePending = false;
     composeClosePending = false;
     clearMailboxRefreshTimer();
-    mailboxController.cancel();
+    mailboxController.reset();
+    flagController.reset();
+    readActivation.reset();
+    metricsRequest.cancel();
+    metricsCache.clear();
     labelRequest.cancel();
     cancelLabelActions();
     // Reopen server-backed choices after recovery; keep typed editor text intact.
@@ -442,13 +454,25 @@
   });
 
   $effect(() => {
-    if (!authenticated || authExpired || urlSection === 'profile' || urlSection === 'trash') return;
-    const loaded = mailboxPages?.[urlSection];
-    if (loaded && loaded.query === urlQuery && loaded.filter === urlFilter &&
-      sameIdentityScope(loaded.identityFilter, urlIdentityFilter) &&
-      (urlSection !== 'inbox' || (loaded.category ?? 'all') === urlCategory) &&
-      (urlSection !== 'label' || loaded.labelId === urlLabelId)) return;
-    untrack(() => scheduleMailboxRefresh(urlSection, urlQuery, urlFilter, loaded?.query !== urlQuery ? 250 : 0, urlIdentityFilter));
+    const section = urlSection;
+    const query = urlQuery;
+    const filter = urlFilter;
+    const identity = urlIdentityFilter;
+    const label = urlLabelId;
+    const category = urlCategory;
+    if (!authenticated || authExpired) return;
+    untrack(() => {
+      clearMailboxRefreshTimer();
+      if (section === 'profile' || section === 'trash') { mailboxController.cancel(); return; }
+      const navigate = () => { void mailboxController.navigate(section, query, filter, identity, label, category); };
+      if (mailboxPages?.[section]?.query !== query && query.trim()) mailboxRefreshTimer = setTimeout(navigate, 250);
+      else navigate();
+    });
+  });
+
+  $effect(() => {
+    const identity = mailIdentityFilter;
+    if (authenticated && !authExpired) untrack(() => { void refreshMetrics(identity); });
   });
 
   $effect(() => {
@@ -543,7 +567,7 @@
     return () => targetMessageRequest.cancel();
   });
 
-  const unreadCount = $derived(metrics.unreadCount);
+  const unreadCount = $derived(sameIdentityScope(metricsIdentity, mailIdentityFilter) ? metrics.unreadCount : 0);
   const recipientSuggestions = $derived(deriveRecipientSuggestions(
     [...mailbox.inbox, ...mailbox.sent],
     mailIdentityOptions.addresses.map((address) => address.email)
@@ -625,7 +649,7 @@
   });
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
-    if (deepLinkedMessage && deepLinkedMessage.id === selectedMessageId && urlMessageId === selectedMessageId) return deepLinkedMessage;
+    if (deepLinkedMessage && deepLinkedMessage.id === selectedMessageId && (urlMessageId === selectedMessageId || readingLayout === 'split')) return deepLinkedMessage;
     if (activeSection === 'drafts' || activeSection === 'trash' || activeSection === 'starred' || activeSection === 'label') {
       const list = visibleMessages;
 
@@ -777,6 +801,9 @@
   };
 
   function applyMessageDelta(result: MessageDelta, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
+    mailboxController.invalidate();
+    metricsCache.clear();
+    metricsRequest.cancel();
     if (deepLinkedMessage?.id === result.message.id) deepLinkedMessage = result.message;
     if (result.message.userLabels === undefined || result.message.hasAttachments === undefined) {
       const previous = [...mailbox.inbox, ...mailbox.sent, ...mailbox.drafts, ...Object.values(mailboxPages ?? {}).flatMap((page) => page?.messages ?? [])]
@@ -805,6 +832,7 @@
     mailbox = merged.snapshot.mailbox;
     mailboxPages = merged.snapshot.mailboxPages;
     metrics = merged.snapshot.metrics;
+    if (merged.metricsApplied) metricsIdentity = mailIdentityFilter;
     runtimeOperationError = false;
     authenticated = true;
     if (options?.section) activeSection = options.section;
@@ -916,7 +944,11 @@
       syncUrl?: boolean;
     }
   ) {
-    mailboxController.cancel();
+    mailboxController.reset();
+    flagController.reset();
+    readActivation.reset();
+    metricsRequest.cancel();
+    metricsCache.clear();
     if (options?.resetUserScoped) {
       deepLinkedMessage = null;
       cancelLabelActions();
@@ -935,7 +967,10 @@
     profile = next.profile;
     mailbox = next.mailbox;
     metrics = next.metrics;
+    metricsIdentity = next.identityFilter;
+    metricsCache.set(identityKey(next.identityFilter), { value: next.metrics, updatedAt: Date.now() });
     mailboxPages = next.mailboxPages;
+    for (const cached of Object.values(next.mailboxPages ?? {})) if (cached) mailboxController.seed(cached);
     activeSection = next.activeSection;
     activeLabelId = next.activeSection === 'label' ? urlLabelId : null;
     selectedMessageId = readingLayout === 'list' && !options?.preferredMessageId ? null : next.selectedMessageId;
@@ -969,7 +1004,11 @@
   function resetWorkspace() {
     draftOpenRequest.cancel();
     const initial = createEmptyWorkspaceViewState();
-    mailboxController.cancel();
+    mailboxController.reset();
+    flagController.reset();
+    readActivation.reset();
+    metricsRequest.cancel();
+    metricsCache.clear();
     labelRequest.cancel();
     cancelLabelActions();
     trashController.cancel();
@@ -1121,7 +1160,6 @@
       if (syncUrl) {
         updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
       }
-      if (authenticated && !authExpired) void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
       return;
     }
 
@@ -1141,7 +1179,6 @@
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
-    if (authenticated && !authExpired && (section === 'drafts' || section === 'starred')) void mailboxController.refresh(section, '', 'all', mailIdentityFilter);
   }
 
   async function reloadMailLabels() {
@@ -1172,7 +1209,6 @@
     inboxCategory = 'all';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ section: 'label', labelId: id, query: '', filter: 'all', messageId: null });
-    if (authenticated && !authExpired) void mailboxController.refresh('label', '', 'all', mailIdentityFilter, id);
   }
 
   function editLabel(mode: 'create' | 'rename', target: MailMessage | null = null) {
@@ -1335,7 +1371,6 @@
     bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ query, messageId: null }, true);
-    scheduleMailboxRefresh(activeSection, query, mailFilter);
   }
 
   function handleCategoryChange(category: InboxCategoryFilter) {
@@ -1346,7 +1381,6 @@
     bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ category, messageId: null });
-    scheduleMailboxRefresh('inbox', searchQuery, mailFilter, 0);
   }
 
   async function changeSelectedCategory(category: MailInboxCategory | null) {
@@ -1388,7 +1422,6 @@
     bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ filter, messageId: null });
-    scheduleMailboxRefresh(activeSection, searchQuery, filter, 0);
   }
 
   function handleIdentityFilterChange(identityFilter: MailboxIdentityFilter | null) {
@@ -1398,7 +1431,6 @@
     bulkThreadScope = 'selected';
     mobileDetailOpen = false;
     updateWorkspaceUrl({ identityFilter, messageId: null });
-    scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, identityFilter);
   }
 
   function clearMailFilters() {
@@ -1411,10 +1443,12 @@
     mobileDetailOpen = false;
     inboxCategory = 'all';
     updateWorkspaceUrl({ query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null }, true);
-    scheduleMailboxRefresh(activeSection, '', 'all', 0, null);
   }
 
   async function refreshWorkspace(announce = true) {
+    mailboxController.invalidate();
+    metricsCache.clear();
+    metricsRequest.cancel();
     if (!authenticated || authExpired) return;
     if (activeSection === 'trash') {
       const refreshed = await trashController.load();
@@ -1523,6 +1557,8 @@
 
     if (!authenticated || authExpired) return;
 
+    mailboxController.invalidate();
+    metricsCache.clear();
     if (event.id) invalidateMessageCaches(event.id);
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
     if (current) {
@@ -1534,10 +1570,11 @@
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {
+    page = { ...page, messages: page.messages.map((message) => flagController.overlay(message)), ...(flagController.busy ? { metrics: undefined } : {}) };
     const merged = mergeMailboxPage({ mailbox, mailboxPages, metrics }, page, append);
     mailbox = merged.mailbox;
     mailboxPages = merged.mailboxPages;
-    metrics = merged.metrics;
+    if (page.metrics) acceptMetrics(page.metrics, page.identityFilter ?? null);
     runtimeOperationError = false;
     mailboxError = '';
     const currentMessages = merged.mailboxPages?.[page.folder]?.messages ?? [];
@@ -1547,7 +1584,8 @@
     }
     if (
       activeSection === page.folder &&
-      (!selectedMessageId || !currentMessages.some((message) => message.id === selectedMessageId))
+      (!selectedMessageId || !currentMessages.some((message) => message.id === selectedMessageId)) &&
+      !(selectedMessageId && deepLinkedMessage?.id === selectedMessageId && (readerOpen || mobileDetailOpen || readingLayout === 'split'))
     ) {
       if (readingLayout === 'split') selectedMessageId = currentMessages[0]?.id ?? null;
       else if (selectedMessageId && !urlMessageId) selectedMessageId = null;
@@ -1597,6 +1635,7 @@
         ...(activeSection === 'label' ? { labelId: activeLabelId! } : {}),
         ...(threadScope === 'filtered' ? { query: searchQuery, filter: mailFilter } : {})
       };
+      if (action === 'read' || action === 'unread') await flagController.flush();
       const result = await mutateMailbox(action, validSelectedIds, threadKeys, scope);
       const metricsScope = result.result.metricsScope.identityFilter;
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
@@ -1632,7 +1671,8 @@
       mailboxLoading = loading && !append;
       mailboxLoadingMore = loading && append;
     },
-    onError: () => { mailboxError = t('mail.listError'); }
+    onError: () => { mailboxError = t('mail.listError'); },
+    onRefreshing: (refreshing) => { mailboxRefreshing = refreshing; if (refreshing) mailboxError = ''; }
   });
 
   async function loadMoreMailbox() {
@@ -1797,7 +1837,7 @@
 
       applyWorkspaceSnapshot(result.workspace, {
         section: 'inbox',
-        preferredMessageId: result.workspace.activePage.messages[0]?.id ?? null,
+        preferredMessageId: readingLayout === 'split' ? result.workspace.activePage.messages[0]?.id ?? null : null,
         clearMailView: true,
         resetUserScoped: true,
         syncUrl: true
@@ -2076,28 +2116,94 @@
     }
   }
 
-  async function patchMessage(message: MailMessage, patch: MessagePatch, nextBanner?: string) {
-    pending = true;
+  function identityKey(identity: MailboxIdentityFilter | null) {
+    return identity ? `${identity.kind}:${identity.id}` : 'owner';
+  }
 
-    try {
-      const result = await updateMessageFlags(message.id, patch);
-
-      // A delayed flag update must not replace a newer reader/list selection.
-      const selection = selectedMessageId;
-      applyMessageDelta(result);
-      selectedMessageId = selection;
-      if (activeSection === 'starred') await mailboxController.refresh('starred', searchQuery, mailFilter, mailIdentityFilter);
-
-      if (nextBanner) {
-        notify(nextBanner, 'success');
-      }
-      workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
-    } catch (error) {
-      notifyError(error, t('notify.updateMessageFailed'));
-    } finally {
-      pending = false;
+  function acceptMetrics(value: WorkspaceMetrics, identity: MailboxIdentityFilter | null) {
+    metricsCache.set(identityKey(identity), { value, updatedAt: Date.now() });
+    if (sameIdentityScope(identity, mailIdentityFilter)) {
+      metrics = value;
+      metricsIdentity = identity;
     }
   }
+
+  async function refreshMetrics(identity = mailIdentityFilter, force = false) {
+    if (!authenticated || authExpired) return;
+    const cached = metricsCache.get(identityKey(identity));
+    if (cached && sameIdentityScope(identity, mailIdentityFilter)) { metrics = cached.value; metricsIdentity = identity; }
+    if (!force && cached && Date.now() - cached.updatedAt < 30_000) return;
+    const request = metricsRequest.begin();
+    try {
+      const result = await fetchMailboxMetrics(identity, request.signal);
+      if (request.isCurrent()) acceptMetrics(result.metrics, result.metricsScope.identityFilter);
+    } catch (error) {
+      if (request.isCurrent()) notifyError(error, t('mail.listError'));
+    }
+  }
+
+  let flagsInterruptedPageRequest = false;
+
+  function applyFlagPatch(id: string, patch: MessagePatch) {
+    if (patch.read === undefined && patch.starred === undefined) return;
+    metricsRequest.cancel();
+    metricsCache.clear();
+    flagsInterruptedPageRequest = mailboxController.patchFlags(id, patch) || flagsInterruptedPageRequest;
+    const existing = deepLinkedMessage?.id === id ? deepLinkedMessage : [...mailbox.inbox, ...mailbox.sent, ...mailbox.drafts,
+      ...Object.values(mailboxPages ?? {}).flatMap((cached) => cached?.messages ?? [])].find((message) => message.id === id);
+    if (existing && patch.read !== undefined && existing.read !== patch.read && existing.folder === 'inbox' && !existing.archivedAt &&
+      sameIdentityScope(metricsIdentity, mailIdentityFilter) && messageMatchesIdentity(existing)) {
+      metrics = { ...metrics, unreadCount: Math.max(0, metrics.unreadCount + (patch.read ? -1 : 1)) };
+    }
+    // Hold the visible reader independently when a flag removes its filtered row.
+    if (existing && selectedMessageId === id) deepLinkedMessage = { ...existing, ...patch };
+    else if (deepLinkedMessage?.id === id) deepLinkedMessage = { ...deepLinkedMessage, ...patch };
+    const updated = patchMailboxFlags({ mailbox, mailboxPages, metrics }, id, patch);
+    mailbox = updated.mailbox;
+    mailboxPages = updated.mailboxPages;
+  }
+
+  function messageMatchesIdentity(message: MailMessage) {
+    if (!mailIdentityFilter) return true;
+    const address = message.folder === 'inbox' ? message.recipientAddressId : message.senderAddressId;
+    return mailIdentityFilter.kind === 'address' ? address === mailIdentityFilter.id :
+      mailIdentityOptions.addresses.some((item) => item.id === address && item.domainId === mailIdentityFilter?.id);
+  }
+
+  const flagController = new MessageFlagsController({
+    onPatch: applyFlagPatch,
+    onConfirmed: (result, current) => {
+      if (current) acceptMetrics(result.metrics, result.metricsScope.identityFilter);
+      workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
+    },
+    onError: (error) => notifyError(error, t('notify.updateMessageFailed')),
+    onSettled: () => {
+      if (!flagController.busy && authenticated && !authExpired) {
+        void refreshMetrics(mailIdentityFilter);
+        const refreshPage = flagsInterruptedPageRequest || searchQuery.trim() || mailFilter !== 'all' || activeSection === 'starred';
+        flagsInterruptedPageRequest = false;
+        if (refreshPage) scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0);
+      }
+    }
+  });
+
+  async function patchMessage(message: MailMessage, patch: MessagePatch, nextBanner?: string) {
+    const identity = mailIdentityFilter;
+    const updated = await flagController.update(message, patch, () => updateMessageFlags(message.id, patch, identity));
+    if (updated && nextBanner) notify(nextBanner, 'success');
+  }
+
+  $effect(() => {
+    const visible = authenticated && !authExpired && activeSection !== 'trash' && activeSection !== 'profile' &&
+      (mobileDetailOpen || readerOpen || (readingLayout === 'split' && workspaceWidth >= 901));
+    const message = visible ? selectedMessage : null;
+    untrack(() => {
+      if (readActivation.activate(message) && message) {
+        if (!selectedMessageId) selectedMessageId = message.id;
+        void patchMessage(message, { read: true });
+      }
+    });
+  });
 
   async function loadServerDraft() {
     if (!draftConflict) return;
@@ -2140,10 +2246,6 @@
     selectedMessageId = message.id;
     mobileDetailOpen = true;
     updateWorkspaceUrl({ messageId: message.id });
-
-    if (activeSection !== 'trash' && message.folder === 'inbox' && !message.read) {
-      await patchMessage(message, { read: true });
-    }
 
     if (isInboundMessageId(message.id)) {
       await loadInboundDetail(message);
@@ -2689,7 +2791,7 @@
           {userLabels}
           {activeLabelId}
           draftCount={metrics.draftsCount}
-          inboxCount={metrics.inboxCount}
+          unreadCount={unreadCount}
           starredCount={metrics.starredCount}
           trashCount={metrics.trashCount}
           {pending}
@@ -2712,7 +2814,7 @@
             {activeLabelId}
             collapsed={sidebarCollapsed}
             draftCount={metrics.draftsCount}
-            inboxCount={metrics.inboxCount}
+            unreadCount={unreadCount}
             starredCount={metrics.starredCount}
             trashCount={metrics.trashCount}
             {pending}
@@ -2936,6 +3038,8 @@
                     selectedMessageId={readingLayout === 'list' && !mobileDetailOpen ? null : selectedMessageId}
                     query={searchQuery}
                     filter={mailFilter}
+                    viewKey={[activeSection, inboxCategory, searchQuery.trim(), mailFilter, identityKey(mailIdentityFilter), activeLabelId ?? ''].join('|')}
+                    refreshing={mailboxRefreshing}
                     loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
                     loadingMore={activeSection === 'trash' ? false : mailboxLoadingMore}
                     error={activeSection === 'trash' ? trashError : mailboxError}

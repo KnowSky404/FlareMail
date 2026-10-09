@@ -23,7 +23,7 @@
 
   let {
     activeSection,
-    inboxCount,
+    unreadCount,
     starredCount,
     draftCount,
     trashCount,
@@ -38,7 +38,7 @@
     onSelectManagementView
   }: {
     activeSection: AppSection;
-    inboxCount: number;
+    unreadCount: number;
     starredCount: number;
     draftCount: number;
     trashCount: number;
@@ -68,7 +68,7 @@
     profile: managementView === 'domains' ? t('shell.domains') : managementView === 'addresses' ? t('shell.addresses') : t('common.settings')
   });
 
-  const formattedInboxCount = $derived(inboxCount ? formatNumber(inboxCount, i18n.locale) : '');
+  const formattedInboxCount = $derived(unreadCount ? (unreadCount > 99 ? '99+' : formatNumber(unreadCount, i18n.locale)) : '');
   const formattedStarredCount = $derived(starredCount ? formatNumber(starredCount, i18n.locale) : '');
   const formattedDraftCount = $derived(draftCount ? formatNumber(draftCount, i18n.locale) : '');
   const formattedTrashCount = $derived(trashCount ? formatNumber(trashCount, i18n.locale) : '');
@@ -102,7 +102,7 @@
 <Drawer id="mobile-navigation-drawer" {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
     <nav class="mobile-nav-list" aria-label={t('shell.mobileNavigation')}>
       <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
-        <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span><small>{formattedInboxCount}</small>
+        <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span><small aria-label={t('mail.unreadCount', { count: unreadCount })}>{formattedInboxCount}</small>
       </button>
       <button class:active={activeSection === 'starred'} type="button" onclick={() => select('starred')}>
         <Star size={19} aria-hidden="true" /><span>{t('shell.starred')}</span><small>{formattedStarredCount}</small>

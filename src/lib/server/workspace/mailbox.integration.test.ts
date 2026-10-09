@@ -1,3 +1,7 @@
+import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
+import { patchWorkspaceMessage } from './message';
+import { patchInboundFlags } from '$lib/server/db/messages';
+import { getMailboxMetrics } from '$lib/server/db/mailbox';
 import { changeMailboxCategories } from './categories';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
@@ -28,7 +32,7 @@ class TestStatement {
     return (this.database.query(this.sql).get(...this.bindings as SQLQueryBindings[]) ?? null) as T | null;
   }
 
-  async run() {
+  run() {
     const result = this.database.query(this.sql).run(...this.bindings as SQLQueryBindings[]);
     return { meta: { changes: Number(result.changes) } };
   }
@@ -45,7 +49,7 @@ class TestD1 {
   async batch(statements: D1PreparedStatement[]) {
     this.database.exec('BEGIN');
     try {
-      for (const statement of statements) await (statement as unknown as TestStatement).run();
+      for (const statement of statements) (statement as unknown as TestStatement).run();
       this.database.exec('COMMIT');
       return [];
     } catch (error) {
@@ -554,7 +558,7 @@ describe('D1 mailbox pages', () => {
     expect(loaded.workspace.activePage.messages.find((message) => message.source === 'inbound')?.body).toBe('');
     expect(db.queries.filter((sql) => sql.includes('SELECT d.id'))).toHaveLength(0);
     expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(2);
-    expect(db.queries.filter((sql) => sql.includes('SELECT COUNT(*)'))).toHaveLength(1);
+    expect(db.queries.filter((sql) => sql.includes('AS inbox_count'))).toHaveLength(1);
     expect(db.queries.some((sql) => /\btext_body\b/u.test(sql))).toBe(false);
   });
 
@@ -1091,4 +1095,33 @@ test('category changes and tab pages retain the selected address boundary', asyn
     scope: { section: 'inbox', identityFilter: { kind: 'address', id: 'address-a' }, category: 'updates' }
   })).rejects.toMatchObject({ status: 404 });
   expect(database.query(`SELECT inbox_category FROM email_messages WHERE id = 'incoming-1'`).get()).toEqual({ inbox_category: 'updates' });
+});
+
+
+test('concurrent read and star patches persist both flags and read-only draft patches never overwrite stars', async () => {
+  const { env, workspace, database } = fixture();
+  database.query("INSERT OR REPLACE INTO workspace_schema_metadata (schema_name, schema_version, updated_at) VALUES ('flaremail', ?, '2026-10-09T00:00:00.000Z')").run(FLAREMAIL_SCHEMA_VERSION);
+  for (const id of ['inbox-a', 'email:incoming-1', 'draft-1']) {
+    await patchWorkspaceMessage(env, workspace, id, { read: false, starred: false });
+    await Promise.all([
+      patchWorkspaceMessage(env, workspace, id, { read: true }),
+      patchWorkspaceMessage(env, workspace, id, { starred: true })
+    ]);
+    const final = await patchWorkspaceMessage(env, workspace, id, {});
+    expect(final?.message).toMatchObject({ read: true, starred: true, body: '' });
+  }
+  expect((await getMailboxMetrics(env.DB, workspace.userId)).unreadCount).toBe(1);
+});
+
+test('flag writes preserve archive and never resurrect deleted mail', async () => {
+  const { env, workspace, database } = fixture();
+  database.query("INSERT OR REPLACE INTO workspace_schema_metadata (schema_name, schema_version, updated_at) VALUES ('flaremail', ?, '2026-10-09T00:00:00.000Z')").run(FLAREMAIL_SCHEMA_VERSION);
+  await env.DB.batch([patchInboundFlags(env.DB, workspace.userId, 'incoming-1', { read: true }, '2026-10-09T00:00:00.000Z')]);
+  database.exec("UPDATE workspace_email_states SET archived_at = '2026-10-09T00:00:00.000Z' WHERE email_message_id = 'incoming-1'");
+  const changed = await patchWorkspaceMessage(env, workspace, 'email:incoming-1', { starred: true });
+  expect(changed?.message).toMatchObject({ read: true, starred: true, archivedAt: '2026-10-09T00:00:00.000Z' });
+  database.exec("UPDATE workspace_email_states SET deleted_at = '2026-10-09T00:01:00.000Z' WHERE email_message_id = 'incoming-1'; UPDATE workspace_messages SET deleted_at = '2026-10-09T00:01:00.000Z' WHERE id = 'inbox-a'");
+  await env.DB.batch([patchInboundFlags(env.DB, workspace.userId, 'incoming-1', { read: false }, '2026-10-09T00:02:00.000Z')]);
+  expect(database.query("SELECT is_read, deleted_at FROM workspace_email_states WHERE email_message_id = 'incoming-1'").get()).toEqual({ is_read: 1, deleted_at: '2026-10-09T00:01:00.000Z' });
+  expect(await patchWorkspaceMessage(env, workspace, 'inbox-a', { read: true })).toBeNull();
 });

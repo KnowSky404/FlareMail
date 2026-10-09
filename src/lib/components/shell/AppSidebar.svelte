@@ -30,7 +30,7 @@
 
   let {
     activeSection,
-    inboxCount,
+    unreadCount,
     starredCount,
     sentCount,
     draftCount,
@@ -48,7 +48,7 @@
     onToggleCollapsed
   }: {
     activeSection: AppSection;
-    inboxCount: number;
+    unreadCount: number;
     starredCount: number;
     sentCount: number;
     draftCount: number;
@@ -70,7 +70,7 @@
   const { t } = i18n;
 
   const navigation = $derived<NavigationItem[]>([
-    { id: 'inbox', label: t('shell.inbox'), count: inboxCount, icon: Inbox },
+    { id: 'inbox', label: t('shell.inbox'), count: unreadCount, icon: Inbox },
     { id: 'starred', label: t('shell.starred'), count: starredCount, icon: Star },
     { id: 'drafts', label: t('shell.drafts'), count: draftCount, icon: FileText },
     { id: 'sent', label: t('shell.sent'), count: sentCount, icon: Send },
@@ -116,7 +116,7 @@
             <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
             <span class="label">{item.label}</span>
             {#if item.count > 0}
-              <span class="count" aria-label={translateCount(i18n.locale, 'mail.messageCount', item.count)}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
+              <span class="count" aria-label={translateCount(i18n.locale, item.id === 'inbox' ? 'mail.unreadCount' : 'mail.messageCount', item.count)}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
             {/if}
           </button>
         {/snippet}

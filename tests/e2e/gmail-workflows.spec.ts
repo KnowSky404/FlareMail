@@ -66,9 +66,8 @@ function row(page: Page, subject: string) {
 }
 
 async function clickCategory(page: Page, label: string, category: Category) {
-  const loaded = page.waitForResponse((response) => mailboxResponse(response, category, false));
   await page.getByRole('tablist', { name: '收件箱分类' }).getByRole('tab', { name: label, exact: true }).click();
-  await loaded;
+  await expect(page.locator('#inbox-category-panel')).toHaveAttribute('aria-labelledby', `inbox-tab-${category}`);
   await expect(page.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true');
 }
 
@@ -187,9 +186,8 @@ test('keeps category navigation in one horizontal accessible tab strip', async (
   await forumsLoaded;
   await expect(forums).toBeFocused();
   await expect(forums).toHaveAttribute('aria-selected', 'true');
-  const allLoaded = page.waitForResponse((response) => mailboxResponse(response, 'all'));
   await forums.press('Home');
-  await allLoaded;
+  await expect(page.locator('#inbox-category-panel')).toHaveAttribute('aria-labelledby', 'inbox-tab-all');
   await expect(all).toBeFocused();
   await expect(all).toHaveAttribute('aria-selected', 'true');
   await assertNoHorizontalOverflow(page);
@@ -572,6 +570,119 @@ test('opens only the newest draft and ignores a delayed draft after leaving its 
   } finally {
     release();
     await page.unroute(`**${draftPath}`);
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('reuses warm category pages with their loaded cursor and no blocking request', async ({ page, consoleErrors }, testInfo) => {
+  const reads: string[] = [];
+  page.on('request', (request) => { if (new URL(request.url()).pathname.endsWith('/flags')) reads.push(request.url()); });
+  await login(page);
+  await clickCategory(page, '主要', 'primary');
+  const nextPage = page.waitForResponse((response) => mailboxResponse(response, 'primary', true));
+  await page.getByRole('button', { name: '加载更多', exact: true }).click();
+  await nextPage;
+  await expect(row(page, 'E2E Bulk 45')).toBeAttached();
+  const scroller = page.locator('.fm-list-scroll');
+  await scroller.evaluate((element) => { element.scrollTop = 280; });
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(280);
+  await clickCategory(page, '论坛', 'forums');
+  await page.waitForLoadState('networkidle');
+  const requested: string[] = [];
+  page.on('request', (request) => { if (new URL(request.url()).pathname === '/api/workspace/mailbox') requested.push(request.url()); });
+  await clickCategory(page, '主要', 'primary');
+  await expect(row(page, 'E2E Bulk 45')).toBeAttached();
+  await expect(page.getByRole('status', { name: '正在加载邮件', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: '邮件详情' })).toBeHidden();
+  await page.waitForLoadState('networkidle');
+  expect(requested).toEqual([]);
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(280);
+  expect(reads, 'Viewing a list/category must not mark its hidden selection read').toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath('warm-inbox-category.png') });
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('shows identity-wide unread badges and auto-reads deep links once per visible opening', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const id = 'e2e-inbox-message';
+  const before = (await readMessages(page)).find((message) => message.id === id)!;
+  const scope = `address:${primaryAddressId}`;
+  async function badge() {
+    const response = await page.request.get(`/api/workspace/mailbox/metrics?identity=${scope}`);
+    const { data } = await response.json();
+    if (testInfo.project.name === 'desktop') {
+      const count = page.locator('#fm-main-sidebar').getByRole('button', { name: '收件箱', exact: true }).locator('.count');
+      await expect(count).toHaveText(String(data.metrics.unreadCount));
+      await expect(count).toHaveAttribute('aria-label', `${data.metrics.unreadCount} 未读`);
+    } else {
+      await page.getByRole('button', { name: '打开导航' }).click();
+      const count = page.getByRole('navigation', { name: '移动端导航' }).getByRole('button').filter({ hasText: '收件箱' }).locator('small');
+      await expect(count).toHaveText(String(data.metrics.unreadCount));
+      await page.keyboard.press('Escape');
+    }
+    return data.metrics.unreadCount;
+  }
+  try {
+    await mutateLocal(page, `/api/workspace/messages/${id}/flags`, 'PATCH', { read: false });
+    // A category with no welcome mail still shows the address-wide unread total.
+    await page.goto(`/?folder=inbox&category=forums&identity=${encodeURIComponent(scope)}`);
+    await badge();
+    const readStarted = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/workspace/messages/${id}/flags` && response.ok());
+    await page.goto(`/?folder=inbox&category=forums&identity=${encodeURIComponent(scope)}&message=${id}`);
+    await readStarted;
+    const detail = page.getByRole('region', { name: '邮件详情' });
+    await expect(detail.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeVisible();
+    await expect(detail.getByRole('article', { name: '邮件正文详情' })).toContainText('isolated local D1');
+    await detail.getByRole('button', { name: '标为未读', exact: true }).click();
+    await expect(detail.getByRole('button', { name: '标为已读', exact: true })).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    expect((await readMessages(page)).find((message) => message.id === id)?.read).toBe(false);
+    await detail.getByRole('button', { name: '返回邮件列表' }).click();
+    await badge();
+    const standaloneRead = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/workspace/messages/${id}/flags` && response.ok());
+    await page.goto(`/messages/${id}`);
+    await standaloneRead;
+    await expect(page.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeVisible();
+    expect((await readMessages(page)).find((message) => message.id === id)?.read).toBe(true);
+  } finally {
+    await mutateLocal(page, `/api/workspace/messages/${id}/flags`, 'PATCH', { read: before.read });
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('finishes new folder navigation when an older read write interrupts its request', async ({ page, consoleErrors }) => {
+  await login(page);
+  await mutateLocal(page, '/api/workspace/messages/e2e-inbox-message/flags', 'PATCH', { read: false });
+  await page.reload();
+  let releaseRead!: () => void;
+  let releasePage!: () => void;
+  const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+  const pageGate = new Promise<void>((resolve) => { releasePage = resolve; });
+  let sentRequests = 0;
+  await page.route('**/api/workspace/messages/e2e-inbox-message/flags', async (route) => { await readGate; await route.continue().catch(() => {}); });
+  await page.route('**/api/workspace/mailbox?**', async (route) => {
+    if (new URL(route.request().url()).searchParams.get('folder') === 'sent' && ++sentRequests === 1) await pageGate;
+    await route.continue().catch(() => {});
+  });
+  try {
+    const readStarted = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/e2e-inbox-message/flags'));
+    await row(page, 'E2E Inbox Welcome').getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+    await readStarted;
+    const sentStarted = page.waitForRequest((request) => new URL(request.url()).searchParams.get('folder') === 'sent');
+    await openFolder(page, '已发送');
+    await sentStarted;
+    const readFinished = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith('/e2e-inbox-message/flags') && response.ok());
+    releaseRead();
+    await readFinished;
+    releasePage();
+    await expect(row(page, 'E2E Seeded Sent')).toBeVisible();
+    await expect(page).toHaveURL(/folder=sent/u);
+    expect(sentRequests).toBeGreaterThanOrEqual(2);
+  } finally {
+    releaseRead(); releasePage();
+    await page.unroute('**/api/workspace/messages/e2e-inbox-message/flags');
+    await page.unroute('**/api/workspace/mailbox?**');
   }
   await assertNoConsoleErrors(consoleErrors);
 });

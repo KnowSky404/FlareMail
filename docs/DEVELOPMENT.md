@@ -139,3 +139,22 @@ the local dependency audit required before a production deployment.
 Wrangler-generated `worker-configuration.d.ts` is the binding type authority. When changing the runtime version, keep `wrangler.toml`, `wrangler.build.toml`, and `wrangler.deploy.toml.example` aligned and regenerate types with `bun run cf:typegen`.
 
 For API contracts, design rules, and operational procedures, use the [documentation index](./README.md).
+
+## Diagnose mailbox navigation
+
+Reproduce with isolated local mail fixtures first. In browser Network, compare a
+cold view, returning to the same view within 30 seconds, and an explicit refresh.
+A fresh cached return should make no mailbox list request; a stale return keeps
+rows visible while refreshing. Authenticated mailbox page, metrics and flags
+responses expose `Server-Timing`; list responses include available `auth`,
+`metrics`, `list`, `labels` and `total` durations. Phases can overlap, so do not
+sum them as wall time. `total` is server processing time, separate from network
+latency and browser rendering. Timing logs record operation, request ID, status
+and durations, without message identifiers or content.
+
+Use `GET /api/workspace/mailbox/metrics?identity=address:<owned-id>` to check the
+navigation badge against `unreadCount`, independent of category/search. GETs
+must not write read state. Reopening a reader should issue a flags PATCH only
+for unread received mail. See the [spec](./specs/mailbox-navigation-and-read-state.md)
+for concurrency, cache invalidation and acceptance cases. Production latency,
+real mail and remote schema readiness require separate authorized verification.

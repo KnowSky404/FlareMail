@@ -24,8 +24,10 @@ contains `activeFolder`, `mailboxPages`, `metrics`, and `mailIdentityOptions`.
   Resend status and sending status, the last check time/failure flag, send
   readiness, and the selected default; they never expose provider credentials
   or remote API details.
-- Changing folder requests that folder's page lazily. `archive` is a mailbox
-  section backed by inbox rows with `archived_at`, not a persisted `folder`
+- Changing folder loads that folder lazily. The browser reuses a session-local
+  cache (16 views, 30-second freshness); stale cached lists remain visible during
+  refresh, and writes/cross-tab notifications invalidate freshness. `archive` is
+  a mailbox section backed by inbox rows with `archived_at`, not a persisted `folder`
   value.
 - Logging out clears the client snapshot, metrics, selected message, detail
   cache, and mailbox pages before another user can log in.
@@ -77,6 +79,36 @@ Inbound `email_messages."to"` is the Cloudflare Email Routing envelope
 recipient. MIME `To` and `Cc` remain separate parsed headers, and raw
 `Delivered-To` remains a separate header snapshot. The detail view displays
 the actual envelope destination independently from the message's To header.
+
+## Mailbox counts and read state
+
+`GET /api/workspace/mailbox/metrics?identity=address:<id>|domain:<id>` returns
+`{ metrics, metricsScope: { identityFilter } }`. Omit `identity` for the Owner
+scope. Invalid identity syntax returns 400; unknown/foreign identities return
+404. Authentication is required. Category, search and pagination do not narrow
+these metrics. `inboxCount` counts non-deleted, non-archived received messages;
+`unreadCount` counts their unread subset. Inbox navigation badges use the latter.
+
+`PATCH /api/workspace/messages/:id/flags` accepts one or both boolean fields
+`read` and `starred`. The optional `identity` query parameter selects response
+metrics scope, not target ownership; the server validates it before writing.
+Only supplied fields are updated, preserving concurrent changes to the other
+field and archive/deletion state. Drafts have no read state; a read-only draft
+patch is a no-op and does not rewrite its star. The response includes a body-free `message`,
+`metrics`, and `metricsScope`. Deleted or foreign messages return 404; invalid
+patches return 400. Existing calls without identity retain Owner-wide metrics.
+
+GETs never mark messages read. The browser PATCHes a received message when its
+reader becomes visible, including split view and both kinds of deep link. A
+manual unread stays unread until that reader is closed and reopened. Writes are
+serialized per message, and stale responses cannot replace a newer selection.
+Lists, flags, and metrics remain `private, no-store` at the HTTP layer; the
+browser view cache is in memory and is cleared on logout/authentication expiry.
+Authenticated requests on these paths expose available phase durations and
+`total` through `Server-Timing`; timing logs omit mail identifiers and content.
+
+See the [navigation and read-state spec](./specs/mailbox-navigation-and-read-state.md)
+for cache keys, failure behavior, regression cases and verification boundaries.
 
 ## Managed domains and addresses
 

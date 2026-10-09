@@ -22,6 +22,7 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 
 | Document | Language | Purpose |
 | --- | --- | --- |
+| [Navigation and read-state spec](./specs/mailbox-navigation-and-read-state.md) | 中文 | Cache behavior, unread counters, partial state writes and acceptance |
 | [Workspace API](./API.md) | English | Authentication, identity management, mailbox pagination, search, drafts, mutations, and delivery contracts |
 | [Owner, identities, and Access ADR](./adr/0014-owner-managed-mail-identities-and-access.md) | English | Authentication and mail ownership architecture |
 | [Body storage ADR](./adr/0011-body-storage.md) | English | Mail body storage decisions |
