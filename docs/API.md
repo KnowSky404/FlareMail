@@ -81,11 +81,45 @@ the actual envelope destination independently from the message's To header.
 ## Managed domains and addresses
 
 `GET /api/workspace/mail-identities` returns only the authenticated Owner's
-configured domains and addresses. Domain enrollment is an operator-controlled
-configuration step (`bun run mail:domain:configure`) that records the exact
-domain-to-zone and Worker mapping; the browser cannot choose an arbitrary zone,
-Worker, API origin, or Cloudflare endpoint. The response also includes boolean
-provider-configuration flags; it never returns a token or key.
+configured domains and addresses. `domainOnboarding` reports whether browser
+enrollment is available and whether route management credentials are configured.
+The deployment fixes `MAIL_IDENTITY_WORKER_NAME` and `MAIL_IDENTITY_ACCOUNT_ID`;
+the browser supplies a domain and Zone ID, which the server verifies against
+Cloudflare before recording the mapping. The browser cannot choose a Worker,
+account, API origin, or Cloudflare endpoint. The operator command
+`bun run mail:domain:configure` remains available. Provider-configuration flags
+never return a token or key; `cloudflareManagement` separately reports whether
+the management credential is present.
+
+- `POST /api/workspace/mail-identities/sync` discovers accessible zones in the
+  deployment account and imports existing literal recipient rules targeting
+  the configured Worker. It requires the authenticated workspace Owner and
+  Zone Read / Email Routing Rules Read permissions. The UI invokes it on entry
+  and offers a retry button; GET remains a database read. Provider requests are
+  read-only, paginated and bounded. Other Worker/forward/drop rules, malformed
+  recipients and competing exact rules are skipped. Worker catch-all imports
+  a domain without inventing addresses; a new domain collects unknown recipients
+  only when its catch-all is verified to target this Worker. Existing settings,
+  tombstones and operations are preserved. Imported addresses are never granted
+  send permission or remote rule ownership. Returns `sync.domainsCreated`,
+  `addressesCreated`, `skippedRules` and per-domain `warnings` with safe error
+  categories. Provider failures retain local configuration. This writes shared
+  D1 identity metadata, without rewriting historical mail or remote routing.
+- `POST /api/workspace/mail-identities/domains` accepts only `domainName` and
+  `zoneId`. It requires Zone Read permission, checks the zone ID, domain suffix
+  boundary and deployment account, and enrolls with unknown recipients rejected.
+  A repeated identical enrollment returns the existing domain; existing mappings
+  and ownership are never overwritten. Enrollment does not modify DNS or create
+  Email Routing rules, and does not claim receiving or sending readiness.
+- `PATCH /api/workspace/mail-identities/domains/:domainId` accepts `enabled`
+  and/or `unknownRecipientPolicy` (`reject` or `collect`). It preserves the zone,
+  Worker mapping, addresses and historical mail. Switching to collect requires
+  a fresh successful observation of catch-all targeting the configured Worker.
+  Disabling a domain stops application receiving/sending without deleting
+  external rules. Concurrent settings or health updates cause a refresh/retry.
+- `PATCH /api/workspace/mail-identities/:addressId` accepts `displayName` and
+  `signature`. It edits only the authenticated Owner's non-deleted address and
+  preserves the email, routing, and receiving/sending preferences.
 
 - `GET /api/workspace/mail-identities/:addressId/delete-preview` is an
   authenticated, read-only snapshot of the exact-address rule, catch-all target

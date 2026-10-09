@@ -1,0 +1,40 @@
+# Copy to ignored wrangler.version-preview.deploy.toml and fill production bindings.
+# Use only `wrangler versions upload --preview-alias function-check --secrets-file .env`.
+# Uploads retain existing Worker secrets without switching production traffic.
+# Never use deploy, versions deploy or triggers deploy with this config.
+name = "flaremail"
+main = "worker/index.ts"
+compatibility_date = "2026-08-19"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "build"
+binding = "ASSETS"
+
+[vars]
+# Copy all current production plain-text variables, including provider settings.
+# Override only these Preview-specific values and the receiving Worker mapping.
+APP_ENV = "preview"
+APP_BASE_URL = "https://function-check-flaremail.example.workers.dev"
+APP_VERSION = "preview+replace-with-commit"
+AUTH_MODE = "local"
+OUTBOUND_PROVIDER = "resend"
+ALLOW_FAKE_SERVICES = "false"
+MAIL_IDENTITY_WORKER_NAME = "flaremail"
+# MAIL_IDENTITY_ACCOUNT_ID = "replace-with-account-id"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "replace-with-production-database"
+database_id = "replace-with-production-database-id"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "replace-with-production-bucket"
+
+[observability]
+enabled = true
+[observability.logs]
+enabled = true
+[observability.traces]
+enabled = false

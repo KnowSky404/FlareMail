@@ -63,6 +63,15 @@ zone/account and Worker target, plus independent Cloudflare-routing and
 Resend-sending check state. A subdomain must be configured as its own explicit
 mapping. Zone visibility from an API token never enrolls a domain.
 
+The Owner may explicitly enroll a domain through the workspace. The deployment
+fixes the receiving Worker and account; the server verifies the submitted Zone
+ID and domain boundary before inserting a mapping, with unknown recipients
+rejected by default. The browser cannot choose the Worker or account, alter an
+existing mapping, or supply credentials. Zone Read permission is required.
+Domain enable/disable and unknown-recipient settings preserve addresses and mail
+history; switching to collect requires fresh verified catch-all targeting this
+Worker. Address names and signatures are editable without changing routing.
+
 `mail_addresses` stores a stable address ID, Owner/domain, receive/send
 switches, lifecycle and routing state, exact remote rule ID, display name,
 signature, and optional default-sender flag. Creating addresses never creates
@@ -81,7 +90,10 @@ saved ID and reconciles the result before reporting completion. Cloudflare's
 documented DELETE route is ID-based and exposes no conditional version
 precondition; this narrows but cannot eliminate a change made between the
 final read and DELETE. A matching existing Worker rule can be explicitly
-imported; imported and conflicting rules are preserved by normal delete and
+imported; the authenticated configuration sync also discovers existing zones
+and imports exact rules targeting the deployment Worker without remote writes.
+Repeated discovery preserves local settings, tombstones and operation leases.
+Imported and conflicting rules are preserved by normal delete and
 retry operations.
 
 Create, check, enable, disable, delete, restore, and retry share the existing

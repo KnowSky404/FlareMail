@@ -16,6 +16,9 @@ declare global {
     /** Read-only token preferred by scheduled and manual health refreshes. */
     CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?: string;
     CLOUDFLARE_EMAIL_ROUTING_TOKEN?: string;
+    /** Server-controlled target for domains enrolled through the workspace. */
+    MAIL_IDENTITY_WORKER_NAME?: string;
+    MAIL_IDENTITY_ACCOUNT_ID?: string;
     /** Legacy outbound sender alias retained for the compatibility send API. */
     MAIL_FROM?: string;
     RESEND_API_BASE_URL?: string;

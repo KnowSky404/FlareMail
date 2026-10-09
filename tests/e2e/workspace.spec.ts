@@ -3094,3 +3094,166 @@ test('renders a representative multi-domain message with two attachments for vis
   await expect(page.getByRole('region', { name: '邮件详情' }).locator('.message-sender-identity')).toContainText('另有 3 位收件人');
   await assertNoConsoleErrors(consoleErrors);
 });
+
+test('connects the first mail domain and edits domain and address settings', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const response = await page.request.get('/api/workspace/mail-identities');
+  const original = await response.json();
+  let domain: Record<string, unknown> | null = null;
+  let address: Record<string, unknown> | null = null;
+  let enrollmentCount = 0;
+  await page.route(/\/api\/workspace\/mail-identities(?:\/.*)?$/u, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const body = request.method() === 'GET' ? null : request.postDataJSON();
+    const fulfill = (data: unknown, status = 200) => route.fulfill({ status, json: { ok: true, data, requestId: 'identity-ui-test' } });
+    if (path === '/api/workspace/mail-identities' && request.method() === 'GET') {
+      return fulfill({ ...original.data, domains: domain ? [domain] : [], addresses: address ? [address] : [],
+        domainOnboarding: { available: true, workerName: 'flaremail', canManageRouting: true } });
+    }
+    if (path.endsWith('/sync') && request.method() === 'POST') {
+      return fulfill({ sync: { domainsCreated: 0, addressesCreated: 0, warnings: [] } });
+    }
+    if (path.endsWith('/domains') && request.method() === 'POST') {
+      enrollmentCount++;
+      expect(body).toEqual({ domainName: 'first.example.test', zoneId: 'a'.repeat(32) });
+      domain = { ...original.data.domains[0], id: '00000000-0000-4000-8000-000000000099', domain_name: body.domainName,
+        cloudflare_zone_id: body.zoneId, worker_name: 'flaremail', enabled: 1, unknown_recipient_policy: 'reject' };
+      return fulfill({ domain, created: true }, 201);
+    }
+    if (path.includes('/domains/') && request.method() === 'PATCH') {
+      domain = { ...domain, enabled: Number(body.enabled), unknown_recipient_policy: body.unknownRecipientPolicy };
+      return fulfill({ domain });
+    }
+    if (path === '/api/workspace/mail-identities' && request.method() === 'POST') {
+      address = { ...original.data.addresses[0], id: '00000000-0000-4000-8000-000000000098', domain_id: domain!.id,
+        email: body.address + '@first.example.test', display_name: body.displayName, signature: body.signature,
+        receive_enabled: 1, lifecycle_status: 'active', routing_state: 'active' };
+      return fulfill({ address }, 201);
+    }
+    if (request.method() === 'PATCH') {
+      address = { ...address, display_name: body.displayName, signature: body.signature };
+      return fulfill({ address });
+    }
+    return route.continue();
+  });
+  await page.goto('/?folder=settings&view=domains');
+  await expect(page.getByText('尚未配置邮件域名。')).toBeVisible();
+  await expect(page.getByLabel('添加邮件域名')).toBeVisible();
+  await page.getByRole('textbox', { name: '邮件域名', exact: true }).fill('first.example.test');
+  await page.getByRole('textbox', { name: 'Cloudflare Zone ID', exact: true }).fill('a'.repeat(32));
+  await page.getByRole('button', { name: '核验并接入域名', exact: true }).click();
+  await expect(page.locator('.domain-card')).toContainText('first.example.test');
+  expect(enrollmentCount).toBe(1);
+  await page.getByRole('button', { name: '域名设置', exact: true }).click();
+  const domainDialog = page.getByRole('dialog', { name: '域名设置' });
+  await domainDialog.getByLabel('启用此域名', { exact: true }).uncheck();
+  await domainDialog.getByRole('button', { name: '保存设置', exact: true }).click();
+  await expect(domainDialog).toBeHidden();
+  await expect(page.getByRole('button', { name: '为此域名创建地址' })).toBeDisabled();
+  await page.getByRole('button', { name: '域名设置', exact: true }).click();
+  await domainDialog.getByLabel('启用此域名', { exact: true }).check();
+  await domainDialog.getByRole('button', { name: '保存设置', exact: true }).click();
+  await expect(domainDialog).toBeHidden();
+  await page.goto('/?folder=settings&view=addresses');
+  await page.getByLabel('邮件地址或本地部分').fill('support');
+  await page.getByLabel('显示名称', { exact: true }).fill('Support');
+  await page.getByRole('button', { name: '创建并配置收信规则' }).click();
+  await expect(page.locator('.address-list')).toContainText('support@first.example.test');
+  await page.getByRole('button', { name: '编辑名称与签名', exact: true }).click();
+  const addressDialog = page.getByRole('dialog', { name: '编辑名称与签名' });
+  await addressDialog.getByLabel('显示名称', { exact: true }).fill('Customer support');
+  await addressDialog.getByLabel('地址签名', { exact: true }).fill('Thank you\nSupport team');
+  await addressDialog.getByRole('button', { name: '保存设置', exact: true }).click();
+  await expect(addressDialog).toBeHidden();
+  await expect(page.locator('.address-list')).toContainText('Customer support');
+  await page.reload();
+  await page.getByRole('button', { name: '编辑名称与签名', exact: true }).click();
+  await expect(addressDialog.getByLabel('地址签名', { exact: true })).toHaveValue('Thank you\nSupport team');
+  await assertNoHorizontalOverflow(page);
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await page.screenshot({ path: `/tmp/flaremail-identity-settings-${testInfo.project.name}.png` });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('shows an actionable domain setup state when provider permissions are missing', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  let configurationReads = 0;
+  await page.route('**/api/workspace/mail-identities', async (route) => {
+    configurationReads++;
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.data.domains = [];
+    payload.data.addresses = [];
+    payload.data.domainOnboarding = { available: false, workerName: 'flaremail', canManageRouting: false };
+    await route.fulfill({ response, json: payload });
+  });
+  await page.goto('/?folder=settings&view=addresses');
+  await expect(page.getByText('尚未配置邮件域名。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '核验并接入域名' })).toBeDisabled();
+  await expect(page.getByText(/当前环境尚未配置域名读取权限/u)).toBeVisible();
+  await expect(page.getByText(/当前环境尚未配置收信规则管理权限/u)).toBeVisible();
+  const refresh = page.getByRole('button', { name: '重新检查配置', exact: true });
+  await refresh.focus();
+  await expect(refresh).toBeFocused();
+  const readsBeforeRefresh = configurationReads;
+  await refresh.press('Enter');
+  await expect.poll(() => configurationReads).toBeGreaterThan(readsBeforeRefresh);
+  await expect(page.getByRole('button', { name: '核验并接入域名' })).toBeDisabled();
+  await assertNoHorizontalOverflow(page);
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await page.screenshot({ path: `/tmp/flaremail-identity-setup-${testInfo.project.name}.png` });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('automatically discovers existing Cloudflare domains and addresses on entry and supports repeat sync', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const original = await (await page.request.get('/api/workspace/mail-identities')).json();
+  const domain = { ...original.data.domains[0], domain_name: 'synced.example.test', worker_name: 'flaremail' };
+  const address = { ...original.data.addresses[0], email: 'existing@synced.example.test', domain_id: domain.id,
+    send_enabled: 0, routing_state: 'imported', routing_owner: 'imported' };
+  let syncCount = 0;
+  let partial = false;
+  await page.route(/\/api\/workspace\/mail-identities(?:\/.*)?$/u, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('/sync') && request.method() === 'POST') {
+      syncCount++;
+      return route.fulfill({ json: { ok: true, data: { sync: {
+        domainsCreated: syncCount === 1 ? 1 : 0, addressesCreated: syncCount === 1 ? 1 : 0,
+        warnings: partial ? [{ domainName: 'another.example.test', code: 'permission_denied' }] : []
+      } } } });
+    }
+    if (path === '/api/workspace/mail-identities' && request.method() === 'GET') {
+      return route.fulfill({ json: { ok: true, data: { ...original.data,
+        domains: syncCount ? [domain] : [], addresses: syncCount ? [address] : [],
+        domainOnboarding: { available: true, workerName: 'flaremail', canManageRouting: true }
+      } } });
+    }
+    return route.continue();
+  });
+  await page.goto('/?folder=settings&view=domains');
+  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  await expect(page.locator('.domain-card')).toContainText('synced.example.test');
+  await expect(page.getByText('同步完成：新增 1 个域名、1 个邮箱地址。', { exact: true })).toBeVisible();
+  expect(syncCount).toBe(1);
+  await expect(page.getByRole('textbox', { name: 'Cloudflare Zone ID', exact: true })).toBeHidden();
+  await page.locator('.manual-domain-setup summary').click();
+  await expect(page.getByRole('textbox', { name: 'Cloudflare Zone ID', exact: true })).toBeVisible();
+  await page.locator('.manual-domain-setup summary').click();
+  await page.screenshot({ path: `/tmp/flaremail-cloudflare-sync-domains-${testInfo.project.name}.png` });
+  await assertNoHorizontalOverflow(page);
+  await page.goto('/?folder=settings&view=addresses');
+  await expect(page.locator('.address-list')).toContainText('existing@synced.example.test');
+  await expect(page.getByText('同步完成：新增 0 个域名、0 个邮箱地址。', { exact: true })).toBeVisible();
+  expect(syncCount).toBe(2);
+  partial = true;
+  await page.getByRole('button', { name: '同步 Cloudflare 配置', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('another.example.test');
+  await expect(page.locator('.address-list')).toContainText('existing@synced.example.test');
+  expect(syncCount).toBe(3);
+  await assertNoHorizontalOverflow(page);
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await page.screenshot({ path: `/tmp/flaremail-cloudflare-sync-addresses-${testInfo.project.name}.png` });
+  await assertNoConsoleErrors(consoleErrors);
+});

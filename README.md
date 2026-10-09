@@ -17,7 +17,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的个人自托管邮件工�
 - Resend 出站：稳定幂等键、`reply_to`/RFC headers、R2 流式附件上传与完整性校验、错误分类、重试，以及 `submitted` 与 `delivered` 的严格语义区分。
 - Resend webhook：Svix 签名与时间窗口校验、事件去重、乱序保护、未知事件保留，以及退信/投诉/抑制等终态。
 - 明确的 `AUTH_MODE=local|cloudflare-access` 认证：本地用户名（无需邮箱）和 PBKDF2 密码，或验签后的 Cloudflare Access 身份映射到相同稳定 Owner；两种模式共用 D1 会话吊销、Cookie、Origin/CSRF、登录限速和安全响应头。Access 过期时，浏览器保留当前标签中的写信内容，重新认证后只刷新安全 GET，不盲重放写请求。
-- 多域名邮件身份：域名通过受控配置显式加入；地址路由只使用限定 zone 的 Cloudflare Email Routing Rules API 精确规则。收件在读取正文/R2 前按信封收件人解析地址，统一邮箱支持服务端域名/地址筛选，搜索、计数、分页和草稿使用同一筛选范围。批量操作默认只修改已选的已加载邮件；筛选内会话和跨 Owner 地址的完整会话均需明确选择，回收站始终是 Owner 全局视图。
+- 多域名邮件身份：进入域名或邮箱地址页面时自动同步 Cloudflare 中指向本应用的已有域名和邮箱规则，无需重复填写 Zone ID；也支持手动接入其他域名、启停域名和设置未知地址策略。地址支持名称与签名编辑，详见 [Preview 与接入配置](./docs/PREVIEW.md)。同步不改动远程规则，保留本地设置及删除状态。地址路由只使用限定 zone 的 Cloudflare Email Routing Rules API 精确规则。收件在读取正文/R2 前按信封收件人解析地址，统一邮箱支持服务端域名/地址筛选，搜索、计数、分页和草稿使用同一筛选范围。批量操作默认只修改已选的已加载邮件；筛选内会话和跨 Owner 地址的完整会话均需明确选择，回收站始终是 Owner 全局视图。
 - 多发件身份：新邮件优先采用当前精确地址筛选中的可发信地址，其他视图使用可发信的全局默认；回复和草稿保留各自原有身份。服务端检查 Owner、地址状态和域级 Resend 发信验证，再固定 From/签名快照；编辑器分别说明地址/域停用、验证状态、检查过期和失败。旧 `OUTBOUND_FROM_EMAIL` / `MAIL_FROM` 仅供系统自动回复和通知使用。
 - 响应式阅读工作台：桌面三栏、可折叠侧栏、默认 440 px 且可在 280–480 px 拖拽/键盘调整的邮件列表、标准/紧凑显示密度、平板/手机 drill-in、近全屏专注阅读和 `/messages/[id]` 独立阅读地址；全局星标按 Owner 范围跨收件/归档/已发送/草稿服务端分页，域名概览、邮箱地址管理和设置可从侧栏分别直达，域名卡片可输入地址前缀快速创建并对收信规则未完成的状态给出提示；Owner 标签可创建、重命名、删除并应用到邮件，标签视图跨收件、归档、已发送、草稿分页；收件、已发送、归档、星标和标签视图支持仅对当前页已选邮件批量添加或移除标签，不扩展到整个会话；星标/标签视图对明确选中的非草稿邮件还支持跨文件夹已读、星标和删除操作，归档仅作用于全为收件的选择，含草稿时只保留标签操作；列表宽度会在详情区可用空间不足时临时收窄，按 Enter 可恢复 440 px 默认值；同一用户打开的窗口只同步邮件状态信号，不传播正文、地址或凭据。
 - 写信界面：桌面浮动窗口支持拖动、键盘缩放、最小化与最大化，手机保持全屏；多发件身份选择、To 收件人最近联系人建议、Cc/Bcc chip、草稿自动保存及附件上传；建议只来自当前会话已加载的邮件，HTML 源码选项默认收起。当前 UI 审查和后续验收范围见 [docs/UI_UE_REVIEW.md](./docs/UI_UE_REVIEW.md)。
@@ -39,7 +39,7 @@ FlareMail 是一个部署在 Cloudflare Workers 上的个人自托管邮件工�
 | 环境 | 出站 provider | 数据与凭据 | 约束 |
 | --- | --- | --- | --- |
 | development/test | 显式 `demo`/fake | 本地 D1/R2；管理员需 bootstrap | 必须设置 `ALLOW_FAKE_SERVICES=true` |
-| preview | 按私有配置 | 独立 preview 资源 | 不应复用生产凭据或 D1 |
+| preview | 按私有配置 | 与生产共用 D1/R2 和 Owner 账号 | 代码独立部署；数据修改直接影响生产；原生 Preview 单独配置 secrets，版本预览可直接保留生产密钥，见 [Preview 文档](./docs/PREVIEW.md) |
 | production | 仅 `resend` | 真实 D1/R2 与 Wrangler secrets | 缺少必要 binding/secret 时 fail closed |
 
 仓库不包含固定登录密码。使用 `scripts/bootstrap-admin.ts` 将 Owner 的本地用户名/凭据写入本地或远程 D1；登录名使用 `FLAREMAIL_ADMIN_USERNAME`，资料邮箱 `FLAREMAIL_PROFILE_EMAIL` 可选且不授予收发信权限。Access-only 初始化可通过 `bun run auth:bootstrap:access` 建立同一稳定 Owner，而无需设置本地密码。

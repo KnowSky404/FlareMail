@@ -75,7 +75,8 @@ function cloudflareApiError(error: CloudflareEmailRoutingError): ApiError {
     not_found: { status: 502, code: 'CLOUDFLARE_ROUTING_ZONE_NOT_FOUND', message: 'Cloudflare Zone 或 Routing Rule 不存在。' },
     invalid_response: { status: 502, code: 'CLOUDFLARE_ROUTING_INVALID_RESPONSE', message: 'Cloudflare Email Routing 返回了无法验证的响应。' },
     upstream_failed: { status: 503, code: 'CLOUDFLARE_ROUTING_UNAVAILABLE', message: 'Cloudflare Email Routing 暂时不可用。' },
-    too_many_rules: { status: 503, code: 'CLOUDFLARE_RULE_LIST_TOO_LARGE', message: 'Cloudflare Zone 的规则列表超过了安全检查上限。' }
+    too_many_rules: { status: 503, code: 'CLOUDFLARE_RULE_LIST_TOO_LARGE', message: 'Cloudflare Zone 的规则列表超过了安全检查上限。' },
+    too_many_zones: { status: 503, code: 'CLOUDFLARE_ZONE_LIST_TOO_LARGE', message: 'Cloudflare 域名列表超过了同步上限。' }
   };
   const mapped = mappings[error.code];
   return new ApiError(mapped.status, mapped.code, mapped.message, undefined, { reason: error.code }, error.retryable);
