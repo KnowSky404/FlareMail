@@ -81,7 +81,7 @@ Cloudflare Email Routing、D1、R2、Resend 等技术信息应放在状态详情
 
 ### 2.5 通过基础组件保持一致
 
-Button、Field、Tabs、Badge、Menu、Table、Dialog、Banner 等必须由共享 UI primitives 实现，不允许在不同邮件组件里分别手写同类控件。
+Button、Field、Badge、Menu、Table、Dialog、Banner 等通用控件必须由共享 UI primitives 实现，不允许在不同邮件组件里分别手写同类控件。邮件分类选项卡统一使用 `InboxCategoryTabs`。
 
 ### 2.6 可访问性是发布条件
 
@@ -353,7 +353,9 @@ font-family:
 
 在 `src/lib/components/ui/` 或等价目录创建共享基础组件。
 
-必需组件：
+按当前功能维护共享组件；没有调用方的预建组件不保留。通用选项卡、状态点或页码分页有实际复用需求时再实现；当前邮件分类使用 `InboxCategoryTabs`，状态使用 `StatusBadge`，邮件列表使用 cursor loading。
+
+当前组件与实现规则：
 
 - `Button`
   - primary、secondary、ghost、danger；
@@ -366,10 +368,8 @@ font-family:
 - `Select`
 - `Checkbox`
 - `Switch`
-- `Tabs`
 - `Badge`
 - `StatusBadge`
-- `StatusDot`
 - `Banner` / `Alert`
 - `Card` / `Panel`，谨慎使用
 - `Table` 或结构化数据列表
@@ -381,7 +381,7 @@ font-family:
 - `Tooltip`
 - `Toast`
 - `ConfirmDialog`
-- `Pagination` 或 cursor loading
+- cursor loading
 - `CommandPalette` 或快捷键帮助面板（如实现）
 
 组件要求：
@@ -694,7 +694,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 - 桌面形成清晰的浅色侧栏 + 列表 + 详情工作区；
 - 平板和手机无横向滚动，流程可用；
 - light/dark/system 在首屏前正确生效；
-- Button、Field、Badge、Banner、Dialog、Menu、Tabs 使用共享 primitives；
+- Button、Field、Badge、Banner、Dialog、Menu 使用共享 primitives；邮件分类使用 `InboxCategoryTabs`；
 - 所有邮件状态有明确视觉处理；
 - Sent 投递状态准确且可展开；
 - Compose autosave 和错误可见；
@@ -760,9 +760,9 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 | --- | --- | --- |
 | 语义颜色、间距、圆角、字体、motion | `src/app.css`（当前含旧 `editorial-heading`、paper/阴影和全局 `overflow: hidden`） | `src/app.css` 或专门 token 文件集中声明本规范 `--fm-*`、space/radius/motion；移除旧 editorial/paper token 和破坏移动滚动的全局限制 |
 | Button/IconButton/Field/Select | 当前各组件内 Tailwind class | `src/lib/components/ui/Button.svelte`、`IconButton.svelte`、`TextField.svelte`、`TextArea.svelte`、`Select.svelte` 等；variant 仅有一个来源，loading 不改变宽度 |
-| 状态、导航和反馈 | 当前内联按钮、文字、Badge | `Badge.svelte`、`StatusBadge.svelte`、`StatusDot.svelte`、`Banner.svelte`、`Alert.svelte`、`Toast.svelte`、`EmptyState.svelte`、`Skeleton.svelte`；状态不可只靠颜色 |
+| 状态、导航和反馈 | 当前内联按钮、文字、Badge | `Badge.svelte`、`StatusBadge.svelte`、`Banner.svelte`、`Alert.svelte`、`Toast.svelte`、`EmptyState.svelte`、`Skeleton.svelte`；状态不可只靠颜色 |
 | 叠加层与菜单 | `ComposeModal.svelte` 及内联控件 | `Dialog.svelte`、`Drawer.svelte`、`Sheet.svelte`、`DropdownMenu.svelte`、`Tooltip.svelte`、`ConfirmDialog.svelte`；实现 focus trap、关闭恢复焦点和正确 ARIA pattern |
-| 结构化数据与切换 | 当前列表内联实现 | `Table.svelte`/结构化列表、`Tabs.svelte`、`Checkbox.svelte`、`Switch.svelte`、`Pagination.svelte` 或 cursor loading |
+| 结构化数据与切换 | 当前列表内联实现 | 结构化列表、`InboxCategoryTabs.svelte`、`Checkbox.svelte`、`Switch.svelte` 和 cursor loading |
 | 图标 | 各组件内联 SVG | 统一 `lucide-svelte` 或少量本地图标组件；默认 16 px、导航 18–20 px，纯图标必须 accessible name + Tooltip |
 
 ## 23. 分阶段设计验证清单
@@ -779,7 +779,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 ### 阶段 1：tokens 与 primitives
 
 - [ ] 4 px space、radius、控件高度和 `--fm-*` light/dark token 集中且无重复颜色字面量。
-- [ ] Button、IconButton、Field、Badge、Banner、Dialog、Menu、Tabs 等由共享 primitives 渲染。
+- [ ] Button、IconButton、Field、Badge、Banner、Dialog、Menu 等由共享 primitives 渲染；邮件分类使用 `InboxCategoryTabs`。
 - [ ] variants、disabled/loading、focus、键盘操作、`aria-live` 和 reduced-motion 均有实现/测试证据。
 - [ ] 文字/背景组合通过自动化 WCAG 2.1 AA 对比度检查。
 

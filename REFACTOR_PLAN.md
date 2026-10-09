@@ -1,5 +1,7 @@
 # FlareMail 全量重构执行计划
 
+> 历史记录：本文保留 2026-08-13 的基线、实施阶段和验收边界，不代表当前文件清单。2026-10-09 清理了已退役的 `GEMINI_UI_PROMPT.md`、无调用方的旧 mock/D1 包装模块及 UI primitives；文中历史路径可在 Git 历史中查看。当前设计规则见 [DESIGN.md](./DESIGN.md)。
+
 > 文档状态：11 个阶段与后续安全/质量收口已实施；本轮继续完成 mailbox archive/bulk、snapshot lazy loading、通知语义和生成类型收口；本文同时保留实施前基线、回滚点与最终证据边界
 >
 > 规范来源：`https://microbin.knowsky.uk/raw/egx53a`

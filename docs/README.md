@@ -42,4 +42,3 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 | [September acceptance](./ACCEPTANCE_2026-09.md) | 中文 | Reliability fixes and verification for the recorded release |
 | [RC-1 record](./RC1_RELEASE.md) | English | Historical behavior, schema, and release risks |
 | [Refactor plan](../REFACTOR_PLAN.md) | 中文 | Implementation phases, rollback points, and acceptance boundaries |
-| [Archived visual prompt](../GEMINI_UI_PROMPT.md) | 中文 | Historical design reference; current design rules live in DESIGN.md |
