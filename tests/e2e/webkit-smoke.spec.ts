@@ -82,19 +82,21 @@ async function openCompose(page: Page) {
 test('shows collapsed sidebar tooltips beyond the label scroller in WebKit', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'webkit-desktop', 'The sidebar is a desktop-only control.');
   await login(page);
-  const created = await page.evaluate(async () => {
+  // Serial retries reuse server-side data; a failed later test must not conflict here.
+  const labelName = `WebKit Sidebar Tooltip ${crypto.randomUUID().slice(0, 8)}`;
+  const created = await page.evaluate(async (name) => {
     const response = await fetch('/api/workspace/labels', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'WebKit Sidebar Tooltip' })
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name })
     });
     return response.ok;
-  });
+  }, labelName);
   expect(created).toBe(true);
   await page.reload();
   const sidebar = page.locator('#fm-main-sidebar');
   await clickHeadlessControl(sidebar.getByRole('button', { name: '折叠侧边栏' }));
-  const label = sidebar.getByRole('button', { name: 'WebKit Sidebar Tooltip' });
+  const label = sidebar.getByRole('button', { name: labelName });
   await label.focus();
-  const tooltip = page.getByRole('tooltip', { name: 'WebKit Sidebar Tooltip' });
+  const tooltip = page.getByRole('tooltip', { name: labelName });
   await expect(tooltip).toBeVisible();
   const [tip, rail] = await Promise.all([tooltip.boundingBox(), sidebar.boundingBox()]);
   expect(tip!.x + tip!.width).toBeGreaterThan(rail!.x + rail!.width + 20);
@@ -535,13 +537,13 @@ test('restores a draft from the trash', async ({ page, consoleErrors }) => {
   await openFolder(page, '草稿箱');
   const draft = page.getByRole('listitem').filter({ hasText: subject });
   await expect(draft).toBeVisible();
-  await clickHeadlessControl(draft.getByRole('button', { name: '移入垃圾箱', exact: true }));
+  await pressHeadlessControl(draft.getByRole('button', { name: '移入垃圾箱', exact: true }));
   await expect(page.getByRole('status').filter({ hasText: '已移入垃圾箱' })).toBeVisible();
   await openFolder(page, '垃圾箱');
   const trashed = page.getByRole('listitem').filter({ hasText: subject });
   await expect(trashed).toBeVisible();
-  await clickHeadlessControl(trashed.getByRole('button', { name: new RegExp(subject, 'u') }).first());
-  await clickHeadlessControl(page.getByRole('button', { name: '恢复', exact: true }));
+  await pressHeadlessControl(trashed.getByRole('button', { name: new RegExp(subject, 'u') }).first());
+  await pressHeadlessControl(page.getByRole('button', { name: '恢复', exact: true }));
   await expect(page.getByRole('status').filter({ hasText: '已恢复到草稿箱' })).toBeVisible();
   await assertNoConsoleErrors(consoleErrors);
 });
