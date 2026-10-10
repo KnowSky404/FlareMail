@@ -25,6 +25,10 @@
 
 邮件地址是由同一工作区 Owner 管理的收发资源；登录凭据和资料邮箱单独配置。
 
+每项开发使用独立 worktree 和新分支。功能改动先通过本地验证和远程 PRE 验收，
+再提 PR 到 `main`；合并及生产部署按明确授权执行。详见
+[开发流程](./docs/DEVELOPMENT.md#worktree-and-pr-workflow)。
+
 ## 文档
 
 | 指南 | 内容 |

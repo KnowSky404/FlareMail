@@ -176,6 +176,15 @@ Production must be deployed from a clean checkout. The supported default is
 acceptable when its full SHA is recorded. Do not use a dirty worktree or rely
 on a feature branch relationship from an old release.
 
+Develop changes in a dedicated worktree and task branch, complete local gates
+and remote PRE business acceptance, then open a PR targeting `main`. Merge,
+direct pushes to `main`, and production deployment require their respective
+authorizations. Compare the final release SHA and contents with PRE evidence;
+changed contents require renewed verification and acceptance. Documentation-only
+changes do not require PRE deployment. See the
+[development workflow](./docs/DEVELOPMENT.md#worktree-and-pr-workflow) for the
+PR gate and evidence requirements.
+
 POSIX shell:
 
 ```bash

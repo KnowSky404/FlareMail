@@ -8,8 +8,16 @@
 
 ## 默认验收顺序
 
-先在隔离本地数据和 fake/demo provider 上完成实现、测试、检查和构建，提交后
-再在已授权的范围内发布远程 Preview；生产发布另需明确授权。普通开发或文档
+所有开发先创建独立 worktree 和任务分支，从核对过的最新 `origin/main` 开始，
+不直接在 `main` 或用户原工作树中修改；步骤见
+[开发指南](./DEVELOPMENT.md#worktree-and-pr-workflow)。先在隔离本地数据和
+fake/demo provider 上完成实现、测试、检查和构建，提交后再在已授权的范围内
+发布远程 PRE（Preview）并完成业务验收，然后才推送任务分支并提 PR 到 `main`。
+PR 附验收提交 SHA、URL、部署/版本 ID、相关页面/API 结果和未覆盖项；仅健康
+检查或发布成功不算验收完成。后续影响实现的提交需补做本地/PRE 验收再合并；
+PRE 阻塞时保留分支并报告原因，绕过门禁需明确授权。纯文档/约束更新检查
+差异、命令和链接后即可提 PR，标明 PRE 不适用。合并、直接推送 `main` 及
+生产发布分别按明确授权执行，内容变化的最终提交需重新验证。普通开发或文档
 修改不自动部署。`bun run preview` 是本地 Worker，`wrangler preview` 才发布
 原生远程 Preview；版本预览用于需要复用生产 secrets 检查某个上传版本的场景。
 `bun run deploy:dry-run` 只检查公开本地配置的打包，不能代替目标 Preview 的
