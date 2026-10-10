@@ -23,9 +23,12 @@ PRE 阻塞时保留分支并报告原因，绕过门禁需明确授权。纯文�
 `bun run deploy:dry-run` 只检查公开本地配置的打包，不能代替目标 Preview 的
 绑定、变量和 secrets 核对。
 
-已授权 PR 默认 rebase 合并；确认 `MERGED`、主分支合并提交及内容完整后，
+所有 PR（含纯文档）先等待当前 head 的 Codex Code Review 及已启用的
+Security Review 完成并处理反馈；机器人审查不由 Actions 检查列表代替。
+已授权 PR 再以 rebase 合并；确认 `MERGED`、主分支合并提交及内容完整后，
 快进同步干净的本地 `main`，再清理本任务已合并且无新增提交的 worktree 和
 本地/远端分支。保留未保存文件、私有配置和验收证据，不强制移除工作树；
+远端分支删除用已合并 head 的显式 lease，阻止删除并发新增提交。
 具体检查与例外见[收尾流程](./DEVELOPMENT.md#rebase-merge-and-cleanup)。
 合并和清理不代表生产部署。
 

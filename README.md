@@ -27,7 +27,8 @@ Mail addresses are managed resources under one workspace Owner; login credential
 
 Develop each task in a dedicated worktree and new branch. Feature changes pass
 local checks and remote PRE acceptance before a PR to `main`; merge and
-production deployment follow explicit authorization. Authorized PRs use rebase
+production deployment follow explicit authorization. All PRs wait for Codex
+bot review of the current head and handling of findings. Authorized PRs use rebase
 merge by default, followed by main synchronization and completed task
 worktree/branch cleanup. See the
 [development workflow](./docs/DEVELOPMENT.md#worktree-and-pr-workflow).

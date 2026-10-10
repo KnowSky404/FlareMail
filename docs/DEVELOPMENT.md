@@ -28,7 +28,9 @@ The checked-in `wrangler.toml` uses local D1/R2, `AUTH_MODE=local`, and the demo
 
 The workflow is a dedicated worktree and branch, local implementation and
 verification, a committed change, authorized remote PRE (Preview) acceptance,
-then a PR targeting `main`. An authorized PR uses rebase merge by default,
+then a PR targeting `main`. Wait for Codex bot review of the current head and
+address its findings before merging, including for documentation-only PRs.
+An authorized PR uses rebase merge by default,
 followed by verification, main synchronization and task worktree/branch cleanup.
 Production publication requires its own authorization. Ordinary development
 does not automatically deploy.
@@ -91,9 +93,31 @@ credentials from another checkout.
 
 ### Rebase merge and cleanup
 
+Every PR must complete Codex bot review before merge, including documentation
+and instruction changes. The current bot is `chatgpt-codex-connector[bot]`;
+some `gh` output omits the `[bot]` suffix. Verify the actual author and reviewed
+commit. The repository currently runs both Code Review and Security Review;
+wait for both to complete for the current PR head. Inspect each status/commit
+in the bot's `Codex Review Summary`, submitted reviews and inline findings.
+A single summary metadata `status` or `headSha` does not establish completion
+of both review types. This GitHub App review is separate from GitHub Actions.
+An empty checks list, `CLEAN` mergeability, a review of an older commit, 👀,
+an isolated 👍, or `COMMENTED` alone is insufficient evidence for this gate.
+
+Assess each finding, fix confirmed issues and run affected verification, or
+record evidence explaining a false positive or inapplicable finding. Do not
+merge with an unresolved valid blocking finding. Any new commit requires
+completed review for the new head, plus affected local/PRE gates. If review
+is pending, failed or lacks current-head evidence, retain the PR, branch and
+worktree and report the status; elapsed time does not waive review. Do not
+enable auto-merge before this gate has passed. Record completion times, review
+SHA and result links with the PR's acceptance evidence. See the
+[official Codex review guide](https://learn.chatgpt.com/docs/third-party/github).
+
 For an authorized merge, use rebase unless the user specifies another strategy.
 Inspect the PR's base branch, head SHA, commits/files, mergeability and required
-checks first. Lock the merge to the verified head using
+checks, and confirm the bot review gate above has passed. Lock the merge to the
+verified and reviewed head using
 `gh pr merge <PR> --rebase --match-head-commit <HEAD_SHA>`. Do not bypass checks
 with `--admin`. Auto-merge or a merge queue request is not a completed merge;
 wait until the PR state is `MERGED` before cleanup.
@@ -122,9 +146,15 @@ requests retention:
    temporary services. Never remove another task's worktree or the main checkout.
 2. From a retained checkout, remove the clean task checkout with
    `git worktree remove <PATH>`. Do not use `--force`. Then delete its local
-   branch with `git branch -d <BRANCH>` and remote branch with
-   `git push origin --delete <BRANCH>` if they still exist. Keep worktree
-   removal separate from PR merge so each result can be checked.
+   branch with `git branch -d <BRANCH>` if it still exists. Delete the remote
+   branch only with an explicit lease pinned to the verified merged PR head:
+   `git push --force-with-lease=refs/heads/<BRANCH>:<VERIFIED_HEAD_SHA> origin :refs/heads/<BRANCH>`.
+   This conditional deletion does not authorize overwriting branch history.
+   Never use unconditional `--delete` or `--force`. If the remote branch is
+   already absent, record that result. If the lease fails, preserve the remote
+   branch and report it; do not replace the expected SHA with a new unmerged
+   head and retry deletion. Keep worktree removal separate from PR merge so
+   each result can be checked.
 3. If `-d` refuses only because rebase changed ancestry, `-D` is permitted for
    this task branch only after checking the PR's `MERGED` record, merge SHA
    in main, unchanged task head and equivalent patches. A successful `-d`
