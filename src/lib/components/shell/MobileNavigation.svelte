@@ -14,7 +14,7 @@
   import Plus from '@lucide/svelte/icons/plus';
   import { Drawer } from '$lib/components/ui';
   import type { MailboxSection, MailUserLabel } from '$lib/domain/mail';
-  import { formatNumber } from '$lib/i18n';
+  import { describeNavigationCount, formatNavigationCount, type NavigationCounts, type AttentionSection } from '$lib/client/navigation-counts';
   import BrandMark from './BrandMark.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import { useLocale } from '$lib/i18n/runtime.svelte';
@@ -23,10 +23,7 @@
 
   let {
     activeSection,
-    unreadCount,
-    starredCount,
-    draftCount,
-    trashCount,
+    counts,
     managementView = 'settings',
     pending = false,
     userLabels = [],
@@ -38,10 +35,7 @@
     onSelectManagementView
   }: {
     activeSection: AppSection;
-    unreadCount: number;
-    starredCount: number;
-    draftCount: number;
-    trashCount: number;
+    counts: NavigationCounts;
     managementView?: 'settings' | 'domains' | 'addresses';
     pending?: boolean;
     userLabels?: MailUserLabel[];
@@ -68,10 +62,9 @@
     profile: managementView === 'domains' ? t('shell.domains') : managementView === 'addresses' ? t('shell.addresses') : t('common.settings')
   });
 
-  const formattedInboxCount = $derived(unreadCount ? (unreadCount > 99 ? '99+' : formatNumber(unreadCount, i18n.locale)) : '');
-  const formattedStarredCount = $derived(starredCount ? formatNumber(starredCount, i18n.locale) : '');
-  const formattedDraftCount = $derived(draftCount ? formatNumber(draftCount, i18n.locale) : '');
-  const formattedTrashCount = $derived(trashCount ? formatNumber(trashCount, i18n.locale) : '');
+  function countId(section: AttentionSection) {
+    return counts[section] ? `mobile-${section}-count` : undefined;
+  }
 
   function select(section: AppSection) {
     onSelectSection(section);
@@ -88,6 +81,14 @@
   }
 </script>
 
+{#snippet badge(section: AttentionSection)}
+  {@const count = counts[section]}
+  {#if count && count > 0}
+    {@const description = describeNavigationCount(i18n.locale, section, count)}
+    <small id={countId(section)} aria-label={description} title={description}>{formatNavigationCount(i18n.locale, count)}</small>
+  {/if}
+{/snippet}
+
 <header class="mobile-bar">
   <button class="icon" type="button" aria-label={t('shell.openNavigation')} aria-expanded={open} onclick={() => (open = true)}>
     <Menu size={21} aria-hidden="true" />
@@ -101,23 +102,23 @@
 
 <Drawer id="mobile-navigation-drawer" {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
     <nav class="mobile-nav-list" aria-label={t('shell.mobileNavigation')}>
-      <button class:active={activeSection === 'inbox'} type="button" onclick={() => select('inbox')}>
-        <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span><small aria-label={t('mail.unreadCount', { count: unreadCount })}>{formattedInboxCount}</small>
+      <button class:active={activeSection === 'inbox'} type="button" aria-label={t('shell.inbox')} aria-describedby={countId('inbox')} onclick={() => select('inbox')}>
+        <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span>{@render badge('inbox')}
       </button>
       <button class:active={activeSection === 'starred'} type="button" onclick={() => select('starred')}>
-        <Star size={19} aria-hidden="true" /><span>{t('shell.starred')}</span><small>{formattedStarredCount}</small>
+        <Star size={19} aria-hidden="true" /><span>{t('shell.starred')}</span>
       </button>
-      <button class:active={activeSection === 'drafts'} type="button" onclick={() => select('drafts')}>
-        <FileText size={19} aria-hidden="true" /><span>{t('shell.drafts')}</span><small>{formattedDraftCount}</small>
+      <button class:active={activeSection === 'drafts'} type="button" aria-label={t('shell.drafts')} aria-describedby={countId('drafts')} onclick={() => select('drafts')}>
+        <FileText size={19} aria-hidden="true" /><span>{t('shell.drafts')}</span>{@render badge('drafts')}
       </button>
-      <button class:active={activeSection === 'sent'} type="button" onclick={() => select('sent')}>
-        <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>
+      <button class:active={activeSection === 'sent'} type="button" aria-label={t('shell.sent')} aria-describedby={countId('sent')} onclick={() => select('sent')}>
+        <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>{@render badge('sent')}
       </button>
       <button class:active={activeSection === 'archive'} type="button" onclick={() => select('archive')}>
         <Archive size={19} aria-hidden="true" /><span>{t('shell.archive')}</span>
       </button>
       <button class:active={activeSection === 'trash'} type="button" onclick={() => select('trash')}>
-        <Trash2 size={19} aria-hidden="true" /><span>{t('shell.trash')}</span><small>{formattedTrashCount}</small>
+        <Trash2 size={19} aria-hidden="true" /><span>{t('shell.trash')}</span>
       </button>
       <div class="flex items-center justify-between px-3 pt-2 text-xs font-semibold text-[var(--fm-text-muted)]">
         <span>{t('shell.labels')}</span>

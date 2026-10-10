@@ -16,7 +16,7 @@
   import type { LucideIcon } from '@lucide/svelte';
   import type { MailboxSection, MailUserLabel } from '$lib/domain/mail';
   import Tooltip from '$lib/components/ui/Tooltip.svelte';
-  import { formatNumber, translateCount } from '$lib/i18n';
+  import { describeNavigationCount, formatNavigationCount, type NavigationCounts, type AttentionSection } from '$lib/client/navigation-counts';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
@@ -24,17 +24,13 @@
   type NavigationItem = {
     id: NavigationId;
     label: string;
-    count: number;
+    count?: number | null;
     icon: LucideIcon;
   };
 
   let {
     activeSection,
-    unreadCount,
-    starredCount,
-    sentCount,
-    draftCount,
-    trashCount,
+    counts,
     managementView = 'settings',
     collapsed = false,
     pending = false,
@@ -48,11 +44,7 @@
     onToggleCollapsed
   }: {
     activeSection: AppSection;
-    unreadCount: number;
-    starredCount: number;
-    sentCount: number;
-    draftCount: number;
-    trashCount: number;
+    counts: NavigationCounts;
     managementView?: 'settings' | 'domains' | 'addresses';
     collapsed?: boolean;
     pending?: boolean;
@@ -70,15 +62,15 @@
   const { t } = i18n;
 
   const navigation = $derived<NavigationItem[]>([
-    { id: 'inbox', label: t('shell.inbox'), count: unreadCount, icon: Inbox },
-    { id: 'starred', label: t('shell.starred'), count: starredCount, icon: Star },
-    { id: 'drafts', label: t('shell.drafts'), count: draftCount, icon: FileText },
-    { id: 'sent', label: t('shell.sent'), count: sentCount, icon: Send },
-    { id: 'archive', label: t('shell.archive'), count: 0, icon: Archive },
-    { id: 'trash', label: t('shell.trash'), count: trashCount, icon: Trash2 },
-    { id: 'domains', label: t('shell.domains'), count: 0, icon: Globe2 },
-    { id: 'addresses', label: t('shell.addresses'), count: 0, icon: AtSign },
-    { id: 'profile', label: t('common.settings'), count: 0, icon: Settings }
+    { id: 'inbox', label: t('shell.inbox'), count: counts.inbox, icon: Inbox },
+    { id: 'starred', label: t('shell.starred'), icon: Star },
+    { id: 'drafts', label: t('shell.drafts'), count: counts.drafts, icon: FileText },
+    { id: 'sent', label: t('shell.sent'), count: counts.sent, icon: Send },
+    { id: 'archive', label: t('shell.archive'), icon: Archive },
+    { id: 'trash', label: t('shell.trash'), icon: Trash2 },
+    { id: 'domains', label: t('shell.domains'), icon: Globe2 },
+    { id: 'addresses', label: t('shell.addresses'), icon: AtSign },
+    { id: 'profile', label: t('common.settings'), icon: Settings }
   ]);
 
   function isActive(id: NavigationId) {
@@ -102,21 +94,22 @@
   <nav aria-label={t('shell.mainNavigation')}>
     {#each navigation as item}
       {@const Icon = item.icon}
-      <Tooltip content={item.label} side="right" floating disabled={!collapsed} class={item.id === 'domains' ? 'w-full management-start' : 'w-full'}>
+      {@const countDescription = item.count && item.count > 0 ? describeNavigationCount(i18n.locale, item.id as AttentionSection, item.count) : ''}
+      <Tooltip content={countDescription ? `${item.label} · ${countDescription}` : item.label} side="right" floating disabled={!collapsed} class={item.id === 'domains' ? 'w-full management-start' : 'w-full'}>
         {#snippet trigger(tooltipId)}
           <button
             type="button"
             class:active={isActive(item.id)}
             aria-current={isActive(item.id) ? 'page' : undefined}
             aria-label={item.label}
-            aria-describedby={collapsed ? tooltipId : undefined}
+            aria-describedby={collapsed ? tooltipId : countDescription ? `sidebar-${item.id}-count` : undefined}
             class="fm-touch-target"
             onclick={() => item.id === 'domains' || item.id === 'addresses' ? onSelectManagementView?.(item.id) : onSelectSection(item.id)}
           >
             <Icon size={19} strokeWidth={1.8} aria-hidden="true" />
             <span class="label">{item.label}</span>
-            {#if item.count > 0}
-              <span class="count" aria-label={translateCount(i18n.locale, item.id === 'inbox' ? 'mail.unreadCount' : 'mail.messageCount', item.count)}>{item.count > 99 ? '99+' : formatNumber(item.count, i18n.locale)}</span>
+            {#if item.count && item.count > 0}
+              <span id={`sidebar-${item.id}-count`} class="count" aria-label={countDescription} title={countDescription}>{formatNavigationCount(i18n.locale, item.count)}</span>
             {/if}
           </button>
         {/snippet}

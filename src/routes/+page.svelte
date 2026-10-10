@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { navigationCounts } from '$lib/client/navigation-counts';
   import { afterNavigate, goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, tick, untrack } from 'svelte';
@@ -567,6 +568,7 @@
     return () => targetMessageRequest.cancel();
   });
 
+  const attentionCounts = $derived(navigationCounts(metrics, metricsIdentity, mailIdentityFilter));
   const unreadCount = $derived(sameIdentityScope(metricsIdentity, mailIdentityFilter) ? metrics.unreadCount : 0);
   const recipientSuggestions = $derived(deriveRecipientSuggestions(
     [...mailbox.inbox, ...mailbox.sent],
@@ -1451,6 +1453,7 @@
     metricsRequest.cancel();
     if (!authenticated || authExpired) return;
     if (activeSection === 'trash') {
+      if (mailIdentityFilter) await refreshMetrics(mailIdentityFilter, true);
       const refreshed = await trashController.load();
       if (refreshed) {
         runtimeOperationError = false;
@@ -1639,7 +1642,7 @@
       const result = await mutateMailbox(action, validSelectedIds, threadKeys, scope);
       const metricsScope = result.result.metricsScope.identityFilter;
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
-        metrics = result.result.metrics;
+        acceptMetrics(result.result.metrics, metricsScope);
       }
       if (action === 'trash') trashLoaded = false;
       selectedMessageIds = [];
@@ -1886,7 +1889,7 @@
       const result = await updateProfile(nextProfile);
 
       profile = result.profile ?? profile;
-      metrics = result.metrics ?? metrics;
+      if (result.metrics) await acceptMutationMetrics(result.metrics, null);
       runtimeOperationError = false;
       profileStatus = t('notify.profileSaved');
       notify(t('notify.profileUpdated'), 'success');
@@ -2126,6 +2129,14 @@
       metrics = value;
       metricsIdentity = identity;
     }
+  }
+
+  async function acceptMutationMetrics(value: WorkspaceMetrics, identity: MailboxIdentityFilter | null) {
+    mailboxController.invalidate();
+    metricsRequest.cancel();
+    metricsCache.clear();
+    acceptMetrics(value, identity);
+    if (!sameIdentityScope(identity, mailIdentityFilter)) await refreshMetrics(mailIdentityFilter, true);
   }
 
   async function refreshMetrics(identity = mailIdentityFilter, force = false) {
@@ -2388,6 +2399,7 @@
 
     try {
       const result = await deleteMessage(message.id);
+      await acceptMutationMetrics(result.metrics, result.metricsScope.identityFilter);
 
       const removed = removeMessage(
         { mailbox, mailboxPages, metrics },
@@ -2423,7 +2435,7 @@
             label: t('common.undo'),
             run: async () => {
               const restored = await restoreTrashItem(result.removedId);
-              metrics = restored.metrics;
+              await acceptMutationMetrics(restored.metrics, null);
               trashLoaded = false;
               workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId });
               if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace(false);
@@ -2452,7 +2464,7 @@
     pending = true;
     try {
       const result = await restoreTrashItem(message.id);
-      metrics = result.metrics;
+      await acceptMutationMetrics(result.metrics, null);
       runtimeOperationError = false;
       removeTrashItemFromView(message.id);
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
@@ -2468,7 +2480,7 @@
     pending = true;
     try {
       const result = await permanentlyDeleteTrashItem(message.id);
-      metrics = result.metrics;
+      await acceptMutationMetrics(result.metrics, null);
       runtimeOperationError = false;
       removeTrashItemFromView(message.id);
       inboundDetailCache.invalidate(message.id);
@@ -2491,7 +2503,7 @@
     pending = true;
     try {
       const result = await emptyTrash();
-      metrics = result.metrics;
+      await acceptMutationMetrics(result.metrics, null);
       runtimeOperationError = false;
       for (const item of trashItems) {
         inboundDetailCache.invalidate(item.id);
@@ -2790,10 +2802,7 @@
           {managementView}
           {userLabels}
           {activeLabelId}
-          draftCount={metrics.draftsCount}
-          unreadCount={unreadCount}
-          starredCount={metrics.starredCount}
-          trashCount={metrics.trashCount}
+          counts={attentionCounts}
           {pending}
           onCompose={() => {
             openCompose('new');
@@ -2813,12 +2822,8 @@
             labels={userLabels}
             {activeLabelId}
             collapsed={sidebarCollapsed}
-            draftCount={metrics.draftsCount}
-            unreadCount={unreadCount}
-            starredCount={metrics.starredCount}
-            trashCount={metrics.trashCount}
+            counts={attentionCounts}
             {pending}
-            sentCount={metrics.sentCount}
             onCompose={() => {
               openCompose('new');
             }}

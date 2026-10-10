@@ -1059,8 +1059,9 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
   await login(page);
   const navigation = page.getByRole('navigation', { name: '主导航' });
-  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).getByText('48', { exact: true })).toBeVisible();
-  await expect(navigation.getByRole('button', { name: '已发送', exact: true }).getByText('1', { exact: true })).toBeVisible();
+  const { data } = await (await page.request.get('/api/workspace/mailbox/metrics')).json();
+  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).locator('.count')).toHaveText(String(data.metrics.unreadCount));
+  await expect(navigation.getByRole('button', { name: '已发送', exact: true }).locator('.count')).toHaveCount(0);
   await expect(navigation.getByRole('button', { name: '草稿箱', exact: true }).getByText('5', { exact: true })).toBeVisible();
 
   const selected = page.getByLabel('选择E2E Inbox Welcome');

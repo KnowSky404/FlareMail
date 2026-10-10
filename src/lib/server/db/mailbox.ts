@@ -328,8 +328,8 @@ export async function getMailboxMetrics(
         SUM(ds.status = 'complained') AS complained_count,
         SUM(ds.status = 'submitting' AND datetime(COALESCE(ds.last_event_at, ds.updated_at, ds.created_at)) <= datetime('now', '-15 minutes')) AS stale_delivery_count
       FROM workspace_delivery_statuses AS ds
-      LEFT JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
-      WHERE ds.user_id = (SELECT id FROM owner_scope) AND ${identityPredicate('m', 'sender_address_id')}
+      JOIN workspace_messages AS m ON m.user_id = ds.user_id AND m.id = ds.message_id
+      WHERE ds.user_id = (SELECT id FROM owner_scope) AND m.folder = 'sent' AND m.deleted_at IS NULL AND ${identityPredicate('m', 'sender_address_id')}
     )
     SELECT
       COALESCE(m.inbox_count, 0) + COALESCE(e.inbox_count, 0) AS inbox_count,
