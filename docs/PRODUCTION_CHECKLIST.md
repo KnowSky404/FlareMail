@@ -12,6 +12,16 @@ recipient addresses or full R2 keys into shared evidence.
 
 ## Release identity
 
+- [ ] Development took place in a dedicated worktree and task branch. The
+  feature PR was opened after PRE business acceptance and records the accepted
+  SHA, URL, deployment/version ID and relevant checks. Later implementation
+  changes received updated local/PRE evidence. Documentation-only changes
+  record diff, command and link review with PRE marked not applicable; any
+  bypass of the feature PRE gate has explicit authorization.
+- [ ] Merge, any direct push to `main`, and production deployment are covered
+  by the respective user authorizations. The final release SHA and contents
+  are compared with PRE evidence; changed contents are verified and accepted
+  again before production publication.
 - [ ] The release is being prepared from `main`, or an explicitly approved
   immutable release commit has been selected and recorded.
 - [ ] `git status --short` is empty.

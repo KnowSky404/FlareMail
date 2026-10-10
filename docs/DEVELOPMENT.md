@@ -4,6 +4,11 @@
 
 ## Prepare the checkout
 
+Create a dedicated worktree and task branch before editing, including for
+documentation or instruction changes. Keep the user's original checkout intact.
+Follow the [worktree and PR workflow](#worktree-and-pr-workflow) below, then run
+setup and verification from that worktree.
+
 Use the newest stable Bun already installed on your machine, satisfying
 `engines.bun` in `package.json` (currently **>=1.4.0**). Do not download an older
 runtime just to match `packageManager`: that field records the reproducible CI
@@ -21,7 +26,66 @@ bun run db:migrate:local
 
 The checked-in `wrangler.toml` uses local D1/R2, `AUTH_MODE=local`, and the demo outbound provider with `ALLOW_FAKE_SERVICES=true`. Optional local overrides belong in the ignored `.dev.vars`; see `.dev.vars.example`. Keep real credentials out of Git.
 
-The workflow is local implementation and verification, then an authorized remote Preview deployment, then a separately authorized production release. Ordinary development does not automatically deploy. The repository's configured preview environments share production D1/R2 and the Owner account; writes there affect production. Use local state for development and read the [preview guide](./PREVIEW.md) before using a remote preview. Production uses Resend and rejects missing required bindings or secrets.
+The workflow is a dedicated worktree and branch, local implementation and
+verification, a committed change, authorized remote PRE (Preview) acceptance,
+then a PR targeting `main`. Merge and production publication follow their
+respective authorizations. Ordinary development does not automatically deploy.
+The repository's configured preview environments share production D1/R2 and
+the Owner account; writes there affect production. Use local state for
+development and read the [preview guide](./PREVIEW.md) before using a remote
+preview. Production uses Resend and rejects missing required bindings or secrets.
+
+## Worktree and PR workflow
+
+Inspect the current directory, branch, upstream, status and existing worktrees
+before changing anything. For a new task, fetch and inspect the latest
+`origin/main`, then create a new branch in a separate checkout. For example,
+from the original repository (replace the topic and path for each task):
+
+```bash
+pwd
+git status --short
+git branch --show-current
+git rev-parse --abbrev-ref --symbolic-full-name '@{u}'
+git worktree list
+git fetch origin main
+git rev-parse origin/main
+git worktree add -b feat/mail-topic ../FlareMail-mail-topic origin/main
+cd ../FlareMail-mail-topic
+```
+
+Use `fix/<topic>` or `docs/<topic>` for fixes and documentation. A writable
+temporary directory is also suitable. Record the absolute worktree path,
+branch and base SHA. Resume an existing task in its existing worktree and
+branch; use a different base only when the user requests it. Never develop
+directly on `main` or switch the user's original checkout to the task branch.
+Preserve unrelated changes and retain unmerged worktrees and branches.
+
+Install locked dependencies in the task worktree. Keep generated output,
+local D1/R2, browser state and server ports separate from other tasks. Do not
+share writable build directories or automatically copy private configs or
+credentials from another checkout.
+
+1. Implement and run the applicable local gates below, then create an atomic
+   Conventional Commit.
+2. With Preview authorization, publish that commit and complete relevant
+   business acceptance under [PREVIEW.md](./PREVIEW.md). Record the SHA, URL,
+   deployment/version ID, checks and limitations. Health alone is insufficient.
+3. Only after PRE acceptance, push the task branch and open a PR targeting
+   `main`, within the user's authorization. Include the base SHA, accepted SHA,
+   local and PRE evidence, and uncovered behavior. Documentation-only changes
+   use diff, command and link review and mark PRE as not applicable.
+4. Changes to the implementation after acceptance require affected local gates
+   and PRE acceptance again before merge. If PRE is blocked, retain the branch
+   and report the blocker; bypassing the gate requires explicit authorization.
+   Record alternative verification for handlers PRE cannot exercise.
+5. Merge, direct pushes to `main`, and production deployment each require
+   authorization covering that action. The default path is an accepted PR
+   merged into `main`; an explicitly requested direct push still follows the
+   local and PRE gates. Before production, check the final SHA and contents
+   against PRE evidence, repeat verification and acceptance if contents changed,
+   and follow the exact-commit gates in the
+   [production checklist](./PRODUCTION_CHECKLIST.md).
 
 ## Initialize the local Owner
 

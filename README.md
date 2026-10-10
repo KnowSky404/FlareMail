@@ -25,6 +25,11 @@ For local development, use the [development guide](./docs/DEVELOPMENT.md). Use t
 
 Mail addresses are managed resources under one workspace Owner; login credentials and profile email are configured separately.
 
+Develop each task in a dedicated worktree and new branch. Feature changes pass
+local checks and remote PRE acceptance before a PR to `main`; merge and
+production deployment follow explicit authorization. See the
+[development workflow](./docs/DEVELOPMENT.md#worktree-and-pr-workflow).
+
 ## Documentation
 
 | Guide | What it covers |

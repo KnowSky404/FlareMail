@@ -26,13 +26,23 @@
 - `bun run release:preflight -- --json`：检查干净提交及本地发布门禁，不执行远程部署或远程迁移
 - `bun run deploy`：使用私有 `wrangler.deploy.toml` 构建并发布生产 Worker，仅在明确授权生产发布时使用
 
+## Worktree 与分支隔离
+
+- 所有功能开发、修复、重构及相关测试、配置、文档改动，必须先为当前任务创建独立 Git worktree 和新分支，再在该 worktree 内修改、验证和提交。纯文档/开发约束更新也使用独立 worktree 和分支。禁止直接在 `main` 或用户正在使用的工作树中开发。
+- 开工检查 cwd、分支、上游、工作树状态和 `git worktree list`；从已核对的最新 `origin/main` 创建任务分支（如 `feat/<topic>`、`fix/<topic>`、`docs/<topic>`）。明确继续已有任务时复用该任务的 worktree/分支，不另建重复分支；其他基线需有用户明确要求。
+- worktree 放在仓库外的同级目录或可写临时目录，记录绝对路径、分支和基线 SHA。依赖、构建产物、本地 D1/R2、浏览器测试状态和端口分别隔离；不要复用其他工作树的可写生成目录，也不要自动复制私有配置或密钥。具体步骤见 [开发指南](docs/DEVELOPMENT.md#worktree-and-pr-workflow)。
+- 保留原工作树和无关改动，不擅自 reset、stash、rebase、force-push 或删除 worktree/分支。未合并任务及其验收证据保留供继续开发和审查。
+
 ## 本地优先与发布顺序
+
+默认顺序：**独立 worktree + 新分支 → 本地实现与验证 → 原子提交 → PRE（远程 Preview）部署与验收 → 推送任务分支并提 PR → 合并 `main` → 按授权推送/部署生产**。本地提交、分支推送、PR、合并和生产部署是不同阶段，不以完成上一阶段推定下一阶段已获授权。
 
 1. 先在隔离本地 D1/R2 和 demo/fake provider 上实现、验证，再提交当前任务。不要用共享 Preview 数据做 fixture、自动化测试或破坏性验收。
 2. 需要远程验收且用户已授权发布 Preview 时，先通过本地门禁和打包检查，再按 [Preview 指南](docs/PREVIEW.md) 发布已验证的提交。未指定生产的发布请求优先使用 Preview，不直接调用 `bun run deploy`。普通修复、审查或约束更新不自动触发部署。
 3. 区分 `bun run preview`（本地 Worker）、`wrangler preview`（原生远程 Preview）和 `wrangler versions upload`（版本预览）。原生 Preview 是默认远程验收方式；需要复用生产既有 secrets 检查上传版本时，按指南使用版本预览。不得用 `wrangler deploy` 代替 Preview 发布，也不得擅自执行 `versions deploy` 或 `triggers deploy`。
 4. 当前 Preview 有意共用生产 D1/R2 和 Owner，发布代码不切换生产流量，但写入会影响生产数据。默认只读验收；写入、真实邮件/Telegram、远程迁移或路由/DNS 变更必须在用户授权范围内。已明确授权的同一范围无需重复确认。不要为发布 Preview 初始化 Owner、重置数据库或自动创建/删除云资源。
 5. Preview 发布后记录提交 SHA、URL、部署/版本 ID，核对登录、相关页面/API、绑定和生产流量指向。`/api/health` 只证明存活；数据库/绑定就绪另查已认证的 `/api/readiness`。Preview HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
+   功能改动只有在对应提交完成 PRE 相关页面/API 验收后才可提 PR；仅发布成功或健康检查通过不算验收完成。PR 后追加影响实现的提交，必须补做受影响的本地验证和 PRE 验收后才能合并。PRE 无法覆盖的 handler 需记录替代验证路径；环境阻塞不能记为通过或自动跳过，绕过此门禁需用户明确授权。纯文档/约束改动完成差异、命令和链接检查即可提 PR，无需为此部署 PRE。
 6. 生产发布是后续独立步骤，需要明确生产授权；按 [生产清单](docs/PRODUCTION_CHECKLIST.md) 核对同一提交的本地验证、依赖审计、迁移兼容性及回退边界。原则上先保留对应 Preview 验收证据；首次部署、事件处理或 Preview 无法覆盖的 handler 变更需说明替代验证路径。
 7. GitHub Actions 仅在发布 Release 或手动触发时扫描依赖安全，普通 push/PR 不触发。测试、浏览器 QA、构建和部署在本机执行，仍需按当前提交保留验证证据。发版后触发的扫描不能代替生产部署前的本地依赖审计。
 
@@ -54,6 +64,8 @@
 - 开工先检查 cwd、分支、上游、工作树和已有改动；保留无关用户改动，不擅自清理、reset、stash、rebase 或 force-push。
 - 除非用户明确要求不提交，当前任务的相关改动完成验证后创建原子提交，使用 `type(scope): summary`。不要为每次文件编辑立即提交，不创建空提交，不混入无关或私有文件；验证失败或无法安全提交时报告原因。
 - 本地提交、push、PR、Preview 与生产发布分别处理。push/PR 按用户授权执行；要求观察 CI 时跟踪推送的确切 SHA 到所需任务的终态，不能以 push 成功代替 CI 成功。
+- 功能 PR 以 `main` 为目标分支，附 worktree/分支、基线及验收 SHA、本地门禁、PRE URL/部署或版本 ID、相关业务验收和未覆盖项；纯文档 PR 明确 PRE 不适用。PRE 未验收完成时交付分支、提交和阻塞原因，不提前创建功能 PR。
+- 合并 PR、直接推送 `main` 和生产部署需要对应的明确授权；一般开发请求不授权这些动作。默认通过已验收 PR 合并，用户明确要求直接推送时仍保留本地/PRE 门禁。生产默认部署已进入 `origin/main` 的干净提交；合并、squash 或冲突解决后核对最终 SHA 与 PRE 内容，内容变化时重新验证并验收，遵循生产清单的准确提交门禁。
 - PR 写清问题、最终行为、影响和验证；UI 附截图，D1/绑定写明迁移与配置。GitHub CLI 的正文默认先写受引号保护的 heredoc 临时文件，再传 `--body-file`。
 - 更新公开行为或操作契约时同步相应开发、Preview、部署/API 和中英文说明；历史验收记录保留当时版本与证据，不改写成当前结论。大段验收历史放专门记录，不堆入 README 或本文件。
 
