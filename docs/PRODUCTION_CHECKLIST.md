@@ -22,6 +22,11 @@ recipient addresses or full R2 keys into shared evidence.
   by the respective user authorizations. The final release SHA and contents
   are compared with PRE evidence; changed contents are verified and accepted
   again before production publication.
+- [ ] Before merge, Codex Code Review and enabled Security Review completed for
+  the final PR head, including documentation-only PRs. Review SHA, completion
+  times and result links are recorded, and findings were assessed and handled.
+  Any new commit received a new completed review. Empty Actions checks or old
+  reviews do not satisfy this gate.
 - [ ] The PR URL, original head and final merge SHA are recorded. The authorized
   PR used rebase merge unless another strategy was requested; `MERGED` and
   patch/content integration into main were verified. Task worktree/branch

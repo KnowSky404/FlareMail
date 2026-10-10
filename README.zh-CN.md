@@ -26,7 +26,8 @@
 邮件地址是由同一工作区 Owner 管理的收发资源；登录凭据和资料邮箱单独配置。
 
 每项开发使用独立 worktree 和新分支。功能改动先通过本地验证和远程 PRE 验收，
-再提 PR 到 `main`；合并及生产部署按明确授权执行。已授权 PR 默认 rebase 合并，
+再提 PR 到 `main`；所有 PR 合并前等待当前提交的 Codex 机器人 review 完成并
+处理反馈。合并及生产部署按明确授权执行。已授权 PR 默认 rebase 合并，
 核对并同步主分支后清理已完成任务的 worktree 和本地/远端分支。详见
 [开发流程](./docs/DEVELOPMENT.md#worktree-and-pr-workflow)。
 

@@ -185,11 +185,15 @@ changes do not require PRE deployment. See the
 [development workflow](./docs/DEVELOPMENT.md#worktree-and-pr-workflow) for the
 PR gate and evidence requirements.
 
-Authorized PRs use rebase merge by default. Verify the merged result, sync a
+Every PR first waits for Codex Code Review and enabled Security Review to
+complete for its current head, with findings handled. Documentation-only PRs
+also follow this gate. Authorized PRs then use rebase merge by default.
+Verify the merged result, sync a
 clean local main checkout by fast-forward, then remove the completed task's
 clean worktree and local/remote branches, preserving configuration and evidence.
 See the [completion workflow](./docs/DEVELOPMENT.md#rebase-merge-and-cleanup)
-for safe cleanup and retention conditions. These steps do not deploy production.
+for safe cleanup, conditional remote branch deletion and retention conditions.
+These steps do not deploy production.
 
 POSIX shell:
 

@@ -35,7 +35,7 @@
 
 ## 本地优先与发布顺序
 
-默认顺序：**独立 worktree + 新分支 → 本地实现与验证 → 原子提交 → PRE（远程 Preview）部署与验收 → 推送任务分支并提 PR → 按授权 rebase 合并到 `main` → 核对并同步主分支 → 清理任务 worktree/分支 → 按授权部署生产**。本地提交、分支推送、PR、合并和生产部署是不同阶段，不以完成上一阶段推定下一阶段已获授权。
+默认顺序：**独立 worktree + 新分支 → 本地实现与验证 → 原子提交 → PRE（远程 Preview）部署与验收 → 推送任务分支并提 PR → 等待 Codex 机器人 review 完成并处理反馈 → 按授权 rebase 合并到 `main` → 核对并同步主分支 → 清理任务 worktree/分支 → 按授权部署生产**。本地提交、分支推送、PR、合并和生产部署是不同阶段，不以完成上一阶段推定下一阶段已获授权。
 
 1. 先在隔离本地 D1/R2 和 demo/fake provider 上实现、验证，再提交当前任务。不要用共享 Preview 数据做 fixture、自动化测试或破坏性验收。
 2. 需要远程验收且用户已授权发布 Preview 时，先通过本地门禁和打包检查，再按 [Preview 指南](docs/PREVIEW.md) 发布已验证的提交。未指定生产的发布请求优先使用 Preview，不直接调用 `bun run deploy`。普通修复、审查或约束更新不自动触发部署。
@@ -65,16 +65,19 @@
 - 除非用户明确要求不提交，当前任务的相关改动完成验证后创建原子提交，使用 `type(scope): summary`。不要为每次文件编辑立即提交，不创建空提交，不混入无关或私有文件；验证失败或无法安全提交时报告原因。
 - 本地提交、push、PR、Preview 与生产发布分别处理。push/PR 按用户授权执行；要求观察 CI 时跟踪推送的确切 SHA 到所需任务的终态，不能以 push 成功代替 CI 成功。
 - 功能 PR 以 `main` 为目标分支，附 worktree/分支、基线及验收 SHA、本地门禁、PRE URL/部署或版本 ID、相关业务验收和未覆盖项；纯文档 PR 明确 PRE 不适用。PRE 未验收完成时交付分支、提交和阻塞原因，不提前创建功能 PR。
+- 所有 PR（包括纯文档/约束更新）合并前必须等待 Codex 机器人对当前 head SHA 的 review 完成。当前机器人为 `chatgpt-codex-connector[bot]`（`gh` 部分输出省略 `[bot]`）；核对真实作者和每项审查对应的提交。当前已启用 Code Review 和 Security Review，两项均需完成；优先检查机器人 `Codex Review Summary` 的各项状态/提交及相关 review、行内评论，不仅检查 GitHub Actions。`CLEAN`、无 checks、旧提交的 review、👀、单独的 👍 或 `COMMENTED` 均不能代替当前提交的有效完成凭据；汇总中的单个 `status`/`headSha` 也不能代替所有审查项的核对。
+- Review 完成后逐条核实反馈：修复确认的问题并完成受影响验证，误报或不适用项记录依据；未处理的有效阻断问题不能合并。追加任何提交后重新等待针对新 head 的完整 review，按现有规则补做受影响的本地/PRE 验收。审查未完成、失败或缺少对应当前 head 的凭据时保留 PR、分支和 worktree，报告状态，不以等待超时或跳过审查继续合并；不提前启用可能绕过此人工门禁的 auto-merge。交付时记录 review 完成时间、审查 SHA 和结果链接。
 - 合并 PR、直接推送 `main` 和生产部署需要对应的明确授权；一般开发请求不授权这些动作。已授权的 PR 默认使用 rebase 合并，用户指定其他策略时遵从；用户明确要求直接推送时仍保留本地/PRE 门禁。生产默认部署已进入 `origin/main` 的干净提交；合并、squash 或冲突解决后核对最终 SHA 与 PRE 内容，内容变化时重新验证并验收，遵循生产清单的准确提交门禁。
 - PR 写清问题、最终行为、影响和验证；UI 附截图，D1/绑定写明迁移与配置。GitHub CLI 的正文默认先写受引号保护的 heredoc 临时文件，再传 `--body-file`。
 - 更新公开行为或操作契约时同步相应开发、Preview、部署/API 和中英文说明；历史验收记录保留当时版本与证据，不改写成当前结论。大段验收历史放专门记录，不堆入 README 或本文件。
 
 ### Rebase 合并与任务收尾
 
-1. 合并前核对 PR 的目标 `main`、head SHA、提交/文件范围、可合并状态和所需检查；使用 `gh pr merge <PR> --rebase --match-head-commit <HEAD_SHA>` 锁定已验证的提交。不以 `--admin` 绕过检查；自动合并或进入队列不算已合并，等待实际 `MERGED` 后再清理。
+1. 合并前核对 PR 的目标 `main`、head SHA、提交/文件范围、可合并状态和所需检查，并确认该 head 的 Codex Code Review、已启用的 Security Review 均已完成且反馈已处理；使用 `gh pr merge <PR> --rebase --match-head-commit <HEAD_SHA>` 锁定已验证和审查的提交。不以 `--admin` 绕过检查；自动合并或进入队列不算已合并，等待实际 `MERGED` 后再清理。
 2. 合并后记录 PR URL、原 head SHA 和合并 SHA，fetch `origin/main` 并确认合并 SHA 已进入主分支。Rebase 会改写 SHA，用 PR 合并记录及补丁/内容对比核实任务改动完整进入 `main`；不能仅凭原 SHA 不再是祖先判定丢失，也不能仅凭分支已推送认定合并成功。内容变化时补做受影响验证和 PRE 验收。
 3. 原主工作树在 `main` 且干净、无分叉时，用 `git merge --ff-only origin/main` 同步；有用户改动或无法快进时保留现场并报告，不 reset、stash 或自动 rebase。此阻塞不妨碍已证实合并且可安全清理的任务收尾。
 4. 默认清理本任务已合并的 worktree、本地及远端分支。先确认任务分支仍指向 PR 已合并的 head，没有新增提交；检查暂存、未提交、未跟踪文件及需保留的忽略文件，妥善保存验收记录和私有配置，并停止该任务的临时服务。从保留的主工作树运行 `git worktree remove <PATH>`，再删除本地及远端任务分支，不使用 `worktree remove --force`，不删除其他任务或主工作树。
+   远端删除必须用已核实的 PR head 作显式 lease：`git push --force-with-lease=refs/heads/<BRANCH>:<VERIFIED_HEAD_SHA> origin :refs/heads/<BRANCH>`。这是只允许删除指定旧 SHA 的保护，不授权覆盖分支；禁止无条件 `--delete` 或 `--force`。远端已不存在时记录即可；lease 被拒绝则保留远端分支并报告，不改成新 SHA 重试删除未经合并的提交。
 5. 本地分支优先用 `git branch -d <BRANCH>`；若仅因 rebase 改写祖先关系被拒绝，必须先以 PR `MERGED`、主分支合并 SHA、任务 head 未变化及补丁等价证据确认改动已保留，才可对该任务分支使用 `-D`。有未保存文件、未合并提交、其他 worktree 占用或用户要求保留时停止对应清理并报告。最后核对 PR 状态、本地/远端 `main`、工作树状态、任务分支和 worktree 是否已移除；交付 PR URL、最终 SHA、验证及未完成项，不把合并或清理视为生产部署。
 
 ## 安全与配置提示
