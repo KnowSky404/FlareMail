@@ -47,6 +47,8 @@ Owner。打开未读收件邮件（包括分栏和独立阅读链接）会自动
    保留代码记录，但其旧数据绑定已不可用；不再使用旧部署地址。
    **原生 Worker Preview** 不继承生产 secrets，也无法从 Cloudflare 读取其明文；需单独输入或
    使用权限 `0600` 的私有 secrets 文件配置。缺少对应 Key 时，该服务不可用。
+   域名和邮箱地址页面优先显示当前环境未配置密钥的提示；共享 D1 中的历史
+   供应商错误会保留，但不能据此认定当前 Preview 的密钥无效或权限不足。
    缺少 Telegram Token 时将 Preview 的 `TELEGRAM_ENABLED` 设为 `false`，
    避免配置校验阻止网页访问；生产 Telegram 功能及其他生产配置保持不变。
 5. 完成 `bun test`、`bun run check`、`bun run build` 和 Chromium 桌面/手机 QA，

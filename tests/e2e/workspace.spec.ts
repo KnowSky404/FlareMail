@@ -3263,6 +3263,7 @@ test('shows current provider errors on both identity pages and clears recovered 
     cloudflare_checked_at: new Date().toISOString(), cloudflare_error_code: null,
     resend_error_code: 'resend_permission_denied' };
   const address = { ...sourceAddress, last_error_code: null };
+  const providerConfiguration = { ...original.data.providerConfiguration, cloudflare: true, resend: true };
   await page.route(/\/api\/workspace\/mail-identities(?:\/.*)?$/u, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -3271,7 +3272,7 @@ test('shows current provider errors on both identity pages and clears recovered 
     }
     if (path === '/api/workspace/mail-identities' && request.method() === 'GET') {
       return route.fulfill({ json: { ok: true, data: { ...original.data, domains: [domain], addresses: [address],
-        providerConfiguration: { ...original.data.providerConfiguration, cloudflare: true, resend: true },
+        providerConfiguration,
         domainOnboarding: { available: true, workerName: 'flaremail', canManageRouting: true }
       } } });
     }
@@ -3292,6 +3293,22 @@ test('shows current provider errors on both identity pages and clears recovered 
     await expect(card.getByText(/^Cloudflare 检查/u)).toHaveCount(0);
     await card.screenshot({ path: `/tmp/flaremail-provider-permission-${view}-${testInfo.project.name}.png` });
 
+    // Shared provider history does not imply credentials exist in this deployment.
+    providerConfiguration.resend = false;
+    await refresh();
+    await expect(card.getByText('当前环境未配置 Resend API Key，无法检查域名发信状态。', { exact: true })).toBeVisible();
+    await expect(card.getByText('Resend 检查无权访问；请检查 API Key 是否有效及其域名读取权限。', { exact: true })).toHaveCount(0);
+    await assertNoHorizontalOverflow(page);
+    expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+    await card.screenshot({ path: `/tmp/flaremail-provider-unconfigured-${view}-${testInfo.project.name}.png` });
+    domain.resend_error_code = null;
+    await refresh();
+    await expect(card.getByText('当前环境未配置 Resend API Key，无法检查域名发信状态。', { exact: true })).toBeVisible();
+    providerConfiguration.resend = true;
+    domain.resend_error_code = 'resend_permission_denied';
+    await refresh();
+    await expect(card.getByText('Resend 检查无权访问；请检查 API Key 是否有效及其域名读取权限。', { exact: true })).toBeVisible();
+
     domain.resend_error_code = null;
     domain.cloudflare_error_code = 'cloudflare_network_failure';
     await refresh();
@@ -3301,6 +3318,12 @@ test('shows current provider errors on both identity pages and clears recovered 
     domain.cloudflare_error_code = 'cloudflare_permission_denied';
     await refresh();
     await expect(card.getByText('Cloudflare 检查无权访问；请检查 Token 是否有效及其域名和邮件路由读取权限。', { exact: true })).toBeVisible();
+
+    providerConfiguration.cloudflare = false;
+    await refresh();
+    await expect(card.getByText('当前环境未配置 Cloudflare Token，无法检查路由状态。', { exact: true })).toBeVisible();
+    await expect(card.getByText('Cloudflare 检查无权访问；请检查 Token 是否有效及其域名和邮件路由读取权限。', { exact: true })).toHaveCount(0);
+    providerConfiguration.cloudflare = true;
 
     domain.cloudflare_error_code = null;
     await refresh();

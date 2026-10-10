@@ -125,7 +125,12 @@ the management credential is present.
 
 Domain warnings on both management pages use the current `cloudflare_error_code`
 and `resend_error_code` independently, with provider-specific credential guidance
-for access failures. The legacy domain `last_error_code` mirrors the latest
+for access failures. These warnings first honor the current deployment's
+`providerConfiguration` flags: absent credentials show a configuration message,
+even if a shared database retains a provider error from another deployment.
+The persisted error is preserved, and becomes visible when credentials are
+configured. A missing credential is not reported as an access denial.
+The legacy domain `last_error_code` mirrors the latest
 Cloudflare check, including scheduled recovery; it does not represent Resend
 health. Address `last_error_code` still reports that address's routing operation
 failure. Discovery sync does not replace a provider health check or clear an

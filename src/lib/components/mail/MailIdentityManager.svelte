@@ -601,13 +601,17 @@
   }
 
   function healthErrorLabel(domain: MailDomain, provider: 'cloudflare' | 'resend') {
+    const configured = provider === 'cloudflare' ? domain.cloudflare_configured : domain.resend_configured;
+    if (!configured) {
+      return t(provider === 'cloudflare' ? 'settings.cloudflareCheckNotConfigured' : 'settings.resendCheckNotConfigured');
+    }
     const code = provider === 'cloudflare' ? domain.cloudflare_error_code : domain.resend_error_code;
     if (!code) return '';
     if (provider === 'cloudflare') {
-      return t(code === 'cloudflare_permission_denied' || code === 'cloudflare_token_missing'
+      return t(code === 'cloudflare_permission_denied'
         ? 'settings.cloudflareCheckAccessDenied' : 'settings.cloudflareCheckNeedsAttention');
     }
-    return t(code === 'resend_permission_denied' || code === 'resend_api_key_missing'
+    return t(code === 'resend_permission_denied'
       ? 'settings.resendCheckAccessDenied' : 'settings.resendCheckNeedsAttention');
   }
 
@@ -831,8 +835,8 @@
               {/each}
             </ul>
           {/if}
-          {#if domain.cloudflare_error_code}<p class="safe-error">{healthErrorLabel(domain, 'cloudflare')}</p>{/if}
-          {#if domain.resend_error_code}<p class="safe-error">{healthErrorLabel(domain, 'resend')}</p>{/if}
+          {#if domain.cloudflare_error_code || !domain.cloudflare_configured}<p class="safe-error">{healthErrorLabel(domain, 'cloudflare')}</p>{/if}
+          {#if domain.resend_error_code || !domain.resend_configured}<p class="safe-error">{healthErrorLabel(domain, 'resend')}</p>{/if}
         </section>
       {/each}
     </div>
