@@ -12,7 +12,7 @@ A personal, self-hosted mail workspace on Cloudflare Workers. Manage multiple do
 
 - **Receive and send mail** — Cloudflare Email Routing for inbound mail, Resend for outbound mail, attachments, and delivery tracking.
 - **Manage mail identities** — sync existing Cloudflare routing configuration, manage domains and addresses, and choose sender identities and signatures.
-- **Organize your inbox** — categories, labels, stars, archive, trash, advanced search, and bulk actions.
+- **Organize your inbox** — categories, labels, stars, archive, trash, advanced search, bulk actions, and navigation counts for unread mail, drafts, and sending or failed mail.
 - **Read and compose anywhere** — desktop and mobile layouts, an optional reading pane, focused reading, replies, forwarding, and autosaved drafts.
 - **Keep control of access and data** — local username/password or Cloudflare Access authentication, D1 for structured data, and R2 for raw mail and attachments.
 - **Stay notified** — optional Telegram notifications with privacy settings and delivery retries.

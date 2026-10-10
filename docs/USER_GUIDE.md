@@ -20,7 +20,11 @@ Unknown recipients are rejected by default for manually connected domains. Colle
 - Opening received mail marks it read, including the reading pane and direct links.
   Marking it unread while reading keeps it unread until you close and reopen it.
   The Inbox badge shows unread received mail in the selected domain/address,
-  independent of category and search.
+  independent of category and search. Sidebar and mobile menu badges show work
+  needing attention: Inbox unread mail, all Drafts, and Sent mail that is sending,
+  delayed, failed/suppressed, bounced, or complained. Normally sent/delivered mail
+  is excluded. Starred, Archive, and Trash have no badges. Zero counts are hidden;
+  counts above 99 show `99+`, with the full count in the accessible description.
 - Returning to a recently visited mailbox/category restores the cached list and
   loaded pages immediately. Older views refresh in the background; use Refresh
   to fetch changes immediately.

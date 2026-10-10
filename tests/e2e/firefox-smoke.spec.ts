@@ -1,3 +1,4 @@
+import { verifyNavigationAttention } from './navigation-attention';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import AxeBuilder from '@axe-core/playwright';
@@ -457,4 +458,9 @@ test('keeps settings navigation and save action usable across Firefox viewports'
   await page.keyboard.press('Enter');
   await expect(name).toHaveValue('Unsaved Firefox settings draft');
   await assertNoConsoleErrors(consoleErrors);
+});
+
+
+test('shows only navigation counts needing attention across identity changes', async ({ page, consoleErrors }, testInfo) => {
+  await verifyNavigationAttention(page, consoleErrors, testInfo);
 });

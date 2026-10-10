@@ -1,3 +1,4 @@
+import { verifyNavigationAttention } from './navigation-attention';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -638,4 +639,9 @@ test('keeps WebKit viewport, focus, drawer, dialog and touch semantics accessibl
     expect(undersized).toEqual([]);
   }
   await assertNoConsoleErrors(consoleErrors);
+});
+
+
+test('shows only navigation counts needing attention across identity changes', async ({ page, consoleErrors }, testInfo) => {
+  await verifyNavigationAttention(page, consoleErrors, testInfo);
 });

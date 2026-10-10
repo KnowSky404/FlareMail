@@ -1,3 +1,4 @@
+import { verifyNavigationAttention } from './navigation-attention';
 import type { Page, Response } from '@playwright/test';
 import {
   assertNoConsoleErrors,
@@ -685,4 +686,59 @@ test('finishes new folder navigation when an older read write interrupts its req
     await page.unroute('**/api/workspace/mailbox?**');
   }
   await assertNoConsoleErrors(consoleErrors);
+});
+
+
+test('shows only navigation counts needing attention across identity changes', async ({ page, consoleErrors }, testInfo) => {
+  await verifyNavigationAttention(page, consoleErrors, testInfo);
+});
+
+test('keeps scoped attention counts after undoing a draft trash action', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const subject = `E2E Scoped Undo ${crypto.randomUUID()}`;
+  const created = await mutateLocal(page, '/api/workspace/drafts', 'POST', {
+    to: [{ email: 'draft-recipient@flaremail.test', name: 'Draft Fixture' }], senderAddressId: supportAddressId,
+    subject, body: 'Only this synthetic draft is restored.'
+  }) as { data: { message: Message } };
+  const id = created.data.message.id;
+  const scope = `address:${supportAddressId}`;
+  try {
+    await page.goto(`/?folder=drafts&identity=${encodeURIComponent(scope)}`);
+    const { data: scopedBefore } = await (await page.request.get(`/api/workspace/mailbox/metrics?identity=${scope}`)).json();
+    // Cache another folder before writing; its old metrics must not undo the write.
+    await openFolder(page, '收件箱');
+    await openFolder(page, '草稿箱');
+    const item = row(page, subject);
+    await expect(item).toBeVisible();
+    await page.evaluate(() => {
+      const seen: number[] = [];
+      (window as unknown as { attentionCountsObserved: number[] }).attentionCountsObserved = seen;
+      new MutationObserver(() => {
+        const text = document.querySelector('#sidebar-drafts-count, #mobile-drafts-count')?.textContent;
+        if (text && /^\d+$/u.test(text)) seen.push(Number(text));
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
+    await item.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+    await expect(item).toHaveCount(0);
+    await openFolder(page, '收件箱');
+    const compact = testInfo.project.name !== 'desktop';
+    if (compact) await page.getByRole('button', { name: '打开导航' }).click();
+    const navigation = page.getByRole('navigation', { name: compact ? '移动端导航' : '主导航', exact: true });
+    const count = navigation.getByRole('button', { name: '草稿箱', exact: true }).locator(compact ? 'small' : '.count');
+    await expect(count).toHaveCount(0);
+    if (compact) await page.keyboard.press('Escape');
+    await page.getByRole('status').filter({ hasText: '已移入垃圾箱' }).getByRole('button', { name: '撤销' }).click();
+    await openFolder(page, '草稿箱');
+    await expect(item).toBeVisible();
+    const { data: owner } = await (await page.request.get('/api/workspace/mailbox/metrics')).json();
+    expect(owner.metrics.draftsCount).toBeGreaterThan(scopedBefore.metrics.draftsCount);
+    if (compact) await page.getByRole('button', { name: '打开导航' }).click();
+    await expect(count).toHaveText(String(scopedBefore.metrics.draftsCount));
+    const seen = await page.evaluate(() => (window as unknown as { attentionCountsObserved: number[] }).attentionCountsObserved);
+    expect(seen.every((count) => count <= scopedBefore.metrics.draftsCount)).toBe(true);
+    await expect(page).toHaveURL(/identity=address/u);
+    await assertNoConsoleErrors(consoleErrors);
+  } finally {
+    await mutateLocal(page, `/api/workspace/messages/${id}`, 'DELETE');
+  }
 });

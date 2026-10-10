@@ -524,6 +524,17 @@ describe('D1 mailbox pages', () => {
         ('complained-global', 'user-1', 'complained', datetime('now')),
         ('foreign-failed', 'user-2', 'failed', datetime('now'))
     `);
+    // Delivery counters describe active sent mail, not orphaned delivery rows.
+    database.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email,
+        subject, preview, body, sent_at, labels_json, is_read, is_starred)
+      SELECT ds.message_id, ds.user_id, 'sent', m.from_name, m.from_email, m.to_name, m.to_email,
+        ds.message_id, '', '', m.sent_at, '[]', 1, 0
+      FROM workspace_delivery_statuses AS ds CROSS JOIN workspace_messages AS m
+      WHERE m.id = 'sent-1' AND ds.message_id <> 'sent-1';
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status) VALUES
+        ('orphan-failed', 'user-1', 'failed');
+    `);
     const page = await loadMailboxPage(env, workspace, query('sent', { deliveryStatus: 'delivered' }));
     expect(page.messages).toHaveLength(1);
     expect(page.messages[0].deliveryStatus).toBe('delivered');
@@ -531,7 +542,7 @@ describe('D1 mailbox pages', () => {
     expect(page.metrics).toEqual({
       inboxCount: 3,
       archiveCount: 0,
-      sentCount: 1,
+      sentCount: 9,
       draftsCount: 1,
       trashCount: 0,
       unreadCount: 2,
@@ -542,6 +553,15 @@ describe('D1 mailbox pages', () => {
       bouncedCount: 1,
       complainedCount: 1,
       staleDeliveryCount: 1
+    });
+    database.exec(`
+      UPDATE workspace_messages SET deleted_at = datetime('now') WHERE id = 'failed-global';
+      UPDATE workspace_messages SET folder = 'inbox' WHERE id = 'suppressed-global';
+      UPDATE workspace_messages SET sender_address_id = 'address-a' WHERE id IN ('queued-global', 'delayed-global');
+    `);
+    expect(await getMailboxMetrics(env.DB, workspace.userId)).toMatchObject({ failedCount: 0, trashCount: 1 });
+    expect(await getMailboxMetrics(env.DB, workspace.userId, { kind: 'address', id: 'address-a' })).toMatchObject({
+      sentCount: 2, queuedCount: 1, delayedCount: 1, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0
     });
   });
 

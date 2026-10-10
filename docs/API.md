@@ -89,6 +89,17 @@ scope. Invalid identity syntax returns 400; unknown/foreign identities return
 these metrics. `inboxCount` counts non-deleted, non-archived received messages;
 `unreadCount` counts their unread subset. Inbox navigation badges use the latter.
 
+Navigation badges represent attention rather than folder totals: Inbox uses
+`unreadCount`; Drafts uses `draftsCount`; Sent adds `queuedCount`, `delayedCount`,
+`failedCount`, `bouncedCount`, and `complainedCount`. `queuedCount` includes
+queued/submitting and `failedCount` includes failed/suppressed. The submitting
+subset `staleDeliveryCount` is not added again. Delivery metrics count only
+existing, non-deleted sent messages owned by the current Owner within the chosen
+identity; deleted messages and orphaned delivery rows are excluded. Sent/delivered
+mail does not contribute. Starred, Archive, and Trash have no navigation badges.
+`inboxCount`, `sentCount`, `starredCount`, `archiveCount`, and `trashCount` retain
+their total-count meanings for lists and API consumers.
+
 `PATCH /api/workspace/messages/:id/flags` accepts one or both boolean fields
 `read` and `starred`. The optional `identity` query parameter selects response
 metrics scope, not target ownership; the server validates it before writing.

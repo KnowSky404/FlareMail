@@ -95,6 +95,9 @@ const zhCN = {
   'mail.unreadCount': '{count} 未读',
   'mail.unreadCount.one': '{count} 未读',
   'mail.unreadCount.other': '{count} 未读',
+  'mail.sendAttentionCount': '{count} 封发送中或需处理',
+  'mail.sendAttentionCount.one': '{count} 封发送中或需处理',
+  'mail.sendAttentionCount.other': '{count} 封发送中或需处理',
   'mail.noSubject': '无主题',
   'mail.noPreview': '无预览',
   'mail.from': '发件人',
@@ -847,6 +850,7 @@ export type PluralMessageKey =
   | 'mail.resultCount'
   | 'mail.folderCount'
   | 'mail.unreadCount'
+  | 'mail.sendAttentionCount'
   | 'mail.viewDeliveryEvents'
   | 'mail.selectedCount'
   | 'mail.threadCount'
@@ -955,6 +959,9 @@ const en = {
   'mail.unreadCount': '{count} unread',
   'mail.unreadCount.one': '{count} unread',
   'mail.unreadCount.other': '{count} unread',
+  'mail.sendAttentionCount': '{count} sending or needing attention',
+  'mail.sendAttentionCount.one': '{count} message sending or needing attention',
+  'mail.sendAttentionCount.other': '{count} messages sending or needing attention',
   'mail.noSubject': 'No subject',
   'mail.noPreview': 'No preview',
   'mail.from': 'From',
