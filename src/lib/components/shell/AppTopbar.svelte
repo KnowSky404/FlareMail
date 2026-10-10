@@ -206,9 +206,10 @@
               </button>
             </div>
           </section>
-          <div class="preference-language">
-            <LanguageSwitcher />
-          </div>
+          <section aria-labelledby="display-preferences-language">
+            <h2 id="display-preferences-language">{t('settings.language')}</h2>
+            <LanguageSwitcher variant="segmented" class="preference-options" />
+          </section>
         </div>
       {/snippet}
     </DropdownMenu>
@@ -404,13 +405,13 @@
     text-transform: uppercase;
   }
 
-  .preference-options {
+  .preference-panel :global(.preference-options) {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.25rem;
   }
 
-  .preference-options button {
+  .preference-panel :global(.preference-options button) {
     display: grid;
     min-height: 56px;
     min-width: 0;
@@ -424,25 +425,16 @@
     text-align: center;
   }
 
-  .preference-options button:hover,
-  .preference-options button.active {
+  .preference-panel :global(.preference-options button:hover),
+  .preference-panel :global(.preference-options button.active) {
     border-color: var(--fm-primary);
     color: var(--fm-primary);
     background: var(--fm-primary-soft);
   }
 
-  .preference-options button:focus-visible {
+  .preference-panel :global(.preference-options button:focus-visible) {
     outline: 2px solid var(--fm-focus);
     outline-offset: 2px;
-  }
-
-  .preference-language {
-    border-top: 1px solid var(--fm-border);
-    padding-top: 0.75rem;
-  }
-
-  .preference-language :global(.language-switcher) {
-    width: 100%;
   }
 
   @media (max-width: 1100px) {

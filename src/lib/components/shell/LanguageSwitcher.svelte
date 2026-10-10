@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Monitor from '@lucide/svelte/icons/monitor';
+  import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
   import {
     DEFAULT_LOCALE,
     getLocaleContext,
@@ -23,12 +25,14 @@
   let {
     locale,
     preference,
+    variant = 'select',
     disabled = false,
     class: className = '',
     onLocaleChange
   }: {
     locale?: Locale;
     preference?: LocalePreference;
+    variant?: 'select' | 'segmented';
     disabled?: boolean;
     class?: string;
     onLocaleChange?: (locale: Locale) => void | Promise<void>;
@@ -40,6 +44,7 @@
   let selectedPreference = $state<LocalePreference>(normalizeLocale(context?.getLocale?.() ?? DEFAULT_LOCALE));
   const visibleLocale = $derived(locale === undefined ? selectedLocale : normalizeLocale(locale));
   const visiblePreference = $derived(preference === undefined ? selectedPreference : preference);
+  const choices = [BROWSER_LOCALE_PREFERENCE, ...SUPPORTED_LOCALES] as const;
 
   $effect(() => {
     if (locale !== undefined) selectedLocale = normalizeLocale(locale);
@@ -87,8 +92,7 @@
     };
   });
 
-  async function changeLocale(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
+  async function changeLocale(value: string) {
     const nextPreference: LocalePreference = value === BROWSER_LOCALE_PREFERENCE
       ? BROWSER_LOCALE_PREFERENCE
       : normalizeLocale(value, visibleLocale);
@@ -98,27 +102,72 @@
     context?.setLocale(selectedLocale);
     await onLocaleChange?.(selectedLocale);
   }
+
+  function handleRadioKeydown(event: KeyboardEvent) {
+    if (disabled) return;
+    const button = event.currentTarget as HTMLButtonElement;
+    const buttons = [...button.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]') ?? []];
+    const index = nextRadioIndex(event.key, buttons.indexOf(button), buttons.length);
+    if (index === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void changeLocale(choices[index]);
+    buttons[index]?.focus({ preventScroll: true });
+  }
 </script>
 
-<label class={`language-switcher ${className}`.trim()}>
-  <span class="visually-hidden">{t('shell.languageSwitcher')}</span>
-  <select
-    class="fm-touch-target"
-    aria-label={t('shell.languageSwitcher')}
-    disabled={disabled}
-    value={visiblePreference}
-    onchange={changeLocale}
-  >
-    <option value={BROWSER_LOCALE_PREFERENCE}>{t('common.browser')}</option>
-    <option value={SUPPORTED_LOCALES[0]}>{t('common.zhCN')}</option>
-    <option value={SUPPORTED_LOCALES[1]}>{t('common.en')}</option>
-  </select>
-</label>
+{#if variant === 'segmented'}
+  <div class={`language-switcher ${className}`.trim()} role="radiogroup" aria-label={t('shell.languageSwitcher')}>
+    {#each choices as choice}
+      <button
+        class:active={visiblePreference === choice}
+        type="button"
+        role="radio"
+        aria-checked={visiblePreference === choice}
+        tabindex={visiblePreference === choice ? 0 : -1}
+        {disabled}
+        onclick={() => void changeLocale(choice)}
+        onkeydown={handleRadioKeydown}
+      >
+        {#if choice === BROWSER_LOCALE_PREFERENCE}
+          <Monitor class="size-4" aria-hidden="true" />
+        {:else}
+          <span class="language-symbol" aria-hidden="true">{choice === 'zh-CN' ? '中' : 'En'}</span>
+        {/if}
+        <span>{choice === BROWSER_LOCALE_PREFERENCE ? t('common.browser') : choice === 'zh-CN' ? t('common.zhCN') : t('common.en')}</span>
+      </button>
+    {/each}
+  </div>
+{:else}
+  <label class={`language-switcher ${className}`.trim()}>
+    <span class="visually-hidden">{t('shell.languageSwitcher')}</span>
+    <select
+      class="fm-touch-target"
+      aria-label={t('shell.languageSwitcher')}
+      disabled={disabled}
+      value={visiblePreference}
+      onchange={(event) => void changeLocale(event.currentTarget.value)}
+    >
+      <option value={BROWSER_LOCALE_PREFERENCE}>{t('common.browser')}</option>
+      <option value={SUPPORTED_LOCALES[0]}>{t('common.zhCN')}</option>
+      <option value={SUPPORTED_LOCALES[1]}>{t('common.en')}</option>
+    </select>
+  </label>
+{/if}
 
 <style>
   .language-switcher {
     display: inline-flex;
     align-items: center;
+  }
+
+  .language-symbol {
+    display: inline-flex;
+    height: 16px;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1;
   }
 
   select {

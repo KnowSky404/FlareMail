@@ -1216,7 +1216,7 @@ test('keeps readable optional split columns, persists the layout, and opens one 
 
   await page.getByRole('button', { name: '显示偏好' }).click();
   const language = page.getByLabel('切换语言');
-  await language.selectOption('en');
+  await language.getByRole('radio', { name: 'English', exact: true }).click();
   await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
   await expect(page.locator('#fm-main-sidebar').getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
   const filters = page.getByRole('group', { name: 'Mail filters' });
@@ -1224,7 +1224,7 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   await expect(filters.getByRole('button', { name: 'Unread', exact: true })).toBeVisible();
   await expect(filters.getByRole('button', { name: 'Starred', exact: true })).toBeVisible();
   await page.screenshot({ path: join(tmpdir(), `flaremail-reading-layout-${testInfo.project.name}-en.png`), fullPage: false });
-  await page.getByLabel('Change language').selectOption('zh-CN');
+  await page.getByLabel('Change language').getByRole('radio', { name: '简体中文', exact: true }).click();
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   await page.evaluate(() => localStorage.removeItem('flaremail-layout-v1'));
   await assertNoConsoleErrors(consoleErrors);
@@ -2626,6 +2626,40 @@ test('supports display preferences and keyboard shortcut help/navigation', async
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps topbar icons compact and persists clicked language preferences', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop project drives the topbar viewport matrix.');
+  await login(page);
+  for (const width of [1280, 1024, 901]) {
+    await page.setViewportSize({ width, height: 900 });
+    const status = page.locator('summary[aria-label="查看工作区服务状态"]');
+    const bounds = await status.boundingBox();
+    expect(bounds?.width).toBe(40);
+    expect(bounds?.height).toBe(40);
+    await status.click();
+    await expect(page.locator('#service-status-content')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(status).toBeFocused();
+    await page.getByRole('button', { name: '显示偏好' }).click();
+    await expect(page.getByRole('radio', { name: 'English', exact: true })).toBeVisible();
+    await assertNoHorizontalOverflow(page);
+    await page.screenshot({ path: join(tmpdir(), `flaremail-topbar-preferences-${width}.png`), fullPage: false });
+    await page.keyboard.press('Escape');
+  }
+  await page.getByRole('button', { name: '显示偏好' }).click();
+  await page.getByRole('radio', { name: 'English', exact: true }).click();
+  await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
+  await page.getByRole('button', { name: 'Display preferences' }).click();
+  await expect(page.getByRole('radio', { name: 'English', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('radio', { name: 'Follow browser' }).click();
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '显示偏好' }).click();
+  await expect(page.getByRole('radio', { name: '跟随浏览器' })).toHaveAttribute('aria-checked', 'true');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('uses one keyboard stop per display preference radio group', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Display preferences are in the desktop topbar.');
   await login(page);
@@ -2633,7 +2667,7 @@ test('uses one keyboard stop per display preference radio group', async ({ page,
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.getByRole('button', { name: '显示偏好' }).click();
-  const dialog = page.getByRole('dialog', { name: '显示偏好' });
+  const dialog = page.locator('#display-preferences-content');
   const theme = dialog.getByRole('radiogroup', { name: '颜色主题' });
   const density = dialog.getByRole('radiogroup', { name: '显示密度' });
   const light = theme.getByRole('radio', { name: '浅色' });
@@ -2661,6 +2695,20 @@ test('uses one keyboard stop per display preference radio group', async ({ page,
   await page.keyboard.press('Home');
   await expect(standard).toBeFocused();
   await expect(standard).toHaveAttribute('aria-checked', 'true');
+  await expect(dialog.getByRole('combobox')).toHaveCount(0);
+  const language = dialog.getByRole('radiogroup', { name: /切换语言|Change language/u });
+  await expect(language.getByRole('radio')).toHaveCount(3);
+  await page.keyboard.press('Tab');
+  await expect(language.getByRole('radio', { name: '跟随浏览器' })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(language.getByRole('radio', { name: 'English', exact: true })).toBeFocused();
+  await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('flaremail-locale'))).toBe('en');
+  await page.keyboard.press('ArrowRight');
+  await expect(language.getByRole('radio', { name: '跟随浏览器' })).toBeFocused();
+  await expect(language.getByRole('radio', { name: '跟随浏览器' })).toHaveAttribute('aria-checked', 'true');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('flaremail-locale'))).toBe('browser');
+  await language.getByRole('radio', { name: '简体中文', exact: true }).click();
   expect((await new AxeBuilder({ page }).include('#display-preferences-content').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
   await page.setViewportSize({ width: 1505, height: 1045 });
   await assertNoHorizontalOverflow(page);

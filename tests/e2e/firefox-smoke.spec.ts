@@ -50,7 +50,7 @@ test('renders inbox and focused reading without Firefox errors', async ({ page, 
 test('navigates display preference radio groups by keyboard in Firefox', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('button', { name: '显示偏好' }).click();
-  const dialog = page.getByRole('dialog', { name: '显示偏好' });
+  const dialog = page.locator('#display-preferences-content');
   const theme = dialog.getByRole('radiogroup', { name: '颜色主题' });
   const density = dialog.getByRole('radiogroup', { name: '显示密度' });
   await expect(theme.getByRole('radio', { name: '跟随系统' })).toBeFocused();
@@ -61,6 +61,15 @@ test('navigates display preference radio groups by keyboard in Firefox', async (
   await expect(density.getByRole('radio', { name: '标准显示' })).toBeFocused();
   await page.keyboard.press('ArrowRight');
   await expect(density.getByRole('radio', { name: '紧凑显示' })).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Tab');
+  const language = dialog.getByRole('radiogroup', { name: /切换语言|Change language/u });
+  await expect(language.getByRole('radio', { name: '跟随浏览器' })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(language.getByRole('radio', { name: 'English', exact: true })).toBeFocused();
+  await expect(page.getByRole('main', { name: 'Mail workspace' })).toBeVisible();
+  await page.keyboard.press('Home');
+  await expect(language.getByRole('radio', { name: '跟随浏览器' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
   await assertNoConsoleErrors(consoleErrors);

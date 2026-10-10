@@ -55,4 +55,6 @@ Use the delivery timeline to review submission, delivery, and failure events. Su
 
 Settings groups profile, notifications, appearance, diagnostics, and Telegram controls. Choose English, Simplified Chinese, or the browser's language. Interface dates, counts, and accessibility labels follow the chosen language; original mail content remains unchanged.
 
+On desktop, open Display preferences in the top-right corner to choose a theme, density, or language directly from the option cards. Each group has one Tab stop; arrow keys switch choices, Home/End select the first/last choice, and Escape closes the panel. Language preferences persist across reloads. The circular service-status icon opens workspace status details; green indicates healthy status and red indicates attention is needed.
+
 Telegram notifications are optional. An operator configures the deployment Bot, then the Owner binds a private chat through a one-time confirmation link and chooses privacy/summary settings. Use the [Telegram guide](./TELEGRAM.md) for setup, retries, and delivery troubleshooting.

@@ -1,6 +1,5 @@
 <script lang="ts">
   import CheckCircle2 from '@lucide/svelte/icons/circle-check-big';
-  import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import { formatNumber } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
@@ -64,14 +63,15 @@
     <details bind:this={statusElement} bind:open class="status-menu">
       <summary bind:this={summaryElement} class:degraded={!healthy} aria-label={t('status.view')} aria-controls="service-status-content" aria-describedby={tooltipId}>
         {#if healthy}
-          <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
+          <CheckCircle2 size={18} strokeWidth={2} aria-hidden="true" />
           <span class="sr-only">{t('status.healthy')}</span>
         {:else}
-          <CircleAlert size={16} strokeWidth={2} aria-hidden="true" />
+          <CircleAlert size={18} strokeWidth={2} aria-hidden="true" />
           <span class="sr-only">{t('status.degraded')}</span>
-          <span class="attention-count" aria-hidden="true">{formatNumber(attentionCount, i18n.locale)}</span>
+          {#if attentionCount > 0}
+            <span class="attention-count" aria-hidden="true">{attentionCount > 99 ? '99+' : formatNumber(attentionCount, i18n.locale)}</span>
+          {/if}
         {/if}
-        <ChevronDown class="chevron" size={14} aria-hidden="true" />
       </summary>
 
       <div id="service-status-content" class="status-popover" role="region" aria-label={t('status.view')} tabindex="-1">
@@ -101,21 +101,26 @@
   }
 
   summary {
+    position: relative;
     display: inline-flex;
-    min-height: 40px;
-    min-width: 40px;
+    height: 40px;
+    width: 40px;
     align-items: center;
     justify-content: center;
-    gap: 7px;
-    padding: 0 8px;
-    border: 1px solid var(--fm-border);
-    border-radius: var(--radius-md);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
     color: var(--fm-text-secondary);
-    background: var(--fm-surface);
+    background: transparent;
     cursor: pointer;
     font-size: 13px;
     font-weight: 550;
     list-style: none;
+  }
+
+  summary:hover,
+  .status-menu[open] summary {
+    background: var(--fm-surface-hover);
   }
 
   summary::-webkit-details-marker {
@@ -131,19 +136,21 @@
   }
 
   .attention-count {
-    min-width: 1.1rem;
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex;
+    min-width: 16px;
+    height: 16px;
+    align-items: center;
+    justify-content: center;
+    padding: 0 3px;
+    border-radius: var(--radius-pill);
     color: var(--fm-danger);
-    font-size: 11px;
+    background: var(--fm-surface);
+    font-size: 9px;
     font-variant-numeric: tabular-nums;
     font-weight: 700;
-  }
-
-  .status-menu[open] :global(.chevron) {
-    transform: rotate(180deg);
-  }
-
-  :global(.chevron) {
-    transition: transform var(--motion-fast);
   }
 
   .status-popover {
