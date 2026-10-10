@@ -22,6 +22,13 @@ recipient addresses or full R2 keys into shared evidence.
   by the respective user authorizations. The final release SHA and contents
   are compared with PRE evidence; changed contents are verified and accepted
   again before production publication.
+- [ ] The PR URL, original head and final merge SHA are recorded. The authorized
+  PR used rebase merge unless another strategy was requested; `MERGED` and
+  patch/content integration into main were verified. Task worktree/branch
+  cleanup and local main synchronization are recorded as complete, retained
+  by request, or blocked with a reason under the
+  [completion workflow](./DEVELOPMENT.md#rebase-merge-and-cleanup). Cleanup
+  does not establish production deployment.
 - [ ] The release is being prepared from `main`, or an explicitly approved
   immutable release commit has been selected and recorded.
 - [ ] `git status --short` is empty.

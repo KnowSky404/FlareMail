@@ -23,6 +23,12 @@ PRE 阻塞时保留分支并报告原因，绕过门禁需明确授权。纯文�
 `bun run deploy:dry-run` 只检查公开本地配置的打包，不能代替目标 Preview 的
 绑定、变量和 secrets 核对。
 
+已授权 PR 默认 rebase 合并；确认 `MERGED`、主分支合并提交及内容完整后，
+快进同步干净的本地 `main`，再清理本任务已合并且无新增提交的 worktree 和
+本地/远端分支。保留未保存文件、私有配置和验收证据，不强制移除工作树；
+具体检查与例外见[收尾流程](./DEVELOPMENT.md#rebase-merge-and-cleanup)。
+合并和清理不代表生产部署。
+
 本项目采用**共用生产数据、独立发布代码**的 Preview 模式。`previews.d1_databases`
 的 `database_id` 与生产 `DB` 相同，`previews.r2_buckets` 的 `bucket_name` 与生产
 `BUCKET` 相同。邮件、域名、地址、Owner 账号及持久化设置共用；在 Preview 中

@@ -28,8 +28,10 @@ The checked-in `wrangler.toml` uses local D1/R2, `AUTH_MODE=local`, and the demo
 
 The workflow is a dedicated worktree and branch, local implementation and
 verification, a committed change, authorized remote PRE (Preview) acceptance,
-then a PR targeting `main`. Merge and production publication follow their
-respective authorizations. Ordinary development does not automatically deploy.
+then a PR targeting `main`. An authorized PR uses rebase merge by default,
+followed by verification, main synchronization and task worktree/branch cleanup.
+Production publication requires its own authorization. Ordinary development
+does not automatically deploy.
 The repository's configured preview environments share production D1/R2 and
 the Owner account; writes there affect production. Use local state for
 development and read the [preview guide](./PREVIEW.md) before using a remote
@@ -81,11 +83,58 @@ credentials from another checkout.
    Record alternative verification for handlers PRE cannot exercise.
 5. Merge, direct pushes to `main`, and production deployment each require
    authorization covering that action. The default path is an accepted PR
-   merged into `main`; an explicitly requested direct push still follows the
+   rebased into `main`; an explicitly requested direct push still follows the
    local and PRE gates. Before production, check the final SHA and contents
    against PRE evidence, repeat verification and acceptance if contents changed,
    and follow the exact-commit gates in the
    [production checklist](./PRODUCTION_CHECKLIST.md).
+
+### Rebase merge and cleanup
+
+For an authorized merge, use rebase unless the user specifies another strategy.
+Inspect the PR's base branch, head SHA, commits/files, mergeability and required
+checks first. Lock the merge to the verified head using
+`gh pr merge <PR> --rebase --match-head-commit <HEAD_SHA>`. Do not bypass checks
+with `--admin`. Auto-merge or a merge queue request is not a completed merge;
+wait until the PR state is `MERGED` before cleanup.
+
+Record the PR URL, original head SHA and resulting merge SHA. Fetch `origin/main`
+and verify it contains the merge SHA. Rebase rewrites commit identities: compare
+the original and merged patches/contents, using `git range-diff` where useful,
+instead of relying only on ancestry of the original SHA. If main has advanced
+with unrelated changes, compare the PR's original and rebased commit ranges,
+rather than requiring the whole task tree to equal the latest main tree.
+Changed implementation contents require updated verification and PRE acceptance.
+
+From the preserved main checkout, sync with `git merge --ff-only origin/main`
+only when it is on `main`, clean and can fast-forward. Preserve a dirty or
+diverged checkout and report the limitation; do not reset, stash or rebase user
+work. Task cleanup can proceed independently if its merge is proven and its
+worktree and branches meet the cleanup conditions.
+
+After a verified authorized merge, clean up that task by default unless the user
+requests retention:
+
+1. Confirm any remaining local and remote task branches point to the merged PR
+   head, with no later commits. Inspect staged/unstaged and untracked files,
+   as well as ignored files that need retention. Preserve acceptance evidence
+   and private configuration outside the disposable worktree, and stop its
+   temporary services. Never remove another task's worktree or the main checkout.
+2. From a retained checkout, remove the clean task checkout with
+   `git worktree remove <PATH>`. Do not use `--force`. Then delete its local
+   branch with `git branch -d <BRANCH>` and remote branch with
+   `git push origin --delete <BRANCH>` if they still exist. Keep worktree
+   removal separate from PR merge so each result can be checked.
+3. If `-d` refuses only because rebase changed ancestry, `-D` is permitted for
+   this task branch only after checking the PR's `MERGED` record, merge SHA
+   in main, unchanged task head and equivalent patches. A successful `-d`
+   alone does not prove integration into main; it can check the branch upstream.
+   Unmerged commits, unsaved files, another worktree using the branch, or a
+   retention request stop the affected cleanup and must be reported.
+4. Verify PR state, local/remote main SHAs, working tree status, and absence of
+   the task worktree and branches. Report the PR URL, final SHA, verification,
+   cleanup result and remaining blockers. Merge and cleanup do not deploy
+   production.
 
 ## Initialize the local Owner
 
