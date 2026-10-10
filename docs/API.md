@@ -123,6 +123,14 @@ account, API origin, or Cloudflare endpoint. The operator command
 never return a token or key; `cloudflareManagement` separately reports whether
 the management credential is present.
 
+Domain warnings on both management pages use the current `cloudflare_error_code`
+and `resend_error_code` independently, with provider-specific credential guidance
+for access failures. The legacy domain `last_error_code` mirrors the latest
+Cloudflare check, including scheduled recovery; it does not represent Resend
+health. Address `last_error_code` still reports that address's routing operation
+failure. Discovery sync does not replace a provider health check or clear an
+unresolved routing or sending error.
+
 - `POST /api/workspace/mail-identities/sync` discovers accessible zones in the
   deployment account and imports existing literal recipient rules targeting
   the configured Worker. It requires the authenticated workspace Owner and

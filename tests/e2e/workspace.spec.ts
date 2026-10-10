@@ -3254,6 +3254,68 @@ test('shows an actionable domain setup state when provider permissions are missi
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('shows current provider errors on both identity pages and clears recovered warnings', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  const original = await (await page.request.get('/api/workspace/mail-identities')).json();
+  const sourceAddress = original.data.addresses[0];
+  const domain = { ...original.data.domains.find((item: { id: string }) => item.id === sourceAddress.domain_id),
+    last_error_code: 'cloudflare_network_failure',
+    cloudflare_checked_at: new Date().toISOString(), cloudflare_error_code: null,
+    resend_error_code: 'resend_permission_denied' };
+  const address = { ...sourceAddress, last_error_code: null };
+  await page.route(/\/api\/workspace\/mail-identities(?:\/.*)?$/u, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (path.endsWith('/sync') && request.method() === 'POST') {
+      return route.fulfill({ json: { ok: true, data: { sync: { domainsCreated: 0, addressesCreated: 0, warnings: [] } } } });
+    }
+    if (path === '/api/workspace/mail-identities' && request.method() === 'GET') {
+      return route.fulfill({ json: { ok: true, data: { ...original.data, domains: [domain], addresses: [address],
+        providerConfiguration: { ...original.data.providerConfiguration, cloudflare: true, resend: true },
+        domainOnboarding: { available: true, workerName: 'flaremail', canManageRouting: true }
+      } } });
+    }
+    return route.continue();
+  });
+  const refresh = () => page.getByRole('button', { name: '同步 Cloudflare 配置', exact: true }).click();
+  for (const view of ['domains', 'addresses']) {
+    domain.cloudflare_error_code = null;
+    domain.resend_error_code = 'resend_permission_denied';
+    address.last_error_code = null;
+    await page.goto(`/?folder=settings&view=${view}`);
+    await expect(page).toHaveURL(new RegExp(`view=${view}`));
+    await expect(page.getByRole('heading', { name: view === 'domains' ? '域名概览' : '受管邮件地址', exact: true })).toBeVisible();
+    await expect(page.locator('vite-error-overlay')).toHaveCount(0);
+    const card = page.locator('.domain-card');
+    await expect(card.getByText('Resend 检查无权访问；请检查 API Key 是否有效及其域名读取权限。', { exact: true })).toBeVisible();
+    await expect(card.getByText('上次同步失败；请检查或重试。', { exact: true })).toHaveCount(0);
+    await expect(card.getByText(/^Cloudflare 检查/u)).toHaveCount(0);
+    await card.screenshot({ path: `/tmp/flaremail-provider-permission-${view}-${testInfo.project.name}.png` });
+
+    domain.resend_error_code = null;
+    domain.cloudflare_error_code = 'cloudflare_network_failure';
+    await refresh();
+    await expect(card.getByText('Cloudflare 检查需要处理；请检查路由状态或重试。', { exact: true })).toBeVisible();
+    await expect(card.getByText(/^Resend 检查/u)).toHaveCount(0);
+
+    domain.cloudflare_error_code = 'cloudflare_permission_denied';
+    await refresh();
+    await expect(card.getByText('Cloudflare 检查无权访问；请检查 Token 是否有效及其域名和邮件路由读取权限。', { exact: true })).toBeVisible();
+
+    domain.cloudflare_error_code = null;
+    await refresh();
+    await expect(card.locator('.safe-error')).toHaveCount(0);
+    await assertNoHorizontalOverflow(page);
+    expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+    await page.screenshot({ path: `/tmp/flaremail-provider-errors-${view}-${testInfo.project.name}.png` });
+  }
+  // Address operation failures remain visible independently of domain health.
+  address.last_error_code = 'cloudflare_route_missing';
+  await refresh();
+  await expect(page.locator('.address-list .safe-error')).toHaveText('上次同步失败；请检查或重试。');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('automatically discovers existing Cloudflare domains and addresses on entry and supports repeat sync', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const original = await (await page.request.get('/api/workspace/mail-identities')).json();

@@ -63,7 +63,7 @@ function createFixture(options: { due?: boolean; checkedAt?: string | null; coll
       cloudflare_next_check_at, cloudflare_check_token, cloudflare_error_code,
       cloudflare_error_at, cloudflare_failure_count, resend_domain_id, resend_status,
       resend_sending_status, resend_checked_at, resend_next_check_at, resend_check_token,
-      resend_error_code, resend_error_at, resend_failure_count
+      resend_error_code, resend_error_at, resend_failure_count, last_error_code, last_error_at
     FROM mail_domains WHERE id = ?
   `).get(domainId) as Record<string, unknown>;
   return { sqlite, db, env, readDomain };
@@ -98,6 +98,56 @@ function successDependencies(nowMs = defaultNow): MailHealthRefreshDependencies 
 }
 
 describe('scheduled mail domain health refresh', () => {
+  test('clears a recovered Cloudflare error without hiding an independent Resend failure', async () => {
+    const fixture = createFixture();
+    const previousFailureAt = new Date(defaultNow - 60_000).toISOString();
+    fixture.sqlite.query(`UPDATE mail_domains SET
+      last_error_code = 'cloudflare_network_failure', last_error_at = ?,
+      cloudflare_error_code = 'cloudflare_network_failure', cloudflare_error_at = ?
+      WHERE id = ?`).run(previousFailureAt, previousFailureAt, domainId);
+    const deps = successDependencies();
+    deps.resendLookup = async () => { throw new ResendDomainError('permission_denied'); };
+
+    await refreshMailDomainHealth(fixture.env, deps);
+
+    expect(fixture.readDomain()).toMatchObject({
+      cloudflare_checked_at: new Date(defaultNow).toISOString(),
+      cloudflare_error_code: null,
+      last_error_code: null,
+      last_error_at: null,
+      resend_error_code: 'resend_permission_denied'
+    });
+    fixture.sqlite.close();
+  });
+
+  test('does not clear a newer Cloudflare error after its health lease is superseded', async () => {
+    const fixture = createFixture();
+    const deps = successDependencies();
+    const makeClient = deps.cloudflareClientFactory!;
+    deps.cloudflareClientFactory = (...args) => {
+      const client = makeClient(...args);
+      return { ...client, async getZone(id) {
+        fixture.sqlite.query(`UPDATE mail_domains SET cloudflare_check_token = 'newer-check',
+          cloudflare_error_code = 'cloudflare_permission_denied',
+          last_error_code = 'cloudflare_permission_denied', last_error_at = ? WHERE id = ?`)
+          .run(new Date(defaultNow).toISOString(), domainId);
+        return client.getZone(id);
+      } };
+    };
+
+    await refreshMailDomainHealth(fixture.env, deps);
+
+    expect(fixture.readDomain()).toMatchObject({
+      cloudflare_check_token: 'newer-check',
+      cloudflare_checked_at: null,
+      cloudflare_error_code: 'cloudflare_permission_denied',
+      last_error_code: 'cloudflare_permission_denied',
+      last_error_at: new Date(defaultNow).toISOString(),
+      resend_error_code: null
+    });
+    fixture.sqlite.close();
+  });
+
   test('renews due provider observations before the 24-hour inbound window and does not mutate address intent', async () => {
     const checkedAt = new Date(defaultNow - 24 * 60 * 60 * 1000 - 5_000).toISOString();
     const fixture = createFixture({ checkedAt, collect: true });
@@ -171,6 +221,8 @@ describe('scheduled mail domain health refresh', () => {
       cloudflare_checked_at: checkedAt,
       resend_checked_at: checkedAt,
       cloudflare_error_code: 'cloudflare_permission_denied',
+      last_error_code: 'cloudflare_permission_denied',
+      last_error_at: new Date(defaultNow).toISOString(),
       resend_error_code: 'resend_rate_limited',
       cloudflare_failure_count: 0,
       resend_failure_count: 1

@@ -240,13 +240,15 @@ async function saveCloudflareResult(
        catch_all_checked_at = CASE WHEN ? IS NULL THEN catch_all_checked_at ELSE ? END,
        cloudflare_checked_at = CASE WHEN ? IS NULL THEN cloudflare_checked_at ELSE ? END,
        cloudflare_error_code = ?, cloudflare_error_at = ?, cloudflare_failure_count = ?, cloudflare_next_check_at = ?,
+       last_error_code = ?, last_error_at = ?,
        cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
      WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`
   ).bind(
     result.catchAllObservedAt ?? null, result.catchAllTarget ?? null,
     result.catchAllObservedAt ?? null, result.catchAllObservedAt ?? null,
     result.observedAt, result.observedAt,
-    result.errorCode, result.errorCode ? isoAt(nowMs) : null, failureCount, nextAt, isoAt(nowMs),
+    result.errorCode, result.errorCode ? isoAt(nowMs) : null, failureCount, nextAt,
+    result.errorCode, result.errorCode ? isoAt(nowMs) : null, isoAt(nowMs),
     domain.id, domain.owner_user_id, token
   ).run();
 }

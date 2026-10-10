@@ -34,7 +34,6 @@
     resend_error_code: string | null;
     cloudflare_configured: boolean;
     resend_configured: boolean;
-    last_error_code: string | null;
   };
 
   type MailAddress = {
@@ -601,6 +600,17 @@
     return provider === 'cloudflare' ? domain.cloudflare_next_check_at : domain.resend_next_check_at;
   }
 
+  function healthErrorLabel(domain: MailDomain, provider: 'cloudflare' | 'resend') {
+    const code = provider === 'cloudflare' ? domain.cloudflare_error_code : domain.resend_error_code;
+    if (!code) return '';
+    if (provider === 'cloudflare') {
+      return t(code === 'cloudflare_permission_denied' || code === 'cloudflare_token_missing'
+        ? 'settings.cloudflareCheckAccessDenied' : 'settings.cloudflareCheckNeedsAttention');
+    }
+    return t(code === 'resend_permission_denied' || code === 'resend_api_key_missing'
+      ? 'settings.resendCheckAccessDenied' : 'settings.resendCheckNeedsAttention');
+  }
+
   function canSendFrom(address: MailAddress) {
     const domain = domains.find((item) => item.id === address.domain_id);
     return mailSenderSendBlockReason({
@@ -821,7 +831,8 @@
               {/each}
             </ul>
           {/if}
-          {#if domain.last_error_code}<p class="safe-error">{t('settings.lastSyncNeedsAttention')}</p>{/if}
+          {#if domain.cloudflare_error_code}<p class="safe-error">{healthErrorLabel(domain, 'cloudflare')}</p>{/if}
+          {#if domain.resend_error_code}<p class="safe-error">{healthErrorLabel(domain, 'resend')}</p>{/if}
         </section>
       {/each}
     </div>
