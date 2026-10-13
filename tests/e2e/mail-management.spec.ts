@@ -89,7 +89,9 @@ test.describe('mail resource management', () => {
 
     await moreActions.focus();
     await page.keyboard.press('Enter');
-    await expect(reader.getByRole('menu')).toBeVisible();
+    const initialMenu = reader.getByRole('menu');
+    await expect(initialMenu).toBeVisible();
+    await expect(initialMenu.getByRole('menuitem').first()).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(reader).toBeVisible();
     await expect(reader.getByRole('menu')).toBeHidden();

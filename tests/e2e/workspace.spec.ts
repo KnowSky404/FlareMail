@@ -1150,7 +1150,9 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   const readerMoreActions = reader.getByRole('button', { name: '更多邮件操作', exact: true });
   await readerMoreActions.focus();
   await page.keyboard.press('Enter');
-  await expect(reader.getByRole('menu')).toBeVisible();
+  const initialReaderMenu = reader.getByRole('menu');
+  await expect(initialReaderMenu).toBeVisible();
+  await expect(initialReaderMenu.getByRole('menuitem').first()).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(reader).toBeVisible();
   await expect(reader.getByRole('menu')).toBeHidden();
