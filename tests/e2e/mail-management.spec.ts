@@ -176,6 +176,45 @@ test.describe('mail resource management', () => {
     await expect(page.getByRole('dialog')).toBeHidden();
   });
 
+  test('closes clean management dialogs across one Back or Forward traversal', async ({ page }) => {
+    await login(page);
+    await gotoManagement(page, '/?folder=settings&view=domains');
+    const domainRow = page.locator('[data-domain-id="00000000-0000-4000-8000-000000000011"]');
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
+    await expect(page).toHaveURL(/view=addresses.*domain=00000000-0000-4000-8000-000000000011/u);
+
+    await addButton(page, 'address').click();
+    const addAddress = page.locator('#add-mail-address-dialog');
+    await expect(addAddress).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/view=domains/u);
+    await expect(addAddress).toBeHidden();
+    await page.goForward();
+    await expect(page).toHaveURL(/view=addresses.*domain=00000000-0000-4000-8000-000000000011/u);
+    await expect(addAddress).toBeHidden();
+
+    const addressRow = page.locator('[data-address-id="00000000-0000-4000-8000-000000000022"]');
+    await addressRow.getByRole('button', { name: /编辑名称与签名|Edit name and signature/u }).click();
+    const editAddress = page.locator('#edit-mail-address');
+    await expect(editAddress).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/view=domains/u);
+    await expect(editAddress).toBeHidden();
+    await page.goForward();
+    await expect(page).toHaveURL(/view=addresses.*domain=00000000-0000-4000-8000-000000000011/u);
+    await expect(editAddress).toBeHidden();
+
+    await page.goBack();
+    await expect(page).toHaveURL(/view=domains/u);
+    await domainRow.getByRole('button', { name: 'flaremail.test', exact: true }).click();
+    const diagnostics = page.locator('#mail-diagnostics');
+    await expect(diagnostics).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(/view=addresses.*domain=00000000-0000-4000-8000-000000000011/u);
+    await expect(diagnostics).toBeHidden();
+  });
+
   test('opens add and edit dialogs, preserves invalid input, and ignores duplicate submit', async ({ page }) => {
     await login(page);
     await gotoManagement(page, '/?folder=settings&view=addresses');
@@ -385,7 +424,7 @@ test.describe('mail resource management', () => {
           cloudflare: { state: 'unavailable', errorCode: 'provider_timeout', route: { observation: 'unknown', source: 'api', ruleId: null }, catchAll: { target: 'external', checkedAt: null, fresh: false, live: false } },
           policies: { remove_owned_route: { available: true, action: 'remove' }, retain_reject_route: { available: false, action: null }, preserve_imported_route: { available: false, action: null } },
           recommendedPolicy: 'remove_owned_route', canConfirm: true
-        } } } });
+      } } } });
         return;
       }
       await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { message: 'preview unavailable' } }) });
@@ -450,6 +489,72 @@ test.describe('mail resource management', () => {
     expect(checkPosts).toBe(1);
   });
 
+  test('uses newer recovered domain health after a failed check readback', async ({ page }) => {
+    await login(page);
+    const original = await readIdentities(page);
+    const domainId = String(original.domains[0].id);
+    const staleDomain = {
+      ...original.domains[0], cloudflare_error_code: 'old_cloudflare_error',
+      cloudflare_checked_at: new Date(Date.now() - 86_400_000).toISOString(),
+      cloudflare_check_expires_at: new Date(Date.now() - 60_000).toISOString()
+    };
+    const recoveredDomain = {
+      ...staleDomain, cloudflare_error_code: null,
+      cloudflare_checked_at: new Date().toISOString(),
+      cloudflare_check_expires_at: null
+    };
+    let identityGets = 0;
+    let failReadback = false;
+    let checkError = 'old_cloudflare_error';
+    await page.route(identitiesUrl, async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      identityGets++;
+      if (failReadback) {
+        await route.fulfill({ status: 503, json: { ok: false, error: { message: 'synthetic check readback failed' } } });
+        return;
+      }
+      const domain = identityGets === 1 ? staleDomain : recoveredDomain;
+      await route.fulfill({ json: { ok: true, data: {
+        ...original,
+        providerConfiguration: { cloudflare: true, resend: true },
+        domains: original.domains.map((item) => item.id === domainId ? domain : item)
+      } } });
+    });
+    await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, async (route) => {
+      await route.fulfill({ json: { ok: true, data: { check: {
+        cloudflare: { state: 'error', errorCode: checkError, catchAllEnabled: false, catchAllTarget: 'unknown', checkedAt: staleDomain.cloudflare_checked_at, addresses: [] },
+        resend: { state: 'verified', checkedAt: original.domains[0].resend_checked_at ?? null }
+      } } } });
+    });
+
+    await gotoManagement(page, '/?folder=settings&view=domains');
+    const domainRow = page.locator(`[data-domain-id="${domainId}"]`);
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
+    await expect.poll(() => identityGets).toBe(2);
+    await expect(page.getByRole('status').filter({ hasText: /检查未完成|did not complete/u }).first()).toBeVisible();
+    await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+
+    await expect(domainRow).toContainText(/可用|Ready/u);
+    await domainRow.getByRole('button', { name: original.domains[0].domain_name as string, exact: true }).click();
+    const diagnostics = page.locator('#mail-diagnostics');
+    await expect(diagnostics).toBeVisible();
+    const cloudflareCard = diagnostics.locator('h4').filter({ hasText: 'Cloudflare' }).locator('..');
+    await expect(cloudflareCard).toContainText(/自动检查有效|Fresh/u);
+    await expect(cloudflareCard).not.toContainText(/检查需要处理|needs attention|old_cloudflare_error/u);
+
+    await diagnostics.getByRole('button', { name: /关闭|Close/u, exact: true }).last().click();
+    failReadback = true;
+    checkError = 'cloudflare_permission_denied';
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
+    await expect.poll(() => identityGets).toBe(3);
+    await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+    await domainRow.getByRole('button', { name: original.domains[0].domain_name as string, exact: true }).click();
+    await expect(diagnostics).toBeVisible();
+    await expect(cloudflareCard.locator('..')).toContainText(/检查无权访问|check access was denied/u);
+  });
+
   test('round trips every address management action through its guarded endpoint', async ({ page }) => {
     await login(page);
     const original = await readIdentities(page);
@@ -457,9 +562,9 @@ test.describe('mail resource management', () => {
     const now = new Date().toISOString();
     const domain = fixture.domains[0];
     Object.assign(domain, {
-      enabled: 1, cloudflare_checked_at: now, cloudflare_check_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+      enabled: 1, cloudflare_checked_at: now, cloudflare_check_expires_at: null,
       cloudflare_error_code: null, resend_status: 'verified', resend_sending_status: 'enabled', resend_checked_at: now,
-      resend_check_expires_at: new Date(Date.now() + 86_400_000).toISOString(), resend_error_code: null
+      resend_check_expires_at: null, resend_error_code: null
     });
     const [primary, actionAddress, deletedAddress] = fixture.addresses;
     if (!primary || !actionAddress || !deletedAddress) throw new Error('The management fixture needs three addresses.');
@@ -472,7 +577,7 @@ test.describe('mail resource management', () => {
 
     await page.route(identitiesUrl, async (route) => {
       if (route.request().method() === 'GET') {
-        await route.fulfill({ json: { ok: true, data: fixture } });
+        await route.fulfill({ json: { ok: true, data: { ...fixture, providerConfiguration: { cloudflare: true, resend: true } } } });
         return;
       }
       await route.continue();
@@ -518,8 +623,8 @@ test.describe('mail resource management', () => {
     });
     await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, async (route) => {
       await route.fulfill({ json: { ok: true, data: { check: {
-        cloudflare: { state: 'ready', errorCode: null, catchAllEnabled: true, catchAllTarget: 'this_worker', checkedAt: now,
-          addresses: [{ addressId: actionId, status: 'importable' }] }, resend: { state: 'verified' }
+        cloudflare: { state: 'ready', errorCode: null, catchAllEnabled: true, catchAllTarget: 'this_worker', checkedAt: domain.cloudflare_checked_at as string,
+          addresses: [{ addressId: actionId, status: 'importable' }] }, resend: { state: 'verified', checkedAt: domain.resend_checked_at as string }
       } } } });
     });
 
@@ -540,6 +645,17 @@ test.describe('mail resource management', () => {
       await expect.poll(() => requests.at(-1)).toBe(`${actionId}:${action}`);
     };
     await clickAction(/重试|Retry/u, 'retry');
+
+    await page.goBack();
+    await expect(page).toHaveURL(/view=domains/u);
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
+    await expect(page.getByRole('status').filter({ hasText: /状态检查已完成|检查未完成|status checks completed|did not complete/u }).first()).toBeVisible();
+    await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
+    await expect(page).toHaveURL(/view=addresses.*domain=/u);
+
     await clickAction(/导入规则|Import rule/u, 'import');
     await clickAction(/^(?:停用|Disable)$/u, 'disable');
     await clickAction(/^(?:启用|Enable)$/u, 'enable');
