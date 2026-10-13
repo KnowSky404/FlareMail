@@ -27,7 +27,7 @@ Domains 与 Email addresses 是配置管理页面，首屏首先回答“已经�
 | 查看域名地址 | 基线把关联地址嵌套在 Domain card 内 | Address count / View addresses 进入 `view=addresses&domain=<id>`，真正筛选地址表格 |
 | 新增地址 | Addresses 页常驻表单，传 `domainId`、`address`、可选 `displayName`/`signature` | Addresses 页主按钮或域名行菜单打开共用 Dialog；域名、前缀、完整地址预览可见 |
 | 编辑地址 | 行内 Edit dialog；`PATCH /api/workspace/mail-identities/:addressId` 只改名称/签名 | 行 Actions 中的带可访问名称铅笔图标；邮箱字符串和域名归属只读；保留输入和脏表单保护 |
-| 地址生命周期 | 行按钮按 active/disabled/deleted 显示 disable、enable 或 restore，调用 `POST /:addressId` | 行菜单保留相同门禁；已删除只显示恢复和诊断/历史适用操作 |
+| 地址生命周期 | 行按钮按 active/disabled/deleted 显示 disable、enable 或 restore，调用 `POST /:addressId` | 行菜单保留相同门禁；已删除且路由已协调时可恢复，未协调时仍可重试，保留诊断/历史适用操作 |
 | 路由导入/重试 | `import` 仅在 `route === importable`；`retry` 在 pending/provisioning/deleting/unknown/error 等状态可用 | 行菜单按真实状态条件显示 Import/Retry；未知结果不诱导重复创建 |
 | 发信开关与默认发件人 | active 地址按 readiness 显示 enable_send、disable_send、make_default | 行菜单/次级操作保留 `mailSenderSendBlockReason` 门禁；`send_enabled` 不直接显示为 send-ready |
 | 删除地址 | Delete 先 GET `/:addressId/delete-preview`，再按策略 DELETE；保留路由/移除自有路由/保留导入规则等安全门禁 | 行菜单 Delete 打开原预检 Dialog；不以普通确认替代；保留历史邮件和 catch-all 风险 |
@@ -211,6 +211,8 @@ PR #10 的 Code Review 发现：共享 DropdownMenu 在已有 ReaderDialog 内�
 独立的 `restores ReaderDialog focus after its menu closes` 浏览器用例覆盖这两个关闭路径；既有阅读工作区用例也补充同样的断言。该新增用例不计入上方初始交付的 23 项管理测试矩阵，修复提交的运行结果另记录在 PR 验收证据中。
 
 后续审查还补充两条边界：未修改且未提交中的管理弹窗在 Back/Forward 时关闭并接受当前导航，只有脏表单确认才使用延迟继续回调；成功读取资源后丢弃旧检查缓存，本次 POST 的各供应商结果仅在其自身检查时间与 GET 快照相同时独立保留。Resend 未配置或状态更新不能丢弃仍有效的 Cloudflare 路由观察。对应回归覆盖单次历史遍历、错误检查后读取到恢复状态的诊断显示，以及仅配置 Cloudflare 时导入刚发现的规则。
+
+删除失败或仍在协调中的 tombstone 在行菜单和诊断弹窗保留 Retry；仅在服务器允许的已协调路由状态显示 Restore。provisioning 和安全错误标记也保留重试。当前环境未配置 Resend 时，历史健康记录不将发信或默认发件人操作显示为可用；已确认的供应商检查清空错误后，刷新失败也不能回退显示旧错误。
 
 ## 兼容性结论
 
