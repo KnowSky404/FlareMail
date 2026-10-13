@@ -88,8 +88,8 @@
       return t(cloudflare ? 'settings.cloudflareCheckNotConfigured' : 'settings.resendCheckNotConfigured');
     }
     const code = cloudflare
-      ? (check?.cloudflare?.errorCode ?? domain.cloudflare_error_code)
-      : domain.resend_error_code;
+      ? (check?.cloudflare ? check.cloudflare.errorCode : domain.cloudflare_error_code)
+      : (check?.resend?.errorCode === undefined ? domain.resend_error_code : check.resend.errorCode);
     const checkFailed = cloudflare
       ? check?.cloudflare?.state === 'error'
       : check?.resend?.state === 'error';
@@ -156,6 +156,7 @@
       address.routing_state === 'error' ||
       address.routing_state === 'unknown' ||
       address.routing_state === 'pending' ||
+      address.routing_state === 'provisioning' ||
       address.routing_state === 'deleting' ||
       address.last_error_code
     ));

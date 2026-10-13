@@ -61,5 +61,5 @@ export type DomainCheck = {
     checkedAt: string | null;
     addresses: Array<{ addressId: string; status: RouteStatus }>;
   };
-  resend: { state: 'verified' | 'pending' | 'failed' | 'missing' | 'not_configured' | 'error' };
+  resend: { state: 'verified' | 'pending' | 'failed' | 'missing' | 'not_configured' | 'error'; errorCode?: string | null };
 };

@@ -496,16 +496,18 @@ test.describe('mail resource management', () => {
     const staleDomain = {
       ...original.domains[0], cloudflare_error_code: 'old_cloudflare_error',
       cloudflare_checked_at: new Date(Date.now() - 86_400_000).toISOString(),
-      cloudflare_check_expires_at: new Date(Date.now() - 60_000).toISOString()
+      cloudflare_check_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      resend_error_code: 'old_resend_error', resend_checked_at: new Date(Date.now() - 86_400_000).toISOString()
     };
     const recoveredDomain = {
       ...staleDomain, cloudflare_error_code: null,
       cloudflare_checked_at: new Date().toISOString(),
-      cloudflare_check_expires_at: null
+      cloudflare_check_expires_at: null, resend_error_code: null, resend_checked_at: new Date().toISOString()
     };
     let identityGets = 0;
     let failReadback = false;
-    let checkError = 'old_cloudflare_error';
+    let useStaleReadback = false;
+    let checkError: string | null = 'old_cloudflare_error';
     await page.route(identitiesUrl, async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       identityGets++;
@@ -513,7 +515,7 @@ test.describe('mail resource management', () => {
         await route.fulfill({ status: 503, json: { ok: false, error: { message: 'synthetic check readback failed' } } });
         return;
       }
-      const domain = identityGets === 1 ? staleDomain : recoveredDomain;
+      const domain = identityGets === 1 || useStaleReadback ? staleDomain : recoveredDomain;
       await route.fulfill({ json: { ok: true, data: {
         ...original,
         providerConfiguration: { cloudflare: true, resend: true },
@@ -522,8 +524,9 @@ test.describe('mail resource management', () => {
     });
     await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, async (route) => {
       await route.fulfill({ json: { ok: true, data: { check: {
-        cloudflare: { state: 'error', errorCode: checkError, catchAllEnabled: false, catchAllTarget: 'unknown', checkedAt: staleDomain.cloudflare_checked_at, addresses: [] },
-        resend: { state: 'verified', checkedAt: original.domains[0].resend_checked_at ?? null }
+        cloudflare: { state: checkError ? 'error' : 'ready', errorCode: checkError, catchAllEnabled: false, catchAllTarget: 'unknown', checkedAt: checkError ? staleDomain.cloudflare_checked_at : recoveredDomain.cloudflare_checked_at, addresses: [] },
+        resend: { state: checkError ? 'error' : 'verified', errorCode: checkError ? 'resend_permission_denied' : null,
+          checkedAt: checkError ? staleDomain.resend_checked_at : recoveredDomain.resend_checked_at }
       } } } });
     });
 
@@ -553,6 +556,25 @@ test.describe('mail resource management', () => {
     await domainRow.getByRole('button', { name: original.domains[0].domain_name as string, exact: true }).click();
     await expect(diagnostics).toBeVisible();
     await expect(cloudflareCard.locator('..')).toContainText(/检查无权访问|check access was denied/u);
+    const resendCard = diagnostics.locator('h4').filter({ hasText: 'Resend' }).locator('../..');
+    await expect(resendCard).toContainText(/检查无权访问|check access was denied/u);
+
+    await diagnostics.getByRole('button', { name: /关闭|Close/u, exact: true }).last().click();
+    failReadback = false;
+    useStaleReadback = true;
+    await page.locator('#refresh-mail-resources').click();
+    await expect.poll(() => identityGets).toBe(4);
+    await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+    failReadback = true;
+    checkError = null;
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
+    await expect.poll(() => identityGets).toBe(5);
+    await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+    await domainRow.getByRole('button', { name: original.domains[0].domain_name as string, exact: true }).click();
+    await expect(diagnostics).toBeVisible();
+    await expect(cloudflareCard.locator('..')).not.toContainText(/检查需要处理|needs attention|检查无权访问|check access was denied/u);
+    await expect(resendCard).not.toContainText(/Resend 检查需要处理|Resend check needs attention|检查无权访问|check access was denied/u);
   });
 
   test('keeps discovered Cloudflare rules when Resend is unconfigured', async ({ page }) => {
@@ -562,11 +584,12 @@ test.describe('mail resource management', () => {
     const domain: Record<string, unknown> = {
       ...original.domains[0], cloudflare_checked_at: now, cloudflare_check_expires_at: null,
       cloudflare_error_code: null, catch_all_target: 'this_worker',
-      resend_checked_at: new Date(Date.now() - 86_400_000).toISOString()
+      resend_checked_at: new Date(Date.now() - 60_000).toISOString(), resend_status: 'verified', resend_sending_status: 'enabled',
+      resend_error_code: null, resend_check_expires_at: null
     };
     const address = original.addresses[1];
     if (!address) throw new Error('The management fixture needs an importable address.');
-    Object.assign(address, { domain_id: domain.id, lifecycle_status: 'active', routing_state: 'error', routing_owner: 'flaremail', last_error_code: 'synthetic_route_error' });
+    Object.assign(address, { domain_id: domain.id, lifecycle_status: 'active', routing_state: 'error', routing_owner: 'flaremail', last_error_code: 'synthetic_route_error', send_enabled: 1, is_default_sender: 0 });
     const addressId = String(address.id);
     const actions: string[] = [];
     await page.route(identitiesUrl, async (route) => {
@@ -599,14 +622,75 @@ test.describe('mail resource management', () => {
     await moreButton(domainRow).click();
     await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
     const addressRow = page.locator(`[data-address-id="${addressId}"]`);
+    await expect(addressRow.getByRole('cell').nth(4)).toContainText(/需重新检查|Check again/u);
     await addressRow.getByRole('button', { name: String(address.email), exact: true }).click();
     const diagnostics = page.locator('#mail-diagnostics');
     await expect(diagnostics).toContainText(/可导入|Importable/u);
     await expect(diagnostics.locator('h4').filter({ hasText: 'Resend' }).locator('../..')).toContainText(/未配置|Not configured/u);
     await diagnostics.getByRole('button', { name: /关闭|Close/u, exact: true }).last().click();
     await moreButton(addressRow).click();
+    await expect(page.getByRole('menuitem', { name: /设为默认|Make default/u })).toBeDisabled();
     await page.getByRole('menuitem', { name: /导入规则|Import rule/u }).click();
     await expect.poll(() => actions).toEqual(['import']);
+  });
+
+  test('retries deleted route reconciliation before exposing restore', async ({ page }) => {
+    await login(page);
+    const fixture = await readIdentities(page);
+    const address = fixture.addresses[2];
+    if (!address) throw new Error('The management fixture needs a tombstone address.');
+    const addressId = String(address.id);
+    const actions: string[] = [];
+    await page.route(identitiesUrl, async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({ json: { ok: true, data: fixture } });
+    });
+    await page.route(new RegExp(`/api/workspace/mail-identities/${addressId}$`), async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      const action = (route.request().postDataJSON() as { action: string }).action;
+      actions.push(action);
+      Object.assign(address, action === 'retry'
+        ? { routing_state: 'deleted', last_error_code: null }
+        : { lifecycle_status: 'active', routing_state: 'active', receive_enabled: 1 });
+      await route.fulfill({ json: { ok: true, data: { address } } });
+    });
+    await gotoManagement(page, '/?folder=settings&view=addresses');
+    await page.getByLabel(/状态筛选|State filter/u).selectOption('deleted');
+    const row = page.locator(`[data-address-id="${addressId}"]`);
+    for (const state of ['deleting', 'error', 'unknown', 'pending', 'provisioning', 'deleted', 'imported', 'active']) {
+      Object.assign(address, { lifecycle_status: 'deleted', routing_state: state, last_error_code: null, receive_enabled: 0, send_enabled: 0,
+        routing_owner: state === 'imported' ? 'imported' : 'flaremail',
+        delete_route_policy: state === 'active' ? 'retain_reject_route' : state === 'imported' ? 'preserve_imported_route' : 'remove_owned_route' });
+      await page.locator('#refresh-mail-resources').click();
+      await expect(row).toBeVisible();
+      await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+      if (!['deleted', 'imported', 'active'].includes(state)) {
+        await moreButton(row).click();
+        await expect(page.getByRole('menuitem', { name: /恢复|Restore/u })).toHaveCount(0);
+        const beforeRetry = actions.length;
+        if (state === 'deleting') {
+          await page.getByRole('menuitem', { name: /诊断|Diagnostics/u }).click();
+          const diagnostics = page.locator('#mail-diagnostics');
+          await diagnostics.getByRole('button', { name: /重试|Retry/u, exact: true }).click();
+          await expect.poll(() => actions.length).toBe(beforeRetry + 1);
+          await expect(diagnostics.getByRole('button', { name: /重试|Retry/u, exact: true })).toHaveCount(0);
+          await diagnostics.getByRole('button', { name: /关闭|Close/u, exact: true }).last().click();
+        } else {
+          await page.getByRole('menuitem', { name: /重试|Retry/u, exact: true }).click();
+          await expect.poll(() => actions.length).toBe(beforeRetry + 1);
+        }
+        expect(actions.at(-1)).toBe('retry');
+        await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+      }
+      await moreButton(row).click();
+      await expect(page.getByRole('menuitem', { name: /重试|Retry/u, exact: true })).toHaveCount(0);
+      const beforeRestore = actions.length;
+      await page.getByRole('menuitem', { name: /恢复|Restore/u }).click();
+      await expect.poll(() => actions.length).toBe(beforeRestore + 1);
+      expect(actions.at(-1)).toBe('restore');
+      await expect(row).toBeHidden();
+      await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+    }
   });
 
   test('round trips every address management action through its guarded endpoint', async ({ page }) => {

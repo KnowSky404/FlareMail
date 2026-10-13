@@ -178,7 +178,7 @@
             resendSendingStatus: domain?.resend_sending_status ?? 'unknown', resendCheckedAt: domain?.resend_checked_at ?? null,
             resendCheckFailed: Boolean(domain?.resend_error_code) };
           return { id: address.id, domainId: address.domain_id, email: address.email, displayName: address.display_name,
-            isDefaultSender: address.is_default_sender === 1, ...readiness, sendReady: mailSenderSendBlockReason(readiness, now) === null };
+            isDefaultSender: address.is_default_sender === 1, ...readiness, sendReady: Boolean(domain?.resend_configured) && mailSenderSendBlockReason(readiness, now) === null };
         })
       });
   }
@@ -464,6 +464,13 @@
   function checkFor(domain: MailDomain, addressId: string): RouteStatus | undefined {
     return checks[domain.id]?.cloudflare?.addresses.find((entry) => entry.addressId === addressId)?.status;
   }
+  function canRetryRouting(address: MailAddress) {
+    return Boolean(address.last_error_code || ['error', 'unknown', 'pending', 'provisioning', 'deleting'].includes(address.routing_state));
+  }
+  function canRestoreAddress(address: MailAddress) {
+    return ['deleted', 'imported'].includes(address.routing_state) ||
+      (address.routing_state === 'active' && address.delete_route_policy === 'retain_reject_route' && address.routing_owner === 'flaremail');
+  }
   function receivingState(address: MailAddress, domain?: MailDomain): DomainCapabilityState {
     if (!domain || !domain.enabled || address.lifecycle_status !== 'active' || !address.receive_enabled) return 'not_ready';
     const route = checkFor(domain, address.id);
@@ -498,6 +505,7 @@
 
   function canSendFrom(address: MailAddress) {
     const domain = domains.find((item) => item.id === address.domain_id);
+    if (!domain?.resend_configured) return false;
     return mailSenderSendBlockReason({
       lifecycleStatus: address.lifecycle_status,
       sendEnabled: address.send_enabled === 1,
@@ -505,12 +513,12 @@
       resendStatus: domain?.resend_status ?? 'unknown',
       resendSendingStatus: domain?.resend_sending_status ?? 'unknown',
       resendCheckedAt: domain?.resend_checked_at ?? null,
-      resendCheckFailed: Boolean(domain?.resend_error_code)
+      resendCheckFailed: Boolean(domain.resend_error_code)
     }, now) === null;
   }
 
   function capabilitiesFor(domain: MailDomain, domainAddresses: MailAddress[]) {
-    return summarizeDomainCapabilities({
+    const capabilities = summarizeDomainCapabilities({
       enabled: Boolean(domain.enabled),
       cloudflareHealth: mailHealthState({
         configured: domain.cloudflare_configured,
@@ -531,6 +539,8 @@
         sendEnabled: address.send_enabled === 1
       }))
     }, now);
+    if (!domain.resend_configured && capabilities.sending === 'ready') capabilities.sending = 'needs_check';
+    return capabilities;
   }
 
   function capabilityLabel(state: DomainCapabilityState) {
@@ -659,7 +669,7 @@
                     {#snippet trigger()}<MoreHorizontal size={17} aria-hidden="true" />{/snippet}
                     <button role="menuitem" type="button" disabled={!domain || busy} onclick={(event) => { if (domain) openDiagnostics(domain, address, event); }}>{t('settings.diagnostics')}</button>
                     {#if address.lifecycle_status === 'deleted'}
-                      <button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'restore')}>{t('settings.restoreAddress')}</button>
+                      {#if canRestoreAddress(address)}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'restore')}>{t('settings.restoreAddress')}</button>{/if}
                     {:else}
                       {#if route === 'importable'}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'import')}>{t('settings.importRule')}</button>{/if}
                       <button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, address.lifecycle_status === 'active' ? 'disable' : 'enable')}>{t(address.lifecycle_status === 'active' ? 'settings.disableAddress' : 'settings.enableAddress')}</button>
@@ -669,9 +679,9 @@
                           {#if !address.is_default_sender}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id] || !canSendFrom(address)} onclick={() => void runAction(address, 'make_default')}>{t('settings.setDefaultSender')}</button>{/if}
                         {:else}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id] || !canSendFrom({ ...address, send_enabled: 1 })} onclick={() => void runAction(address, 'enable_send')}>{t('settings.enableSending')}</button>{/if}
                       {/if}
-                      {#if ['error', 'unknown', 'pending', 'deleting'].includes(address.routing_state)}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'retry')}>{t('settings.retryRouting')}</button>{/if}
                       <button role="menuitem" class="danger" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={(event) => void openDeletePreview(address, event)}>{t('settings.deleteAddress')}</button>
                     {/if}
+                    {#if canRetryRouting(address)}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'retry')}>{t('settings.retryRouting')}</button>{/if}
                   </DropdownMenu>
                 </div></td>
               </tr>
@@ -753,7 +763,7 @@
     <MailIdentityDiagnostics domain={diagnosticsDomain} address={diagnosticsAddress} check={checks[diagnosticsDomain.id]} {busy} showActions={false} />
     {#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
     {#if notice}<p class="message" role="status">{notice}</p>{/if}
-    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button>{#if diagnosticsAddress && diagnosticsAddress.lifecycle_status !== 'deleted' && ['error','unknown','pending','deleting'].includes(diagnosticsAddress.routing_state)}<Button variant="secondary" disabled={busy || unresolvedAddressActions[diagnosticsAddress.id]} onclick={() => void runAction(diagnosticsAddress!, 'retry')}>{t('settings.retryRouting')}</Button>{/if}<Button loading={pendingAction === `check:${diagnosticsDomain.id}`} disabled={busy || unresolvedDomainChecks[diagnosticsDomain.id]} onclick={() => void checkDomain(diagnosticsDomain!)}>{t('settings.checkMailDomain')}</Button>{/snippet}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button>{#if diagnosticsAddress && canRetryRouting(diagnosticsAddress)}<Button variant="secondary" disabled={busy || unresolvedAddressActions[diagnosticsAddress.id]} onclick={() => void runAction(diagnosticsAddress!, 'retry')}>{t('settings.retryRouting')}</Button>{/if}<Button loading={pendingAction === `check:${diagnosticsDomain.id}`} disabled={busy || unresolvedDomainChecks[diagnosticsDomain.id]} onclick={() => void checkDomain(diagnosticsDomain!)}>{t('settings.checkMailDomain')}</Button>{/snippet}
   </Dialog>
 {/if}
 
