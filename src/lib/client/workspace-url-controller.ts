@@ -25,6 +25,12 @@ export type WorkspaceUrlUpdates = {
   labelId?: string | null;
 };
 
+const MANAGEMENT_RESOURCE_ID_PATTERN = /^[A-Za-z0-9:._-]{1,128}$/u;
+
+function validManagementResourceId(value: string | null): value is string {
+  return Boolean(value && MANAGEMENT_RESOURCE_ID_PATTERN.test(value));
+}
+
 export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
   const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'starred' || folder === 'label' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
@@ -37,7 +43,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   return {
     section,
     managementView: section === 'profile' && (view === 'domains' || view === 'addresses') ? view : 'settings',
-    managementDomainId: section === 'profile' && view === 'addresses' && managementDomainId && /^[A-Za-z0-9:._-]{1,128}$/u.test(managementDomainId)
+    managementDomainId: section === 'profile' && view === 'addresses' && validManagementResourceId(managementDomainId)
       ? managementDomainId : null,
     query: section === 'trash' || section === 'profile' ? '' : url.searchParams.get('q')?.slice(0, 200) ?? '',
     filter: section !== 'trash' && section !== 'profile' && (filter === 'unread' || filter === 'starred') ? filter : 'all',
@@ -65,9 +71,13 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
       next.searchParams.delete('view');
     }
   }
-  if (updates.managementDomainId !== undefined || updates.managementView !== undefined || updates.section !== undefined) {
-    if ((updates.section ?? readWorkspaceUrl(url).section) === 'profile' && (updates.managementView ?? readWorkspaceUrl(url).managementView) === 'addresses' && updates.managementDomainId) {
-      next.searchParams.set('domain', updates.managementDomainId);
+  const currentState = readWorkspaceUrl(url);
+  const targetSection = updates.section ?? currentState.section;
+  const targetManagementView = updates.managementView ?? currentState.managementView;
+  if (updates.managementDomainId !== undefined || updates.managementView !== undefined || updates.section !== undefined || targetSection === 'profile') {
+    const domainId = updates.managementDomainId !== undefined ? updates.managementDomainId : currentState.managementDomainId;
+    if (targetSection === 'profile' && targetManagementView === 'addresses' && validManagementResourceId(domainId)) {
+      next.searchParams.set('domain', domainId);
     } else {
       next.searchParams.delete('domain');
     }

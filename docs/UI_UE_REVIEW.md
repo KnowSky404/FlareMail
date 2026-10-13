@@ -2,6 +2,32 @@
 
 基线：2026-09-28，`main` 的当前 Web 工作台。范围为 `src/routes/`、`src/lib/components/{mail,shell,ui}/`、`src/app.css`、`DESIGN.md` 和现有 Playwright 流程。本审查只描述仓库中可见的实现；真实邮件与生产环境不属于 UI 验收证据。
 
+## 2026-10-13 资源表格重构记录
+
+本节是基于最新核查基线 `main` / `e7fa432f658c7a307df021cd2758b1f2e7750611` 的实现和证据记录。实现分支为 `feat/mail-resource-tables`；Chromium 桌面/移动、窄屏、Firefox、WebKit 桌面及 WebKit iPhone/iPad 的定向证据均已记录。最终冻结 UI 的 `check`/`build` 已通过；交付提交即包含本记录的提交，最终 SHA 在交付消息中给出。
+
+历史实现的问题是：`MailIdentityManager` 用 Domain card 承载域名、供应商状态和嵌套地址列表，域名行展开 quick-create form；Addresses 视图常驻完整创建表单并展开多个行按钮；`onMount` 的 `load(true)` 还会在 GET 后自动 POST `/sync`。这使配置、同步和诊断状态占据首屏，也让读取页面隐含写入身份元数据的动作。
+
+本轮目标结构如下：
+
+- Domains 和 Email addresses 首屏直接显示已有资源的语义表格。Domains 列为 Domain、未删除地址数（包含 disabled）、状态、简短 Receiving、简短 Sending 和 Actions；Addresses 列为 Email address、Domain、独立生命周期状态、Receiving、Sending 和 Actions。
+- Add domain、Add address、Edit、诊断和删除预检均按需打开共享 Dialog。Domain 行的 Add address 与 Addresses 主按钮共用新增地址流程，并在前者入口预选域名；地址数量进入 `view=addresses&domain=<id>` 的真实筛选列表。
+- 工具栏提供搜索、必要的状态筛选、Refresh 和 More actions。Refresh/进入页面只 GET 已保存配置；只有用户显式选择 Sync 才 POST `/sync`，结果显示新增、部分成功、失败或未知结果。
+- Provider 检查时间、过期、catch-all、路由归属/冲突和安全错误进入诊断 Dialog。显示状态继续使用 `mailHealthState`、`mailSenderSendBlockReason` 和 `summarizeDomainCapabilities` 的既有边界；enabled、send_enabled、send-ready 和真实收发不能混为一个绿色状态。
+- 失败读取保留已有表格；写入成功但刷新失败显示需刷新核对的提示；超时和未知结果不会诱导重复创建。菜单条件继续沿用 disable/enable/restore/import/retry/enable_send/disable_send/make_default 和 delete-preview 的服务端门禁。
+
+当前实现边界为：`src/lib/components/mail/MailIdentityManager.svelte` 负责页面状态、表格编排和排序，`MailIdentityDiagnostics.svelte` 负责按需诊断，`MailDomainSetup.svelte` 复用域名接入流程，`mail-resource-types.ts` 集中资源类型，`src/lib/client/mail-resource-list.ts` 只负责筛选和分页；共享 `Dialog`、`DropdownMenu`、`IconButton` 及 URL controller 承担必要的焦点、菜单和深链支持。同步 POST 的不确定结果先通过安全 GET 核对，找到记录时展示明确的“已找到但原结果不确定”状态。
+
+本轮 `bun run test` 为 633 项通过、0 项失败（111 个文件、3,924 个断言）；`bun run check` 为 0 errors / 0 warnings，`bun run build` 通过。Chromium 桌面、390px 手机、320px 窄屏、Firefox 桌面、WebKit 桌面及 iPhone/iPad 模拟的适用管理用例均已覆盖。初跑、定向复测和中断后补测分别记录，不合计为一次连续全绿运行；准确计数和日志见下方链接的 Spec。
+
+域名上下文是真实列表筛选：格式错误的 URL 参数在导航接受后移除，已失效的合法 ID 显示明确提示和清除入口。409 回读区分可在写入后发生的路由失败与确定性的已有地址冲突；后者保留草稿和诊断入口，不能误报本次创建成功。未知 5xx、迟到响应和会话过期保留输入且不自动重放写请求；不可变提交目标避免域名在回读期间停用后核对错地址。共享 Dialog 补齐容器焦点的反向 Tab 路径。
+
+截图集中在 `/tmp/flaremail-management-evidence/`，共 18 个文件，覆盖两页桌面、手机、窄屏、长内容，以及新增、编辑、诊断和部分成功状态。Firefox 使用原生主题偏好绕过本地驱动在 COOP 导航后丢失媒体模拟的问题，保留产品安全头并验证系统主题刷新；Linux WebKit 设备模拟不等于实体 Safari，短视口和 CSS zoom 2 分别是软键盘布局及 200% 缩放模拟。
+
+API、D1 schema/migrations、环境变量、绑定和依赖均未变化。本轮仅完成隔离本地/mock 验证；未执行 push、PR、CI、PRE、生产发布、远程迁移或真实供应商变更，未验证真实邮件投递、实体 Safari、人工屏幕阅读器、真实软键盘或手动浏览器缩放。
+
+详细的旧操作盘点、列/菜单/Dialog 状态、URL 与同步边界、文案 key 及逐项证据清单见 [邮件资源表格管理 Spec](./specs/mail-resource-management.md)。下方既有记录保留原日期、提交和结论，不改写为本轮证据。
+
 ## 现状与问题
 
 | 维度 | 已有基础 | 待解决问题 |

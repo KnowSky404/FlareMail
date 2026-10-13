@@ -150,8 +150,10 @@ unresolved routing or sending error.
 - `POST /api/workspace/mail-identities/sync` discovers accessible zones in the
   deployment account and imports existing literal recipient rules targeting
   the configured Worker. It requires the authenticated workspace Owner and
-  Zone Read / Email Routing Rules Read permissions. The UI invokes it on entry
-  and offers a retry button; GET remains a database read. Provider requests are
+  Zone Read / Email Routing Rules Read permissions. The management UI invokes
+  it only after the Owner explicitly chooses the sync/import action; entering a
+  page and ordinary Refresh use `GET /api/workspace/mail-identities` only.
+  Provider requests are
   read-only, paginated and bounded. Other Worker/forward/drop rules, malformed
   recipients and competing exact rules are skipped. Worker catch-all imports
   a domain without inventing addresses; a new domain collects unknown recipients

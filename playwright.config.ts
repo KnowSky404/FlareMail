@@ -20,9 +20,9 @@ const webkitLaunchOptions = process.env.PLAYWRIGHT_WEBKIT_EXECUTABLE_PATH
 const firefoxLaunchOptions = process.env.PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH
   ? { executablePath: process.env.PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH }
   : undefined;
-const chromiumTestMatch = /(?:workspace|gmail-workflows|compose-safety)\.spec\.ts/u;
-const webkitSmokeTestMatch = /webkit-smoke\.spec\.ts/u;
-const firefoxSmokeTestMatch = /firefox-smoke\.spec\.ts/u;
+const chromiumTestMatch = /(?:workspace|gmail-workflows|compose-safety|mail-management)\.spec\.ts/u;
+const webkitSmokeTestMatch = /(?:webkit-smoke|mail-management)\.spec\.ts/u;
+const firefoxSmokeTestMatch = /(?:firefox-smoke|mail-management)\.spec\.ts/u;
 // Linux browser video finalization is unreliable here; failures still retain
 // screenshots and traces through the shared test configuration.
 const nonChromiumVideo = 'off' as const;

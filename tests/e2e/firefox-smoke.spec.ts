@@ -262,9 +262,9 @@ test('sends with a second managed identity through the local demo provider', asy
 
 test('keeps domain dashboard responsive in light and dark Firefox', async ({ page, consoleErrors }) => {
   await login(page);
-  await page.goto('/?folder=settings&view=domains');
-  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
-  await expect(page.locator('.domain-card').filter({ hasText: 'flaremail.test' })).toBeVisible();
+  await page.goto('/?folder=settings&view=domains', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('heading', { name: /域名|Domains/u })).toBeVisible();
+  await expect(page.getByRole('table', { name: /域名|Domains/u })).toContainText('flaremail.test');
   for (const width of [1920, 1440, 1366, 768, 390]) {
     await page.setViewportSize({ width, height: width < 900 ? 844 : 900 });
     await assertNoHorizontalOverflow(page);
@@ -273,17 +273,11 @@ test('keeps domain dashboard responsive in light and dark Firefox', async ({ pag
   await page.evaluate(() => localStorage.setItem('flaremail-theme', 'dark'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /域名|Domains/u })).toBeVisible();
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), 'flaremail-firefox-domains-mobile-dark.png'), fullPage: false });
-  const domainCard = page.locator('.domain-card').filter({ hasText: 'flaremail.test' });
-  const quickCreate = domainCard.getByRole('button', { name: '为此域名创建地址' });
-  await quickCreate.click();
-  const quickCreateForm = domainCard.locator('.quick-create-form');
-  await expect(quickCreateForm.getByLabel('地址前缀 (@flaremail.test)')).toBeFocused();
+  await expect(page.getByRole('dialog')).toBeHidden();
   await assertNoHorizontalOverflow(page);
-  await quickCreateForm.getByRole('button', { name: '取消' }).click();
-  await expect(quickCreate).toBeFocused();
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -411,7 +405,7 @@ test('keeps mobile compose, domains, and settings accessible in light and dark t
   await expect(composeButton).toBeFocused();
 
   await page.goto('/?folder=settings&view=domains');
-  await expect(page.getByRole('heading', { name: '域名概览' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /域名|Domains/u })).toBeVisible();
   expect(await scan()).toEqual([]);
   await page.goto('/?folder=settings');
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
