@@ -1097,7 +1097,7 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   await expect(sidebar).toHaveAttribute('aria-label', '邮箱导航');
   await expect(collapse).toHaveCount(0);
   await expect(sidebar.getByRole('button', { name: '展开侧边栏' })).toBeVisible();
-  await page.reload();
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.locator('#fm-main-sidebar').getByRole('button', { name: '展开侧边栏' })).toBeVisible();
   await page.locator('#fm-main-sidebar').getByRole('button', { name: '展开侧边栏' }).click();
 
@@ -1147,6 +1147,29 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   await expect(page.locator('.fm-workspace-shell')).not.toHaveAttribute('inert', '');
   await readerTrigger.click();
   await expect(reader).toBeVisible();
+  const readerMoreActions = reader.getByRole('button', { name: '更多邮件操作', exact: true });
+  await readerMoreActions.focus();
+  await page.keyboard.press('Enter');
+  await expect(reader.getByRole('menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(reader).toBeVisible();
+  await expect(reader.getByRole('menu')).toBeHidden();
+  await expect(readerMoreActions).toBeFocused();
+
+  await readerMoreActions.press('Enter');
+  await expect(reader.getByRole('menu')).toBeVisible();
+  const markRead = reader.getByRole('menuitem', { name: /标为(?:已读|未读)/u });
+  await expect(markRead).toBeVisible();
+  const updatedReadState = page.waitForResponse((response) =>
+    response.request().method() === 'PATCH' && new URL(response.url()).pathname.endsWith('/flags')
+  );
+  await markRead.click();
+  await updatedReadState;
+  await expect(reader).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  await expect(reader.getByRole('menu')).toBeHidden();
+  await expect(readerMoreActions).toBeFocused();
+
   await page.keyboard.press('Escape');
   await expect(reader).toBeHidden();
   await expect(readerTrigger).toBeFocused();

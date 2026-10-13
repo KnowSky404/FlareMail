@@ -56,12 +56,23 @@
   }
 
   function closeMenu() {
+    const modalSelector = '[role="dialog"][aria-modal="true"]';
+    // Keep the overlays that were already present separate from one opened by
+    // the menu item in this event turn. Existing parent/stacked dialogs must
+    // not prevent returning focus to a trigger inside the current dialog.
+    const existingModals = new Set([...document.querySelectorAll<HTMLElement>(modalSelector)]);
+    const triggerModal = triggerElement?.closest<HTMLElement>(modalSelector) ?? null;
     setOpen(false);
     if (!restoreFocusOnClose) return;
     requestAnimationFrame(() => {
-      // Selecting a menu item may have opened a dialog in the same event turn.
-      // Its focus trap owns focus; do not pull focus back to the menu trigger.
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      const activeModal = document.activeElement instanceof HTMLElement
+        ? document.activeElement.closest<HTMLElement>(modalSelector)
+        : null;
+      const openedModal = [...document.querySelectorAll<HTMLElement>(modalSelector)]
+        .some((modal) => !existingModals.has(modal));
+      // A newly opened or currently focused different modal owns focus. An
+      // existing dialog containing this menu is the valid restoration target.
+      if (openedModal || (activeModal && activeModal !== triggerModal)) return;
       triggerElement?.focus({ preventScroll: true });
     });
   }
