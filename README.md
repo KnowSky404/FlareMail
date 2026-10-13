@@ -46,4 +46,4 @@ worktree/branch cleanup. See the
 
 ## License
 
-[GNU Affero General Public License v3.0 only](./LICENSE) (`AGPL-3.0-only`).
+[GNU Affero General Public License v3.0 or later](./LICENSE) (`AGPL-3.0-or-later`).
