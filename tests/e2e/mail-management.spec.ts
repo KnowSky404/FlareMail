@@ -555,6 +555,60 @@ test.describe('mail resource management', () => {
     await expect(cloudflareCard.locator('..')).toContainText(/检查无权访问|check access was denied/u);
   });
 
+  test('keeps discovered Cloudflare rules when Resend is unconfigured', async ({ page }) => {
+    await login(page);
+    const original = await readIdentities(page);
+    const now = new Date().toISOString();
+    const domain: Record<string, unknown> = {
+      ...original.domains[0], cloudflare_checked_at: now, cloudflare_check_expires_at: null,
+      cloudflare_error_code: null, catch_all_target: 'this_worker',
+      resend_checked_at: new Date(Date.now() - 86_400_000).toISOString()
+    };
+    const address = original.addresses[1];
+    if (!address) throw new Error('The management fixture needs an importable address.');
+    Object.assign(address, { domain_id: domain.id, lifecycle_status: 'active', routing_state: 'error', routing_owner: 'flaremail', last_error_code: 'synthetic_route_error' });
+    const addressId = String(address.id);
+    const actions: string[] = [];
+    await page.route(identitiesUrl, async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({ json: { ok: true, data: {
+        ...original, providerConfiguration: { cloudflare: true, resend: false },
+        domains: original.domains.map((item) => item.id === domain.id ? domain : item)
+      } } });
+    });
+    await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, async (route) => {
+      await route.fulfill({ json: { ok: true, data: { check: {
+        cloudflare: { state: 'ready', errorCode: null, catchAllEnabled: true, catchAllTarget: 'this_worker', checkedAt: now,
+          addresses: [{ addressId, status: 'importable' }] },
+        resend: { state: 'not_configured', checkedAt: null }
+      } } } });
+    });
+    await page.route(new RegExp(`/api/workspace/mail-identities/${addressId}$`), async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      actions.push((route.request().postDataJSON() as { action: string }).action);
+      Object.assign(address, { routing_state: 'imported', routing_owner: 'imported', last_error_code: null });
+      await route.fulfill({ json: { ok: true, data: { address } } });
+    });
+
+    await gotoManagement(page, '/?folder=settings&view=domains');
+    const domainRow = page.locator(`[data-domain-id="${domain.id}"]`);
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
+    await expect(page.getByRole('status').filter({ hasText: /状态检查已完成|status checks completed/u }).first()).toBeVisible();
+    await expect(page.locator('#refresh-mail-resources')).toBeEnabled();
+    await moreButton(domainRow).click();
+    await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
+    const addressRow = page.locator(`[data-address-id="${addressId}"]`);
+    await addressRow.getByRole('button', { name: String(address.email), exact: true }).click();
+    const diagnostics = page.locator('#mail-diagnostics');
+    await expect(diagnostics).toContainText(/可导入|Importable/u);
+    await expect(diagnostics.locator('h4').filter({ hasText: 'Resend' }).locator('../..')).toContainText(/未配置|Not configured/u);
+    await diagnostics.getByRole('button', { name: /关闭|Close/u, exact: true }).last().click();
+    await moreButton(addressRow).click();
+    await page.getByRole('menuitem', { name: /导入规则|Import rule/u }).click();
+    await expect.poll(() => actions).toEqual(['import']);
+  });
+
   test('round trips every address management action through its guarded endpoint', async ({ page }) => {
     await login(page);
     const original = await readIdentities(page);
