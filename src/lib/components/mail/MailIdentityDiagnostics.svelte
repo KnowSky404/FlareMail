@@ -61,13 +61,30 @@
     return labels[target];
   }
 
+  function providerCheckedAt(provider: 'cloudflare' | 'resend') {
+    const current = check?.[provider]?.checkedAt;
+    return current === undefined
+      ? (provider === 'cloudflare' ? domain.cloudflare_checked_at : domain.resend_checked_at)
+      : current;
+  }
+
+  function providerLeaseExpiresAt(provider: 'cloudflare' | 'resend') {
+    const current = check?.[provider];
+    if (current && !current.errorCode?.endsWith('_check_in_progress')) return null;
+    return provider === 'cloudflare' ? domain.cloudflare_check_expires_at : domain.resend_check_expires_at;
+  }
+
   function providerHealth(provider: 'cloudflare' | 'resend'): MailHealthState {
     const cloudflare = provider === 'cloudflare';
+    const current = check?.[provider];
+    const errorCode = current?.errorCode === undefined
+      ? (cloudflare ? domain.cloudflare_error_code : domain.resend_error_code)
+      : current.errorCode;
     return mailHealthState({
-      configured: cloudflare ? domain.cloudflare_configured : domain.resend_configured,
-      checkedAt: cloudflare ? domain.cloudflare_checked_at : domain.resend_checked_at,
-      leaseExpiresAt: cloudflare ? domain.cloudflare_check_expires_at : domain.resend_check_expires_at,
-      errorCode: cloudflare ? domain.cloudflare_error_code : domain.resend_error_code
+      configured: cloudflare ? domain.cloudflare_configured : domain.resend_configured && current?.state !== 'not_configured',
+      checkedAt: providerCheckedAt(provider),
+      leaseExpiresAt: providerLeaseExpiresAt(provider),
+      errorCode: current?.state === 'error' && !errorCode ? 'provider_check_failed' : errorCode
     });
   }
 
@@ -76,7 +93,7 @@
     if (state === 'refreshing') return t('settings.mailHealthRefreshing');
     if (state === 'degraded') return t('settings.mailHealthDegraded');
     if (state === 'not_configured') return t('settings.mailHealthNotConfigured');
-    return provider === 'cloudflare' && !domain.cloudflare_checked_at
+    return provider === 'cloudflare' && !providerCheckedAt(provider)
       ? t('settings.statusNotChecked')
       : t('settings.mailHealthStale');
   }
@@ -213,9 +230,10 @@
       {#each providers as provider}
         {@const providerName = provider === 'cloudflare' ? 'Cloudflare' : 'Resend'}
         {@const health = providerHealth(provider)}
-        {@const checkedAt = provider === 'cloudflare' ? (check?.cloudflare?.checkedAt ?? domain.cloudflare_checked_at) : domain.resend_checked_at}
-        {@const expiresAt = provider === 'cloudflare' ? domain.cloudflare_check_expires_at : domain.resend_check_expires_at}
-        {@const nextCheckAt = provider === 'cloudflare' ? domain.cloudflare_next_check_at : domain.resend_next_check_at}
+        {@const checkedAt = providerCheckedAt(provider)}
+        {@const expiresAt = providerLeaseExpiresAt(provider)}
+        {@const snapshotCheckedAt = provider === 'cloudflare' ? domain.cloudflare_checked_at : domain.resend_checked_at}
+        {@const nextCheckAt = checkedAt === snapshotCheckedAt ? (provider === 'cloudflare' ? domain.cloudflare_next_check_at : domain.resend_next_check_at) : null}
         {@const error = providerErrorLabel(provider)}
         <div class="rounded border border-[var(--fm-border)] p-3">
           <div class="flex items-center justify-between gap-2">

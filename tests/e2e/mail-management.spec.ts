@@ -515,7 +515,9 @@ test.describe('mail resource management', () => {
         await route.fulfill({ status: 503, json: { ok: false, error: { message: 'synthetic check readback failed' } } });
         return;
       }
-      const domain = identityGets === 1 || useStaleReadback ? staleDomain : recoveredDomain;
+      const domain = useStaleReadback
+        ? { ...staleDomain, cloudflare_check_expires_at: new Date(Date.now() + 60_000).toISOString(), resend_check_expires_at: new Date(Date.now() + 60_000).toISOString() }
+        : identityGets === 1 ? staleDomain : recoveredDomain;
       await route.fulfill({ json: { ok: true, data: {
         ...original,
         providerConfiguration: { cloudflare: true, resend: true },
@@ -575,6 +577,10 @@ test.describe('mail resource management', () => {
     await expect(diagnostics).toBeVisible();
     await expect(cloudflareCard.locator('..')).not.toContainText(/检查需要处理|needs attention|检查无权访问|check access was denied/u);
     await expect(resendCard).not.toContainText(/Resend 检查需要处理|Resend check needs attention|检查无权访问|check access was denied/u);
+    await expect(cloudflareCard).toContainText(/自动检查有效|Fresh/u);
+    await expect(resendCard).toContainText(/自动检查有效|Fresh/u);
+    await expect(cloudflareCard.locator('..')).not.toContainText(/检查失败或配置需要处理|Check failed or configuration needs attention|正在刷新|Refreshing/u);
+    await expect(resendCard).not.toContainText(/检查失败或配置需要处理|Check failed or configuration needs attention|正在刷新|Refreshing/u);
   });
 
   test('keeps discovered Cloudflare rules when Resend is unconfigured', async ({ page }) => {
