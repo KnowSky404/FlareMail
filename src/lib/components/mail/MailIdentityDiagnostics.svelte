@@ -17,7 +17,7 @@
   }: {
     domain: MailDomain;
     address?: MailAddress;
-    check?: DomainCheck;
+    check?: Partial<DomainCheck>;
     busy?: boolean;
     showActions?: boolean;
     onCheck?: () => void;
@@ -88,11 +88,11 @@
       return t(cloudflare ? 'settings.cloudflareCheckNotConfigured' : 'settings.resendCheckNotConfigured');
     }
     const code = cloudflare
-      ? (check?.cloudflare.errorCode ?? domain.cloudflare_error_code)
+      ? (check?.cloudflare?.errorCode ?? domain.cloudflare_error_code)
       : domain.resend_error_code;
     const checkFailed = cloudflare
-      ? check?.cloudflare.state === 'error'
-      : check?.resend.state === 'error';
+      ? check?.cloudflare?.state === 'error'
+      : check?.resend?.state === 'error';
     if (!code && !checkFailed) return '';
     if (!code && checkFailed) {
       return t(cloudflare ? 'settings.cloudflareCheckNeedsAttention' : 'settings.resendCheckNeedsAttention');
@@ -113,7 +113,7 @@
   }
 
   function resendStatusLabel() {
-    const state = check?.resend.state;
+    const state = check?.resend?.state;
     if (state === 'verified' || (!state && domain.resend_status === 'verified')) return t('settings.resendVerified');
     if (state === 'failed' || (!state && domain.resend_status === 'failed')) return t('settings.resendFailed');
     if (state === 'missing') return t('settings.resendMissing');
@@ -124,12 +124,12 @@
   }
 
   function catchAllTarget() {
-    return check?.cloudflare.catchAllTarget ?? domain.catch_all_target;
+    return check?.cloudflare?.catchAllTarget ?? domain.catch_all_target;
   }
 
   function routeStatus() {
     if (!address) return null;
-    return check?.cloudflare.addresses.find((entry) => entry.addressId === address.id)?.status
+    return check?.cloudflare?.addresses.find((entry) => entry.addressId === address.id)?.status
       ?? address.routing_state;
   }
 
@@ -212,7 +212,7 @@
       {#each providers as provider}
         {@const providerName = provider === 'cloudflare' ? 'Cloudflare' : 'Resend'}
         {@const health = providerHealth(provider)}
-        {@const checkedAt = provider === 'cloudflare' ? (check?.cloudflare.checkedAt ?? domain.cloudflare_checked_at) : domain.resend_checked_at}
+        {@const checkedAt = provider === 'cloudflare' ? (check?.cloudflare?.checkedAt ?? domain.cloudflare_checked_at) : domain.resend_checked_at}
         {@const expiresAt = provider === 'cloudflare' ? domain.cloudflare_check_expires_at : domain.resend_check_expires_at}
         {@const nextCheckAt = provider === 'cloudflare' ? domain.cloudflare_next_check_at : domain.resend_next_check_at}
         {@const error = providerErrorLabel(provider)}

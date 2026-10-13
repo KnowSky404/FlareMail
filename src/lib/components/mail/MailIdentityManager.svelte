@@ -34,7 +34,7 @@
   const { t } = useLocale();
   let domains = $state<MailDomain[]>([]);
   let addresses = $state<MailAddress[]>([]);
-  let checks = $state<Record<string, DomainCheck>>({});
+  let checks = $state<Record<string, Partial<DomainCheck>>>({});
   let loading = $state(true);
   let loadedOnce = $state(false);
   let pendingAction = $state('');
@@ -149,9 +149,11 @@
       const preserved = options.preserveCheck;
       if (preserved) {
         const domain = domains.find((item) => item.id === preserved.domainId);
-        if (domain && preserved.check.cloudflare.checkedAt === domain.cloudflare_checked_at &&
-          preserved.check.resend.checkedAt === domain.resend_checked_at) {
-          checks = { [preserved.domainId]: preserved.check };
+        if (domain) {
+          const current: Partial<DomainCheck> = {};
+          if (preserved.check.cloudflare.checkedAt === domain.cloudflare_checked_at) current.cloudflare = preserved.check.cloudflare;
+          if (preserved.check.resend.checkedAt === domain.resend_checked_at) current.resend = preserved.check.resend;
+          if (current.cloudflare || current.resend) checks = { [preserved.domainId]: current };
         }
       }
       unresolvedAddressActions = {};
@@ -460,7 +462,7 @@
     return Boolean(deletePreview?.canConfirm && deletePreview.policies[deletePolicy].available && Date.parse(deletePreview.expiresAt) > now && !deletePreviewLoading && !busy);
   }
   function checkFor(domain: MailDomain, addressId: string): RouteStatus | undefined {
-    return checks[domain.id]?.cloudflare.addresses.find((entry) => entry.addressId === addressId)?.status;
+    return checks[domain.id]?.cloudflare?.addresses.find((entry) => entry.addressId === addressId)?.status;
   }
   function receivingState(address: MailAddress, domain?: MailDomain): DomainCapabilityState {
     if (!domain || !domain.enabled || address.lifecycle_status !== 'active' || !address.receive_enabled) return 'not_ready';
@@ -517,7 +519,7 @@
         errorCode: domain.cloudflare_error_code, nowMs: now
       }),
       catchAllCollects: domain.unknown_recipient_policy === 'collect' &&
-        (checks[domain.id]?.cloudflare.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
+        (checks[domain.id]?.cloudflare?.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
       resendStatus: domain.resend_status,
       resendSendingStatus: domain.resend_sending_status,
       resendCheckedAt: domain.resend_checked_at,
