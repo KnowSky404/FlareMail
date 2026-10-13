@@ -210,6 +210,8 @@ PR #10 的 Code Review 发现：共享 DropdownMenu 在已有 ReaderDialog 内�
 
 独立的 `restores ReaderDialog focus after its menu closes` 浏览器用例覆盖这两个关闭路径；既有阅读工作区用例也补充同样的断言。该新增用例不计入上方初始交付的 23 项管理测试矩阵，修复提交的运行结果另记录在 PR 验收证据中。
 
+后续审查还补充两条边界：未修改且未提交中的管理弹窗在 Back/Forward 时关闭并接受当前导航，只有脏表单确认才使用延迟继续回调；成功读取资源后丢弃旧检查缓存，本次 POST 的检查结果仅在两个供应商的检查时间都与 GET 快照相同时保留。对应回归覆盖单次历史遍历和错误检查后读取到恢复状态的诊断显示。
+
 ## 兼容性结论
 
 本设计只改变管理页面的信息架构和客户端入口。API 路径与 payload、D1 schema/migrations、Cloudflare/Resend 环境变量和 `package.json` 依赖均应保持不变。若实现发现必须扩大到 API 或契约，须在实现提交前补充缺口、兼容性、迁移和测试说明；不能在文档中把推测写成完成事实。

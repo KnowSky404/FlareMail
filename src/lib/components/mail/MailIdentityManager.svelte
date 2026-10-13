@@ -117,6 +117,10 @@
     onNavigationGuardChange?.((proceed) => {
       if (!hasDialog) return true;
       if (busy) return false;
+      if (!dirty) {
+        closeAll();
+        return true;
+      }
       requestClose(() => { closeAll(); proceed(); });
       return false;
     });
@@ -126,7 +130,10 @@
   type Identities = { domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[]; addresses: MailAddress[];
     providerConfiguration: { cloudflare: boolean; resend: boolean }; domainOnboarding?: typeof onboarding };
 
-  async function load(): Promise<boolean> {
+  type FreshCheck = DomainCheck & { resend: DomainCheck['resend'] & { checkedAt: string | null } };
+  type LoadOptions = { preserveCheck?: { domainId: string; check: FreshCheck } };
+
+  async function load(options: LoadOptions = {}): Promise<boolean> {
     const request = loadRequests.begin();
     loading = true;
     errorMessage = '';
@@ -138,6 +145,15 @@
       domains = loaded.domains.map((domain) => ({ ...domain, cloudflare_configured: loaded.providerConfiguration.cloudflare, resend_configured: loaded.providerConfiguration.resend }));
       addresses = loaded.addresses;
       loadedOnce = true;
+      checks = {};
+      const preserved = options.preserveCheck;
+      if (preserved) {
+        const domain = domains.find((item) => item.id === preserved.domainId);
+        if (domain && preserved.check.cloudflare.checkedAt === domain.cloudflare_checked_at &&
+          preserved.check.resend.checkedAt === domain.resend_checked_at) {
+          checks = { [preserved.domainId]: preserved.check };
+        }
+      }
       unresolvedAddressActions = {};
       unresolvedDomainChecks = {};
       publishOptions();
@@ -230,9 +246,9 @@
     return !(error instanceof ClientApiError) || error.status === 0 || error.status >= 500 || error.code === 'INVALID_RESPONSE';
   }
   function currentSession(epoch: number) { return epoch === sessionEpoch && !isClientAuthExpired(); }
-  async function saved(message: string, attention = false) {
+  async function saved(message: string, attention = false, options: LoadOptions = {}) {
     notice = message; noticeNeedsAttention = attention;
-    if (!await load()) notice = `${message} ${t('settings.savedRefreshFailed')}`;
+    if (!await load(options)) notice = `${message} ${t('settings.savedRefreshFailed')}`;
   }
   function resourceNotice(message: string, resource: MailAddress | MailDomain) {
     const matches = 'email' in resource
@@ -365,10 +381,12 @@
     if (busy || unresolvedDomainChecks[domain.id]) return;
     pendingAction = `check:${domain.id}`; errorMessage = ''; const epoch = sessionEpoch;
     try {
-      const result = await requestJson<{ check: DomainCheck }>(`/api/workspace/mail-identities/domains/${encodeURIComponent(domain.id)}/check`, { method: 'POST', body: '{}' });
+      const result = await requestJson<{ check: FreshCheck }>(`/api/workspace/mail-identities/domains/${encodeURIComponent(domain.id)}/check`, { method: 'POST', body: '{}' });
       if (!currentSession(epoch)) { unresolvedDomainChecks = { ...unresolvedDomainChecks, [domain.id]: true }; errorMessage = t('settings.writeOutcomeUnknown'); return; }
       checks = { ...checks, [domain.id]: result.check };
-      await saved(t(result.check.cloudflare.state === 'ready' ? 'settings.mailIdentityCheckComplete' : 'settings.mailIdentityCheckIncomplete'), result.check.cloudflare.state !== 'ready');
+      await saved(t(result.check.cloudflare.state === 'ready' ? 'settings.mailIdentityCheckComplete' : 'settings.mailIdentityCheckIncomplete'), result.check.cloudflare.state !== 'ready', {
+        preserveCheck: { domainId: domain.id, check: result.check }
+      });
     } catch (error) {
       const unknown = !currentSession(epoch) || uncertain(error);
       const message = formError(error);
