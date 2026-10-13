@@ -4,9 +4,15 @@
 
 ## Domains and addresses
 
-Open **Domains** or **Mail addresses** from the sidebar. When provider credentials are configured, FlareMail syncs existing Cloudflare rules pointing to this application. You can retry with **Sync Cloudflare configuration** or connect another domain manually. Sync reads remote rules and saves identity records locally; it preserves existing names, signatures, disabled states, and deleted addresses.
+Open **Domains** or **Email addresses** from the sidebar. Each page starts with a table of the resources already saved for the Owner. Use the **Add domain** or **Add address** button for a dialog; edit an existing row from its accessible Edit pencil action. Refresh reads the saved list and keeps the current table context. A failed read is shown as an error instead of an empty configuration.
 
-Use an address prefix on a domain card to create an address. Confirm that its receiving rule is ready before using it for inbound mail. Address names and signatures can be edited separately. Sending requires an enabled address/domain and verified Resend sending configuration. The workspace explains unavailable or stale sender states.
+Use the domain and state filters to narrow the table. The domain address count includes every non-deleted address, including disabled addresses. Selecting **View addresses** applies that domain as a real address-list filter. Deleted addresses are available through the explicit deleted-state filter and expose only the recovery and diagnostics actions that apply to a tombstone.
+
+Use **Sync Cloudflare configuration** only when you want to discover eligible provider configuration and import identity records locally. It is separate from Refresh and does not modify remote routes. Sync results can be complete, partial, failed, or unknown; review the result and resource state before retrying a write.
+
+If a domain status check times out or otherwise has an uncertain result, the page reads the saved state again and keeps that domain's Check action locked while the result remains unknown. Refresh after the provider state is available to clear the lock.
+
+The address dialog previews the complete address and supports optional display name and signature settings. Confirm that its receiving rule is ready before using it for inbound mail. Sending requires an enabled address/domain and verified Resend sending configuration. The workspace keeps receiving lifecycle, sending permission, provider readiness, and route state separate.
 
 Deleting an address first shows a read-only preview of its routing rules and catch-all behavior. Review the offered route policy before confirming. Historical mail and attachments remain available. Removing an exact rule does not block another external catch-all.
 

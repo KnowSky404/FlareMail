@@ -1,529 +1,461 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
-  import { AlertTriangle, CheckCircle2, Mail, RefreshCw, RotateCw, ShieldAlert, Trash2 } from '@lucide/svelte';
-  import Panel from '$lib/components/ui/Panel.svelte';
+  import { onMount } from 'svelte';
+  import { AlertTriangle, ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Plus, RefreshCw } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import IconButton from '$lib/components/ui/IconButton.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
+  import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+  import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
+  import Skeleton from '$lib/components/ui/Skeleton.svelte';
   import MailDomainSetup from './MailDomainSetup.svelte';
-  import { requestJson } from '$lib/client/api';
+  import MailIdentityDiagnostics from './MailIdentityDiagnostics.svelte';
+  import { ClientApiError, requestJson } from '$lib/client/api';
+  import { AUTH_EXPIRED_EVENT, isClientAuthExpired } from '$lib/client/auth-session';
+  import { LatestRequest } from '$lib/client/latest-request';
+  import { filterMailDomains, filterMailAddresses, paginateMailResources, type MailDomainStatusFilter, type MailAddressLifecycleFilter } from '$lib/client/mail-resource-list';
   import { mailHealthState } from '$lib/domain/mail/health';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
   import { summarizeDomainCapabilities, type DomainCapabilityState } from './domain-capabilities';
+  import type { MailDomain, MailAddress, DomainCheck, DeletePreview, DeletePolicy, RouteStatus } from './mail-resource-types';
   import type { WorkspaceSnapshot } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
-  type MailDomain = {
-    id: string;
-    domain_name: string;
-    enabled: number;
-    cloudflare_zone_id: string;
-    worker_name: string;
-    unknown_recipient_policy: 'reject' | 'collect';
-    catch_all_target: 'unknown' | 'this_worker' | 'external' | 'drop' | 'none';
-    resend_status: 'unknown' | 'pending' | 'verified' | 'failed';
-    resend_sending_status: 'unknown' | 'enabled' | 'disabled';
-    resend_checked_at: string | null;
-    cloudflare_checked_at: string | null;
-    cloudflare_check_expires_at: string | null;
-    cloudflare_next_check_at: string | null;
-    cloudflare_error_code: string | null;
-    resend_check_expires_at: string | null;
-    resend_next_check_at: string | null;
-    resend_error_code: string | null;
-    cloudflare_configured: boolean;
-    resend_configured: boolean;
-  };
-
-  type MailAddress = {
-    id: string;
-    domain_id: string;
-    email: string;
-    display_name: string;
-    signature: string;
-    receive_enabled: number;
-    send_enabled: number;
-    is_default_sender: number;
-    lifecycle_status: 'active' | 'disabled' | 'deleted';
-    routing_state: 'pending' | 'provisioning' | 'active' | 'deleting' | 'imported' | 'unknown' | 'error' | 'deleted';
-    routing_owner: 'flaremail' | 'imported' | null;
-    delete_route_policy: 'remove_owned_route' | 'retain_reject_route' | 'preserve_imported_route' | null;
-    last_error_code: string | null;
-  };
-
-  type RouteStatus = 'managed' | 'imported' | 'importable' | 'missing' | 'conflict' | 'duplicate' | 'deleted_route' | 'deleted_absent' | 'imported_preserved' | 'reject_route_preserved';
-  type DeletePolicy = 'remove_owned_route' | 'retain_reject_route' | 'preserve_imported_route';
-  type DeletePreview = {
-    previewedAt: string;
-    expiresAt: string;
-    historyRetained: true;
-    cloudflare: {
-      state: 'verified' | 'unavailable';
-      errorCode: string | null;
-      route: { observation: 'managed_worker' | 'imported_worker' | 'absent' | 'external_rule' | 'conflict' | 'unknown'; source: 'api' | 'wrangler' | null; ruleId: string | null };
-      catchAll: { target: MailDomain['catch_all_target']; checkedAt: string | null; fresh: boolean; live: boolean };
-    };
-    policies: Record<DeletePolicy, { available: boolean; action: string | null }>;
-    recommendedPolicy: DeletePolicy | null;
-    canConfirm: boolean;
-  };
-  type DomainCheck = {
-    cloudflare: {
-      state: 'ready' | 'error';
-      errorCode: string | null;
-      catchAllEnabled: boolean | null;
-      catchAllTarget: MailDomain['catch_all_target'];
-      checkedAt: string | null;
-      addresses: Array<{ addressId: string; status: RouteStatus }>;
-    };
-    resend: { state: 'verified' | 'pending' | 'failed' | 'missing' | 'not_configured' | 'error' };
-  };
-
-  let {
-    view = 'addresses',
-    initialDomainId = '',
-    initialAddressLocalPart = '',
-    onError,
-    onOptionsChange,
-    onCreateAddressForDomain,
-    onSelectedDomainChange
-  }: {
-    view?: 'domains' | 'addresses';
-    initialDomainId?: string;
-    initialAddressLocalPart?: string;
+  let { view = 'addresses', initialDomainId = '', onError, onOptionsChange, onViewAddressesForDomain,
+    onSelectedDomainChange, onNavigationGuardChange }: {
+    view?: 'domains' | 'addresses'; initialDomainId?: string;
     onError?: (error: unknown) => void;
     onOptionsChange?: (options: WorkspaceSnapshot['mailIdentityOptions']) => void;
-    onCreateAddressForDomain?: (domainId: string, addressLocalPart: string) => void;
+    onViewAddressesForDomain?: (domainId: string) => void;
     onSelectedDomainChange?: (domainId: string) => void;
+    onNavigationGuardChange?: (guard: ((proceed: () => void) => boolean) | null) => void;
   } = $props();
   const { t } = useLocale();
   let domains = $state<MailDomain[]>([]);
   let addresses = $state<MailAddress[]>([]);
   let checks = $state<Record<string, DomainCheck>>({});
-  let localPart = $state('');
-  let selectedDomainId = $state('');
-  let displayName = $state('');
-  let signature = $state('');
-  let quickCreateDomainId = $state('');
-  let quickLocalPart = $state('');
-  let quickCreateError = $state('');
-  let quickCreateNoticeDomainId = $state('');
-  let quickCreateNotice = $state('');
-  let quickCreateNeedsAttention = $state(false);
   let loading = $state(true);
-  let syncing = $state(false);
-  let syncNotice = $state('');
-  let syncError = $state('');
+  let loadedOnce = $state(false);
   let pendingAction = $state('');
   let errorMessage = $state('');
   let notice = $state('');
   let noticeNeedsAttention = $state(false);
-  let onboarding = $state<{ available: boolean; workerName: string | null; canManageRouting: boolean }>({ available: false, workerName: null, canManageRouting: false });
+  let syncNotice = $state('');
+  let syncError = $state('');
+  let providerConfiguration = $state({ cloudflare: false, resend: false });
+  let onboarding = $state({ available: false, workerName: null as string | null, canManageRouting: false });
+  let domainSearch = $state('');
+  let addressSearch = $state('');
+  let domainStatus = $state<MailDomainStatusFilter>('all');
+  let addressStatus = $state<MailAddressLifecycleFilter>('current');
+  let domainFilter = $state('');
+  let pageNumber = $state(1);
+  let sortDescending = $state(false);
+  let createAddressOpen = $state(false);
+  let addDomainOpen = $state(false);
+  let domainSetupDirty = $state(false);
+  let domainSetupBusy = $state(false);
+  let domainFormCanSubmit = $state(false);
+  let selectedDomainId = $state('');
+  let localPart = $state('');
+  let displayName = $state('');
+  let signature = $state('');
+  let createSeedDomainId = $state('');
+  let createError = $state('');
+  let createFoundAddressId = $state('');
+  let createAttempt = $state<{ domainId: string; email: string; displayName: string; signature: string } | null>(null);
+  let createExistingConflict = $state(false);
+  let unresolvedAddressActions = $state<Record<string, boolean>>({});
+  let unresolvedDomainChecks = $state<Record<string, boolean>>({});
+  let unknownWrite = $state(false);
   let domainSettingsTarget = $state<MailDomain | null>(null);
   let domainEnabled = $state(true);
   let unknownPolicy = $state<'reject' | 'collect'>('reject');
-  let settingsError = $state('');
   let editAddressTarget = $state<MailAddress | null>(null);
   let editDisplayName = $state('');
   let editSignature = $state('');
+  let settingsError = $state('');
+  let diagnosticsDomainId = $state('');
+  let diagnosticsAddressId = $state('');
+  let syncOpen = $state(false);
+  let discardOpen = $state(false);
+  let discardAction: (() => void) | null = null;
+  let restoreFocusElement = $state<HTMLElement | null>(null);
   let deleteTarget = $state<MailAddress | null>(null);
   let deletePreview = $state<DeletePreview | null>(null);
   let deletePreviewLoading = $state(false);
   let deletePreviewError = $state('');
   let deletePolicy = $state<DeletePolicy>('remove_owned_route');
+  let now = $state(Date.now());
+  let deleteExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+  let sessionEpoch = 0;
+  const loadRequests = new LatestRequest();
+  const deleteRequests = new LatestRequest();
+  const busy = $derived(Boolean(pendingAction) || domainSetupBusy);
+  const dirty = $derived(domainSetupDirty || (createAddressOpen && (selectedDomainId !== createSeedDomainId || Boolean(localPart || displayName || signature))) ||
+    (domainSettingsTarget !== null && (domainEnabled !== Boolean(domainSettingsTarget.enabled) || unknownPolicy !== domainSettingsTarget.unknown_recipient_policy)) ||
+    (editAddressTarget !== null && (editDisplayName !== editAddressTarget.display_name || editSignature !== editAddressTarget.signature)));
+  const hasDialog = $derived(createAddressOpen || addDomainOpen || Boolean(domainSettingsTarget || editAddressTarget || deleteTarget || diagnosticsDomainId) || syncOpen);
+  const availableDomains = $derived(domains.filter((domain) => domain.enabled));
+  const invalidDomainFilter = $derived(Boolean(domainFilter) && loadedOnce && !domains.some((domain) => domain.id === domainFilter));
+  const visibleDomains = $derived(filterMailDomains(domains, domainSearch, domainStatus).sort((a, b) => (sortDescending ? -1 : 1) * a.domain_name.localeCompare(b.domain_name)));
+  const visibleAddresses = $derived(filterMailAddresses(addresses, { search: addressSearch, domainId: domainFilter, lifecycle: addressStatus }).sort((a, b) => (sortDescending ? -1 : 1) * a.email.localeCompare(b.email)));
+  const domainPage = $derived(paginateMailResources(visibleDomains, pageNumber, 25));
+  const addressPage = $derived(paginateMailResources(visibleAddresses, pageNumber, 25));
+  const currentPage = $derived(view === 'domains' ? domainPage : addressPage);
+  const totalResources = $derived(view === 'domains' ? domains.length : addresses.filter((address) => addressStatus === 'deleted' ? address.lifecycle_status === 'deleted' : addressStatus === 'all' || address.lifecycle_status !== 'deleted').length);
+  const diagnosticsDomain = $derived(domains.find((domain) => domain.id === diagnosticsDomainId));
+  const diagnosticsAddress = $derived(addresses.find((address) => address.id === diagnosticsAddressId));
+  const title = $derived(view === 'domains' ? t('shell.domains') : t('shell.addresses'));
+  const expectedEmail = $derived(`${localPart.trim().toLowerCase()}@${domains.find((domain) => domain.id === selectedDomainId)?.domain_name ?? '…'}`);
 
-  const addressByDomain = $derived.by(() => {
-    const grouped = new Map<string, MailAddress[]>();
-    for (const address of addresses) {
-      const current = grouped.get(address.domain_id) ?? [];
-      current.push(address);
-      grouped.set(address.domain_id, current);
-    }
-    return grouped;
-  });
-
+  $effect(() => { domainFilter = initialDomainId; pageNumber = 1; });
+  $effect(() => { view; pageNumber = 1; });
+  $effect(() => { if (loadedOnce && pageNumber !== currentPage.page) pageNumber = currentPage.page; });
   $effect(() => {
-    const requestedDomainId = initialDomainId;
-    if (!requestedDomainId) return;
-    untrack(() => {
-      if (domains.some((domain) => domain.id === requestedDomainId && domain.enabled)) {
-        selectedDomainId = requestedDomainId;
-      }
+    onNavigationGuardChange?.((proceed) => {
+      if (!hasDialog) return true;
+      if (busy) return false;
+      requestClose(() => { closeAll(); proceed(); });
+      return false;
     });
+    return () => onNavigationGuardChange?.(null);
   });
 
-  $effect(() => {
-    const requestedLocalPart = initialAddressLocalPart;
-    if (requestedLocalPart) untrack(() => { localPart = requestedLocalPart; });
-  });
+  type Identities = { domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[]; addresses: MailAddress[];
+    providerConfiguration: { cloudflare: boolean; resend: boolean }; domainOnboarding?: typeof onboarding };
 
-  async function load(discover = false) {
+  async function load(): Promise<boolean> {
+    const request = loadRequests.begin();
     loading = true;
     errorMessage = '';
     try {
-      type Identities = {
-        domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[];
-        addresses: MailAddress[];
-        providerConfiguration: { cloudflare: boolean; resend: boolean };
-        domainOnboarding?: typeof onboarding;
-      };
-      let loaded = await requestJson<Identities>('/api/workspace/mail-identities');
-      if (discover && loaded.domainOnboarding?.available) {
-        syncing = true;
-        syncError = '';
-        syncNotice = '';
-        try {
-          const result = await requestJson<{ sync: { domainsCreated: number; addressesCreated: number;
-            warnings: Array<{ domainName: string; code: string }> } }>('/api/workspace/mail-identities/sync', { method: 'POST' });
-          loaded = await requestJson<Identities>('/api/workspace/mail-identities');
-          syncNotice = t('settings.providerSyncComplete', { domains: result.sync.domainsCreated, addresses: result.sync.addressesCreated });
-          if (result.sync.warnings.length) syncError = t('settings.providerSyncPartial', {
-            domains: result.sync.warnings.map((warning) => warning.domainName).join(', ')
-          });
-        } catch (error) {
-          syncError = error instanceof Error ? error.message : t('settings.providerSyncFailed');
-        } finally { syncing = false; }
-      }
+      const loaded = await requestJson<Identities>('/api/workspace/mail-identities', { signal: request.signal });
+      if (!request.isCurrent()) return false;
+      providerConfiguration = loaded.providerConfiguration;
       onboarding = loaded.domainOnboarding ?? { available: false, workerName: null, canManageRouting: false };
-      domains = loaded.domains.map((domain) => ({
-        ...domain,
-        cloudflare_configured: loaded.providerConfiguration.cloudflare,
-        resend_configured: loaded.providerConfiguration.resend
-      }));
-      const loadedDomains = domains;
+      domains = loaded.domains.map((domain) => ({ ...domain, cloudflare_configured: loaded.providerConfiguration.cloudflare, resend_configured: loaded.providerConfiguration.resend }));
       addresses = loaded.addresses;
-      onOptionsChange?.({
-        domains: loadedDomains.map(({ id, domain_name }) => ({ id, domainName: domain_name })),
-      addresses: loaded.addresses.map((address) => {
-        const domain = loadedDomains.find((item) => item.id === address.domain_id);
-          const readiness = {
-            lifecycleStatus: address.lifecycle_status,
-            sendEnabled: address.send_enabled === 1,
-            domainEnabled: Boolean(domain?.enabled),
-            resendStatus: domain?.resend_status ?? 'unknown',
-            resendSendingStatus: domain?.resend_sending_status ?? 'unknown',
-            resendCheckedAt: domain?.resend_checked_at ?? null,
-            resendCheckFailed: Boolean(domain?.resend_error_code)
-          } satisfies Omit<WorkspaceSnapshot['mailIdentityOptions']['addresses'][number],
-            'id' | 'domainId' | 'email' | 'displayName' | 'isDefaultSender' | 'sendReady'>;
-          return {
-            id: address.id,
-            domainId: address.domain_id,
-            email: address.email,
-            displayName: address.display_name,
-            isDefaultSender: address.is_default_sender === 1,
-            ...readiness,
-            sendReady: mailSenderSendBlockReason(readiness) === null
-          };
+      loadedOnce = true;
+      unresolvedAddressActions = {};
+      unresolvedDomainChecks = {};
+      publishOptions();
+      return true;
+    } catch (error) {
+      if (!request.isCurrent()) return false;
+      errorMessage = t(loadedOnce ? 'settings.refreshFailedKept' : 'settings.loadFailedRetry');
+      onError?.(error);
+      return false;
+    } finally { if (request.isCurrent()) loading = false; }
+  }
+
+  function publishOptions() {
+    onOptionsChange?.({
+        domains: domains.map(({ id, domain_name }) => ({ id, domainName: domain_name })),
+        addresses: addresses.map((address) => {
+          const domain = domains.find((item) => item.id === address.domain_id);
+          const readiness = { lifecycleStatus: address.lifecycle_status, sendEnabled: address.send_enabled === 1,
+            domainEnabled: Boolean(domain?.enabled), resendStatus: domain?.resend_status ?? 'unknown',
+            resendSendingStatus: domain?.resend_sending_status ?? 'unknown', resendCheckedAt: domain?.resend_checked_at ?? null,
+            resendCheckFailed: Boolean(domain?.resend_error_code) };
+          return { id: address.id, domainId: address.domain_id, email: address.email, displayName: address.display_name,
+            isDefaultSender: address.is_default_sender === 1, ...readiness, sendReady: mailSenderSendBlockReason(readiness, now) === null };
         })
       });
-      if (!selectedDomainId || !domains.some((domain) => domain.id === selectedDomainId)) {
-        selectedDomainId = domains.find((domain) => domain.id === initialDomainId && domain.enabled)?.id
-          ?? domains.find((domain) => domain.enabled)?.id ?? domains[0]?.id ?? '';
-      }
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityLoadFailed');
-      onError?.(error);
-    } finally {
-      loading = false;
-    }
   }
 
   onMount(() => {
-    void load(true);
+    void load();
+    const interval = setInterval(() => { now = Date.now(); if (loadedOnce) publishOptions(); }, 30_000);
+    const expire = () => { sessionEpoch++; loadRequests.cancel(); loading = false; };
+    window.addEventListener(AUTH_EXPIRED_EVENT, expire);
+    return () => { clearInterval(interval); clearTimeout(deleteExpiryTimer); loadRequests.cancel(); deleteRequests.cancel(); window.removeEventListener(AUTH_EXPIRED_EVENT, expire); };
   });
 
-  async function domainCreated(domainId: string) {
-    selectedDomainId = domainId;
-    notice = t('settings.mailDomainConnected');
-    noticeNeedsAttention = false;
-    await load();
+  function beforeUnload(event: BeforeUnloadEvent) {
+    if (!dirty && !busy) return;
+    event.preventDefault(); event.returnValue = '';
   }
-
-  function openDomainSettings(domain: MailDomain) {
-    domainSettingsTarget = domain;
-    domainEnabled = Boolean(domain.enabled);
-    unknownPolicy = domain.unknown_recipient_policy;
-    settingsError = '';
+  function captureTrigger(event?: MouseEvent) {
+    const target = event?.currentTarget;
+    restoreFocusElement = target instanceof HTMLElement
+      ? (target.getAttribute('role') === 'menuitem' ? target.closest('[data-resource-actions]')?.querySelector<HTMLElement>('button[aria-haspopup="menu"]') ?? document.getElementById('mail-resources-menu')?.querySelector<HTMLElement>('button[aria-haspopup="menu"]') ?? target : target)
+      : document.activeElement instanceof HTMLElement ? document.activeElement : null;
   }
+  function closeAll() {
+    createAddressOpen = false; addDomainOpen = false; domainSetupDirty = false;
+    domainSettingsTarget = null; editAddressTarget = null; deleteTarget = null;
+    diagnosticsDomainId = ''; diagnosticsAddressId = ''; syncOpen = false; unknownWrite = false; deleteRequests.cancel(); clearTimeout(deleteExpiryTimer);
+  }
+  function requestClose(action: () => void = closeAll) {
+    if (busy) return;
+    if (dirty) { discardAction = action; discardOpen = true; }
+    else action();
+  }
+  function discardChanges() {
+    const action = discardAction; discardOpen = false; discardAction = null; action?.();
+  }
+  function filterDomain(domainId: string) { domainFilter = domainId; pageNumber = 1; onSelectedDomainChange?.(domainId); }
+  function clearFilters() { domainSearch = ''; addressSearch = ''; domainStatus = 'all'; addressStatus = 'current'; filterDomain(''); }
+  function domainAddresses(domainId: string) { return addresses.filter((address) => address.domain_id === domainId); }
+  function openCreateAddress(domainId = domainFilter, event?: MouseEvent) {
+    captureTrigger(event);
+    selectedDomainId = availableDomains.some((domain) => domain.id === domainId) ? domainId : availableDomains[0]?.id ?? '';
+    createSeedDomainId = selectedDomainId; localPart = ''; displayName = ''; signature = ''; createError = ''; createFoundAddressId = ''; createAttempt = null; createExistingConflict = false; unknownWrite = false;
+    createAddressOpen = true;
+  }
+  function openAddDomain(event?: MouseEvent) { captureTrigger(event); domainSetupDirty = false; addDomainOpen = true; }
+  async function domainCreated(_domainId: string, domain?: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>) {
+    if (domain) {
+      domains = [...domains.filter((item) => item.id !== domain.id), { ...domain, cloudflare_configured: providerConfiguration.cloudflare, resend_configured: providerConfiguration.resend }];
+      publishOptions();
+    }
+    notice = t('settings.mailDomainConnected'); noticeNeedsAttention = false;
+    if (!await load()) notice = t('settings.savedRefreshFailed');
+    addDomainOpen = false; domainSetupDirty = false; domainSetupBusy = false;
+  }
+  function openDomainSettings(domain: MailDomain, event?: MouseEvent) {
+    captureTrigger(event); domainSettingsTarget = domain; domainEnabled = Boolean(domain.enabled);
+    unknownPolicy = domain.unknown_recipient_policy; settingsError = ''; unknownWrite = false;
+  }
+  function openAddressSettings(address: MailAddress, event?: MouseEvent) {
+    captureTrigger(event); editAddressTarget = address; editDisplayName = address.display_name;
+    editSignature = address.signature; settingsError = ''; unknownWrite = false;
+  }
+  function openDiagnostics(domain: MailDomain, address?: MailAddress, event?: MouseEvent) {
+    captureTrigger(event); errorMessage = ''; notice = ''; diagnosticsDomainId = domain.id; diagnosticsAddressId = address?.id ?? '';
+  }
+  function uncertain(error: unknown) {
+    return !(error instanceof ClientApiError) || error.status === 0 || error.status >= 500 || error.code === 'INVALID_RESPONSE';
+  }
+  function currentSession(epoch: number) { return epoch === sessionEpoch && !isClientAuthExpired(); }
+  async function saved(message: string, attention = false) {
+    notice = message; noticeNeedsAttention = attention;
+    if (!await load()) notice = `${message} ${t('settings.savedRefreshFailed')}`;
+  }
+  function resourceNotice(message: string, resource: MailAddress | MailDomain) {
+    const matches = 'email' in resource
+      ? view !== 'addresses' || filterMailAddresses([resource], { search: addressSearch, domainId: domainFilter, lifecycle: addressStatus }).length > 0
+      : view !== 'domains' || filterMailDomains([resource], domainSearch, domainStatus).length > 0;
+    return matches ? message : `${message} ${t('settings.resourceOutsideFilter')}`;
+  }
+  function formError(error: unknown) { onError?.(error); return error instanceof Error ? error.message : t('settings.mailIdentityActionFailed'); }
 
-  async function saveDomainSettings(event: SubmitEvent) {
-    event.preventDefault();
-    if (!domainSettingsTarget || pendingAction) return;
-    pendingAction = 'domain-settings';
-    settingsError = '';
+  async function verifyWriteOutcome() {
+    if (busy) return;
+    pendingAction = 'verify';
     try {
-      await requestJson(`/api/workspace/mail-identities/domains/${encodeURIComponent(domainSettingsTarget.id)}`, {
+      if (!await load()) return;
+      if (createAddressOpen) {
+        const existing = addresses.find((address) => address.email.toLowerCase() === (createAttempt?.email ?? expectedEmail).toLowerCase());
+        if (existing) { createFoundAddressId = existing.id; createError = t(createExistingConflict ? 'settings.addressAlreadyExistsReadback' : 'settings.addressFoundAfterUnknown'); unknownWrite = true; return; }
+      } else if (editAddressTarget) {
+        const existing = addresses.find((address) => address.id === editAddressTarget?.id);
+        if (existing?.display_name === editDisplayName.trim() && existing?.signature === editSignature.replace(/\r\n?/gu, '\n')) {
+          editAddressTarget = null; notice = t('settings.addressSettingsSaved'); unknownWrite = false; return;
+        }
+      } else if (domainSettingsTarget) {
+        const existing = domains.find((domain) => domain.id === domainSettingsTarget?.id);
+        if (Boolean(existing?.enabled) === domainEnabled && existing?.unknown_recipient_policy === unknownPolicy) {
+          domainSettingsTarget = null; notice = t('settings.domainSettingsSaved'); unknownWrite = false; return;
+        }
+      }
+      unknownWrite = false;
+      createExistingConflict = false;
+      if (createAddressOpen) createError = t('settings.writeVerifiedMissing'); else settingsError = t('settings.writeVerifiedMissing');
+    } finally { pendingAction = ''; }
+  }
+  async function createAddress(event: SubmitEvent) {
+    event.preventDefault();
+    if (busy || unknownWrite || !selectedDomainId) return;
+    const prefix = localPart.trim().toLowerCase();
+    if (!availableDomains.some((domain) => domain.id === selectedDomainId) || !prefix || prefix.length > 64 ||
+      prefix.startsWith('.') || prefix.endsWith('.') || prefix.includes('..') || !/^[a-z0-9.!#$%&'*+/=?^_{|}~-]+$/u.test(prefix) || new TextEncoder().encode(expectedEmail).byteLength > 90) {
+      createError = t('settings.addressPrefixInvalid'); return;
+    }
+    if (addresses.some((address) => address.email.toLowerCase() === expectedEmail.toLowerCase())) { createError = t('settings.quickAddressAlreadyExists'); return; }
+    const attempt = { domainId: selectedDomainId, email: expectedEmail, displayName, signature };
+    createAttempt = attempt;
+    const payload = { domainId: attempt.domainId, address: localPart, displayName: attempt.displayName, signature: attempt.signature };
+    pendingAction = 'create'; createError = ''; const epoch = sessionEpoch;
+    try {
+      const result = await requestJson<{ address: MailAddress }>('/api/workspace/mail-identities', {
+        method: 'POST', body: JSON.stringify(payload)
+      });
+      if (!currentSession(epoch)) { unknownWrite = true; createError = t('settings.writeOutcomeUnknown'); return; }
+      addresses = [...addresses.filter((address) => address.id !== result.address.id), result.address]; publishOptions();
+      const attention = result.address.receive_enabled !== 1;
+      await saved(resourceNotice(t(attention ? 'settings.mailAddressSavedNeedsAttention' : 'settings.mailAddressCreated'), result.address), attention);
+      createAddressOpen = false;
+    } catch (error) {
+      createError = formError(error);
+      // A conflict may occur after insertion, such as a lost lease or a domain
+      // being disabled during routing. Read back before allowing another POST.
+      const conflict = error instanceof ClientApiError && error.status === 409;
+      const persistedConflict = conflict && ['CLOUDFLARE_ROUTING_CONFLICT', 'MAIL_ADDRESS_OPERATION_CONFLICT', 'MAIL_DOMAIN_DISABLED'].includes(error.code);
+      const existingConflict = conflict && ['MAIL_ADDRESS_ALREADY_EXISTS', 'MAIL_ADDRESS_RESTORE_REQUIRED'].includes(error.code);
+      const outcomeUnknown = !currentSession(epoch) || uncertain(error);
+      if (outcomeUnknown || conflict) {
+        unknownWrite = true;
+        if (currentSession(epoch) && await load()) {
+          const created = addresses.find((address) => address.email.toLowerCase() === attempt.email.toLowerCase());
+          if (created) {
+            if (persistedConflict && created.domain_id === attempt.domainId && created.lifecycle_status !== 'deleted' &&
+              created.receive_enabled !== 1 && created.display_name === attempt.displayName.trim() && created.signature === attempt.signature.replace(/\r\n?/gu, '\n')) {
+              notice = resourceNotice(t('settings.mailAddressSavedNeedsAttention'), created);
+              noticeNeedsAttention = true; createAddressOpen = false; unknownWrite = false;
+              return;
+            }
+            createFoundAddressId = created.id;
+            createExistingConflict = existingConflict;
+            createError = t(existingConflict ? 'settings.addressAlreadyExistsReadback' : 'settings.addressFoundAfterUnknown');
+          }
+          else if (outcomeUnknown) createError = t('settings.writeOutcomeUnknown');
+          else unknownWrite = false;
+        }
+      }
+    } finally { pendingAction = ''; }
+  }
+  async function saveDomainSettings(event: SubmitEvent) {
+    event.preventDefault(); if (!domainSettingsTarget || busy || unknownWrite) return;
+    pendingAction = 'domain-settings'; settingsError = ''; const epoch = sessionEpoch;
+    try {
+      const result = await requestJson<{ domain: MailDomain }>(`/api/workspace/mail-identities/domains/${encodeURIComponent(domainSettingsTarget.id)}`, {
         method: 'PATCH', body: JSON.stringify({ enabled: domainEnabled, unknownRecipientPolicy: unknownPolicy })
       });
-      domainSettingsTarget = null;
-      notice = t('settings.domainSettingsSaved');
-      noticeNeedsAttention = false;
-      await load();
-    } catch (error) { settingsError = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed'); }
+      if (!currentSession(epoch)) { unknownWrite = true; settingsError = t('settings.writeOutcomeUnknown'); return; }
+      const targetId = domainSettingsTarget.id;
+      domains = domains.map((domain) => domain.id === targetId ? { ...domain, ...result.domain } : domain); publishOptions();
+      await saved(resourceNotice(t('settings.domainSettingsSaved'), result.domain)); domainSettingsTarget = null;
+    } catch (error) { settingsError = formError(error); unknownWrite = uncertain(error) || !currentSession(epoch); }
     finally { pendingAction = ''; }
   }
-
-  function openAddressSettings(address: MailAddress) {
-    editAddressTarget = address;
-    editDisplayName = address.display_name;
-    editSignature = address.signature;
-    settingsError = '';
-  }
-
   async function saveAddressSettings(event: SubmitEvent) {
-    event.preventDefault();
-    if (!editAddressTarget || pendingAction) return;
-    pendingAction = 'address-settings';
-    settingsError = '';
+    event.preventDefault(); if (!editAddressTarget || busy || unknownWrite) return;
+    pendingAction = 'address-settings'; settingsError = ''; const epoch = sessionEpoch;
     try {
-      await requestJson(`/api/workspace/mail-identities/${encodeURIComponent(editAddressTarget.id)}`, {
+      const result = await requestJson<{ address: MailAddress }>(`/api/workspace/mail-identities/${encodeURIComponent(editAddressTarget.id)}`, {
         method: 'PATCH', body: JSON.stringify({ displayName: editDisplayName, signature: editSignature })
       });
-      editAddressTarget = null;
-      notice = t('settings.addressSettingsSaved');
-      noticeNeedsAttention = false;
-      await load();
-    } catch (error) { settingsError = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed'); }
+      if (!currentSession(epoch)) { unknownWrite = true; settingsError = t('settings.writeOutcomeUnknown'); return; }
+      const targetId = editAddressTarget.id;
+      addresses = addresses.map((address) => address.id === targetId ? result.address : address); publishOptions();
+      await saved(resourceNotice(t('settings.addressSettingsSaved'), result.address)); editAddressTarget = null;
+    } catch (error) { settingsError = formError(error); unknownWrite = uncertain(error) || !currentSession(epoch); }
     finally { pendingAction = ''; }
   }
-
+  async function syncResources() {
+    if (busy || !onboarding.available) return;
+    pendingAction = 'sync'; syncError = ''; syncNotice = ''; const epoch = sessionEpoch;
+    try {
+      const result = await requestJson<{ sync: { domainsCreated: number; addressesCreated: number; warnings: Array<{ domainName: string; code: string }> } }>('/api/workspace/mail-identities/sync', { method: 'POST' });
+      if (!currentSession(epoch)) { syncError = t('settings.writeOutcomeUnknown'); return; }
+      syncNotice = t('settings.providerSyncComplete', { domains: result.sync.domainsCreated, addresses: result.sync.addressesCreated });
+      if (result.sync.warnings.length) syncError = t('settings.providerSyncPartial', { domains: result.sync.warnings.map((warning) => warning.domainName).join(', ') });
+      if (!await load()) syncNotice += ` ${t('settings.savedRefreshFailed')}`;
+    } catch (error) {
+      syncError = formError(error);
+      if (!currentSession(epoch) || uncertain(error)) syncError = `${t('settings.writeOutcomeUnknown')} ${syncError}`;
+      if (currentSession(epoch)) await load();
+    }
+    finally { pendingAction = ''; }
+  }
+  async function checkDomain(domain: MailDomain) {
+    if (busy || unresolvedDomainChecks[domain.id]) return;
+    pendingAction = `check:${domain.id}`; errorMessage = ''; const epoch = sessionEpoch;
+    try {
+      const result = await requestJson<{ check: DomainCheck }>(`/api/workspace/mail-identities/domains/${encodeURIComponent(domain.id)}/check`, { method: 'POST', body: '{}' });
+      if (!currentSession(epoch)) { unresolvedDomainChecks = { ...unresolvedDomainChecks, [domain.id]: true }; errorMessage = t('settings.writeOutcomeUnknown'); return; }
+      checks = { ...checks, [domain.id]: result.check };
+      await saved(t(result.check.cloudflare.state === 'ready' ? 'settings.mailIdentityCheckComplete' : 'settings.mailIdentityCheckIncomplete'), result.check.cloudflare.state !== 'ready');
+    } catch (error) {
+      const unknown = !currentSession(epoch) || uncertain(error);
+      const message = formError(error);
+      if (unknown) {
+        unresolvedDomainChecks = { ...unresolvedDomainChecks, [domain.id]: true };
+        const remainingChecks = { ...checks };
+        delete remainingChecks[domain.id];
+        checks = remainingChecks;
+      }
+      if (currentSession(epoch)) await load();
+      errorMessage = unknown ? `${t('settings.writeOutcomeUnknown')} ${message}` : message;
+    }
+    finally { pendingAction = ''; }
+  }
+  async function runAction(address: MailAddress, action: 'disable' | 'enable' | 'import' | 'restore' | 'retry' | 'enable_send' | 'disable_send' | 'make_default') {
+    if (busy || unresolvedAddressActions[address.id] || (action === 'make_default' && !canSendFrom(address)) || (action === 'enable_send' && !canSendFrom({ ...address, send_enabled: 1 }))) return;
+    pendingAction = `${address.id}:${action}`; errorMessage = ''; const epoch = sessionEpoch;
+    try {
+      const result = await requestJson<{ address: MailAddress }>(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, { method: 'POST', body: JSON.stringify({ action }) });
+      if (!currentSession(epoch)) { unresolvedAddressActions = { ...unresolvedAddressActions, [address.id]: true }; errorMessage = t('settings.writeOutcomeUnknown'); return; }
+      addresses = addresses.map((item) => item.id === result.address.id ? result.address : action === 'make_default' ? { ...item, is_default_sender: 0 } : item); publishOptions();
+      await saved(resourceNotice(t('settings.mailIdentityActionComplete'), result.address));
+    } catch (error) {
+      const unknown = !currentSession(epoch) || uncertain(error);
+      const message = formError(error);
+      if (unknown) unresolvedAddressActions = { ...unresolvedAddressActions, [address.id]: true };
+      if (currentSession(epoch)) await load();
+      errorMessage = unknown ? `${t('settings.writeOutcomeUnknown')} ${message}` : message;
+    }
+    finally { pendingAction = ''; }
+  }
+  async function openDeletePreview(address: MailAddress, event?: MouseEvent) {
+    if (busy) return;
+    if (!deleteTarget) captureTrigger(event);
+    const request = deleteRequests.begin();
+    deleteTarget = address; deletePreview = null; deletePreviewError = ''; deletePreviewLoading = true;
+    try {
+      const result = await requestJson<{ preview: DeletePreview }>(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}/delete-preview`, { signal: request.signal });
+      if (!request.isCurrent() || deleteTarget?.id !== address.id) return;
+      deletePreview = result.preview; now = Date.now();
+      clearTimeout(deleteExpiryTimer);
+      deleteExpiryTimer = setTimeout(() => { now = Date.now(); }, Math.max(0, Date.parse(result.preview.expiresAt) - now) + 1);
+      deletePolicy = result.preview.recommendedPolicy ?? (address.routing_owner === 'imported' ? 'preserve_imported_route' : 'remove_owned_route');
+    } catch (error) { if (request.isCurrent()) deletePreviewError = formError(error); }
+    finally { if (request.isCurrent()) deletePreviewLoading = false; }
+  }
+  function closeDeletePreview() { if (busy) return; deleteRequests.cancel(); clearTimeout(deleteExpiryTimer); deleteTarget = null; deletePreview = null; deletePreviewError = ''; }
+  async function deleteAddress() {
+    if (busy || !deleteTarget) return;
+    const address = deleteTarget;
+    if (!deletePreview || Date.parse(deletePreview.expiresAt) <= Date.now()) { await openDeletePreview(address); return; }
+    if (!canConfirmDelete()) return;
+    pendingAction = `${address.id}:delete`; deletePreviewError = ''; const epoch = sessionEpoch;
+    try {
+      const result = await requestJson<{ remoteRuleStatus: string; address: MailAddress }>(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, { method: 'DELETE', body: JSON.stringify({ confirm: 'delete', policy: deletePolicy }) });
+      if (!currentSession(epoch)) { unresolvedAddressActions = { ...unresolvedAddressActions, [address.id]: true }; deletePreviewError = t('settings.writeOutcomeUnknown'); deletePreview = null; return; }
+      addresses = addresses.map((item) => item.id === address.id ? result.address : item); publishOptions();
+      await saved(t(result.remoteRuleStatus === 'retained_for_rejection' ? 'settings.deleteAddressRouteRetained' : result.remoteRuleStatus === 'preserved_unverified' ? 'settings.deleteAddressImportedPreserved' : result.remoteRuleStatus === 'removed' ? 'settings.deleteAddressRuleRemoved' : 'settings.mailAddressDeleted'));
+      deleteTarget = null;
+    } catch (error) {
+      const unknown = !currentSession(epoch) || uncertain(error);
+      const message = formError(error);
+      deletePreview = null;
+      if (unknown) unresolvedAddressActions = { ...unresolvedAddressActions, [address.id]: true };
+      if (currentSession(epoch)) await load();
+      deletePreviewError = unknown ? `${t('settings.writeOutcomeUnknown')} ${message}` : message;
+    }
+    finally { pendingAction = ''; }
+  }
+  function canConfirmDelete() {
+    return Boolean(deletePreview?.canConfirm && deletePreview.policies[deletePolicy].available && Date.parse(deletePreview.expiresAt) > now && !deletePreviewLoading && !busy);
+  }
   function checkFor(domain: MailDomain, addressId: string): RouteStatus | undefined {
     return checks[domain.id]?.cloudflare.addresses.find((entry) => entry.addressId === addressId)?.status;
   }
-
-  async function createAddress(event: SubmitEvent) {
-    event.preventDefault();
-    if (!selectedDomainId || !localPart.trim()) return;
-    const requestedAddress = localPart.trim().toLowerCase();
-    const domainName = domains.find((domain) => domain.id === selectedDomainId)?.domain_name.toLowerCase() ?? '';
-    const expectedEmail = requestedAddress.includes('@') ? requestedAddress : `${requestedAddress}@${domainName}`;
-    const existedBefore = addresses.some((address) => address.email.toLowerCase() === expectedEmail);
-    pendingAction = 'create';
-    errorMessage = '';
-    notice = '';
-    noticeNeedsAttention = false;
-    try {
-      const created = await requestJson<{ address: MailAddress }>('/api/workspace/mail-identities', {
-        method: 'POST',
-        body: JSON.stringify({ domainId: selectedDomainId, address: localPart, displayName, signature })
-      });
-      localPart = '';
-      displayName = '';
-      signature = '';
-      noticeNeedsAttention = created.address.receive_enabled !== 1;
-      notice = t(noticeNeedsAttention ? 'settings.mailAddressSavedNeedsAttention' : 'settings.mailAddressCreated');
-      await load();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
-      onError?.(error);
-      await load();
-      if (!existedBefore && addresses.some((address) => address.email.toLowerCase() === expectedEmail)) {
-        localPart = '';
-        displayName = '';
-        signature = '';
-        notice = t('settings.mailAddressSavedNeedsAttention');
-        noticeNeedsAttention = true;
-      } else {
-        errorMessage = message;
-      }
-    } finally {
-      pendingAction = '';
-    }
+  function receivingState(address: MailAddress, domain?: MailDomain): DomainCapabilityState {
+    if (!domain || !domain.enabled || address.lifecycle_status !== 'active' || !address.receive_enabled) return 'not_ready';
+    const route = checkFor(domain, address.id);
+    if ((route !== undefined && route !== 'managed' && route !== 'imported') || address.last_error_code || !['active', 'imported'].includes(address.routing_state)) return 'needs_check';
+    return mailHealthState({ configured: domain.cloudflare_configured, checkedAt: domain.cloudflare_checked_at, errorCode: domain.cloudflare_error_code, leaseExpiresAt: domain.cloudflare_check_expires_at, nowMs: now }) === 'fresh' ? 'ready' : 'needs_check';
   }
-
-  async function toggleQuickCreate(domainId: string) {
-    const closing = quickCreateDomainId === domainId;
-    quickCreateDomainId = closing ? '' : domainId;
-    quickLocalPart = '';
-    quickCreateError = '';
-    quickCreateNoticeDomainId = '';
-    quickCreateNotice = '';
-    quickCreateNeedsAttention = false;
-    await tick();
-    document.getElementById(`${closing ? 'quick-create-trigger' : 'quick-address'}-${domainId}`)?.focus();
+  function sendingState(address: MailAddress): DomainCapabilityState {
+    if (canSendFrom(address)) return 'ready';
+    const domain = domains.find((item) => item.id === address.domain_id);
+    if (address.lifecycle_status !== 'active' || !address.send_enabled || !domain?.enabled) return 'not_ready';
+    return 'needs_check';
   }
-
-  function handleQuickCreateKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Escape' || !quickCreateDomainId) return;
-    const form = document.getElementById(`quick-create-form-${quickCreateDomainId}`);
-    if (!form?.contains(event.target as Node)) return;
-    event.preventDefault();
-    void toggleQuickCreate(quickCreateDomainId);
-  }
-
-  function openFullAddressForm(domainId: string) {
-    quickCreateDomainId = '';
-    onCreateAddressForDomain?.(domainId, quickLocalPart.trim());
-  }
-
-  async function createQuickAddress(event: SubmitEvent, domain: MailDomain) {
-    event.preventDefault();
-    const requestedLocalPart = quickLocalPart.trim();
-    if (!requestedLocalPart || pendingAction || !domain.enabled) return;
-    if (requestedLocalPart.includes('@')) {
-      quickCreateError = t('settings.quickAddressPrefixOnly');
-      return;
-    }
-    const expectedEmail = `${requestedLocalPart.toLowerCase()}@${domain.domain_name.toLowerCase()}`;
-    const existedBefore = addresses.some((address) => address.email.toLowerCase() === expectedEmail);
-    if (existedBefore) {
-      quickCreateError = t('settings.quickAddressAlreadyExists');
-      return;
-    }
-    pendingAction = `quick-create:${domain.id}`;
-    quickCreateError = '';
-    quickCreateNoticeDomainId = '';
-    quickCreateNotice = '';
-    quickCreateNeedsAttention = false;
-    let restoreTriggerFocus = false;
-    try {
-      const created = await requestJson<{ address: MailAddress }>('/api/workspace/mail-identities', {
-        method: 'POST',
-        body: JSON.stringify({ domainId: domain.id, address: requestedLocalPart })
-      });
-      await load();
-      quickLocalPart = '';
-      quickCreateDomainId = '';
-      quickCreateNoticeDomainId = domain.id;
-      quickCreateNeedsAttention = created.address.receive_enabled !== 1;
-      quickCreateNotice = t(quickCreateNeedsAttention ? 'settings.mailAddressSavedNeedsAttention' : 'settings.mailAddressCreated');
-      restoreTriggerFocus = true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
-      onError?.(error);
-      await load();
-      if (!existedBefore && addresses.some((address) => address.email.toLowerCase() === expectedEmail)) {
-        quickLocalPart = '';
-        quickCreateDomainId = '';
-        quickCreateError = '';
-        quickCreateNoticeDomainId = domain.id;
-        quickCreateNotice = t('settings.mailAddressSavedNeedsAttention');
-        quickCreateNeedsAttention = true;
-        restoreTriggerFocus = true;
-      } else {
-        quickCreateError = message;
-      }
-    } finally {
-      pendingAction = '';
-      if (restoreTriggerFocus) {
-        await tick();
-        document.getElementById(`quick-create-trigger-${domain.id}`)?.focus();
-      }
-    }
-  }
-
-  async function checkDomain(domain: MailDomain) {
-    pendingAction = 'check:' + domain.id;
-    errorMessage = '';
-    notice = '';
-    noticeNeedsAttention = false;
-    try {
-      const result = await requestJson<{ check: DomainCheck }>(
-        `/api/workspace/mail-identities/domains/${encodeURIComponent(domain.id)}/check`,
-        { method: 'POST', body: '{}' }
-      );
-      checks = { ...checks, [domain.id]: result.check };
-      notice = result.check.cloudflare.state === 'ready'
-        ? t('settings.mailIdentityCheckComplete')
-        : t('settings.mailIdentityCheckIncomplete');
-      await load();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
-      onError?.(error);
-    } finally {
-      pendingAction = '';
-    }
-  }
-
-  async function runAction(address: MailAddress, action: 'disable' | 'enable' | 'import' | 'restore' | 'retry' | 'enable_send' | 'disable_send' | 'make_default') {
-    pendingAction = `${address.id}:${action}`;
-    errorMessage = '';
-    notice = '';
-    noticeNeedsAttention = false;
-    try {
-      await requestJson(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, {
-        method: 'POST',
-        body: JSON.stringify({ action })
-      });
-      notice = t('settings.mailIdentityActionComplete');
-      await load();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
-      onError?.(error);
-      const message = errorMessage;
-      await load();
-      errorMessage = message;
-    } finally {
-      pendingAction = '';
-    }
-  }
-
-  async function deleteAddress() {
-    const address = deleteTarget;
-    if (!address) return;
-    if (!deletePreview || Date.parse(deletePreview.expiresAt) <= Date.now()) {
-      await openDeletePreview(address);
-      return;
-    }
-    if (!deletePreview.canConfirm || !deletePreview.policies[deletePolicy].available) return;
-    pendingAction = `${address.id}:delete`;
-    errorMessage = '';
-    notice = '';
-    noticeNeedsAttention = false;
-    try {
-      const result = await requestJson<{ remoteRuleStatus: string }>(`/api/workspace/mail-identities/${encodeURIComponent(address.id)}`, {
-        method: 'DELETE',
-        body: JSON.stringify({ confirm: 'delete', policy: deletePolicy })
-      });
-      deleteTarget = null;
-      notice = result.remoteRuleStatus === 'retained_for_rejection'
-        ? t('settings.deleteAddressRouteRetained')
-        : result.remoteRuleStatus === 'preserved_unverified'
-          ? t('settings.deleteAddressImportedPreserved')
-          : result.remoteRuleStatus === 'removed'
-            ? t('settings.deleteAddressRuleRemoved')
-            : t('settings.mailAddressDeleted');
-      await load();
-    } catch (error) {
-      errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
-      onError?.(error);
-      const message = errorMessage;
-      await load();
-      errorMessage = message;
-    } finally {
-      pendingAction = '';
-    }
-  }
-
-  async function openDeletePreview(address: MailAddress) {
-    deleteTarget = address;
-    deletePreview = null;
-    deletePreviewError = '';
-    deletePreviewLoading = true;
-    try {
-      const result = await requestJson<{ preview: DeletePreview }>(
-        `/api/workspace/mail-identities/${encodeURIComponent(address.id)}/delete-preview`
-      );
-      deletePreview = result.preview;
-      deletePolicy = result.preview.recommendedPolicy ?? (address.routing_owner === 'imported'
-        ? 'preserve_imported_route' : 'remove_owned_route');
-    } catch (error) {
-      deletePreviewError = error instanceof Error ? error.message : t('settings.deletePreviewUnavailable');
-      onError?.(error);
-    } finally {
-      deletePreviewLoading = false;
-    }
-  }
-
-  function closeDeletePreview() {
-    if (pendingAction.endsWith(':delete')) return;
-    deleteTarget = null;
-    deletePreview = null;
-    deletePreviewError = '';
-  }
-
   function deleteRouteLabel(preview: DeletePreview) {
     const labels: Record<DeletePreview['cloudflare']['route']['observation'], string> = {
       managed_worker: t('settings.deletePreviewManagedRoute'),
@@ -544,77 +476,6 @@
     return labels[preview.cloudflare.catchAll.target];
   }
 
-  function canConfirmDelete() {
-    return Boolean(deletePreview?.canConfirm && deletePreview.policies[deletePolicy].available &&
-      Date.parse(deletePreview.expiresAt) > Date.now() && !deletePreviewLoading && !pendingAction.endsWith(':delete'));
-  }
-
-  function statusLabel(status: RouteStatus | MailAddress['routing_state']) {
-    const labels: Record<string, string> = {
-      managed: t('settings.routeManaged'), imported: t('settings.routeImported'), importable: t('settings.routeImportable'),
-      missing: t('settings.routeMissing'), conflict: t('settings.routeConflict'), duplicate: t('settings.routeDuplicate'),
-      deleted_route: t('settings.routeStillPresent'), reject_route_preserved: t('settings.deletedRejectRoutePreserved'),
-      deleted_absent: t('settings.deletedRouteAbsent'), imported_preserved: t('settings.importedRuleRetained'),
-      pending: t('settings.routePending'), provisioning: t('settings.routeProvisioning'),
-      active: t('settings.routeActive'), deleting: t('settings.routeDeleting'), unknown: t('settings.routeUnknown'), error: t('settings.routeError'), deleted: t('settings.routeDeleted')
-    };
-    return labels[status] ?? status;
-  }
-
-  function catchAllLabel(domain: MailDomain) {
-    const target = checks[domain.id]?.cloudflare.catchAllTarget ?? domain.catch_all_target;
-    const labels = {
-      unknown: t('settings.catchAllUnknown'), this_worker: t('settings.catchAllWorker'),
-      external: t('settings.catchAllExternal'), drop: t('settings.catchAllDrop'), none: t('settings.catchAllDisabled')
-    };
-    return labels[target];
-  }
-
-  function resendLabel(domain: MailDomain) {
-    const state = checks[domain.id]?.resend.state;
-    if (state === 'verified' || (!state && domain.resend_status === 'verified')) return t('settings.resendVerified');
-    if (state === 'failed' || (!state && domain.resend_status === 'failed')) return t('settings.resendFailed');
-    if (state === 'missing') return t('settings.resendMissing');
-    if (state === 'not_configured') return t('settings.resendNotConfigured');
-    if (state === 'error') return t('settings.resendCheckFailed');
-    if (state === 'pending' || (!state && domain.resend_status === 'pending')) return t('settings.resendPending');
-    return t('settings.resendUnknown');
-  }
-
-  function healthLabel(domain: MailDomain, provider: 'cloudflare' | 'resend') {
-    const isCloudflare = provider === 'cloudflare';
-    const state = mailHealthState({
-      configured: isCloudflare ? domain.cloudflare_configured : domain.resend_configured,
-      checkedAt: isCloudflare ? domain.cloudflare_checked_at : domain.resend_checked_at,
-      leaseExpiresAt: isCloudflare ? domain.cloudflare_check_expires_at : domain.resend_check_expires_at,
-      errorCode: isCloudflare ? domain.cloudflare_error_code : domain.resend_error_code
-    });
-    if (state === 'fresh') return t('settings.mailHealthFresh');
-    if (state === 'refreshing') return t('settings.mailHealthRefreshing');
-    if (state === 'degraded') return t('settings.mailHealthDegraded');
-    if (state === 'not_configured') return t('settings.mailHealthNotConfigured');
-    return isCloudflare && !domain.cloudflare_checked_at ? t('settings.statusNotChecked') : t('settings.mailHealthStale');
-  }
-
-  function nextHealthCheck(domain: MailDomain, provider: 'cloudflare' | 'resend') {
-    return provider === 'cloudflare' ? domain.cloudflare_next_check_at : domain.resend_next_check_at;
-  }
-
-  function healthErrorLabel(domain: MailDomain, provider: 'cloudflare' | 'resend') {
-    const configured = provider === 'cloudflare' ? domain.cloudflare_configured : domain.resend_configured;
-    if (!configured) {
-      return t(provider === 'cloudflare' ? 'settings.cloudflareCheckNotConfigured' : 'settings.resendCheckNotConfigured');
-    }
-    const code = provider === 'cloudflare' ? domain.cloudflare_error_code : domain.resend_error_code;
-    if (!code) return '';
-    if (provider === 'cloudflare') {
-      return t(code === 'cloudflare_permission_denied'
-        ? 'settings.cloudflareCheckAccessDenied' : 'settings.cloudflareCheckNeedsAttention');
-    }
-    return t(code === 'resend_permission_denied'
-      ? 'settings.resendCheckAccessDenied' : 'settings.resendCheckNeedsAttention');
-  }
-
   function canSendFrom(address: MailAddress) {
     const domain = domains.find((item) => item.id === address.domain_id);
     return mailSenderSendBlockReason({
@@ -625,7 +486,7 @@
       resendSendingStatus: domain?.resend_sending_status ?? 'unknown',
       resendCheckedAt: domain?.resend_checked_at ?? null,
       resendCheckFailed: Boolean(domain?.resend_error_code)
-    }) === null;
+    }, now) === null;
   }
 
   function capabilitiesFor(domain: MailDomain, domainAddresses: MailAddress[]) {
@@ -635,7 +496,7 @@
         configured: domain.cloudflare_configured,
         checkedAt: domain.cloudflare_checked_at,
         leaseExpiresAt: domain.cloudflare_check_expires_at,
-        errorCode: domain.cloudflare_error_code
+        errorCode: domain.cloudflare_error_code, nowMs: now
       }),
       catchAllCollects: domain.unknown_recipient_policy === 'collect' &&
         (checks[domain.id]?.cloudflare.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
@@ -649,7 +510,7 @@
         receiveEnabled: address.receive_enabled === 1,
         sendEnabled: address.send_enabled === 1
       }))
-    });
+    }, now);
   }
 
   function capabilityLabel(state: DomainCapabilityState) {
@@ -659,219 +520,234 @@
 
 </script>
 
-<svelte:window onkeydown={handleQuickCreateKeydown} />
+<svelte:window onbeforeunload={beforeUnload} />
 
-<Panel class="mx-auto max-w-[72rem]" title={view === 'domains' ? t('settings.domainDashboard') : t('settings.mailIdentities')} description={view === 'domains' ? t('settings.domainDashboardDescription') : t('settings.mailIdentitiesDescription')}>
-  <div class="provider-sync">
-    <p class="muted">{t('settings.providerSyncDescription')}</p>
-    <Button variant="secondary" loading={syncing} disabled={loading || Boolean(pendingAction)} onclick={() => void load(true)}><RefreshCw size={14} aria-hidden="true" />{t('settings.syncCloudflare')}</Button>
-  </div>
-  {#if syncNotice}<p class="message success" role="status">{syncNotice}</p>{/if}
-  {#if syncError}<p class="message attention" role="alert">{syncError}</p>{/if}
-  {#if errorMessage}<p class="message error" role="alert">{errorMessage}</p>{/if}
-  {#if notice}<p class="message" class:success={!noticeNeedsAttention} class:attention={noticeNeedsAttention} role="status" aria-live="polite">{notice}</p>{/if}
+{#snippet stateBadge(state: DomainCapabilityState)}
+  <span class="state-badge" class:ready={state === 'ready'} class:attention={state === 'needs_check'}>{capabilityLabel(state)}</span>
+{/snippet}
 
-  {#if loading}
-    <p class="muted" role="status">{t('common.loading')}</p>
-  {:else}
-    {#if domains.length === 0}
-      <MailDomainSetup available={onboarding.available} workerName={onboarding.workerName} onCreated={domainCreated} onRefresh={load} />
-    {:else if view === 'domains'}
-      <details class="manual-domain-setup">
-        <summary>{t('settings.addMailDomainManually')}</summary>
-        <MailDomainSetup available={onboarding.available} workerName={onboarding.workerName} onCreated={domainCreated} onRefresh={load} />
-      </details>
-    {/if}
-    {#if !onboarding.canManageRouting}
-      <p class="setup-hint" role="status">{t('settings.routingManagementMissing')}</p>
-    {/if}
-    {#if domains.length === 0}
-    <p class="muted">{t('settings.noMailDomains')}</p>
+<section class="resource-manager" aria-labelledby="resource-manager-title" data-mail-resource-manager>
+  <header class="resource-header">
+    <h1 id="resource-manager-title">{title}<span class="resource-count">{loadedOnce ? totalResources : '…'}</span></h1>
+    {#if view === 'domains'}
+      <Button id="add-mail-domain" disabled={!loadedOnce || busy} onclick={openAddDomain}><Plus size={16} aria-hidden="true" />{t('settings.addMailDomain')}</Button>
     {:else}
-    {#if view === 'addresses'}
-    <form class="create-form" onsubmit={createAddress}>
-      <div class="form-title"><Mail size={16} aria-hidden="true" /><strong>{t('settings.addMailAddress')}</strong></div>
-      <div class="create-grid">
-        <label class="field-label" for="mail-identity-domain">{t('settings.mailDomain')}</label>
-        <select id="mail-identity-domain" bind:value={selectedDomainId} disabled={pendingAction === 'create'} onchange={(event) => onSelectedDomainChange?.(event.currentTarget.value)}>
-          {#each domains as domain (domain.id)}
-            <option value={domain.id} disabled={!domain.enabled}>{domain.domain_name}</option>
-          {/each}
-        </select>
-        <TextField id="mail-identity-address" label={t('settings.mailAddress')} value={localPart} required disabled={pendingAction === 'create'} placeholder="hello or hello@example.com" oninput={(event) => (localPart = event.currentTarget.value)} />
-        <TextField id="mail-identity-name" label={t('settings.mailAddressDisplayName')} value={displayName} disabled={pendingAction === 'create'} oninput={(event) => (displayName = event.currentTarget.value)} />
-        <div class="signature-field"><TextArea id="mail-identity-signature" label={t('settings.mailAddressSignature')} value={signature} rows={2} disabled={pendingAction === 'create'} oninput={(event) => (signature = event.currentTarget.value)} /></div>
-        <Button type="submit" loading={pendingAction === 'create'} disabled={!selectedDomainId || !localPart.trim()}>{t('settings.createMailAddress')}</Button>
-      </div>
-    </form>
+      <Button id="add-mail-address" disabled={!loadedOnce || busy || availableDomains.length === 0} onclick={(event) => openCreateAddress(domainFilter, event)}><Plus size={16} aria-hidden="true" />{t('settings.addMailAddress')}</Button>
     {/if}
-
-    <div class="domain-list">
-      {#each domains as domain (domain.id)}
-        {@const domainAddresses = addressByDomain.get(domain.id) ?? []}
-        {@const check = checks[domain.id]}
-        {@const capabilities = capabilitiesFor(domain, domainAddresses)}
-        <section class="domain-card" aria-labelledby={`domain-title-${domain.id}`}>
-          <header class="domain-header">
-            <div class="domain-heading">
-              <h3 id={`domain-title-${domain.id}`}>{domain.domain_name}</h3>
-              <p>{domain.enabled ? t('settings.enabled') : t('settings.disabled')} · {t('settings.catchAll')}: {catchAllLabel(domain)}</p>
-            </div>
-            <div class="domain-header-actions">
-              {#if view === 'domains'}
-                <Button variant="secondary" size="sm" disabled={Boolean(pendingAction)} onclick={() => openDomainSettings(domain)}>{t('settings.domainSettings')}</Button>
-                <Button id={`quick-create-trigger-${domain.id}`} variant="secondary" size="sm" disabled={!domain.enabled || Boolean(pendingAction)} ariaExpanded={quickCreateDomainId === domain.id} ariaControls={quickCreateDomainId === domain.id ? `quick-create-form-${domain.id}` : undefined} onclick={() => void toggleQuickCreate(domain.id)}>{t('settings.createAddressForDomain')}</Button>
-                <Button variant="secondary" size="sm" loading={pendingAction === 'check:' + domain.id} onclick={() => void checkDomain(domain)}>
-                  <RefreshCw size={14} aria-hidden="true" /> {t('settings.checkMailDomain')}
-                </Button>
-              {/if}
-            </div>
-          </header>
-          {#if view === 'domains' && quickCreateDomainId === domain.id}
-            <form id={`quick-create-form-${domain.id}`} class="quick-create-form" onsubmit={(event) => void createQuickAddress(event, domain)}>
-              <div class="quick-address-field">
-                <TextField id={`quick-address-${domain.id}`} label={`${t('settings.quickAddressLocalPart')} (@${domain.domain_name})`} value={quickLocalPart} error={quickCreateError} maxlength={64} required disabled={Boolean(pendingAction)} autocomplete="off" placeholder="hello" oninput={(event) => { quickLocalPart = event.currentTarget.value; quickCreateError = ''; }} />
-                <span class="quick-address-domain" aria-hidden="true">@{domain.domain_name}</span>
-              </div>
-              <div class="quick-create-actions">
-                <Button type="submit" size="sm" loading={pendingAction === `quick-create:${domain.id}`} disabled={!quickLocalPart.trim() || Boolean(pendingAction)}>{t('settings.createMailAddress')}</Button>
-                <Button variant="ghost" size="sm" disabled={Boolean(pendingAction)} onclick={() => openFullAddressForm(domain.id)}>{t('settings.quickAddressDetails')}</Button>
-                <Button variant="ghost" size="sm" disabled={Boolean(pendingAction)} onclick={() => void toggleQuickCreate(domain.id)}>{t('common.cancel')}</Button>
-              </div>
-            </form>
-          {/if}
-          {#if view === 'domains' && quickCreateNoticeDomainId === domain.id}
-            <p class:attention={quickCreateNeedsAttention} class="quick-create-notice" role="status">{quickCreateNotice}</p>
-          {/if}
-          {#if view === 'domains'}
-          <dl class="capability-summary" aria-label={t('settings.domainCapabilities')}>
-            <div>
-              <dt>{t('settings.receive')}</dt>
-              <dd class:ready={capabilities.receiving === 'ready'} class:attention={capabilities.receiving === 'needs_check'}>
-                {#if capabilities.receiving === 'ready'}<CheckCircle2 size={16} aria-hidden="true" />{:else}<AlertTriangle size={16} aria-hidden="true" />{/if}
-                {capabilityLabel(capabilities.receiving)}
-              </dd>
-            </div>
-            <div>
-              <dt>{t('settings.send')}</dt>
-              <dd class:ready={capabilities.sending === 'ready'} class:attention={capabilities.sending === 'needs_check'}>
-                {#if capabilities.sending === 'ready'}<CheckCircle2 size={16} aria-hidden="true" />{:else}<AlertTriangle size={16} aria-hidden="true" />{/if}
-                {capabilityLabel(capabilities.sending)}
-              </dd>
-            </div>
-          </dl>
-          <dl class="domain-status">
-            <div>
-              <dt>Cloudflare</dt>
-              <dd>{healthLabel(domain, 'cloudflare')}{#if nextHealthCheck(domain, 'cloudflare')}<small>{t('settings.mailHealthNextCheck')}: {nextHealthCheck(domain, 'cloudflare')}</small>{/if}</dd>
-            </div>
-            <div>
-              <dt>Resend</dt>
-              <dd>{resendLabel(domain)} · {healthLabel(domain, 'resend')}{#if nextHealthCheck(domain, 'resend')}<small>{t('settings.mailHealthNextCheck')}: {nextHealthCheck(domain, 'resend')}</small>{/if}</dd>
-            </div>
-            <div><dt>{t('settings.unknownRecipients')}</dt><dd>{domain.unknown_recipient_policy === 'collect' ? t('settings.unknownCollect') : t('settings.unknownReject')}</dd></div>
-          </dl>
-
-          {#if check?.cloudflare.catchAllTarget === 'external' || domain.catch_all_target === 'external'}
-            <p class="warning"><AlertTriangle size={15} aria-hidden="true" /> {t('settings.externalCatchAllRisk')}</p>
-          {:else if domain.unknown_recipient_policy === 'collect' && (check?.cloudflare.catchAllTarget ?? domain.catch_all_target) !== 'this_worker'}
-            <p class="warning"><ShieldAlert size={15} aria-hidden="true" /> {t('settings.collectRequiresWorkerCatchAll')}</p>
-          {/if}
-          {/if}
-
-          {#if domainAddresses.length === 0}
-            <p class="muted empty-addresses">{t('settings.noMailAddresses')}</p>
-          {:else}
-            <ul class="address-list" aria-label={t('settings.managedMailAddresses')}>
-              {#each domainAddresses as address (address.id)}
-                {@const route = checkFor(domain, address.id)}
-                <li class:deleted={address.lifecycle_status === 'deleted'}>
-                  <div class="address-info">
-                    <strong>{address.email}</strong>
-                    {#if address.display_name}<span>{address.display_name}</span>{/if}
-                  </div>
-                  <div class="address-state">
-                    <span class="pill" class:success={address.receive_enabled === 1} class:danger={address.routing_state === 'error' || route === 'conflict' || route === 'duplicate'}>
-                      {address.lifecycle_status === 'deleted' ? t('settings.routeDeleted') : address.receive_enabled ? t('settings.receiveEnabled') : t('settings.receiveDisabled')}
-                    </span>
-                    <span class="pill" class:success={canSendFrom(address)}>{address.is_default_sender ? t('settings.defaultSender') : address.send_enabled ? t('settings.sendEnabled') : t('settings.sendDisabled')}</span>
-                    <span class="route-state">{statusLabel(route ?? address.routing_state)}</span>
-                    {#if address.last_error_code}<span class="safe-error">{t('settings.lastSyncNeedsAttention')}</span>{/if}
-                  </div>
-                  {#if view === 'addresses'}
-                  <div class="address-actions" aria-label={t('settings.mailAddressActions')}>
-                    {#if address.lifecycle_status !== 'deleted'}
-                      <Button size="sm" variant="secondary" disabled={Boolean(pendingAction)} onclick={() => openAddressSettings(address)}>{t('settings.editAddressDetails')}</Button>
-                    {/if}
-                    {#if route === 'importable' && address.lifecycle_status !== 'deleted'}
-                      <Button size="sm" variant="secondary" loading={pendingAction === `${address.id}:import`} onclick={() => void runAction(address, 'import')}><CheckCircle2 size={14} aria-hidden="true" /> {t('settings.importRule')}</Button>
-                    {/if}
-                    {#if address.lifecycle_status === 'active'}
-                      <Button size="sm" variant="ghost" loading={pendingAction === `${address.id}:disable`} onclick={() => void runAction(address, 'disable')}>{t('settings.disableAddress')}</Button>
-                    {:else if address.lifecycle_status === 'disabled'}
-                      <Button size="sm" variant="secondary" loading={pendingAction === `${address.id}:enable`} onclick={() => void runAction(address, 'enable')}>{t('settings.enableAddress')}</Button>
-                    {:else}
-                      <Button size="sm" variant="secondary" loading={pendingAction === `${address.id}:restore`} onclick={() => void runAction(address, 'restore')}>{t('settings.restoreAddress')}</Button>
-                    {/if}
-                    {#if address.lifecycle_status === 'active'}
-                      {#if address.send_enabled}
-                        <Button size="sm" variant="ghost" loading={pendingAction === `${address.id}:disable_send`} onclick={() => void runAction(address, 'disable_send')}>{t('settings.disableSending')}</Button>
-                        {#if !address.is_default_sender}
-                          <Button size="sm" variant="secondary" disabled={!canSendFrom(address)} loading={pendingAction === `${address.id}:make_default`} onclick={() => void runAction(address, 'make_default')}>{t('settings.setDefaultSender')}</Button>
-                        {/if}
-                      {:else}
-                        <Button size="sm" variant="secondary" disabled={!canSendFrom({ ...address, send_enabled: 1 })} loading={pendingAction === `${address.id}:enable_send`} onclick={() => void runAction(address, 'enable_send')}>{t('settings.enableSending')}</Button>
-                      {/if}
-                    {/if}
-                    {#if address.routing_state === 'error' || address.routing_state === 'unknown' || address.routing_state === 'pending' || address.routing_state === 'deleting'}
-                      <Button size="sm" variant="ghost" loading={pendingAction === `${address.id}:retry`} onclick={() => void runAction(address, 'retry')}><RotateCw size={14} aria-hidden="true" /> {t('settings.retryRouting')}</Button>
-                    {/if}
-                    {#if address.lifecycle_status !== 'deleted'}
-                      <Button size="sm" variant="ghost" ariaLabel={t('settings.deleteAddress')} onclick={() => void openDeletePreview(address)}><Trash2 size={14} aria-hidden="true" /><span class="sr-only">{t('settings.deleteAddress')}</span></Button>
-                    {/if}
-                  </div>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-          {#if domain.cloudflare_error_code || !domain.cloudflare_configured}<p class="safe-error">{healthErrorLabel(domain, 'cloudflare')}</p>{/if}
-          {#if domain.resend_error_code || !domain.resend_configured}<p class="safe-error">{healthErrorLabel(domain, 'resend')}</p>{/if}
-        </section>
-      {/each}
+  </header>
+  <div class="resource-toolbar">
+    <div class="resource-search">
+      <TextField id="mail-resource-search" label={view === 'domains' ? t('settings.domainSearch') : t('settings.addressSearch')} value={view === 'domains' ? domainSearch : addressSearch} type="search" oninput={(event) => { if (view === 'domains') domainSearch = event.currentTarget.value; else addressSearch = event.currentTarget.value; pageNumber = 1; }} />
     </div>
+    {#if view === 'addresses'}
+      <label class="toolbar-field" for="mail-domain-filter">{t('settings.domainFilter')}
+        <select id="mail-domain-filter" value={domainFilter} onchange={(event) => filterDomain(event.currentTarget.value)}>
+          <option value="">{t('settings.allDomains')}</option>
+          {#if invalidDomainFilter}<option value={domainFilter}>{t('settings.invalidDomainContext')}</option>{/if}
+          {#each domains as domain (domain.id)}<option value={domain.id}>{domain.domain_name}</option>{/each}
+        </select>
+      </label>
     {/if}
+    <label class="toolbar-field" for="mail-state-filter">{t('settings.stateFilter')}
+      {#if view === 'domains'}
+        <select id="mail-state-filter" bind:value={domainStatus} onchange={() => pageNumber = 1}>
+          <option value="all">{t('settings.allStates')}</option><option value="enabled">{t('settings.enabled')}</option><option value="disabled">{t('settings.disabled')}</option>
+        </select>
+      {:else}
+        <select id="mail-state-filter" bind:value={addressStatus} onchange={() => pageNumber = 1}>
+          <option value="current">{t('settings.configuredAddresses')}</option><option value="active">{t('settings.activeAddresses')}</option><option value="disabled">{t('settings.disabledAddresses')}</option><option value="deleted">{t('settings.deletedAddresses')}</option><option value="all">{t('settings.allStates')}</option>
+        </select>
+      {/if}
+    </label>
+    <div class="toolbar-actions">
+      <IconButton id="refresh-mail-resources" ariaLabel={t('settings.refreshList')} loading={loading && loadedOnce} disabled={busy || loading} onclick={() => void load()}><RefreshCw size={17} aria-hidden="true" /></IconButton>
+      <DropdownMenu id="mail-resources-menu" triggerAriaLabel={t('settings.moreActions')} align="end" showChevron={false}>
+        {#snippet trigger()}<MoreHorizontal size={18} aria-hidden="true" />{/snippet}
+        <button role="menuitem" type="button" disabled={busy || !loadedOnce} onclick={(event) => { captureTrigger(event); syncNotice = ''; syncError = ''; syncOpen = true; }}>{t('settings.syncCloudflare')}</button>
+        {#if view === 'addresses'}<button role="menuitem" type="button" disabled={busy || !loadedOnce} onclick={openAddDomain}>{t('settings.addMailDomain')}</button>{/if}
+        <button role="menuitem" type="button" onclick={() => { sortDescending = !sortDescending; pageNumber = 1; }}>{t(sortDescending ? 'settings.sortAscending' : 'settings.sortDescending')}</button>
+        <button role="menuitem" type="button" onclick={clearFilters}>{t('settings.clearFilters')}</button>
+      </DropdownMenu>
+    </div>
+  </div>
+  {#if errorMessage}<p class="message error" role="alert">{errorMessage}<button type="button" class="text-action" disabled={loading || busy} onclick={() => void load()}>{t('settings.refreshList')}</button></p>{/if}
+  {#if notice}<p class="message" class:success={!noticeNeedsAttention} class:attention={noticeNeedsAttention} role="status">{notice}</p>{/if}
+  {#if invalidDomainFilter}<p class="message attention" role="status">{t('settings.invalidDomainContext')} <button type="button" class="text-action" onclick={() => filterDomain('')}>{t('settings.clearFilters')}</button></p>{/if}
+  {#if !loadedOnce && loading}
+    <div class="table-loading" role="status"><span class="sr-only">{t('common.loading')}</span>{#each Array(5) as _, index (index)}<Skeleton height="2.75rem" />{/each}</div>
+  {:else if loadedOnce}
+    {#if view === 'addresses' && availableDomains.length === 0}
+      <p class="message" role="status">{t('settings.noAvailableDomains')} <button class="text-action" type="button" onclick={openAddDomain}>{t('settings.addMailDomain')}</button></p>
+    {/if}
+    <div class="table-wrap" aria-busy={loading}>
+      {#if view === 'domains'}
+        <table aria-label={title}>
+          <thead><tr><th scope="col">{t('settings.mailDomain')}</th><th scope="col" class="secondary-column">{t('shell.addresses')}</th><th scope="col" class="secondary-column">{t('settings.resourceStatus')}</th><th scope="col" class="capability-column">{t('settings.receive')}</th><th scope="col" class="capability-column">{t('settings.send')}</th><th scope="col" class="actions-column"><span class="sr-only">{t('settings.resourceActions')}</span></th></tr></thead>
+          <tbody>
+            {#each domainPage.items as domain (domain.id)}
+              {@const associated = domainAddresses(domain.id)}
+              {@const capabilities = capabilitiesFor(domain, associated)}
+              {@const count = associated.filter((address) => address.lifecycle_status !== 'deleted').length}
+              <tr data-domain-id={domain.id} data-resource-row data-resource-kind="domain">
+                <td class="identity-cell"><button type="button" class="identity-link" onclick={(event) => openDiagnostics(domain, undefined, event)}>{domain.domain_name}</button>
+                  <div class="mobile-summary"><span>{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span><button type="button" class="text-action" title={t('settings.addressCountHelp')} aria-label={`${t('settings.viewAddresses')}: ${domain.domain_name} (${count})`} onclick={() => onViewAddressesForDomain?.(domain.id)}>{t('shell.addresses')} {count}</button></div>
+                  <div class="mobile-capabilities"><span>{t('settings.receive')}: {capabilityLabel(capabilities.receiving)}</span><span>{t('settings.send')}: {capabilityLabel(capabilities.sending)}</span></div>
+                  {#if capabilities.receiving === 'needs_check' || capabilities.sending === 'needs_check' || domain.cloudflare_error_code || domain.resend_error_code}<button type="button" class="attention detail-link" onclick={(event) => openDiagnostics(domain, undefined, event)}><AlertTriangle size={13} aria-hidden="true" />{t('settings.needsCheckDetails')}</button>{/if}
+                </td>
+                <td class="secondary-column"><button type="button" class="text-action" title={t('settings.addressCountHelp')} aria-label={`${t('settings.viewAddresses')}: ${domain.domain_name} (${count})`} onclick={() => onViewAddressesForDomain?.(domain.id)}>{count}</button></td>
+                <td class="secondary-column"><span class="state-badge">{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span></td>
+                <td class="capability-column">{@render stateBadge(capabilities.receiving)}</td><td class="capability-column">{@render stateBadge(capabilities.sending)}</td>
+                <td class="actions-column"><div class="row-actions" data-resource-actions>
+                  <IconButton ariaLabel={`${t('settings.domainSettings')}: ${domain.domain_name}`} disabled={busy} onclick={(event) => openDomainSettings(domain, event)}><Pencil size={16} aria-hidden="true" /></IconButton>
+                  <DropdownMenu id={`domain-menu-${domain.id}`} triggerAriaLabel={`${t('settings.moreActions')}: ${domain.domain_name}`} align="end" showChevron={false}>
+                    {#snippet trigger()}<MoreHorizontal size={17} aria-hidden="true" />{/snippet}
+                    <button role="menuitem" type="button" onclick={() => onViewAddressesForDomain?.(domain.id)}>{t('settings.viewAddresses')}</button>
+                    <button role="menuitem" type="button" disabled={!domain.enabled || busy} onclick={(event) => openCreateAddress(domain.id, event)}>{t('settings.createAddressForDomain')}</button>
+                    <button role="menuitem" type="button" disabled={busy} onclick={(event) => openDiagnostics(domain, undefined, event)}>{t('settings.diagnostics')}</button>
+                    <button role="menuitem" type="button" disabled={busy || unresolvedDomainChecks[domain.id]} onclick={() => void checkDomain(domain)}>{t('settings.checkMailDomain')}</button>
+                  </DropdownMenu>
+                </div></td>
+              </tr>
+            {/each}
+            {#if !domainPage.total}<tr><td colspan="6" class="empty-cell">{domains.length ? t('settings.noMatches') : t('settings.noMailDomains')}</td></tr>{/if}
+          </tbody>
+        </table>
+      {:else}
+        <table aria-label={title}>
+          <thead><tr><th scope="col">{t('shell.addresses')}</th><th scope="col" class="secondary-column">{t('settings.mailDomain')}</th><th scope="col" class="secondary-column">{t('settings.resourceStatus')}</th><th scope="col" class="capability-column">{t('settings.receive')}</th><th scope="col" class="capability-column">{t('settings.send')}</th><th scope="col" class="actions-column"><span class="sr-only">{t('settings.resourceActions')}</span></th></tr></thead>
+          <tbody>
+            {#each addressPage.items as address (address.id)}
+              {@const domain = domains.find((item) => item.id === address.domain_id)}
+              {@const route = domain ? checkFor(domain, address.id) : undefined}
+              {@const receive = receivingState(address, domain)}
+              {@const send = sendingState(address)}
+              <tr data-address-id={address.id} data-resource-row data-resource-kind="address">
+                <td class="identity-cell"><button type="button" class="identity-link" onclick={(event) => { if (domain) openDiagnostics(domain, address, event); }}>{address.email}</button>
+                  {#if address.display_name && address.display_name !== address.email}<span class="display-name">{address.display_name}</span>{/if}
+                  {#if address.is_default_sender}<span class="default-badge">{t('settings.defaultSender')}</span>{/if}
+                  <div class="mobile-summary">{address.lifecycle_status === 'deleted' ? t('settings.routeDeleted') : address.lifecycle_status === 'active' ? t('settings.enabled') : t('settings.disabled')}</div>
+                  <div class="mobile-capabilities"><span>{t('settings.receive')}: {capabilityLabel(receive)}</span><span>{t('settings.send')}: {capabilityLabel(send)}</span></div>
+                  {#if address.lifecycle_status !== 'deleted' && (address.last_error_code || receive === 'needs_check' || send === 'needs_check' || route === 'conflict' || route === 'duplicate')}
+                    <button type="button" class="attention detail-link" onclick={(event) => { if (domain) openDiagnostics(domain, address, event); }}><AlertTriangle size={13} aria-hidden="true" />{t('settings.needsCheckDetails')}</button>
+                  {/if}
+                </td>
+                <td class="secondary-column">{domain?.domain_name ?? '—'}</td><td class="secondary-column"><span class="state-badge">{address.lifecycle_status === 'deleted' ? t('settings.routeDeleted') : address.lifecycle_status === 'active' ? t('settings.enabled') : t('settings.disabled')}</span></td>
+                <td class="capability-column">{@render stateBadge(receive)}</td><td class="capability-column">{@render stateBadge(send)}</td>
+                <td class="actions-column"><div class="row-actions" data-resource-actions>
+                  {#if address.lifecycle_status !== 'deleted'}<IconButton ariaLabel={`${t('settings.editAddressDetails')}: ${address.email}`} disabled={busy} onclick={(event) => openAddressSettings(address, event)}><Pencil size={16} aria-hidden="true" /></IconButton>{/if}
+                  <DropdownMenu id={`address-menu-${address.id}`} triggerAriaLabel={`${t('settings.moreActions')}: ${address.email}`} align="end" showChevron={false}>
+                    {#snippet trigger()}<MoreHorizontal size={17} aria-hidden="true" />{/snippet}
+                    <button role="menuitem" type="button" disabled={!domain || busy} onclick={(event) => { if (domain) openDiagnostics(domain, address, event); }}>{t('settings.diagnostics')}</button>
+                    {#if address.lifecycle_status === 'deleted'}
+                      <button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'restore')}>{t('settings.restoreAddress')}</button>
+                    {:else}
+                      {#if route === 'importable'}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'import')}>{t('settings.importRule')}</button>{/if}
+                      <button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, address.lifecycle_status === 'active' ? 'disable' : 'enable')}>{t(address.lifecycle_status === 'active' ? 'settings.disableAddress' : 'settings.enableAddress')}</button>
+                      {#if address.lifecycle_status === 'active'}
+                        {#if address.send_enabled}
+                          <button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'disable_send')}>{t('settings.disableSending')}</button>
+                          {#if !address.is_default_sender}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id] || !canSendFrom(address)} onclick={() => void runAction(address, 'make_default')}>{t('settings.setDefaultSender')}</button>{/if}
+                        {:else}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id] || !canSendFrom({ ...address, send_enabled: 1 })} onclick={() => void runAction(address, 'enable_send')}>{t('settings.enableSending')}</button>{/if}
+                      {/if}
+                      {#if ['error', 'unknown', 'pending', 'deleting'].includes(address.routing_state)}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'retry')}>{t('settings.retryRouting')}</button>{/if}
+                      <button role="menuitem" class="danger" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={(event) => void openDeletePreview(address, event)}>{t('settings.deleteAddress')}</button>
+                    {/if}
+                  </DropdownMenu>
+                </div></td>
+              </tr>
+            {/each}
+            {#if !addressPage.total}<tr><td colspan="6" class="empty-cell">{addresses.length || invalidDomainFilter ? t('settings.noMatches') : t('settings.noMailAddresses')}</td></tr>{/if}
+          </tbody>
+        </table>
+      {/if}
+    </div>
+    <footer class="resource-pagination">
+      <p role="status">{t('settings.filteredCount', { visible: currentPage.total, total: totalResources })}</p>
+      {#if view === 'domains'}<span class="count-help">{t('settings.addressCountHelp')}</span>{/if}
+      {#if currentPage.pageCount > 1}<div><IconButton ariaLabel={t('settings.previousPage')} disabled={currentPage.page <= 1} onclick={() => pageNumber = currentPage.page - 1}><ChevronLeft size={17} aria-hidden="true" /></IconButton><span>{t('settings.resourcePage', { page: currentPage.page, pages: currentPage.pageCount })}</span><IconButton ariaLabel={t('settings.nextPage')} disabled={currentPage.page >= currentPage.pageCount} onclick={() => pageNumber = currentPage.page + 1}><ChevronRight size={17} aria-hidden="true" /></IconButton></div>{/if}
+    </footer>
   {/if}
-</Panel>
+</section>
+
+{#if createAddressOpen}
+  <Dialog open id="add-mail-address-dialog" title={t('settings.addMailAddress')} dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#add-mail-address" initialFocus="#mail-identity-address" onClose={() => requestClose()}>
+    <form id="create-mail-address-form" class="identity-form" onsubmit={createAddress}>
+      <label for="mail-identity-domain">{t('settings.mailDomain')}</label>
+      <select id="mail-identity-domain" bind:value={selectedDomainId} disabled={busy || unknownWrite}>
+        {#each availableDomains as domain (domain.id)}<option value={domain.id}>{domain.domain_name}</option>{/each}
+      </select>
+      <TextField id="mail-identity-address" label={t('settings.quickAddressLocalPart')} value={localPart} required maxlength={64} disabled={busy || unknownWrite} placeholder="hello" autocomplete="off" oninput={(event) => { localPart = event.currentTarget.value; createError = ''; }} />
+      <p class="address-preview"><span>{t('settings.addressPreview')}</span><strong>{unknownWrite && createAttempt ? createAttempt.email : expectedEmail}</strong></p>
+      <details><summary>{t('settings.optionalAddressSettings')}</summary><div class="identity-form optional-fields">
+        <TextField id="mail-identity-name" label={t('settings.mailAddressDisplayName')} value={displayName} maxlength={128} disabled={busy || unknownWrite} oninput={(event) => displayName = event.currentTarget.value} />
+        <TextArea id="mail-identity-signature" label={t('settings.mailAddressSignature')} value={signature} rows={4} disabled={busy || unknownWrite} oninput={(event) => signature = event.currentTarget.value} />
+      </div></details>
+      {#if !onboarding.canManageRouting}<p class="attention">{t('settings.routingManagementMissing')}</p>{/if}
+      {#if createError}<p class="message error" role="alert">{createError}</p>{/if}
+      {#if unknownWrite}{#if !createExistingConflict}<p class="attention" role="status">{t('settings.writeOutcomeUnknown')}</p>{/if}<Button variant="secondary" loading={pendingAction === 'verify'} disabled={busy} onclick={() => void verifyWriteOutcome()}>{t('settings.verifyWriteOutcome')}</Button>{#if createFoundAddressId}<Button variant="secondary" disabled={busy} onclick={() => requestClose(() => { const address = addresses.find((item) => item.id === createFoundAddressId); const domain = domains.find((item) => item.id === address?.domain_id); createAddressOpen = false; if (domain && address) openDiagnostics(domain, address); })}>{t('settings.diagnostics')}</Button>{/if}{/if}
+    </form>
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="create-mail-address-form" disabled={busy || unknownWrite || !selectedDomainId || !localPart.trim()} aria-busy={pendingAction === 'create'}>{t('settings.createMailAddress')}</button>{/snippet}
+  </Dialog>
+{/if}
+
+{#if addDomainOpen}
+  <Dialog open id="add-mail-domain-dialog" title={t('settings.addMailDomain')} dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#add-mail-domain" initialFocus="#new-mail-domain" onClose={() => requestClose()}>
+    <MailDomainSetup available={onboarding.available} workerName={onboarding.workerName} busy={Boolean(pendingAction)} onCreated={domainCreated} onRefresh={async () => { await load(); }} onDirtyChange={(value) => domainSetupDirty = value} onPendingChange={(value) => domainSetupBusy = value} onFormStateChange={(state) => domainFormCanSubmit = state.canSubmit} hideActions onError={onError} />
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="mail-domain-setup-form" disabled={!domainFormCanSubmit || busy} aria-busy={domainSetupBusy}>{t('settings.connectMailDomain')}</button>{/snippet}
+  </Dialog>
+{/if}
 
 {#if domainSettingsTarget}
-  <Dialog open title={t('settings.domainSettings')} description={domainSettingsTarget.domain_name} dismissible={!pendingAction} onClose={() => domainSettingsTarget = null}>
-    <form class="identity-settings-form" onsubmit={saveDomainSettings}>
-      <p class="muted">{t('settings.domainMappingLocked')}</p>
-      <label><input type="checkbox" bind:checked={domainEnabled} disabled={Boolean(pendingAction)} /> {t('settings.domainEnabled')}</label>
-      <p class="muted">{t('settings.domainDisableHelp')}</p>
+  <Dialog open id="domain-settings" title={t('settings.domainSettings')} description={domainSettingsTarget.domain_name} dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#add-mail-domain" initialFocus="#domain-enabled" onClose={() => requestClose()}>
+    <form id="domain-settings-form" class="identity-form" onsubmit={saveDomainSettings}>
+      <p>{t('settings.domainMappingLocked')}</p>
+      <dl class="readonly-mapping"><div><dt>{t('settings.domainName')}</dt><dd>{domainSettingsTarget.domain_name}</dd></div><div><dt>{t('settings.domainZoneId')}</dt><dd>{domainSettingsTarget.cloudflare_zone_id}</dd></div><div><dt>Worker</dt><dd>{domainSettingsTarget.worker_name}</dd></div></dl>
+      <label><input id="domain-enabled" type="checkbox" bind:checked={domainEnabled} disabled={busy || unknownWrite} /> {t('settings.domainEnabled')}</label>
+      <p class="attention">{t('settings.domainDisableHelp')}</p>
       <label for="domain-unknown-policy">{t('settings.unknownRecipients')}</label>
-      <select id="domain-unknown-policy" bind:value={unknownPolicy} disabled={Boolean(pendingAction)}>
-        <option value="reject">{t('settings.unknownReject')}</option>
-        <option value="collect">{t('settings.unknownCollect')}</option>
-      </select>
-      <p class="muted">{t('settings.collectRequiresWorkerCatchAll')}</p>
+      <select id="domain-unknown-policy" bind:value={unknownPolicy} disabled={busy || unknownWrite}><option value="reject">{t('settings.unknownReject')}</option><option value="collect">{t('settings.unknownCollect')}</option></select>
+      <p class="attention">{t('settings.collectRequiresWorkerCatchAll')}</p>
+      {#if domainSettingsTarget.catch_all_target === 'external'}<p class="attention">{t('settings.externalCatchAllRisk')}</p>{/if}
       {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
-      <Button type="submit" loading={pendingAction === 'domain-settings'}>{t('settings.saveIdentitySettings')}</Button>
+      {#if unknownWrite}<p class="attention">{t('settings.writeOutcomeUnknown')}</p><Button variant="secondary" disabled={busy} onclick={() => void verifyWriteOutcome()}>{t('settings.verifyWriteOutcome')}</Button>{/if}
     </form>
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="domain-settings-form" disabled={busy || unknownWrite} aria-busy={pendingAction === 'domain-settings'}>{t('settings.saveIdentitySettings')}</button>{/snippet}
   </Dialog>
 {/if}
 
 {#if editAddressTarget}
-  <Dialog open title={t('settings.editAddressDetails')} description={editAddressTarget.email} dismissible={!pendingAction} onClose={() => editAddressTarget = null}>
-    <form class="identity-settings-form" onsubmit={saveAddressSettings}>
-      <TextField id="edit-address-name" label={t('settings.mailAddressDisplayName')} value={editDisplayName} maxlength={128} disabled={Boolean(pendingAction)} oninput={(event) => editDisplayName = event.currentTarget.value} />
-      <TextArea id="edit-address-signature" label={t('settings.mailAddressSignature')} value={editSignature} rows={5} disabled={Boolean(pendingAction)} oninput={(event) => editSignature = event.currentTarget.value} />
+  <Dialog open id="edit-mail-address" title={t('settings.editAddressDetails')} description={editAddressTarget.email} dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#add-mail-address" initialFocus="#edit-address-name" onClose={() => requestClose()}>
+    <form id="address-settings-form" class="identity-form" onsubmit={saveAddressSettings}>
+      <dl class="readonly-mapping"><div><dt>{t('settings.mailAddress')}</dt><dd>{editAddressTarget.email}</dd></div><div><dt>{t('settings.mailDomain')}</dt><dd>{domains.find((domain) => domain.id === editAddressTarget?.domain_id)?.domain_name}</dd></div></dl>
+      <TextField id="edit-address-name" label={t('settings.mailAddressDisplayName')} value={editDisplayName} maxlength={128} disabled={busy || unknownWrite} oninput={(event) => editDisplayName = event.currentTarget.value} />
+      <TextArea id="edit-address-signature" label={t('settings.mailAddressSignature')} value={editSignature} rows={5} disabled={busy || unknownWrite} oninput={(event) => editSignature = event.currentTarget.value} />
       {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
-      <Button type="submit" loading={pendingAction === 'address-settings'}>{t('settings.saveIdentitySettings')}</Button>
+      {#if unknownWrite}<p class="attention">{t('settings.writeOutcomeUnknown')}</p><Button variant="secondary" disabled={busy} onclick={() => void verifyWriteOutcome()}>{t('settings.verifyWriteOutcome')}</Button>{/if}
     </form>
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="address-settings-form" disabled={busy || unknownWrite} aria-busy={pendingAction === 'address-settings'}>{t('settings.saveIdentitySettings')}</button>{/snippet}
   </Dialog>
 {/if}
+
+{#if diagnosticsDomain}
+  <Dialog open id="mail-diagnostics" title={t('settings.diagnostics')} description={diagnosticsAddress?.email ?? diagnosticsDomain.domain_name} size="lg" dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#refresh-mail-resources" onClose={() => requestClose()}>
+    <MailIdentityDiagnostics domain={diagnosticsDomain} address={diagnosticsAddress} check={checks[diagnosticsDomain.id]} {busy} showActions={false} />
+    {#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
+    {#if notice}<p class="message" role="status">{notice}</p>{/if}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button>{#if diagnosticsAddress && diagnosticsAddress.lifecycle_status !== 'deleted' && ['error','unknown','pending','deleting'].includes(diagnosticsAddress.routing_state)}<Button variant="secondary" disabled={busy || unresolvedAddressActions[diagnosticsAddress.id]} onclick={() => void runAction(diagnosticsAddress!, 'retry')}>{t('settings.retryRouting')}</Button>{/if}<Button loading={pendingAction === `check:${diagnosticsDomain.id}`} disabled={busy || unresolvedDomainChecks[diagnosticsDomain.id]} onclick={() => void checkDomain(diagnosticsDomain!)}>{t('settings.checkMailDomain')}</Button>{/snippet}
+  </Dialog>
+{/if}
+
+{#if syncOpen}
+  <Dialog open id="sync-mail-resources" title={t('settings.syncCloudflare')} dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#refresh-mail-resources" onClose={() => requestClose()}>
+    <p>{t('settings.syncImportExplanation')}</p>
+    {#if !onboarding.available}<p class="attention" role="status">{t(onboarding.workerName ? 'settings.domainReadPermissionMissing' : 'settings.domainWorkerMissing')}</p>{/if}
+    {#if syncNotice}<p class="message success" role="status">{syncNotice}</p>{/if}
+    {#if syncError}<p class="message attention" role="alert">{syncError}</p>{/if}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button><Button disabled={busy || !onboarding.available} loading={pendingAction === 'sync'} onclick={() => void syncResources()}>{t('settings.syncImportConfirm')}</Button>{/snippet}
+  </Dialog>
+{/if}
+
+<ConfirmDialog open={discardOpen} id="discard-mail-resource-changes" title={t('settings.discardChangesTitle')} description={t('settings.discardChangesDescription')} confirmLabel={t('settings.discardChanges')} cancelLabel={t('settings.keepEditing')} onConfirm={discardChanges} onCancel={() => { discardOpen = false; discardAction = null; }} />
 
 {#if deleteTarget}
   <Dialog
@@ -882,6 +758,8 @@
     size="lg"
     dismissible={!pendingAction.endsWith(':delete')}
     closeOnBackdrop={!pendingAction.endsWith(':delete')}
+    {restoreFocusElement}
+    fallbackFocus="#refresh-mail-resources"
     onClose={closeDeletePreview}
   >
     {#snippet children()}
@@ -889,6 +767,7 @@
         <p role="status" class="preview-note">{t('settings.deletePreviewLoading')}</p>
       {:else if deletePreviewError}
         <p role="alert" class="preview-warning">{deletePreviewError}</p>
+        <Button variant="secondary" onclick={() => void openDeletePreview(deleteTarget!)}>{t('settings.refreshList')}</Button>
       {:else if deletePreview}
         <div class="delete-preview">
           <p>{t('settings.mailAddressHistoryRetained')}</p>
@@ -905,12 +784,12 @@
             <fieldset>
               <legend>{t('settings.deletePreviewPolicy')}</legend>
               {#if deletePreview.policies.retain_reject_route.available}
-                <label><input type="radio" name="mail-address-delete-policy" value="retain_reject_route" bind:group={deletePolicy} />
+                <label><input type="radio" name="mail-address-delete-policy" value="retain_reject_route" disabled={busy} bind:group={deletePolicy} />
                   <span><strong>{t('settings.deletePolicyRetainLabel')}</strong><small>{t('settings.deletePolicyRetainDescription')}</small></span>
                 </label>
               {/if}
               {#if deletePreview.policies.remove_owned_route.available}
-                <label><input type="radio" name="mail-address-delete-policy" value="remove_owned_route" bind:group={deletePolicy} />
+                <label><input type="radio" name="mail-address-delete-policy" value="remove_owned_route" disabled={busy} bind:group={deletePolicy} />
                   <span><strong>{t('settings.deletePolicyRemoveLabel')}</strong><small>{t('settings.deletePolicyRemoveDescription')}</small></span>
                 </label>
               {/if}
@@ -934,86 +813,83 @@
 {/if}
 
 <style>
-  .provider-sync { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  .provider-sync p { flex: 1; min-width: 12rem; margin: 0; }
-  .manual-domain-setup { margin-bottom: 1rem; }
-  .manual-domain-setup summary { cursor: pointer; margin-bottom: 0.75rem; }
-  .identity-settings-form { display: grid; gap: 0.75rem; }
-  .message { margin: 0 0 var(--space-3); font-size: 13px; }
-  .error, .safe-error { color: var(--fm-danger); }
-  .success { color: var(--fm-success); }
+  .resource-manager { max-width: 80rem; margin-inline: auto; min-width: 0; color: var(--fm-text); font-size: 14px; }
+  .resource-header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  h1 { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 650; line-height: 1.3; }
+  .resource-count { color: var(--fm-text-muted); font-size: 14px; font-weight: 500; }
+  .resource-toolbar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .resource-search { flex: 1; min-width: 12rem; }
+  .toolbar-field { display: grid; gap: 5px; min-width: 8rem; max-width: 16rem; font-size: 13px; color: var(--fm-text-secondary); }
+  .toolbar-actions, .row-actions, .resource-pagination > div { display: flex; align-items: center; gap: 4px; }
+  select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface); color: var(--fm-text); }
+  .table-wrap { border: 1px solid var(--fm-border); border-radius: var(--radius-md); }
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  th { text-align: left; font-weight: 600; font-size: 13px; color: var(--fm-text-secondary); background: var(--fm-surface-subtle); }
+  th, td { padding: 12px; border-bottom: 1px solid var(--fm-border); vertical-align: middle; overflow-wrap: anywhere; }
+  th:first-child { width: 34%; }
+  th.secondary-column { width: 15%; }
+  th.capability-column { width: 11%; }
+  th.actions-column { width: 108px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--fm-surface-hover); }
+  .identity-link { text-align: left; font-weight: 600; overflow-wrap: anywhere; }
+  .identity-link:hover, .text-action:hover { text-decoration: underline; }
+  .text-action { color: var(--fm-primary); padding: 4px; min-height: 32px; }
+  .display-name { display: block; margin-top: 3px; color: var(--fm-text-secondary); }
+  .default-badge { display: inline-block; margin-top: 4px; padding: 2px 6px; border: 1px solid var(--fm-border); border-radius: 4px; color: var(--fm-text-secondary); font-size: 12px; }
+  .state-badge { display: inline-block; color: var(--fm-text-secondary); font-size: 13px; }
+  .ready, .success { color: var(--fm-success); }
   .attention { color: var(--fm-warning); }
-  .muted, .setup-hint { color: var(--fm-text-muted); font-size: 13px; }
-  .create-form { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface-subtle); }
-  .form-title { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; }
-  .create-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: var(--space-3); }
-  .field-label { display: block; min-width: 0; font-size: 12px; color: var(--fm-text-secondary); }
-  select { width: 100%; min-height: 40px; margin-top: 5px; padding: 0 10px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); color: var(--fm-text); background: var(--fm-surface); }
-  .signature-field { grid-column: 1 / -1; }
-  .domain-list { display: grid; gap: var(--space-3); margin-top: var(--space-4); }
-  .domain-card { min-width: 0; padding: var(--space-4); border: 1px solid var(--fm-border); border-radius: var(--radius-md); }
-  .domain-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
-  .domain-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-  .domain-heading { min-width: 0; }
-  .domain-heading h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 650; }
-  .domain-heading p { margin: 4px 0 0; color: var(--fm-text-muted); font-size: 12px; }
-  .quick-create-form { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface-subtle); }
-  .quick-address-field { display: flex; min-width: 0; align-items: end; gap: var(--space-2); }
-  .quick-address-field :global(label) { flex: 1; min-width: 0; }
-  .quick-address-domain { flex: 0 1 auto; min-width: 0; max-width: 50%; min-height: 40px; display: inline-flex; align-items: center; color: var(--fm-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
-  .quick-create-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .quick-create-notice { margin: var(--space-3) 0 0; color: var(--fm-success); font-size: 12px; }
-  .quick-create-notice.attention { color: var(--fm-warning); }
-  .capability-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 0; padding: var(--space-3) 0; border-block: 1px solid var(--fm-border); }
-  .capability-summary > div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .capability-summary dt { color: var(--fm-text-secondary); font-size: 13px; font-weight: 600; }
-  .capability-summary dd { display: inline-flex; align-items: center; gap: var(--space-1); margin: 0; color: var(--fm-danger); font-size: 13px; font-weight: 600; white-space: nowrap; }
-  .capability-summary dd.ready { color: var(--fm-success); }
-  .capability-summary dd.attention { color: var(--fm-warning); }
-  .domain-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; margin: 0 0 var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--fm-border); font-size: 12px; }
-  .domain-status div { display: flex; justify-content: space-between; gap: 8px; }
-  .domain-status dt { color: var(--fm-text-muted); }
-  .domain-status dd { margin: 0; color: var(--fm-text); text-align: right; }
-  .warning { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 var(--space-3); color: var(--fm-warning); font-size: 12px; }
-  .warning :global(svg) { flex: none; margin-top: 1px; }
-  .empty-addresses { margin: 0; }
-  .address-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .address-list li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, auto) auto; align-items: center; gap: 10px; min-width: 0; padding-top: 8px; }
-  .address-list li + li { border-top: 1px solid var(--fm-border); }
-  .address-list li.deleted { opacity: .76; }
-  .address-info { display: grid; min-width: 0; gap: 2px; }
-  .address-info strong { overflow-wrap: anywhere; font-size: 13px; font-weight: 600; }
-  .address-info span, .route-state { color: var(--fm-text-muted); font-size: 11px; }
-  .address-state { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; }
-  .pill { border-radius: var(--radius-pill); padding: 2px 7px; color: var(--fm-text-secondary); background: var(--fm-surface-subtle); font-size: 10px; white-space: nowrap; }
-  .pill.success { color: var(--fm-success); }
-  .pill.danger { color: var(--fm-danger); }
-  .address-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
-  .safe-error { margin: 4px 0 0; font-size: 11px; }
-  .delete-preview { display: grid; gap: var(--space-3); color: var(--fm-text-secondary); font-size: 13px; }
-  .delete-preview dl { display: grid; gap: var(--space-2); }
-  .delete-preview dl > div { display: grid; grid-template-columns: minmax(7rem, 1fr) 2fr; gap: var(--space-2); }
+  .error, .danger { color: var(--fm-danger); }
+  .detail-link { display: flex; gap: 4px; align-items: center; text-align: left; min-height: 32px; margin-top: 4px; font-size: 12px; }
+  .detail-link :global(svg) { flex: none; }
+  .mobile-summary, .mobile-capabilities { display: none; }
+  .empty-cell { text-align: center; padding: 32px 16px; color: var(--fm-text-muted); }
+  .message { margin-block: 12px; overflow-wrap: anywhere; line-height: 1.6; }
+  .table-loading { display: grid; gap: 1px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); }
+  .resource-pagination { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; padding-top: 10px; color: var(--fm-text-muted); font-size: 13px; }
+  .resource-manager :global([role="menuitem"]) { display: block; width: 100%; min-height: 40px; padding: 8px 10px; text-align: left; border-radius: 4px; font-size: 13px; overflow-wrap: anywhere; }
+  .resource-manager :global([role="menuitem"]:hover:not(:disabled)) { background: var(--fm-surface-hover); }
+  .resource-manager :global([role="menuitem"]:disabled) { opacity: .5; }
+  .identity-form { display: grid; gap: 12px; font-size: 14px; }
+  .identity-form p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+  .identity-form label { color: var(--fm-text-secondary); }
+  .optional-fields { margin-top: 12px; }
+  .address-preview { display: grid; gap: 4px; padding: 10px; background: var(--fm-surface-subtle); border-radius: var(--radius-md); overflow-wrap: anywhere; }
+  .address-preview span { color: var(--fm-text-muted); font-size: 13px; }
+  .readonly-mapping { display: grid; gap: 8px; }
+  .readonly-mapping div { display: grid; gap: 4px; }
+  .readonly-mapping dt { color: var(--fm-text-muted); font-size: 13px; }
+  .readonly-mapping dd { margin: 0; overflow-wrap: anywhere; }
+  .submit-button { display: inline-flex; justify-content: center; align-items: center; min-height: 40px; border-radius: var(--radius-md); padding: 8px 14px; background: var(--fm-primary); color: var(--fm-text-inverse); font-size: 14px; font-weight: 600; }
+  .submit-button:disabled { opacity: .5; cursor: not-allowed; }
+  button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--fm-primary); outline-offset: 2px; }
+  .delete-preview { display: grid; gap: 12px; color: var(--fm-text-secondary); font-size: 14px; }
+  .delete-preview dl { display: grid; gap: 8px; }
+  .delete-preview dl > div { display: grid; grid-template-columns: minmax(7rem, 1fr) 2fr; gap: 8px; }
   .delete-preview dt { color: var(--fm-text-muted); }
-  .delete-preview dd { min-width: 0; overflow-wrap: anywhere; color: var(--fm-text); }
-  .delete-preview fieldset { display: grid; gap: var(--space-2); border: 1px solid var(--fm-border); border-radius: var(--radius-md); padding: var(--space-3); }
-  .delete-preview legend { padding: 0 var(--space-1); font-weight: 600; color: var(--fm-text); }
-  .delete-preview label { display: flex; align-items: flex-start; gap: var(--space-2); cursor: pointer; }
-  .delete-preview label span { display: grid; gap: 2px; }
+  .delete-preview dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+  .delete-preview fieldset { display: grid; gap: 8px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); padding: 12px; }
+  .delete-preview label { display: flex; align-items: start; gap: 8px; }
+  .delete-preview label span { display: grid; gap: 4px; }
   .delete-preview label small, .preview-note { color: var(--fm-text-muted); }
   .preview-warning { color: var(--fm-danger); }
-  @media (max-width: 720px) {
-    .create-grid { grid-template-columns: minmax(0, 1fr); }
-    .signature-field { grid-column: auto; }
-    .domain-header { flex-direction: column; align-items: stretch; }
-    .domain-header-actions { justify-content: flex-start; }
-    .quick-address-field { flex-direction: column; align-items: stretch; }
-    .quick-address-domain { max-width: 100%; min-height: 0; }
-    .quick-create-actions :global(button:first-child) { flex: 1 0 100%; }
-    .quick-create-actions :global(button:not(:first-child)) { flex: 1; }
-    .capability-summary { grid-template-columns: minmax(0, 1fr); }
-    .domain-status { grid-template-columns: minmax(0, 1fr); }
-    .address-list li { grid-template-columns: minmax(0, 1fr) auto; }
-    .address-state { grid-column: 1; justify-content: flex-start; }
-    .address-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  @media (max-width: 760px) {
+    .secondary-column { display: none; }
+    th:first-child { width: auto; }
+    th.capability-column { width: 16%; }
+    .mobile-summary { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--fm-text-muted); font-size: 13px; }
+    .toolbar-field { flex: 1; min-width: 7rem; max-width: 100%; }
+  }
+  @media (max-width: 540px) {
+    .capability-column { display: none; }
+    .mobile-capabilities { display: flex; gap: 8px; flex-wrap: wrap; color: var(--fm-text-secondary); font-size: 13px; margin-top: 5px; }
+    .resource-search { flex-basis: 100%; }
+    th, td { padding: 10px 8px; }
+    th.actions-column { width: 104px; }
+    .row-actions { gap: 0; }
+    .resource-header :global(button), .submit-button, .text-action, .identity-link, .detail-link { min-height: 44px; }
+    .resource-manager :global([role="menuitem"]) { min-height: 44px; }
+    .delete-preview dl > div { grid-template-columns: 1fr; }
   }
 </style>

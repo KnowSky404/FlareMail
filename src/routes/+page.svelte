@@ -1,6 +1,6 @@
 <script lang="ts">
   import { navigationCounts } from '$lib/client/navigation-counts';
-  import { afterNavigate, goto, pushState, replaceState } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, tick, untrack } from 'svelte';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
@@ -145,6 +145,7 @@
   } from '$lib/domain/mail';
 
   type AppSection = WorkspaceSection;
+  type ManagementNavigationGuard = (proceed: () => void) => boolean;
 
   type ComposeAutosaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
   type DraftConflictInfo = Pick<MailMessage, 'id' | 'sentAt'>;
@@ -218,6 +219,7 @@
   let bulkLabelPending = $state(false);
   let deleteLabelConfirmOpen = $state(false);
   let managementView = $state<WorkspaceUrlState['managementView']>('settings');
+  let managementNavigationGuard = $state<ManagementNavigationGuard | null>(null);
   type ProfilePaneComponent = (typeof import('$lib/components/mail/ProfilePane.svelte'))['default'];
   type MailIdentityManagerComponent = (typeof import('$lib/components/mail/MailIdentityManager.svelte'))['default'];
   let ProfilePane = $state<ProfilePaneComponent | null>(null);
@@ -229,8 +231,6 @@
   const managementTitle = $derived(managementView === 'settings'
     ? t('common.settings')
     : managementView === 'domains' ? t('shell.domains') : t('shell.addresses'));
-  let createAddressDomainId = $state('');
-  let createAddressLocalPart = $state('');
   let selectedMessageId = $state<string | null>(null);
   let deepLinkedMessage = $state<MailMessage | null>(null);
   let selectedMessageIds = $state<string[]>([]);
@@ -426,9 +426,64 @@
   // SvelteKit shallow pushState changes history/page.state, not page.url.
   // Track the visible browser URL so list filters and Back/Forward share one source.
   let browserWorkspaceUrl = $state<string | null>(null);
+  let recordWorkspaceHistory: (() => void) | null = null;
+  let managementHistoryTransition: 'undo' | 'replay' | null = null;
+  const readSvelteKitHistoryIndex = (state: unknown) => {
+    const value = state && typeof state === 'object' ? (state as Record<string, unknown>)['sveltekit:history'] : null;
+    return typeof value === 'number' ? value : null;
+  };
+  const readSvelteKitNavigationIndex = (state: unknown) => {
+    const value = state && typeof state === 'object' ? (state as Record<string, unknown>)['sveltekit:navigation'] : null;
+    return typeof value === 'number' ? value : null;
+  };
   const currentWorkspaceUrl = $derived(browserWorkspaceUrl ? new URL(browserWorkspaceUrl) : page.url);
   const urlState = $derived(readWorkspaceUrl(currentWorkspaceUrl));
-  afterNavigate(() => { browserWorkspaceUrl = window.location.href; });
+  function managementUrlLeavesCurrentView(nextUrl: URL) {
+    if (!managementNavigationGuard || activeSection !== 'profile' || managementView === 'settings') return false;
+    const currentState = readWorkspaceUrl(currentWorkspaceUrl);
+    const nextState = readWorkspaceUrl(nextUrl);
+    return nextState.section !== 'profile' ||
+      nextState.managementView !== managementView ||
+      (managementView === 'addresses' && nextState.managementDomainId !== currentState.managementDomainId);
+  }
+
+  beforeNavigate((navigation) => {
+    if (
+      managementHistoryTransition !== null ||
+      navigation.type !== 'popstate' ||
+      !navigation.to ||
+      !managementUrlLeavesCurrentView(navigation.to.url)
+    ) return;
+
+    const delta = navigation.delta;
+    const replay = () => {
+      if (!delta) return;
+      managementHistoryTransition = 'replay';
+      window.history.go(delta);
+    };
+    // A clean guard returns true and lets this popstate continue. A dirty or
+    // busy guard returns false, cancels it, and may call replay after consent.
+    if (managementNavigationGuard?.(replay) === false) navigation.cancel();
+  });
+
+  afterNavigate(() => {
+    managementHistoryTransition = null;
+    browserWorkspaceUrl = window.location.href;
+    recordWorkspaceHistory?.();
+    const visibleUrl = new URL(window.location.href);
+    const visibleState = readWorkspaceUrl(visibleUrl);
+    if (visibleState.section === 'profile' && visibleState.managementView === 'addresses' && visibleUrl.searchParams.has('domain') && !visibleState.managementDomainId) {
+      // Initial afterNavigate runs before Kit enables replaceState. Normalize
+      // only this accepted URL after initialization, without adding history.
+      queueMicrotask(() => {
+        if (window.location.href !== visibleUrl.href) return;
+        const normalized = buildWorkspaceUrl(visibleUrl, { managementDomainId: null });
+        replaceState(normalized, page.state);
+        browserWorkspaceUrl = normalized.href;
+        recordWorkspaceHistory?.();
+      });
+    }
+  });
   const urlSection = $derived(urlState.section);
   const urlManagementView = $derived(urlState.managementView);
   const urlManagementDomainId = $derived(urlState.managementDomainId);
@@ -443,8 +498,6 @@
     activeSection = urlSection;
     activeLabelId = urlLabelId;
     managementView = urlManagementView;
-    createAddressDomainId = urlManagementDomainId ?? '';
-    if (urlManagementView !== 'addresses') createAddressLocalPart = '';
     searchQuery = urlQuery;
     mailFilter = urlFilter;
     inboxCategory = urlCategory;
@@ -1125,11 +1178,25 @@
     } else {
       pushState(next, page.state);
     }
+    recordWorkspaceHistory?.();
   }
 
   function setSection(section: AppSection, syncUrl = true) {
+    const navigate = () => setSectionNow(section, syncUrl);
+    if (
+      managementNavigationGuard &&
+      activeSection === 'profile' &&
+      managementView !== 'settings'
+    ) {
+      if (managementNavigationGuard(navigate) !== false) navigate();
+      return;
+    }
+    navigate();
+  }
+
+  function setSectionNow(section: AppSection, syncUrl = true) {
     if (section === 'label') {
-      if (activeLabelId) selectLabel(activeLabelId);
+      if (activeLabelId) selectLabelNow(activeLabelId);
       return;
     }
     clearMailboxRefreshTimer();
@@ -1200,6 +1267,15 @@
   }
 
   function selectLabel(id: string) {
+    const navigate = () => selectLabelNow(id);
+    if (managementNavigationGuard && activeSection === 'profile' && managementView !== 'settings') {
+      if (managementNavigationGuard(navigate) !== false) navigate();
+      return;
+    }
+    navigate();
+  }
+
+  function selectLabelNow(id: string) {
     if (!userLabels.some((label) => label.id === id)) return;
     clearMailboxRefreshTimer();
     activeLabelId = id;
@@ -1332,14 +1408,24 @@
     }
   }
 
-  function setManagementView(view: 'domains' | 'addresses', domainId = '', addressLocalPart = '') {
-    setSection('profile', false);
-    managementView = view;
-    createAddressDomainId = domainId;
-    createAddressLocalPart = addressLocalPart;
-    mailIdentityFilter = null;
-    selectedMessageId = null;
-    updateWorkspaceUrl({ section: 'profile', managementView: view, managementDomainId: domainId || null, query: '', filter: 'all', identityFilter: null, messageId: null });
+  function setManagementView(view: 'domains' | 'addresses', domainId = '') {
+    const navigate = () => {
+      setSectionNow('profile', false);
+      managementView = view;
+      mailIdentityFilter = null;
+      selectedMessageId = null;
+      updateWorkspaceUrl({ section: 'profile', managementView: view, managementDomainId: domainId || null, query: '', filter: 'all', identityFilter: null, messageId: null });
+    };
+    if (
+      managementNavigationGuard &&
+      activeSection === 'profile' &&
+      managementView !== 'settings' &&
+      managementView !== view
+    ) {
+      if (managementNavigationGuard(navigate) !== false) navigate();
+      return;
+    }
+    navigate();
   }
 
   function clearMailboxRefreshTimer() {
@@ -2661,8 +2747,64 @@
   });
 
   onMount(() => {
-    const syncBrowserWorkspaceUrl = () => { browserWorkspaceUrl = window.location.href; };
+    let currentHistoryIndex = readSvelteKitHistoryIndex(history.state);
+    let currentNavigationIndex = readSvelteKitNavigationIndex(history.state);
+    recordWorkspaceHistory = () => {
+      const historyIndex = readSvelteKitHistoryIndex(history.state);
+      const navigationIndex = readSvelteKitNavigationIndex(history.state);
+      if (historyIndex !== null) currentHistoryIndex = historyIndex;
+      if (navigationIndex !== null) currentNavigationIndex = navigationIndex;
+    };
+    const syncBrowserWorkspaceUrl = (event?: PopStateEvent) => {
+      const historyState = event?.state ?? history.state;
+      const navigationIndex = readSvelteKitNavigationIndex(historyState);
+      // Full navigations are handled by SvelteKit's beforeNavigate/afterNavigate
+      // hooks. Updating the reactive URL here would expose the target view
+      // before a dirty navigation has been accepted.
+      if (navigationIndex !== null && currentNavigationIndex !== null && navigationIndex !== currentNavigationIndex) return;
+      browserWorkspaceUrl = window.location.href;
+      const historyIndex = readSvelteKitHistoryIndex(historyState);
+      if (historyIndex !== null) currentHistoryIndex = historyIndex;
+      if (navigationIndex !== null) currentNavigationIndex = navigationIndex;
+    };
     syncBrowserWorkspaceUrl();
+    // SvelteKit treats shallow pushState entries as state updates and skips
+    // beforeNavigate for them. Capture those popstates before the router so a
+    // dirty management dialog can cancel and replay the exact history delta.
+    const captureShallowPopstate = (event: PopStateEvent) => {
+      const targetHistoryIndex = readSvelteKitHistoryIndex(event.state);
+      const targetNavigationIndex = readSvelteKitNavigationIndex(event.state);
+      if (targetHistoryIndex === null || targetNavigationIndex === null || currentHistoryIndex === null || currentNavigationIndex === null) return;
+      if (targetNavigationIndex !== currentNavigationIndex) return;
+      const delta = targetHistoryIndex - currentHistoryIndex;
+      if (managementHistoryTransition !== null) {
+        managementHistoryTransition = null;
+        return;
+      }
+      if (!delta) return;
+      currentHistoryIndex = targetHistoryIndex;
+      // A browser history transition while a resource manager is mounted is
+      // an exit from its current editing context. The shallow URL can still
+      // carry the previous SvelteKit page URL, so deriving the target from
+      // the route's reactive URL state here can incorrectly skip the guard.
+      // Let the manager decide whether the current context is dirty; clean
+      // managers return true and the original transition continues.
+      if (!managementNavigationGuard || activeSection !== 'profile' || managementView === 'settings') return;
+      const replay = () => {
+        managementHistoryTransition = 'replay';
+        window.history.go(delta);
+      };
+      if (managementNavigationGuard?.(replay) !== false) return;
+      event.stopImmediatePropagation();
+      managementHistoryTransition = 'undo';
+      currentHistoryIndex -= delta;
+      window.history.go(-delta);
+    };
+    window.addEventListener('popstate', captureShallowPopstate, { capture: true });
+    // Register the URL synchronizer after the capture guard. Popstate targets
+    // window, so target listeners run in registration order even when one is
+    // marked capture; syncing first would update managementView to the target
+    // URL before the dirty-form guard can inspect the current view.
     window.addEventListener('popstate', syncBrowserWorkspaceUrl);
     const layout = readLayoutPreferences(localStorage);
     sidebarCollapsed = layout.sidebarCollapsed;
@@ -2719,8 +2861,10 @@
     const handleLocaleChange = () => toastController.reset();
     window.addEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
     return () => {
+      recordWorkspaceHistory = null;
       document.removeEventListener('keydown', handleShortcut);
       window.removeEventListener('popstate', syncBrowserWorkspaceUrl);
+      window.removeEventListener('popstate', captureShallowPopstate, { capture: true });
       window.removeEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
       window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
       workspaceSync?.close();
@@ -2856,11 +3000,10 @@
                 {:else if managementView !== 'settings' && MailIdentityManager}
                   <MailIdentityManager
                     view={managementView}
-                    initialDomainId={createAddressDomainId}
-                    initialAddressLocalPart={createAddressLocalPart}
-                    onCreateAddressForDomain={(domainId, addressLocalPart) => setManagementView('addresses', domainId, addressLocalPart)}
+                    initialDomainId={urlManagementDomainId ?? ''}
+                    onViewAddressesForDomain={(domainId) => setManagementView('addresses', domainId)}
+                    onNavigationGuardChange={(guard) => { managementNavigationGuard = guard; }}
                     onSelectedDomainChange={(domainId) => {
-                      createAddressDomainId = domainId;
                       updateWorkspaceUrl({ managementDomainId: domainId }, true);
                     }}
                     onOptionsChange={(options) => {
@@ -2880,25 +3023,51 @@
                     data-management-loading
                   >
                     <p class="sr-only">{t('shell.managementLoading', { section: managementTitle })}</p>
-                    <div class="grid gap-2 py-1">
-                      <Skeleton width="11rem" height="1.375rem" />
-                      <Skeleton width="min(24rem, 75%)" height="0.75rem" />
-                    </div>
                     {#if managementView === 'settings'}
+                      <div class="grid gap-2 py-1">
+                        <Skeleton width="11rem" height="1.375rem" />
+                        <Skeleton width="min(24rem, 75%)" height="0.75rem" />
+                      </div>
                       <div class="flex flex-wrap gap-3 border-b border-[var(--fm-border)] pb-4" aria-hidden="true">
                         {#each Array(4) as _, index (index)}<Skeleton width={index === 0 ? '5rem' : '4rem'} height="1.25rem" />{/each}
                       </div>
+                      <div class="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--fm-border)] bg-[var(--fm-surface)]">
+                        <div class="grid gap-2 border-b border-[var(--fm-border)] px-4 py-3">
+                          <Skeleton width="9rem" height="0.875rem" />
+                          <Skeleton width="min(20rem, 75%)" height="0.75rem" />
+                        </div>
+                        <div class="grid gap-4 p-4">
+                          <Skeleton height="2.5rem" />
+                          <Skeleton height="2.5rem" />
+                        </div>
+                      </div>
+                    {:else}
+                      <div class="flex flex-wrap items-center justify-between gap-3 py-1" aria-hidden="true">
+                        <div class="grid gap-2">
+                          <Skeleton width="11rem" height="1.375rem" />
+                          <Skeleton width="min(18rem, 70vw)" height="0.75rem" />
+                        </div>
+                        <Skeleton width="8rem" height="2.25rem" />
+                      </div>
+                      <div class="grid gap-3 border-b border-[var(--fm-border)] py-3 sm:grid-cols-[minmax(12rem,1fr)_9rem_7rem_auto]" aria-hidden="true">
+                        <Skeleton height="2.25rem" />
+                        <Skeleton height="2.25rem" />
+                        <Skeleton height="2.25rem" />
+                        <Skeleton width="5rem" height="2.25rem" />
+                      </div>
+                      <div class="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--fm-border)] bg-[var(--fm-surface)]" aria-hidden="true">
+                        <div class="grid gap-0 divide-y divide-[var(--fm-border)]">
+                          {#each Array(5) as _, index (index)}
+                            <div class="grid min-h-16 gap-3 px-4 py-3 sm:grid-cols-[minmax(12rem,1fr)_9rem_7rem_auto] sm:items-center">
+                              <Skeleton width="min(15rem, 80%)" height="1rem" />
+                              <Skeleton width="6rem" height="0.875rem" />
+                              <Skeleton width="5rem" height="0.875rem" />
+                              <Skeleton width="4rem" height="2rem" />
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
                     {/if}
-                    <div class="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--fm-border)] bg-[var(--fm-surface)]">
-                      <div class="grid gap-2 border-b border-[var(--fm-border)] px-4 py-3">
-                        <Skeleton width="9rem" height="0.875rem" />
-                        <Skeleton width="min(20rem, 75%)" height="0.75rem" />
-                      </div>
-                      <div class="grid gap-4 p-4">
-                        <Skeleton height="2.5rem" />
-                        <Skeleton height="2.5rem" />
-                      </div>
-                    </div>
                   </div>
                 {/if}
               </div>

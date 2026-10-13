@@ -16,6 +16,7 @@
     triggerTitle,
     triggerClass = '',
     initialFocusSelector,
+    restoreFocusOnClose = true,
     showChevron = true,
     class: className = ''
   }: {
@@ -30,6 +31,8 @@
     triggerTitle?: string;
     triggerClass?: string;
     initialFocusSelector?: string;
+    /** Set false when selecting an item immediately opens another overlay. */
+    restoreFocusOnClose?: boolean;
     showChevron?: boolean;
     class?: string;
   } = $props();
@@ -54,7 +57,13 @@
 
   function closeMenu() {
     setOpen(false);
-    requestAnimationFrame(() => triggerElement?.focus({ preventScroll: true }));
+    if (!restoreFocusOnClose) return;
+    requestAnimationFrame(() => {
+      // Selecting a menu item may have opened a dialog in the same event turn.
+      // Its focus trap owns focus; do not pull focus back to the menu trigger.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      triggerElement?.focus({ preventScroll: true });
+    });
   }
 
   function setOpen(next: boolean) {
