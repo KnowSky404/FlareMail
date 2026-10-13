@@ -174,7 +174,7 @@ tests/e2e/workspace.spec.ts
 
 - 新鲜单元/客户端/服务端相关测试日志 [`/tmp/flaremail-management-final-unit.log`](/tmp/flaremail-management-final-unit.log)：633 项通过、0 项失败，3,924 个期望，111 个文件，15.81 秒。缓存自其他项目的浏览器结果未计入。
 - 最终冻结 UI 的 `check` 为 0 errors / 0 warnings，`build` 通过；日志分别为 [`/tmp/flaremail-management-final-check.log`](/tmp/flaremail-management-final-check.log) 和 [`/tmp/flaremail-management-final-build.log`](/tmp/flaremail-management-final-build.log)。malformed syntax URL 的 `queueMicrotask` 清除修复已包含在该结果中。
-- 当前管理测试总数为 23；匹配移动初跑发生在最新 duplicate-409 guard 之前，22 个新增用例加 9 个相关既有用例共 29 项通过、2 项跳过，日志为 [`/tmp/flaremail-management-final-mobile.log`](/tmp/flaremail-management-final-mobile.log)，后续 affected 定向 6 项通过，日志为 [`/tmp/flaremail-management-final-mobile-targeted.log`](/tmp/flaremail-management-final-mobile-targeted.log)。窄屏初跑 20 项通过后收到外部 SIGTERM 143；没有断言失败；随后 4 项定向补跑 3 项通过、1 项因 desktop-only capture 跳过，日志为 [`/tmp/flaremail-management-final-narrow-completion.log`](/tmp/flaremail-management-final-narrow-completion.log)，与初跑合计覆盖 22 个适用的新管理用例。
+- 初始交付管理测试总数为 23；匹配移动初跑发生在最新 duplicate-409 guard 之前，22 个新增用例加 9 个相关既有用例共 29 项通过、2 项跳过，日志为 [`/tmp/flaremail-management-final-mobile.log`](/tmp/flaremail-management-final-mobile.log)，后续 affected 定向 6 项通过，日志为 [`/tmp/flaremail-management-final-mobile-targeted.log`](/tmp/flaremail-management-final-mobile-targeted.log)。窄屏初跑 20 项通过后收到外部 SIGTERM 143；没有断言失败；随后 4 项定向补跑 3 项通过、1 项因 desktop-only capture 跳过，日志为 [`/tmp/flaremail-management-final-narrow-completion.log`](/tmp/flaremail-management-final-narrow-completion.log)，与初跑合计覆盖 22 个适用的新管理用例。
 - Playwright 版本为 1.58.2，官方二进制为 Chromium 1208（145）、Firefox 1509（146）、WebKit 2248（26）。Firefox 最终匹配 25 项中 24 项通过、1 项跳过（23 项新增含 desktop-only capture、2 项相关既有），用时约 2.7 分钟，日志为 [`/tmp/flaremail-management-final-firefox.log`](/tmp/flaremail-management-final-firefox.log)。driver emulate 的 COOP same-origin 初始失败仅作来源记录，不计入最终结果；原生 Firefox preference 0/dark 在 reload 前后同时得到 media 与 `html` dark，产品 headers 未改动，既有动态 dark/light 应用路径和 root Shift+Tab 均通过。证据记录在 [`/tmp/ff-media-coop-findings.txt`](/tmp/ff-media-coop-findings.txt) 和 [`/tmp/ff-media-pref-labels.json`](/tmp/ff-media-pref-labels.json)。
 - WebKit iPhone 26 项中 25 项通过、1 项跳过（日志：`/tmp/flaremail-management-final-webkit-iphone.log`）；iPad 26 项中 25 项通过、1 项跳过、3.9 分钟（日志：`/tmp/flaremail-management-final-webkit-ipad.log`）。WebKit 桌面初始匹配 22 项通过、1 项跳过；affected 定向重跑 7 项通过，日志为 [`/tmp/flaremail-management-final-webkit-desktop-targeted-retry.log`](/tmp/flaremail-management-final-webkit-desktop-targeted-retry.log)；先前 SIGTERM 143 的运行排除在最终结果外。其余矩阵使用现有 `start-local` 脚本的临时副本，仅调整路径；在每个项目新的 D1/R2 状态上执行，确认单次 frozen build 后省略重复 build。临时 harness 没有依赖或配置提交变化，现有 `testMatch` 变更除外。PRE、生产和真实供应商行为本轮未授权，未验证。
 
@@ -203,6 +203,12 @@ tests/e2e/workspace.spec.ts
 实现已使用以下新增 `settings.*` key；中英文值位于 [`src/lib/i18n/messages.ts`](../../src/lib/i18n/messages.ts)。其余标题、操作、状态和诊断文案复用既有 key，`settings.diagnostics` 也保持复用。新增 key 仅覆盖表格搜索/筛选/分页、弹窗脏状态、同步说明和未知写入结果：
 
 `activeAddresses`, `addressAlreadyExistsReadback`, `addressCountHelp`, `addressFoundAfterUnknown`, `addressPrefixInvalid`, `addressPreview`, `addressSearch`, `allDomains`, `allStates`, `clearFilters`, `configuredAddresses`, `deletedAddresses`, `disabledAddresses`, `discardChanges`, `discardChangesDescription`, `discardChangesTitle`, `domainFilter`, `domainSearch`, `filteredCount`, `invalidDomainContext`, `keepEditing`, `loadFailedRetry`, `moreActions`, `needsCheckDetails`, `nextPage`, `noAvailableDomains`, `noMatches`, `optionalAddressSettings`, `previousPage`, `refreshFailedKept`, `refreshList`, `resourceActions`, `resourceOutsideFilter`, `resourcePage`, `resourceStatus`, `savedRefreshFailed`, `sortAscending`, `sortDescending`, `stateFilter`, `syncImportConfirm`, `syncImportExplanation`, `verifyWriteOutcome`, `viewAddresses`, `writeOutcomeUnknown`, `writeVerifiedMissing`。
+
+## PR 审查后的焦点回归修复
+
+PR #10 的 Code Review 发现：共享 DropdownMenu 在已有 ReaderDialog 内关闭时，因页面仍有 Dialog 而跳过焦点恢复。修复区分菜单所属的已有 Dialog 和本次操作新打开的 Dialog：Escape 或不打开新弹层的菜单动作关闭后，焦点回到原菜单按钮；新弹层仍接管焦点。
+
+独立的 `restores ReaderDialog focus after its menu closes` 浏览器用例覆盖这两个关闭路径；既有阅读工作区用例也补充同样的断言。该新增用例不计入上方初始交付的 23 项管理测试矩阵，修复提交的运行结果另记录在 PR 验收证据中。
 
 ## 兼容性结论
 

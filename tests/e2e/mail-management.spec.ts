@@ -70,6 +70,47 @@ async function routeIdentities(page: Page, handler: (payload: IdentityPayload, r
 }
 
 test.describe('mail resource management', () => {
+  test('restores ReaderDialog focus after its menu closes', async ({ page }) => {
+    await login(page);
+    await page.goto('/?folder=inbox', { waitUntil: 'domcontentloaded' });
+
+    const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+    await expect(item).toBeVisible();
+    await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+
+    const detail = page.getByRole('region', { name: '邮件详情' });
+    await expect(detail).toBeVisible();
+    const openReader = detail.getByRole('button', { name: '展开专注阅读' });
+    await openReader.click();
+
+    const reader = page.getByRole('dialog', { name: 'E2E Inbox Welcome' });
+    await expect(reader).toBeVisible();
+    const moreActions = reader.getByRole('button', { name: '更多邮件操作', exact: true });
+
+    await moreActions.focus();
+    await page.keyboard.press('Enter');
+    await expect(reader.getByRole('menu')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(reader).toBeVisible();
+    await expect(reader.getByRole('menu')).toBeHidden();
+    await expect(moreActions).toBeFocused();
+
+    await moreActions.press('Enter');
+    const menu = reader.getByRole('menu');
+    await expect(menu).toBeVisible();
+    const markRead = menu.getByRole('menuitem', { name: /标为(?:已读|未读)/u });
+    await expect(markRead).toBeVisible();
+    const updatedReadState = page.waitForResponse((response) =>
+      response.request().method() === 'PATCH' && new URL(response.url()).pathname.endsWith('/flags')
+    );
+    await markRead.click();
+    await updatedReadState;
+    await expect(reader).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(1);
+    await expect(menu).toBeHidden();
+    await expect(moreActions).toBeFocused();
+  });
+
   test('opens with configured tables and keeps refresh read-only', async ({ page, consoleErrors }) => {
     await login(page);
     let syncPosts = 0;
