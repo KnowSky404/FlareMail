@@ -46,4 +46,5 @@ worktree/branch cleanup. See the
 
 ## License
 
-[GNU Affero General Public License v3.0 or later](./LICENSE) (`AGPL-3.0-or-later`).
+FlareMail is licensed under the [GNU Affero General Public License](./LICENSE),
+version 3 or (at your option) any later version (`AGPL-3.0-or-later`).
