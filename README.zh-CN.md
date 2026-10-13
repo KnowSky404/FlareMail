@@ -46,4 +46,4 @@
 
 ## 许可证
 
-[GNU Affero General Public License v3.0，仅限此版本](./LICENSE)（`AGPL-3.0-only`）。
+[GNU Affero General Public License v3.0 或更高版本](./LICENSE)（`AGPL-3.0-or-later`）。
