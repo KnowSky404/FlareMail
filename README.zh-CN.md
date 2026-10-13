@@ -46,4 +46,5 @@
 
 ## 许可证
 
-[GNU Affero General Public License v3.0 或更高版本](./LICENSE)（`AGPL-3.0-or-later`）。
+FlareMail 采用 [GNU Affero General Public License](./LICENSE) 第 3 版，
+或（由你选择）任何更高版本（`AGPL-3.0-or-later`）。
