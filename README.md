@@ -41,6 +41,7 @@ worktree/branch cleanup. See the
 | [Local development](./docs/DEVELOPMENT.md) | Setup, administrator bootstrap, and verification |
 | [Deployment](./DEPLOY.md) | First deployment, upgrades, and rollback |
 | [Maintenance and recovery](./docs/DEPLOYMENT.md) | Backups, search indexes, cleanup, and recovery |
+| [Inbound reliability](./docs/specs/inbound-delivery-reliability.md) | Ingest conflicts, plus aliases, routing scope, and delivery evidence |
 | [Telegram](./docs/TELEGRAM.md) | Bot setup and notification operations |
 | [All documentation](./docs/README.md) | API, architecture, previews, design, and release records |
 

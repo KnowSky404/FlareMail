@@ -50,6 +50,8 @@ export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, r
   ) return { accepted: false, reason: 'invalid_recipient' };
 
   const domainName = recipient.slice(separator + 1);
+  const plusSeparator = recipient.slice(0, separator).indexOf('+');
+  const baseRecipient = plusSeparator > 0 ? `${recipient.slice(0, plusSeparator)}@${domainName}` : recipient;
   const row = await db.prepare(`
     SELECT
       d.id AS domain_id,
@@ -69,10 +71,14 @@ export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, r
       a.routing_state
     FROM mail_domains AS d
     LEFT JOIN workspace_owner AS o ON o.singleton = 1
-    LEFT JOIN mail_addresses AS a ON lower(a.email) = ?
+    LEFT JOIN mail_addresses AS a ON lower(a.email) IN (?, ?)
     WHERE lower(d.domain_name) = ?
+    ORDER BY CASE WHEN lower(a.email) = ? THEN 0 ELSE 1 END
     LIMIT 1
-  `).bind(recipient, domainName).first<InboundRecipientRow>();
+  `).bind(recipient, baseRecipient, domainName, recipient).first<InboundRecipientRow>();
+
+  // Literal plus identities, including disabled/deleted tombstones, take
+  // precedence over the base address. Keep the actual recipient for storage.
 
   if (!row) return { accepted: false, reason: 'unknown_domain' };
   if (!row.mapped_owner_id || row.mapped_owner_id !== row.owner_user_id) {

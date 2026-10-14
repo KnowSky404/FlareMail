@@ -39,6 +39,7 @@
 | [本地开发](./docs/DEVELOPMENT.md) | 环境准备、管理员初始化与验证 |
 | [部署指南](./DEPLOY.md) | 首次部署、升级与回滚 |
 | [维护与恢复](./docs/DEPLOYMENT.md) | 备份、搜索索引、清理与故障恢复 |
+| [收信可靠性](./docs/specs/inbound-delivery-reliability.md) | 收信锁冲突、子地址、路由范围与验证边界 |
 | [Telegram](./docs/TELEGRAM.md) | Bot 配置与通知运维 |
 | [全部文档](./docs/README.md) | API、架构、预览、设计与发布记录 |
 

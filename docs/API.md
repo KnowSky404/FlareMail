@@ -249,12 +249,33 @@ the domain. `reject_route_preserved` is an expected terminal observation for a
 deleted address whose exact FlareMail route was deliberately retained; checks
 do not enqueue cleanup or reactivate the address.
 
+Inbound plus addressing follows Cloudflare's
+[subaddressing contract](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/#subaddressing).
+An explicitly registered `name+tag` identity takes precedence, including its
+disabled/deleted state. Otherwise the Worker resolves `name+tag` to the
+configured `name` identity and applies the same ownership, lifecycle, receive,
+and routing guards. The original envelope recipient is retained in the stored
+message and dedupe key; aliases do not create another address or grant a new
+sender identity. Without a configured base, the existing unknown-recipient
+policy applies. Cloudflare's subaddressing setting controls whether a base
+routing rule delivers an alias to this Worker.
+
+A processing ingest lease is not proof of persistence. When another invocation
+holds the lease, the Worker rechecks the committed message before treating the
+delivery as a duplicate. If no message exists, it throws `INBOUND_CLAIM_BUSY`
+without writing R2, changing the other claim, or calling `setReject`. A completed
+claim remains evidence of a previously committed delivery, including after an
+operator has deleted that message. See the
+[inbound reliability spec](./specs/inbound-delivery-reliability.md).
+
 The current [Email Routing Worker handler contract](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/)
 documents `message.setReject()` for an explicit refusal but does not promise
 automatic redelivery when a handler throws. FlareMail therefore does not rely
 on throw-to-retry as a delivery guarantee. Inbound storage or D1 failures still
 throw rather than being converted to a permanent reject; their redelivery
 behavior must be verified against the deployed Cloudflare account separately.
+There is no automatic inbound replay queue: a lease expiring or being removed
+does not itself redeliver or reconstruct mail.
 
 ## Sender selection and readiness
 
