@@ -60,3 +60,52 @@ describe('trash API', () => {
     expect((await POST(event('POST', '/api/workspace/trash', env, { action: 'empty' }))).status).toBe(200);
   });
 });
+
+test('paginates more than 500 mixed trash records without gaps, including tied timestamps and IDs', async () => {
+  const { db, env } = fixture();
+  db.query('DELETE FROM workspace_messages').run();
+  const time = '2026-08-19T01:00:00.000Z';
+  const workspace = db.query(`INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, deleted_at) VALUES (?, 'user-1', 'sent', 'User', 'user@example.test', 'Bob', 'bob@example.test', 'Subject', 'Preview', '', ?, ?)`);
+  const draft = db.query(`INSERT INTO workspace_drafts (id, user_id, to_email, subject, body, created_at, updated_at, deleted_at) VALUES (?, 'user-1', 'bob@example.test', 'Draft', '', ?, ?, ?)`);
+  const inbound = db.query(`INSERT INTO email_messages (id, owner_user_id, "from", "to", "timestamp", raw_key) VALUES (?, 'user-1', 'bob@example.test', 'user@example.test', ?, '')`);
+  const state = db.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, deleted_at) VALUES (?, 'user-1', ?, ?)`);
+  for (let i = 0; i < 201; i++) {
+    const id = `item-${String(i).padStart(4, '0')}`;
+    workspace.run(id, time, time); draft.run(id, time, time, time); inbound.run(id, time); state.run(`state-${id}`, id, time);
+  }
+  workspace.run('foreign', time, time);
+  db.query(`UPDATE workspace_messages SET user_id = 'other-owner' WHERE id = 'foreign'`).run();
+  const keys: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const response = await GET(event('GET', `/api/workspace/trash?limit=40${cursor ? `&cursor=${cursor}` : ''}`, env));
+    expect(response.status).toBe(200);
+    const { data } = await response.json() as { data: { items: Array<{ kind: string; id: string }>; nextCursor: string | null; hasMore: boolean } };
+    expect(data.items.length).toBeLessThanOrEqual(40);
+    keys.push(...data.items.map((item) => `${item.kind}:${item.id}`));
+    expect(data.hasMore).toBe(data.nextCursor !== null);
+    cursor = data.nextCursor;
+  } while (cursor);
+  expect(keys).toHaveLength(603);
+  expect(new Set(keys).size).toBe(603);
+  expect(keys.some((key) => key.includes('foreign'))).toBe(false);
+});
+
+test('trash cursor survives deletion of its boundary and rejects invalid and foreign cursors', async () => {
+  const { db, env } = fixture();
+  db.query(`INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at, deleted_at) VALUES ('m-0', 'user-1', 'sent', 'User', 'user@example.test', 'Bob', 'bob@example.test', '', '', '', '2026-08-19T00:00:00Z', '2026-08-19T01:00:00Z')`).run();
+  const response = await GET(event('GET', '/api/workspace/trash?limit=1', env));
+  const { data } = await response.json() as { data: { nextCursor: string } };
+  db.query(`DELETE FROM workspace_messages WHERE id = 'm-1'`).run();
+  const next = await GET(event('GET', `/api/workspace/trash?limit=1&cursor=${data.nextCursor}`, env));
+  expect(next.status).toBe(200);
+  expect((await next.json() as { data: { items: Array<{ id: string }> } }).data.items[0]?.id).toBe('m-0');
+  expect((await GET(event('GET', '/api/workspace/trash?cursor=invalid', env))).status).toBe(400);
+  const foreign = event('GET', `/api/workspace/trash?cursor=${data.nextCursor}`, env) as { locals: { workspaceSession: WorkspaceContext } };
+  foreign.locals.workspaceSession = { ...session, userId: 'other-owner' };
+  expect((await GET(foreign as never)).status).toBe(400);
+  expect((await GET(event('GET', '/api/workspace/trash?limit=0', env))).status).toBe(400);
+  const unauthenticated = event('GET', '/api/workspace/trash', env) as { locals: Record<string, unknown> };
+  unauthenticated.locals = {};
+  expect((await GET(unauthenticated as never)).status).toBe(401);
+});

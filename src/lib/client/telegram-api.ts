@@ -79,10 +79,15 @@ export function unbindTelegram() {
   return requestJson<TelegramSettingsStatus>(`${settingsPath}/unbind`, { method: 'POST' });
 }
 
-export function fetchTelegramDeliveries(signal?: AbortSignal) {
-  return requestJson<{ deliveries: TelegramDeliverySummary[] }>(`${settingsPath}/deliveries`, { signal });
-}
+
 
 export function retryTelegramDelivery(id: string) {
   return requestJson<{ queued: true; warning: 'unknown_delivery' | null }>(`${settingsPath}/deliveries/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+}
+
+export interface TelegramDeliveryPage { deliveries: TelegramDeliverySummary[]; nextCursor: string | null; hasMore: boolean; }
+export function fetchTelegramDeliveries(cursor: string | null = null, signal?: AbortSignal) {
+  const params = new URLSearchParams({ limit: '20' });
+  if (cursor) params.set('cursor', cursor);
+  return requestJson<TelegramDeliveryPage>(`${settingsPath}/deliveries?${params}`, { signal });
 }

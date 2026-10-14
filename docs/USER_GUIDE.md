@@ -6,6 +6,8 @@
 
 Open **Domains** or **Email addresses** from the sidebar. Each page starts with a table of the resources already saved for the Owner. Use the **Add domain** or **Add address** button for a dialog; edit an existing row from its accessible Edit pencil action. Refresh reads the saved list and keeps the current table context. A failed read is shown as an error instead of an empty configuration.
 
+Domains and addresses show 25 rows per page. Use Previous page and Next page; changing search, sort, or filters returns to the first page.
+
 Use the domain and state filters to narrow the table. The domain address count includes every non-deleted address, including disabled addresses. Selecting **View addresses** applies that domain as a real address-list filter. Deleted addresses are available through the explicit deleted-state filter and expose only the recovery and diagnostics actions that apply to a tombstone.
 
 Both tables start with 10 rows per page. Use **Rows per page** in the footer to choose 10, 20, 50, or 100. Changing the size returns to the first page and keeps your search, filters, and sort order. Reloading the browser page restores the default size.
@@ -63,11 +65,15 @@ The editor supports To/Cc/Bcc recipients, attachment uploads, and autosaved draf
 
 Use the delivery timeline to review submission, delivery, and failure events. Submission to Resend is separate from confirmed delivery. If the login session expires, keep the compose tab open, sign in again, and review the action before retrying.
 
+Mail folders, categories, search, Starred, and label views show up to 40 mail records per page. Conversation grouping can produce fewer rows or show the same conversation on adjacent pages. Previous page restores a visited page; Next page replaces the current list. Bulk selection and default actions apply to the current page. Explicit filtered-conversation or Owner-conversation expansion remains available; turning a page clears both selection and the expansion choice. Trash also shows 40 records per page. A refresh or change of query restarts server pagination at the first page.
+
 ## Settings and notifications
 
 Open Settings from the desktop sidebar or mobile navigation. The top-right account menu shows your account information, **About**, and **Sign out**. About opens a centered dialog with the project version, GitHub repository link, and `© KnowSky404` attribution. The version follows `package.json`; it does not include deployment identifiers. Close it with its Close button, Escape, or the backdrop; focus returns to the account button and unsaved settings remain intact.
 
-Settings groups profile, notifications, appearance, diagnostics, and Telegram controls. Choose English, Simplified Chinese, or the browser's language. Interface dates, counts, and accessibility labels follow the chosen language; original mail content remains unchanged.
+Settings has five tabs: Profile, Notifications, Appearance, Diagnostics, and Telegram. Only the selected tab is shown. Switching tabs keeps unsaved inputs; Profile and Notifications each save their own fields. Appearance applies immediately, and Telegram uses its own actions. Diagnostics includes shortcuts to Domains and Email addresses.
+
+Use the global language control in desktop Display preferences or the mobile navigation drawer. Choose English, Simplified Chinese, or the browser's language. Interface dates, counts, and accessibility labels follow the chosen language; original mail content remains unchanged.
 
 On desktop, open Display preferences in the top-right corner to choose a theme, density, or language directly from the option cards. Each group has one Tab stop; arrow keys switch choices, Home/End select the first/last choice, and Escape closes the panel. Language preferences persist across reloads. The circular service-status icon opens workspace status details; green indicates healthy status and red indicates attention is needed.
 

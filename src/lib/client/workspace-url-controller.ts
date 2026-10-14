@@ -1,3 +1,4 @@
+import { readSettingsTab, type SettingsTab } from './settings-tabs';
 import type { MailboxIdentityFilter, MailboxSection, InboxCategoryFilter } from '$lib/domain/mail';
 import type { MailFilter, WorkspaceSection } from './mailbox-controller';
 
@@ -5,6 +6,7 @@ export type WorkspaceUrlState = {
   section: WorkspaceSection;
   managementView: 'settings' | 'domains' | 'addresses';
   managementDomainId: string | null;
+  settingsTab: SettingsTab;
   query: string;
   filter: MailFilter;
   category: InboxCategoryFilter;
@@ -17,6 +19,7 @@ export type WorkspaceUrlUpdates = {
   section?: WorkspaceSection;
   managementView?: WorkspaceUrlState['managementView'];
   managementDomainId?: string | null;
+  settingsTab?: SettingsTab;
   query?: string;
   filter?: MailFilter;
   category?: InboxCategoryFilter;
@@ -42,6 +45,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const identityMatch = identity?.match(/^(domain|address):([A-Za-z0-9:._-]{1,128})$/u);
   return {
     section,
+    settingsTab: section === 'profile' && view !== 'domains' && view !== 'addresses' ? readSettingsTab(url) : 'profile',
     managementView: section === 'profile' && (view === 'domains' || view === 'addresses') ? view : 'settings',
     managementDomainId: section === 'profile' && view === 'addresses' && validManagementResourceId(managementDomainId)
       ? managementDomainId : null,
@@ -70,6 +74,13 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
     } else {
       next.searchParams.delete('view');
     }
+  }
+  const settingsState = readWorkspaceUrl(next);
+  if (settingsState.section !== 'profile' || settingsState.managementView !== 'settings') next.searchParams.delete('tab');
+  else if (updates.settingsTab !== undefined) {
+    next.hash = '';
+    if (updates.settingsTab === 'profile') next.searchParams.delete('tab');
+    else next.searchParams.set('tab', updates.settingsTab);
   }
   const currentState = readWorkspaceUrl(url);
   const targetSection = updates.section ?? currentState.section;

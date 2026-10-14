@@ -1,6 +1,9 @@
 import type { Locale } from './locale';
 
 const zhCN = {
+  'pagination.label': '列表分页',
+  'pagination.current': '第 {page} 页',
+  'pagination.empty': '暂无结果',
   'common.cancel': '取消',
   'common.close': '关闭',
   'common.confirm': '确认',
@@ -919,6 +922,9 @@ export type MessageValues = Readonly<Record<string, string | number | boolean | 
 export type MessageCatalog = Record<MessageKey, string>;
 
 const en = {
+  'pagination.label': 'List pagination',
+  'pagination.current': 'Page {page}',
+  'pagination.empty': 'No results',
   'common.cancel': 'Cancel',
   'common.close': 'Close',
   'common.confirm': 'Confirm',

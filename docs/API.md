@@ -381,8 +381,12 @@ user's binding or delivery rows.
   test line to the current active/enabled chat.
 - `POST /api/workspace/notifications/telegram/unbind` revokes the binding,
   increments its authorization version, and cancels pending/not-started rows.
-- `GET /api/workspace/notifications/telegram/deliveries?limit=...` returns
-  owner-scoped status metadata without body or attachment content.
+- `GET /api/workspace/notifications/telegram/deliveries?limit=...&cursor=...` returns
+  owner-scoped status metadata without body or attachment content. The response
+  contains `deliveries`, `hasMore`, and `nextCursor` (null at the end). Limit
+  defaults to 20 and accepts 1–50; omit cursor for the first page. Cursors bind
+  the Owner and creation-time/ID order. Invalid or foreign cursors return
+  `400 INVALID_CURSOR`; invalid limits return `400 INVALID_LIMIT`.
 - `POST /api/workspace/notifications/telegram/deliveries/:id/retry` is a
   manual owner-scoped retry for failed/retryable/unknown rows. The response
   carries a manual-duplicate warning for `unknown_delivery`.
@@ -658,9 +662,16 @@ creating a new provider idempotency key.
 message, draft, or inbound state and records its deletion time; repeated
 requests are idempotent. Normal mailbox lists and counts exclude these rows.
 
-`GET /api/workspace/trash?limit=100` returns one ownership-scoped list across
+`GET /api/workspace/trash?limit=100&cursor=...` returns one ownership-scoped page across
 workspace messages, drafts, and inbound messages. Each item includes its
 `deletedAt` and `originalFolder` (`inbox`, `archive`, `sent`, or `drafts`).
+The response retains `items`, `hasMore`, and `metrics`, and adds `nextCursor`
+(null at the end). Omit cursor for the first page; limit defaults to 100 and
+accepts 1–500, while the browser requests 40. The opaque cursor binds the Owner
+and the merged deletion-time/public-ID/kind order across all three sources.
+It remains usable after its boundary record is removed. Invalid or foreign
+cursors return `400 INVALID_CURSOR`; invalid limits return `400 INVALID_LIMIT`.
+Every request still checks the authenticated Owner independently of the cursor.
 
 `POST /api/workspace/trash/:id` restores an item to the persisted folder and
 archive state. `DELETE /api/workspace/trash/:id` permanently deletes only an

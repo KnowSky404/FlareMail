@@ -240,8 +240,11 @@ and max attempts; 401/403 and other permanent failures become terminal
 The UI can verify the deployment Bot and update its Webhook, then shows
 candidate/active/enabled state, the bound Telegram display-name and username
 summary (never the chat ID), privacy and summary switches, test action, unbind
-action, recent deliveries with localized status labels, and manual retry
-warnings. API responses are the normal `{ ok, data, requestId }` no-store
+action, paginated deliveries with localized status labels, and manual retry
+warnings. Open the Telegram settings tab to load status and history. History
+uses 20 records per page through the deliveries endpoint. Switching settings
+tabs retains binding links and history position while stopping hidden polling
+and focus changes; returning refreshes status and the current history page. API responses are the normal `{ ok, data, requestId }` no-store
 envelope.
 
 The scheduled dispatcher also expires pending challenges and candidate

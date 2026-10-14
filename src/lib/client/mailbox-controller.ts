@@ -15,7 +15,7 @@ import {
   type WorkspaceMetrics,
   type WorkspaceSnapshot
 } from '$lib/domain/mail';
-import { LatestRequest } from './latest-request';
+import { CursorPager } from './cursor-pager';
 
 export type WorkspaceSection = MailboxSection | 'trash' | 'profile';
 
@@ -167,6 +167,14 @@ export function selectionCandidates(
       : visibleThreads.map((thread) => thread.sectionLatestMessage);
 }
 
+/** Reading may show cached replies; list rows remain confined to their record page. */
+export function threadDetailMessages(mailbox: MailboxState, section: MailboxSection, pageMessages: MailMessage[], selected: MailMessage) {
+  if (section !== 'inbox' && section !== 'sent' && section !== 'archive') return [selected];
+  const source = section === 'archive' ? { ...mailbox, inbox: pageMessages } : mailbox;
+  return buildMailThreads(source, section === 'sent' ? 'sent' : 'inbox')
+    .find((thread) => thread.messages.some((message) => message.id === selected.id))?.messages ?? [selected];
+}
+
 export function moveSelection(
   candidates: MailMessage[],
   selectedMessageId: string | null,
@@ -281,7 +289,7 @@ export function mergeMessageDelta(
     const nextMessages = sortMailboxMessages([
       ...(page?.messages ?? []).filter((item) => item.id !== result.message.id),
       result.message
-    ]);
+    ]).slice(0, page?.limit ?? 40);
     const nextPage: MailboxPage = page
       ? { ...page, messages: nextMessages }
       : {
@@ -313,7 +321,7 @@ export function mergeMessageDelta(
   const index = current.findIndex((item) => item.id === result.message.id);
   if (index >= 0) current[index] = result.message;
   else current.push(result.message);
-  nextMailbox[folder] = sortMailboxMessages(current);
+  nextMailbox[folder] = sortMailboxMessages(current).slice(0, snapshot.mailboxPages?.[folder]?.limit ?? 40);
 
   return {
     snapshot: {
@@ -381,7 +389,7 @@ type MailboxPageFetcher = (
 ) => Promise<{ page: MailboxPage }>;
 
 type MailboxControllerCallbacks = {
-  onPage: (page: MailboxPage, append: boolean) => void;
+  onPage: (page: MailboxPage, append: boolean, pageNumber?: number) => void;
   onLoading: (loading: boolean, append: boolean) => void;
   onError: (message: string) => void;
   onRefreshing?: (refreshing: boolean) => void;
@@ -389,133 +397,61 @@ type MailboxControllerCallbacks = {
 
 /** Session-local view cache. No mailbox data is stored in browser persistence. */
 export class MailboxController {
-  private readonly request = new LatestRequest();
-  private readonly cache = new Map<string, { page: MailboxPage; updatedAt: number }>();
-  private loadingAppend: boolean | null = null;
-  private inFlight: { key: string; promise: Promise<boolean> } | null = null;
+  private readonly cache = new Map<string, CursorPager<MailboxPage>>();
+  private current: CursorPager<MailboxPage> | null = null;
 
-  constructor(
-    private readonly fetchPage: MailboxPageFetcher,
-    private readonly callbacks: MailboxControllerCallbacks,
-    private readonly now: () => number = Date.now
-  ) {}
+  constructor(private readonly fetchPage: MailboxPageFetcher, private readonly callbacks: MailboxControllerCallbacks,
+    private readonly now: () => number = Date.now) {}
 
-  seed(page: MailboxPage) {
-    this.remember(this.keyForPage(page), page);
-  }
+  seed(page: MailboxPage) { this.pager(this.params(page.folder, page.query, page.filter, page.identityFilter ?? null, page.labelId ?? null, page.category ?? 'all', page.limit)).seed(page); }
 
   navigate(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
-    return this.fetch(folder, query, filter, identityFilter, labelId, category, false);
+    return this.activate(this.params(folder, query, filter, identityFilter, labelId, category)).load();
   }
-
   refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
-    return this.fetch(folder, query, filter, identityFilter, labelId, category, true);
+    return this.activate(this.params(folder, query, filter, identityFilter, labelId, category)).refresh();
   }
-
-  private fetch(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null, category: InboxCategoryFilter, force: boolean): Promise<boolean> {
-    const params = this.params(folder, query, filter, identityFilter, labelId, category);
-    const key = params.toString();
-    if (this.inFlight?.key === key) return this.inFlight.promise;
-    this.cancel();
-    const cached = this.cache.get(key);
-    if (cached) {
-      this.cache.delete(key);
-      this.cache.set(key, cached);
-      this.callbacks.onPage(cached.page, false);
-      if (!force && this.now() - cached.updatedAt < 30_000) return Promise.resolve(true);
-    }
-    const request = this.request.begin();
-    this.setLoading(!cached, false);
-    this.callbacks.onRefreshing?.(Boolean(cached));
-    const promise = (async () => {
-      try {
-        const result = await this.fetchPage(params, request.signal);
-        if (!request.isCurrent()) return false;
-        this.remember(key, result.page);
-        this.callbacks.onPage(result.page, false);
-        return true;
-      } catch (error) {
-        if (request.isCurrent()) this.callbacks.onError(error instanceof Error ? error.message : '刷新邮件列表失败。');
-        return false;
-      } finally {
-        if (request.isCurrent()) {
-          this.inFlight = null;
-          this.setLoading(false, false);
-          this.callbacks.onRefreshing?.(false);
-        }
-      }
-    })();
-    this.inFlight = { key, promise };
-    return promise;
+  loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
+    if (!currentPage?.nextCursor || !currentPage.hasMore) return Promise.resolve(false);
+    const pager = this.activate(this.params(folder, query, filter, identityFilter, labelId, category, currentPage.limit));
+    return pager.next();
   }
-
-  async loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
-    if (!currentPage?.nextCursor || !currentPage.hasMore) return;
-    this.cancel();
-    const request = this.request.begin();
-    this.setLoading(true, true);
-    const params = this.params(folder, query, filter, identityFilter, labelId, category, currentPage.limit);
-    const key = params.toString();
-    params.set('cursor', currentPage.nextCursor);
-    try {
-      const result = await this.fetchPage(params, request.signal);
-      if (!request.isCurrent()) return false;
-      const merged = mergeMailboxPage({ mailbox: cloneMailbox(), mailboxPages: { [folder]: currentPage }, metrics: createEmptyWorkspaceViewState().metrics }, result.page, true);
-      this.remember(key, merged.mailboxPages![folder]!);
-      this.callbacks.onPage(result.page, true);
-      return true;
-    } catch (error) {
-      if (request.isCurrent()) this.callbacks.onError(error instanceof Error ? error.message : '加载更多邮件失败。');
-    } finally {
-      if (request.isCurrent()) this.setLoading(false, true);
-    }
-    return false;
-  }
-
-  /** Invalidates requests as well as freshness: old pages cannot undo a write. */
-  invalidate() {
-    this.cancel();
-    for (const entry of this.cache.values()) {
-      entry.updatedAt = Number.NEGATIVE_INFINITY;
-      entry.page = { ...entry.page, metrics: undefined };
-    }
-  }
-
+  previousPage() { return this.current?.previous() ?? Promise.resolve(false); }
+  invalidate() { for (const pager of this.cache.values()) pager.invalidate(); }
   patchFlags(id: string, patch: FlagDelta) {
-    const interrupted = this.inFlight !== null || this.loadingAppend !== null;
-    this.invalidate();
-    for (const entry of this.cache.values()) entry.page = patchPageFlags(entry.page, id, patch);
+    const interrupted = this.current?.isPending ?? false;
+    for (const pager of this.cache.values()) pager.patch((page) => ({ ...patchPageFlags(page, id, patch), metrics: undefined }));
     return interrupted;
   }
+  reset() { for (const pager of this.cache.values()) pager.reset(); this.cache.clear(); this.current = null; }
+  cancel() { this.current?.cancel(); }
 
-  reset() {
-    this.cancel();
-    this.cache.clear();
+  private activate(params: URLSearchParams) {
+    const pager = this.pager(params);
+    if (this.current !== pager) { this.cancel(); this.current = pager; }
+    return pager;
   }
-
-  cancel() {
-    const append = this.loadingAppend;
-    this.request.cancel();
-    this.inFlight = null;
-    if (append !== null) this.setLoading(false, append);
-    this.callbacks.onRefreshing?.(false);
+  private pager(params: URLSearchParams) {
+    const key = params.toString();
+    const cached = this.cache.get(key);
+    if (cached) { this.cache.delete(key); this.cache.set(key, cached); return cached; }
+    let first: MailboxPage | null = null;
+    const pager: CursorPager<MailboxPage> = new CursorPager<MailboxPage>(async (cursor, signal) => {
+      const query = new URLSearchParams(params);
+      if (cursor) query.set('cursor', cursor);
+      const initial = pager.firstPage ?? first;
+      const { page } = await this.fetchPage(query, signal);
+      return { ...page, ...(cursor && initial?.searchTotal !== undefined ? { searchTotal: initial.searchTotal, searchHitFields: initial.searchHitFields } : {}) };
+    }, {
+      onResult: (page, number) => { if (number === 1) first = page; this.callbacks.onPage(page, false, number); },
+      onLoading: this.callbacks.onLoading,
+      onError: this.callbacks.onError,
+      onRefreshing: this.callbacks.onRefreshing
+    }, this.now);
+    this.cache.set(key, pager);
+    while (this.cache.size > 16) { const oldest = this.cache.keys().next().value!; this.cache.get(oldest)?.cancel(); this.cache.delete(oldest); }
+    return pager;
   }
-
-  private remember(key: string, page: MailboxPage) {
-    this.cache.delete(key);
-    this.cache.set(key, { page: { ...page, messages: [...page.messages] }, updatedAt: this.now() });
-    while (this.cache.size > 16) this.cache.delete(this.cache.keys().next().value!);
-  }
-
-  private keyForPage(page: MailboxPage) {
-    return this.params(page.folder, page.query, page.filter, page.identityFilter ?? null, page.labelId ?? null, page.category ?? 'all', page.limit).toString();
-  }
-
-  private setLoading(loading: boolean, append: boolean) {
-    this.loadingAppend = loading ? append : null;
-    this.callbacks.onLoading(loading, append);
-  }
-
   private params(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null, labelId: string | null, category: InboxCategoryFilter, limit = 40) {
     const params = new URLSearchParams({ folder, limit: String(limit) });
     if (folder === 'inbox' && category !== 'all') params.set('category', category);

@@ -54,6 +54,7 @@
     removeMessage,
     selectNextMessage,
     selectionCandidates,
+    threadDetailMessages,
     workspaceViewStateFromSnapshot,
     type MailFilter,
     type MessageDelta,
@@ -199,6 +200,10 @@
   const metricsRequest = new LatestRequest();
   const readActivation = new ReadActivationController();
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
+  let mailboxPageNumber = $state(1);
+  let trashPageNumber = $state(1);
+  let turningPage = false;
+  let suppressDefaultSelection = $state(false);
   let trashItems = $state<TrashItem[]>([]);
   let trashHasMore = $state(false);
   let trashLoading = $state(false);
@@ -359,14 +364,16 @@
   const targetMessageRequest = new LatestRequest();
   const draftOpenRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
-    onResult: (result) => {
+    onResult: (result, pageNumber) => {
+      if (turningPage) suppressDefaultSelection = true;
+      trashPageNumber = pageNumber;
       trashItems = result.items;
       trashHasMore = result.hasMore;
       trashLoaded = true;
       trashError = '';
       acceptMetrics(result.metrics, null);
       if (activeSection === 'trash' && (!selectedMessageId || !result.items.some((item) => item.id === selectedMessageId))) {
-        selectedMessageId = result.items[0]?.id ?? null;
+        selectedMessageId = turningPage ? null : result.items[0]?.id ?? null;
       }
     },
     onLoading: (loading) => (trashLoading = loading),
@@ -424,7 +431,7 @@
     labelTargetMessage = null;
     bulkLabelDialogOpen = false;
     deleteLabelConfirmOpen = false;
-    trashController.cancel();
+    trashController.reset();
     targetMessageRequest.cancel();
     draftOpenRequest.cancel();
     inboundDetailCache.cancel();
@@ -482,6 +489,15 @@
     recordWorkspaceHistory?.();
     const visibleUrl = new URL(window.location.href);
     const visibleState = readWorkspaceUrl(visibleUrl);
+    if (visibleState.section === 'profile' && visibleState.managementView === 'settings' && (visibleUrl.hash.startsWith('#settings-') || visibleUrl.searchParams.has('tab') && visibleUrl.searchParams.get('tab') !== visibleState.settingsTab)) {
+      queueMicrotask(() => {
+        if (window.location.href !== visibleUrl.href) return;
+        const normalized = buildWorkspaceUrl(visibleUrl, { settingsTab: visibleState.settingsTab });
+        replaceState(normalized, page.state);
+        browserWorkspaceUrl = normalized.href;
+        recordWorkspaceHistory?.();
+      });
+    }
     if (visibleState.section === 'profile' && visibleState.managementView === 'addresses' && visibleUrl.searchParams.has('domain') && !visibleState.managementDomainId) {
       // Initial afterNavigate runs before Kit enables replaceState. Normalize
       // only this accepted URL after initialization, without adding history.
@@ -651,11 +667,9 @@
   );
   const activeThreads = $derived(
     activeSection === 'inbox' || activeSection === 'sent'
-      ? searchQuery.trim()
-        ? buildMailThreads(activeSection === 'inbox' ? { ...mailbox, sent: [] } : { ...mailbox, inbox: [] }, activeSection)
-        : buildMailThreads(mailbox, activeSection)
+      ? buildMailThreads(activeSection === 'inbox' ? { ...mailbox, sent: [] } : { ...mailbox, inbox: [] }, activeSection)
       : activeSection === 'archive'
-        ? buildMailThreads({ ...mailbox, inbox: activeMessages }, 'inbox')
+        ? buildMailThreads({ ...mailbox, inbox: activeMessages, sent: [] }, 'inbox')
         : []
   );
   const visibleMessages = $derived.by(() =>
@@ -710,7 +724,7 @@
     }
 
     return threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
-      ?? (selectedMessageId || readingLayout === 'list' ? null : threads[0]);
+      ?? (selectedMessageId || readingLayout === 'list' || suppressDefaultSelection ? null : threads[0]);
   });
   const selectedThreadId = $derived(selectedThread?.id ?? null);
   const selectedMessage = $derived.by(() => {
@@ -722,7 +736,7 @@
         return null;
       }
 
-      return list.find((message) => message.id === selectedMessageId) ?? (selectedMessageId || readingLayout === 'list' ? null : list[0]);
+      return list.find((message) => message.id === selectedMessageId) ?? (selectedMessageId || readingLayout === 'list' || suppressDefaultSelection ? null : list[0]);
     }
 
     const thread = selectedThread;
@@ -737,7 +751,8 @@
       thread.latestMessage
     );
   });
-  const selectedThreadMessages = $derived(selectedThread?.messages ?? (selectedMessage ? [selectedMessage] : []));
+  const selectedThreadMessages = $derived(selectedMessage && selectedThread && activeSection !== 'trash' && activeSection !== 'profile'
+    ? threadDetailMessages(mailbox, activeSection, activeMessages, selectedMessage) : selectedMessage ? [selectedMessage] : []);
   const selectedReplyAllAvailable = $derived(Boolean(
     selectedMessage &&
       activeSection !== 'trash' &&
@@ -866,6 +881,10 @@
   };
 
   function applyMessageDelta(result: MessageDelta, options?: { section?: AppSection; preferredMessageId?: string | null; clearMailView?: boolean; removeDraftId?: string }) {
+    const targetSection = options?.section ?? activeSection;
+    const previous = targetSection === 'profile' || targetSection === 'trash'
+      ? undefined : mailboxPages?.[targetSection]?.messages.find((message) => message.id === result.message.id);
+    const pageMembershipChanged = result.message.folder === targetSection && (!previous || previous.sentAt !== result.message.sentAt);
     mailboxController.invalidate();
     metricsCache.clear();
     metricsRequest.cancel();
@@ -913,7 +932,7 @@
       updateWorkspaceUrl({ section: options.section, query: options.clearMailView ? '' : undefined, filter: options.clearMailView ? 'all' : undefined,
         identityFilter: options.clearMailView ? null : undefined, messageId: options.section === 'profile' ? null : selectedMessageId }, true);
     }
-    if (options?.clearMailView || !merged.messageApplied || !merged.metricsApplied) {
+    if (pageMembershipChanged || options?.clearMailView || !merged.messageApplied || !merged.metricsApplied) {
       scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter);
     }
   }
@@ -1009,6 +1028,7 @@
       syncUrl?: boolean;
     }
   ) {
+    mailboxPageNumber = 1;
     mailboxController.reset();
     flagController.reset();
     readActivation.reset();
@@ -1022,7 +1042,7 @@
       inboundDetailCache.reset();
       deliveryDetailCache.reset();
       workspaceBodyCache.reset();
-      trashController.cancel();
+      trashController.reset();
       trashItems = [];
       trashHasMore = false;
       trashLoaded = false;
@@ -1076,7 +1096,7 @@
     metricsCache.clear();
     labelRequest.cancel();
     cancelLabelActions();
-    trashController.cancel();
+    trashController.reset();
     authenticated = false;
     deepLinkedMessage = null;
     profile = initial.profile;
@@ -1106,6 +1126,7 @@
     aboutRestoreFocusElement = null;
     mailboxLoading = false;
     mailboxLoadingMore = false;
+    trashPageNumber = 1;
     trashItems = [];
     trashHasMore = false;
     trashLoading = false;
@@ -1173,6 +1194,7 @@
     updates: {
       section?: AppSection;
       managementView?: WorkspaceUrlState['managementView'];
+      settingsTab?: import('$lib/client/settings-tabs').SettingsTab;
       managementDomainId?: string | null;
       query?: string;
       filter?: MailFilter;
@@ -1212,6 +1234,7 @@
       return;
     }
     clearMailboxRefreshTimer();
+    suppressDefaultSelection = false;
     selectedMessageIds = [];
     bulkThreadScope = 'selected';
     activeSection = section;
@@ -1552,7 +1575,7 @@
     if (!authenticated || authExpired) return;
     if (activeSection === 'trash') {
       if (mailIdentityFilter) await refreshMetrics(mailIdentityFilter, true);
-      const refreshed = await trashController.load();
+      const refreshed = await trashController.refresh();
       if (refreshed) {
         runtimeOperationError = false;
         if (announce) notify(t('notify.trashRefreshed'), 'success');
@@ -1688,7 +1711,7 @@
       (!selectedMessageId || !currentMessages.some((message) => message.id === selectedMessageId)) &&
       !(selectedMessageId && deepLinkedMessage?.id === selectedMessageId && (readerOpen || mobileDetailOpen || readingLayout === 'split'))
     ) {
-      if (readingLayout === 'split') selectedMessageId = currentMessages[0]?.id ?? null;
+      if (!turningPage && readingLayout === 'split') selectedMessageId = currentMessages[0]?.id ?? null;
       else if (selectedMessageId && !urlMessageId) selectedMessageId = null;
     }
   }
@@ -1742,7 +1765,7 @@
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
         acceptMetrics(result.result.metrics, metricsScope);
       }
-      if (action === 'trash') trashLoaded = false;
+      if (action === 'trash') { trashController.invalidate(); trashLoaded = false; }
       selectedMessageIds = [];
       bulkThreadScope = 'selected';
       await refreshWorkspace(false);
@@ -1766,7 +1789,7 @@
   }
 
   const mailboxController = new MailboxController(fetchMailboxPage, {
-    onPage: (page, append) => applyMailboxPage(page, append),
+    onPage: (page, append, pageNumber) => { if (turningPage) suppressDefaultSelection = true; mailboxPageNumber = pageNumber ?? 1; applyMailboxPage(page, append); },
     onLoading: (loading, append) => {
       if (loading && !append) mailboxError = '';
       mailboxLoading = loading && !append;
@@ -1777,8 +1800,29 @@
   });
 
   async function loadMoreMailbox() {
-    if (!authenticated || authExpired || mailboxLoading || mailboxLoadingMore || activeSection === 'profile' || activeSection === 'trash') return;
-    await mailboxController.loadMore(activeSection, searchQuery, mailFilter, mailboxPages?.[activeSection], mailIdentityFilter, activeSection === 'label' ? activeLabelId : null, activeSection === 'inbox' ? inboxCategory : 'all');
+    if (activeSection === 'trash') { await turnListPage(() => trashController.next()); return; }
+    if (!authenticated || authExpired || mailboxLoading || mailboxLoadingMore || activeSection === 'profile') return;
+    const section = activeSection;
+    await turnListPage(() => mailboxController.loadMore(section, searchQuery, mailFilter, mailboxPages?.[section], mailIdentityFilter, section === 'label' ? activeLabelId : null, section === 'inbox' ? inboxCategory : 'all'));
+  }
+
+  async function previousListPage() {
+    await turnListPage(() => activeSection === 'trash' ? trashController.previous() : mailboxController.previousPage());
+  }
+
+  async function turnListPage(load: () => Promise<boolean>) {
+    if (turningPage || !authenticated || authExpired || pending) return;
+    turningPage = true;
+    try {
+      if (await load()) {
+        selectedMessageIds = [];
+        bulkThreadScope = 'selected';
+        selectedMessageId = null;
+        deepLinkedMessage = null;
+        mobileDetailOpen = false;
+        updateWorkspaceUrl({ messageId: null }, true);
+      }
+    } finally { turningPage = false; }
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
@@ -2511,13 +2555,14 @@
       mailboxPages = removed.snapshot.mailboxPages;
       metrics = removed.snapshot.metrics;
       runtimeOperationError = false;
+      trashController.invalidate();
       trashLoaded = false;
       if (readingLayout === 'list' && selectedMessageId === message.id) closeMobileDetail();
       else selectedMessageId = readingLayout === 'list' && !mobileDetailOpen ? null : removed.selectedMessageId;
       if (!sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter)) {
         scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter);
       }
-      if (activeSection === 'starred' || activeSection === 'label' || (activeSection === 'inbox' && inboxCategory !== 'all')) await refreshWorkspace(false);
+      if (activeSection !== 'profile' && activeSection !== 'trash') await refreshWorkspace(false);
       selectedMessageIds = selectedMessageIds.filter((id) => id !== result.removedId);
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
@@ -2534,6 +2579,7 @@
             run: async () => {
               const restored = await restoreTrashItem(result.removedId);
               await acceptMutationMetrics(restored.metrics, null);
+              trashController.invalidate();
               trashLoaded = false;
               workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId });
               if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace(false);
@@ -2565,6 +2611,7 @@
       await acceptMutationMetrics(result.metrics, null);
       runtimeOperationError = false;
       removeTrashItemFromView(message.id);
+      await trashController.refresh();
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       notify(t('notify.restoredTo', { folder: result.originalFolder === 'archive' ? t('shell.archive') : result.originalFolder === 'sent' ? t('shell.sent') : result.originalFolder === 'drafts' ? t('shell.drafts') : t('shell.inbox') }), 'success');
     } catch (error) {
@@ -2581,6 +2628,7 @@
       await acceptMutationMetrics(result.metrics, null);
       runtimeOperationError = false;
       removeTrashItemFromView(message.id);
+      await trashController.refresh();
       inboundDetailCache.invalidate(message.id);
       deliveryDetailCache.invalidate(message.id);
       workspaceBodyCache.invalidate(message.id);
@@ -3000,6 +3048,8 @@
               <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
                 {#if managementView === 'settings' && ProfilePane}
                   <ProfilePane
+                    tab={urlState.settingsTab}
+                    onTabChange={(settingsTab) => updateWorkspaceUrl({ settingsTab })}
                     {metrics}
                     {pending}
                     {profile}
@@ -3118,7 +3168,7 @@
                     filter={mailFilter}
                     identityFilter={mailIdentityFilter}
                     identityOptions={mailIdentityOptions}
-                    loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
+                    loading={activeSection === 'trash' ? trashLoading && !trashLoaded : mailboxLoading}
                     onQueryChange={handleSearchQueryChange}
                     onFilterChange={handleFilterChange}
                     onIdentityFilterChange={handleIdentityFilterChange}
@@ -3229,13 +3279,12 @@
                     selectedMessageId={readingLayout === 'list' && !mobileDetailOpen ? null : selectedMessageId}
                     query={searchQuery}
                     filter={mailFilter}
-                    viewKey={[activeSection, inboxCategory, searchQuery.trim(), mailFilter, identityKey(mailIdentityFilter), activeLabelId ?? ''].join('|')}
+                    viewKey={[activeSection, inboxCategory, searchQuery.trim(), mailFilter, identityKey(mailIdentityFilter), activeLabelId ?? '', activeSection === 'trash' ? trashPageNumber : mailboxPageNumber].join('|')}
                     refreshing={mailboxRefreshing}
-                    loading={activeSection === 'trash' ? trashLoading : mailboxLoading}
-                    loadingMore={activeSection === 'trash' ? false : mailboxLoadingMore}
+                    loading={activeSection === 'trash' ? trashLoading && !trashLoaded : mailboxLoading}
+                    loadingMore={activeSection === 'trash' ? trashLoading : mailboxLoadingMore}
                     error={activeSection === 'trash' ? trashError : mailboxError}
                     hasMore={activeSection === 'trash' ? trashHasMore : mailboxPages?.[activeSection]?.hasMore ?? false}
-                    paginationEnd={activeSection === 'trash' ? !trashHasMore : !(mailboxPages?.[activeSection]?.hasMore ?? false)}
                     onSelect={handleSelectMessage}
                     onSelectThread={handleSelectThread}
                     onToggleStar={activeSection === 'trash' ? undefined : handleToggleStar}
@@ -3243,6 +3292,9 @@
                     onFilterChange={handleFilterChange}
                     onClearFilters={clearMailFilters}
                     onRefresh={refreshWorkspace}
+                    pageNumber={activeSection === 'trash' ? trashPageNumber : mailboxPageNumber}
+                    totalPages={activeSection !== 'trash' && mailboxPages?.[activeSection]?.searchTotal !== undefined ? Math.max(1, Math.ceil(mailboxPages[activeSection]!.searchTotal! / mailboxPages[activeSection]!.limit)) : undefined}
+                    onPreviousPage={previousListPage}
                     onLoadMore={loadMoreMailbox}
                     selectable={activeSection !== 'drafts' && activeSection !== 'trash'}
                     selectedMessageIds={selectedMessageIdSet}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
@@ -10,7 +10,7 @@
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
-  import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
+  import { settingsTabs, profileSubmission, acceptProfileSave, type SettingsTab, type EditableSettingsTab } from '$lib/client/settings-tabs';
   import { formatNumber } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
   import { mergeProfileDraft } from '$lib/client/profile-draft';
@@ -33,6 +33,8 @@
 
   let {
     profile,
+    tab = 'profile',
+    onTabChange,
     diagnostics = null,
     metrics,
     serviceDegraded,
@@ -44,6 +46,8 @@
     onOpenAddresses
   }: {
     profile: UserProfile;
+    tab?: SettingsTab;
+    onTabChange?: (tab: SettingsTab) => void;
     diagnostics?: RuntimeDiagnostics | null;
     metrics: WorkspaceMetrics;
     serviceDegraded: boolean;
@@ -67,10 +71,33 @@
       signature: ''
     })
   );
-  let themePreference = $state<ThemePreference>('system');
-  let lastServerProfile: UserProfile | null = null;
   const i18n = useLocale();
   const { t } = i18n;
+  let telegramVisited = $state(false);
+  let focusedTab = $state<SettingsTab>('profile');
+  let feedback = $state<Partial<Record<EditableSettingsTab, { message: string; error: boolean }>>>({});
+  $effect(() => {
+    const current = tab;
+    focusedTab = current;
+    if (current === 'telegram') telegramVisited = true;
+    void tick().then(() => {
+      if (tab === current) document.getElementById(`settings-tab-${current}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+  });
+  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), appearance: t('settings.appearance'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title') });
+
+  function moveTab(event: KeyboardEvent, index: number) {
+    const next = event.key === 'ArrowRight' ? (index + 1) % settingsTabs.length : event.key === 'ArrowLeft' ? (index - 1 + settingsTabs.length) % settingsTabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? settingsTabs.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    focusedTab = settingsTabs[next];
+    const element = document.getElementById(`settings-tab-${focusedTab}`);
+    element?.focus();
+    element?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  let themePreference = $state<ThemePreference>('system');
+  let lastServerProfile: UserProfile | null = null;
+
 
   onMount(() => {
     themePreference = readThemePreference();
@@ -88,11 +115,16 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    const saved = await onSave(createProfileDraft(nextProfile));
+    if (tab !== 'profile' && tab !== 'notifications') return;
+    const submittedTab = tab;
+    const previous = createProfileDraft(profile);
+    feedback[submittedTab] = { message: '', error: false };
+    const saved = await onSave(profileSubmission(profile, nextProfile, submittedTab));
     if (saved) {
-      nextProfile = createProfileDraft(saved);
+      nextProfile = acceptProfileSave(previous, saved, nextProfile, submittedTab);
       lastServerProfile = createProfileDraft(saved);
     }
+    feedback[submittedTab] = { message: saved ? t('notify.profileSaved') : status || t('notify.saveFailed'), error: !saved };
   }
 </script>
 
@@ -100,18 +132,21 @@
   <header class="settings-header">
     <div><h1>{t('settings.title')}</h1>
     <p>{t('settings.description')}</p></div>
-    <LanguageSwitcher />
+
   </header>
 
-  <nav class="settings-section-nav" aria-label={t('settings.sectionNavigation')}>
-    <a href="#settings-profile">{t('settings.profile')}</a>
-    <a href="#settings-notifications">{t('settings.notifications')}</a>
-    <a href="#settings-appearance">{t('settings.appearance')}</a>
-    <a href="#settings-diagnostics">{t('settings.diagnostics')}</a>
-    <a href="#settings-telegram">{t('telegram.title')}</a>
-  </nav>
+  <div class="settings-section-nav" role="tablist" aria-label={t('settings.sectionNavigation')}>
+    {#each settingsTabs as value, index (value)}
+      <button type="button" id={`settings-tab-${value}`} role="tab" aria-selected={tab === value}
+        aria-controls={`settings-panel-${value}`} tabindex={focusedTab === value ? 0 : -1}
+        onfocus={() => focusedTab = value} onkeydown={(event) => moveTab(event, index)}
+        onclick={() => onTabChange?.(value)}>{tabLabels[value]}</button>
+    {/each}
+  </div>
 
+  <div id={tab === 'telegram' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram'}>
   <form onsubmit={submit}>
+    {#if tab === 'profile'}
     <Panel id="settings-profile" class="scroll-mt-[5.25rem]" title={t('settings.profile')} description={t('settings.profileDescription')}>
       <div class="field-grid">
         <TextField
@@ -184,6 +219,8 @@
       </div>
     </Panel>
 
+    {/if}
+    {#if tab === 'notifications'}
     <Panel id="settings-notifications" class="scroll-mt-[5.25rem]" title={t('settings.notifications')} description={t('settings.notificationsDescription')}>
       <Switch
         id="profile-forwarding"
@@ -196,6 +233,8 @@
       <p class="section-note">{t('settings.systemNotifications')}：{diagnostics?.notificationEnabled ? t('settings.runtimeEnabled') : t('settings.runtimeDisabled')}。{t('settings.notificationAddressHidden')}</p>
     </Panel>
 
+    {/if}
+    {#if tab === 'appearance'}
     <Panel id="settings-appearance" class="scroll-mt-[5.25rem]" title={t('settings.appearance')} description={t('settings.appearanceDescription')}>
       <div class="theme-field">
         <Select
@@ -215,6 +254,8 @@
       </div>
     </Panel>
 
+    {/if}
+    {#if tab === 'diagnostics'}
     <Panel id="settings-diagnostics" class="scroll-mt-[5.25rem]" title={t('settings.diagnostics')} description={t('settings.diagnosticsDescription')}>
       {#if diagnostics}
         <dl class="diagnostic-grid">
@@ -234,20 +275,26 @@
       {/if}
     </Panel>
 
+    <Panel title={t('settings.mailIdentities')} description={t('settings.mailIdentitiesDescription')}>
+      <div class="flex flex-wrap gap-2">
+        <Button variant="secondary" onclick={onOpenDomains}>{t('shell.domains')}</Button>
+        <Button variant="secondary" onclick={onOpenAddresses}>{t('shell.addresses')}</Button>
+      </div>
+    </Panel>
+    {/if}
+    {#if tab === 'profile' || tab === 'notifications'}
     <div class="save-row">
       <Button type="submit" loading={pending}>{pending ? t('settings.saving') : t('settings.save')}</Button>
-      {#if status}
-        <p role="status" aria-live="polite" class:error={statusError}>{status}</p>
+      {#if feedback[tab]?.message}
+        <p role="status" aria-live="polite" class:error={feedback[tab]?.error}>{feedback[tab]?.message}</p>
       {/if}
     </div>
+    {/if}
   </form>
-  <Panel title={t('settings.mailIdentities')} description={t('settings.mailIdentitiesDescription')}>
-    <div class="flex flex-wrap gap-2">
-      <Button variant="secondary" onclick={onOpenDomains}>{t('shell.domains')}</Button>
-      <Button variant="secondary" onclick={onOpenAddresses}>{t('shell.addresses')}</Button>
-    </div>
-  </Panel>
-  <div id="settings-telegram" class="settings-anchor"><TelegramNotificationPanel /></div>
+  </div>
+  {#if telegramVisited}
+    <div id="settings-panel-telegram" role="tabpanel" aria-labelledby="settings-tab-telegram" hidden={tab !== 'telegram'}><TelegramNotificationPanel active={tab === 'telegram'} /></div>
+  {/if}
 </div>
 
 <style>
@@ -295,7 +342,7 @@
     scrollbar-width: thin;
   }
 
-  .settings-section-nav a {
+  .settings-section-nav button {
     flex: 0 0 auto;
     min-height: 44px;
     display: inline-flex;
@@ -305,23 +352,23 @@
     color: var(--fm-text-secondary);
     font-size: 13px;
     font-weight: 600;
-    text-decoration: none;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
     white-space: nowrap;
   }
 
-  .settings-section-nav a:hover {
+  .settings-section-nav button:hover {
     background: var(--fm-surface-hover);
     color: var(--fm-text);
   }
 
-  .settings-section-nav a:focus-visible {
+  .settings-section-nav button:focus-visible {
     outline: 2px solid var(--fm-primary);
     outline-offset: -2px;
   }
 
-  .settings-anchor {
-    scroll-margin-top: 5.25rem;
-  }
+  .settings-section-nav button[aria-selected='true'] { color: var(--fm-primary); background: var(--fm-primary-soft); }
 
   form {
     display: grid;

@@ -22,7 +22,7 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 
 | Document | Language | Purpose |
 | --- | --- | --- |
-| [List pagination and settings tabs spec](./specs/list-pagination-and-settings-tabs.md) | 中文 | Confirmed target behavior, pagination APIs, independent settings saves, and acceptance; implementation pending |
+| [List pagination and settings tabs spec](./specs/list-pagination-and-settings-tabs.md) | 中文 | Implemented pagination APIs, independent settings saves, tab navigation, and local acceptance |
 | [Account menu and About spec](./specs/account-menu-and-about.md) | 中文 | Menu actions, project metadata, centered dialog, focus behavior and acceptance |
 | [Inbound reliability spec](./specs/inbound-delivery-reliability.md) | 中文 | Ingest conflicts, plus-address identity mapping, routing scope and verification limits |
 | [Sidebar attention-count spec](./specs/sidebar-attention-counts.md) | 中文 | Attention badges, sending/exception states, identity scope and acceptance |
@@ -42,7 +42,7 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 
 | Document | Language | Purpose |
 | --- | --- | --- |
-| [List pagination and settings analysis](./analysis/list-pagination-and-settings-tabs.md) | 中文 | Current-source audit, confirmed decisions, functional gaps, and verification limits |
+| [List pagination and settings analysis](./analysis/list-pagination-and-settings-tabs.md) | 中文 | Baseline source audit, confirmed decisions, functional gaps, and verification limits |
 | [UI/UX review](./UI_UE_REVIEW.md) | 中文 | Implemented UI changes, acceptance scope, and verification records |
 | [Reading-space QA](./READING_SPACE_QA.md) | 中文 | Layout contracts, browser results, and evidence limits |
 | [September acceptance](./ACCEPTANCE_2026-09.md) | 中文 | Reliability fixes and verification for the recorded release |

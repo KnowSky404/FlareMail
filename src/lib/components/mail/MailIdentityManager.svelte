@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { createPageScroll } from '$lib/client/page-scroll';
+  import Pagination from '$lib/components/ui/Pagination.svelte';
   import { onMount } from 'svelte';
-  import { AlertTriangle, ChevronLeft, ChevronRight, MoreHorizontal, Pencil, Plus, RefreshCw } from '@lucide/svelte';
+  import { AlertTriangle, MoreHorizontal, Pencil, Plus, RefreshCw } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import IconButton from '$lib/components/ui/IconButton.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
@@ -52,6 +54,12 @@
   let domainFilter = $state('');
   let pageNumber = $state(1);
   let pageSize = $state(DEFAULT_RESOURCE_PAGE_SIZE);
+  let listElement = $state<HTMLElement>();
+  const scrollPage = createPageScroll();
+  function turnResourcePage(direction: -1 | 1) {
+    const context = () => JSON.stringify([view, domainSearch, addressSearch, domainStatus, addressStatus, domainFilter, sortDescending, pageSize]);
+    return scrollPage(listElement, context(), currentPage.page, async () => { pageNumber = currentPage.page + direction; return true; }, () => currentPage.page, context);
+  }
   let sortDescending = $state(false);
   let createAddressOpen = $state(false);
   let addDomainOpen = $state(false);
@@ -557,7 +565,7 @@
   <span class="state-badge" class:ready={state === 'ready'} class:attention={state === 'needs_check'}>{capabilityLabel(state)}</span>
 {/snippet}
 
-<section class="resource-manager" aria-labelledby="resource-manager-title" data-mail-resource-manager>
+<section bind:this={listElement} class="resource-manager" aria-labelledby="resource-manager-title" data-mail-resource-manager>
   <header class="resource-header">
     <h1 id="resource-manager-title">{title}<span class="resource-count">{loadedOnce ? totalResources : '…'}</span></h1>
     {#if view === 'domains'}
@@ -701,7 +709,9 @@
             {#each RESOURCE_PAGE_SIZE_OPTIONS as size}<option value={size}>{size}</option>{/each}
           </select>
         </label>
-        {#if currentPage.pageCount > 1}<div class="page-navigation"><IconButton ariaLabel={t('settings.previousPage')} disabled={currentPage.page <= 1} onclick={() => pageNumber = currentPage.page - 1}><ChevronLeft size={17} aria-hidden="true" /></IconButton><span>{t('settings.resourcePage', { page: currentPage.page, pages: currentPage.pageCount })}</span><IconButton ariaLabel={t('settings.nextPage')} disabled={currentPage.page >= currentPage.pageCount} onclick={() => pageNumber = currentPage.page + 1}><ChevronRight size={17} aria-hidden="true" /></IconButton></div>{/if}
+        <Pagination page={currentPage.page} totalPages={currentPage.pageCount} hasPrevious={currentPage.page > 1}
+          hasNext={currentPage.page < currentPage.pageCount} pending={busy || loading} empty={currentPage.total === 0}
+          onPrevious={() => turnResourcePage(-1)} onNext={() => turnResourcePage(1)} />
       </div>
     </footer>
   {/if}
@@ -858,7 +868,7 @@
   .resource-toolbar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .resource-search { flex: 1; min-width: 12rem; }
   .toolbar-field { display: grid; gap: 5px; min-width: 8rem; max-width: 16rem; font-size: 13px; color: var(--fm-text-secondary); }
-  .toolbar-actions, .row-actions, .page-navigation { display: flex; align-items: center; gap: 4px; }
+  .toolbar-actions, .row-actions { display: flex; align-items: center; gap: 4px; }
   select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface); color: var(--fm-text); }
   .table-wrap { border: 1px solid var(--fm-border); border-radius: var(--radius-md); }
   table { width: 100%; table-layout: fixed; border-collapse: collapse; }

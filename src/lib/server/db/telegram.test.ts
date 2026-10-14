@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import {
+  listTelegramDeliveryPage,
   activateTelegramBinding,
   claimTelegramDelivery,
   cleanupTelegramState,
@@ -288,4 +289,25 @@ describe('Telegram D1 state', () => {
     expect(db.query(`SELECT status FROM workspace_telegram_bind_challenges WHERE id = 'challenge-expired'`).get()).toEqual({ status: 'expired' });
     expect(db.query(`SELECT status FROM workspace_telegram_deliveries WHERE id = 'delivery-unknown'`).get()).toEqual({ status: 'unknown_delivery' });
   });
+});
+
+test('Telegram history pages every owned record at a stable tied timestamp and rejects foreign scopes', async () => {
+  const { db, d1 } = database();
+  const time = '2026-09-09T00:00:00.000Z';
+  for (let i = 0; i < 55; i++) {
+    const id = `history-${String(i).padStart(3, '0')}`;
+    db.query(`INSERT INTO email_messages (id, owner_user_id, "from", "to", "timestamp", raw_key) VALUES (?, 'user-1', 'sender@example.test', 'owner@example.test', ?, '')`).run(id, time);
+    db.query(`INSERT INTO workspace_telegram_deliveries (id, owner_user_id, email_message_id, binding_id, authorization_version, status, next_attempt_at, created_at, updated_at) VALUES (?, 'user-1', ?, 'binding', 1, 'sent', ?, ?, ?)`).run(id, id, time, time, time);
+  }
+  const first = await listTelegramDeliveryPage(d1 as unknown as D1Database, 'user-1', 20);
+  const next = await listTelegramDeliveryPage(d1 as unknown as D1Database, 'user-1', 20, first.nextCursor);
+  const last = await listTelegramDeliveryPage(d1 as unknown as D1Database, 'user-1', 20, next.nextCursor);
+  expect(first.deliveries).toHaveLength(20); expect(next.deliveries).toHaveLength(20); expect(last.deliveries).toHaveLength(15);
+  expect(new Set([...first.deliveries, ...next.deliveries, ...last.deliveries].map((row) => row.id)).size).toBe(55);
+  expect(last.nextCursor).toBeNull(); expect(last.hasMore).toBe(false);
+  await expect(listTelegramDeliveryPage(d1 as unknown as D1Database, 'other-owner', 20, first.nextCursor)).rejects.toMatchObject({ code: 'INVALID_CURSOR' });
+  const { encodeListCursor } = await import('../workspace/list-cursor');
+  const trashCursor = encodeListCursor({ scope: 'trash', owner: 'user-1', timestamp: time, id: 'id', kind: 'draft' });
+  await expect(listTelegramDeliveryPage(d1 as unknown as D1Database, 'user-1', 20, trashCursor)).rejects.toMatchObject({ code: 'INVALID_CURSOR' });
+  db.close();
 });

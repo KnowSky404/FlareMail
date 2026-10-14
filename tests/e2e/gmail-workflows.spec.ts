@@ -220,7 +220,7 @@ test('loads categories from the server and preserves deep links, history, pagina
 
     await page.goto('/?folder=inbox&category=primary');
     const nextPage = page.waitForResponse((response) => mailboxResponse(response, 'primary', true));
-    await page.getByRole('button', { name: '加载更多', exact: true }).click();
+    await page.getByRole('button', { name: '下一页', exact: true }).click();
     const response = await nextPage;
     const payload = await response.json() as { data: { page: { messages: Message[] } } };
     expect(payload.data.page.messages.every((message) => message.inboxCategory === 'primary')).toBe(true);
@@ -581,9 +581,10 @@ test('reuses warm category pages with their loaded cursor and no blocking reques
   await login(page);
   await clickCategory(page, '主要', 'primary');
   const nextPage = page.waitForResponse((response) => mailboxResponse(response, 'primary', true));
-  await page.getByRole('button', { name: '加载更多', exact: true }).click();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
   await nextPage;
   await expect(row(page, 'E2E Bulk 45')).toBeAttached();
+  await page.getByRole('button', { name: '上一页', exact: true }).click();
   const scroller = page.locator('.fm-list-scroll');
   await scroller.evaluate((element) => { element.scrollTop = 280; });
   await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(280);
@@ -592,7 +593,7 @@ test('reuses warm category pages with their loaded cursor and no blocking reques
   const requested: string[] = [];
   page.on('request', (request) => { if (new URL(request.url()).pathname === '/api/workspace/mailbox') requested.push(request.url()); });
   await clickCategory(page, '主要', 'primary');
-  await expect(row(page, 'E2E Bulk 45')).toBeAttached();
+  await expect(row(page, 'E2E Bulk 45')).toHaveCount(0);
   await expect(page.getByRole('status', { name: '正在加载邮件', exact: true })).toHaveCount(0);
   await expect(page.getByRole('region', { name: '邮件详情' })).toBeHidden();
   await page.waitForLoadState('networkidle');

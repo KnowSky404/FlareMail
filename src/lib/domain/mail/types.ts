@@ -253,6 +253,7 @@ export interface TrashItem {
 }
 
 export interface TrashListResult {
+  nextCursor: string | null;
   items: TrashItem[];
   hasMore: boolean;
   metrics: WorkspaceMetrics;

@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { ApiError, apiSuccess, withApiHandler } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
-import { hasTelegramTables, listTelegramDeliveries } from '$lib/server/db/telegram';
+import { hasTelegramTables, listTelegramDeliveryPage } from '$lib/server/db/telegram';
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
@@ -9,7 +9,8 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   if (!env?.DB || !await hasTelegramTables(env.DB)) throw new ApiError(503, 'SCHEMA_NOT_READY', 'Telegram 通知数据结构尚未就绪。');
   const limit = Number(event.url.searchParams.get('limit') ?? 20);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new ApiError(400, 'INVALID_LIMIT', '分页参数无效。', undefined, undefined, false);
-  return apiSuccess(event, { deliveries: (await listTelegramDeliveries(env.DB, session.userId, limit)).map((delivery) => ({
+  const page = await listTelegramDeliveryPage(env.DB, session.userId, limit, event.url.searchParams.get('cursor'));
+  return apiSuccess(event, { nextCursor: page.nextCursor, hasMore: page.hasMore, deliveries: page.deliveries.map((delivery) => ({
     id: delivery.id,
     status: delivery.status,
     attempts: delivery.attempts,

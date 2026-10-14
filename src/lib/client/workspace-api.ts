@@ -341,8 +341,10 @@ export function deleteMessage(messageId: string) {
   );
 }
 
-export function fetchTrash(signal?: AbortSignal) {
-  return requestJson<TrashListResult>('/api/workspace/trash?limit=500', { signal });
+export function fetchTrash(signal?: AbortSignal, cursor: string | null = null) {
+  const params = new URLSearchParams({ limit: '40' });
+  if (cursor) params.set('cursor', cursor);
+  return requestJson<TrashListResult>(`/api/workspace/trash?${params}`, { signal });
 }
 
 export function restoreTrashItem(messageId: string) {
