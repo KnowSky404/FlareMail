@@ -44,6 +44,7 @@
 - 弹窗版本与包声明一致，仓库链接、作者署名、中英文文案、两种主题正确；打开弹窗不导航、不发起写请求或外部请求。
 - 覆盖鼠标与键盘激活、三种关闭方式、焦点循环/返回，以及未保存设置和 URL 保留。
 - About 打开时停用工作区搜索、写信、选信、回复、帮助和文件夹快捷键，并清除打开前尚未完成的 `g` 序列；关闭后正常恢复快捷键。
+- 工作区退出或收到其他标签页的会话结束信号时清理 About 状态及旧焦点引用，原页重新登录后不重新弹出 About。
 - Chromium 覆盖 1280×900 桌面、390×844 手机、320×720 窄屏，补充 Linux WebKit / Firefox 及弹窗 WCAG 2.1 AA 自动扫描。Linux WebKit 不等于真实 iOS / Safari，自动扫描不等于屏幕阅读器验收。
 - 提交前串行运行 `bun run test`、`bun run check`、`bun run build`；浏览器验证使用隔离本地 D1/R2 和固定合成数据，截图保存在 `/tmp`。
 - 本地证据、PRE、生产、远程迁移和真实供应商证据分别记录；初次实现阶段尚未获远程发布授权，后续授权见发布准备记录。
@@ -87,3 +88,11 @@ About 用例同时验证页面标题和非空工作区、无框架错误覆盖�
 Firefox 首轮快捷键回归还发现 `/` 的默认行为会令关闭按钮失焦；[Mozilla 文档](https://support.mozilla.org/en-US/kb/search-contents-current-page-text-or-links) 确认该键会打开浏览器快速查找，因此 About 打开时同时阻止无 Ctrl/Meta/Alt 修饰的 `/` 默认行为。保留浏览器组合键和弹窗自身的 Tab/Escape 行为。
 
 修复后 `bun run test` 为 634 项通过，类型检查与 production 构建通过。完整 About / 原有桌面快捷键矩阵首轮为 20 通过、1 项 Firefox 失败，另 2 项按项目跳过（桌面显示偏好用例不适用于手机/窄屏）；处理 Firefox 默认行为后，五个项目的目标快捷键回归全部通过。日志为 `/tmp/flaremail-v1-shortcut-{unit,check,build,browser-initial,browser-final}.log`，未将首轮失败或跳过项记为通过。
+
+## PR 审查修复：会话结束清理
+
+[第二轮 Code Review](https://github.com/KnowSky404/FlareMail/pull/11#discussion_r4266694671) 发现其他标签页结束会话后，原页再次登录会重新显示 About。新增隔离本地浏览器回归先打开 About，再清除测试 Cookie 并广播 `session-ended`，在不刷新页面的情况下登录；修复前确认弹窗意外重新出现。`resetWorkspace()` 现与其他弹层一起清除 `aboutOpen` 和旧触发器引用，回归同时检查新工作区的文件夹快捷键恢复。复现日志：`/tmp/flaremail-v1-session-repro.log`。
+
+用户明确授权“以本地回归替代此次 PRE 交互验收，继续发布”。本次 About 登录后交互采用五浏览器隔离本地回归作为授权替代路径；每次候选提交仍发布 PRE 并核对公开只读页面、版本、资源和生产流量。此授权不构成已认证远程 readiness 或真实供应商验收的证据。
+
+会话清理修复后，634 项单元/集成测试、类型检查与 production 构建通过，五个浏览器项目的会话结束/原页重登录回归全部通过。日志：`/tmp/flaremail-v1-session-{unit,check,build,browser}.log`。
