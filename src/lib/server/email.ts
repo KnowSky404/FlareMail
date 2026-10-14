@@ -29,6 +29,14 @@ export class InboundRawLimitError extends Error {
   }
 }
 
+export class InboundIngestBusyError extends Error {
+  readonly code = 'INBOUND_CLAIM_BUSY';
+  constructor() {
+    super('INBOUND_CLAIM_BUSY');
+    this.name = 'InboundIngestBusyError';
+  }
+}
+
 const configuredLimit = (value: string | undefined, fallback: number, maximum: number) => {
   const parsed = Number(value);
   if (Number.isSafeInteger(parsed) && parsed > maximum) throw new Error('INBOUND_LIMIT_CONFIGURATION_INVALID');
@@ -216,8 +224,17 @@ export async function handleInboundEmail(
   const date = toIsoTimestamp(parsed.date ?? message.headers.get('date'));
   const claim = await claimInboundIngest(env.DB, dedupeKey, (storageId) => `inbound/${date.slice(0, 10)}/${storageId}/message.eml`);
   if (!claim) {
+    // The winning invocation may have committed after our first lookup. A
+    // processing lease alone is never evidence that the mail was persisted.
+    const committed = await findInboundByDedupeKey(env.DB, dedupeKey);
+    if (committed) {
+      safeLog('inbound_duplicate', { correlationId, messageId: committed.id, durationMs: Date.now() - startedAt });
+      return;
+    }
     safeLog('inbound_claim_busy', { correlationId, code: 'INBOUND_CLAIM_BUSY', durationMs: Date.now() - startedAt });
-    return;
+    // Keep this as an invocation failure, like other storage failures. An
+    // explicit setReject would turn a temporary conflict into a permanent refusal.
+    throw new InboundIngestBusyError();
   }
   if (claim.status === 'completed') {
     safeLog('inbound_duplicate', { correlationId, code: 'INBOUND_CLAIM_COMPLETED', durationMs: Date.now() - startedAt });

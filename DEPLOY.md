@@ -526,6 +526,15 @@ MIME To/Cc and parsed `Delivered-To` are independent snapshots and do not grant
 ownership. Local login username, Access identity/email, and profile email do
 not affect mail ownership.
 
+For plus addressing, an explicit `name+tag` address takes precedence over
+`name`. Otherwise the alias uses the base address's ownership and receiving
+guards while preserving `name+tag` in the envelope snapshot and dedupe key.
+Disabled/deleted literal aliases or base identities cannot fall through to
+catch-all collection. Enable Cloudflare
+[subaddressing](https://developers.cloudflare.com/email-service/configuration/email-routing-addresses/#subaddressing)
+when aliases should match a base routing rule. Aliases do not create another
+sendable identity.
+
 Configure the actual domain-to-zone/Worker mapping with
 `bun run mail:domain:configure -- --remote`, then create or explicitly import
 an exact Worker routing rule for each address from Profile → Mail identities.
@@ -534,6 +543,11 @@ recent check that the existing catch-all targets this Worker and never creates
 a sendable address. A repeated delivery with the same RFC Message-ID to two
 managed addresses remains distinct because recipient participates in
 deduplication.
+
+Review the catch-all separately: mail reaching another Worker or a forwarding
+destination is outside FlareMail's storage path. A code upgrade does not move
+that traffic. Worker renames, rule disabling/deletion and catch-all changes need
+their own reviewed routing plan.
 
 #### Browser origin ↔ incoming Worker domain
 
@@ -938,6 +952,15 @@ For every later release:
 6. Preserve the existing Custom Domain, webhook and Email Routing rules unless
    a separately approved change is required. Run the smallest controlled smoke
    test that covers the changed behavior.
+
+For inbound changes, validate the
+[ingest and alias regressions](docs/specs/inbound-delivery-reliability.md)
+locally. A fresh processing lease without a committed message must fail the
+invocation as `INBOUND_CLAIM_BUSY`; it must not return success or turn contention
+into a permanent `setReject`. Email Routing does not document automatic
+redelivery of Worker exceptions. Record real SMTP failure/redelivery behavior
+separately when a controlled production mail test is authorized; HTTP Preview
+acceptance cannot establish it.
 
 Do not run a Time Travel restore, logical export, R2 deletion or Email Routing
 change as an implicit part of an ordinary code deployment.

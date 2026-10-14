@@ -104,6 +104,20 @@ const barrier = (count: number): Barrier => {
   };
 };
 
+const pauseNextWrite = (bucket: TestBucket) => {
+  let entered!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const paused = new Promise<void>((resolve) => { release = resolve; });
+  const put = bucket.put.bind(bucket);
+  const spy = spyOn(bucket, 'put').mockImplementationOnce(async (key, value, options) => {
+    entered();
+    await paused;
+    return put(key, value, options);
+  });
+  return { started, release, restore: () => spy.mockRestore() };
+};
+
 const message = (bytes = fixtureBytes(), to = 'owner@example.test', declaredSize = bytes.byteLength, gate?: Barrier) => {
   let rejected = '';
   const value = {
@@ -442,6 +456,44 @@ describe('inbound email persistence', () => {
     expect(test.BUCKET.objects.size).toBe(0);
   });
 
+  test('stores plus-address deliveries under the base identity with distinct envelope dedupe keys', async () => {
+    const test = environment();
+    const recipients = ['owner@example.test', 'owner+news@example.test', 'owner+alerts@example.test'];
+    for (const recipient of recipients) {
+      const inbound = message(fixtureBytes(), recipient);
+      await handleInboundEmail(inbound.value, test.env);
+      expect(inbound.rejected()).toBe('');
+    }
+    await handleInboundEmail(message(fixtureBytes(), recipients[1]).value, test.env);
+    const rows = test.database.query(`SELECT "to", mail_address_id, owner_user_id, recipient_status
+      FROM email_messages ORDER BY "to"`).all();
+    expect(rows).toEqual([...recipients].sort().map((recipient) => ({
+      to: recipient, mail_address_id: 'address-1', owner_user_id: 'user-1', recipient_status: 'managed'
+    })));
+    expect(test.database.query('SELECT COUNT(DISTINCT dedupe_key) AS count FROM email_messages').get()).toEqual({ count: 3 });
+    expect(test.database.query('SELECT COUNT(*) AS count FROM mail_addresses').get()).toEqual({ count: 1 });
+    expect(test.BUCKET.objects.size).toBe(6);
+    test.database.close();
+  });
+
+  test('fails a fresh interrupted-claim redelivery without accepting or rejecting unpersisted mail', async () => {
+    const test = environment();
+    const dedupeKey = await createInboundDedupeKey('<attachment-1@example.com>', 'owner@example.test', fixtureBytes().buffer);
+    const now = new Date().toISOString();
+    test.database.query(`INSERT INTO workspace_inbound_ingest_claims
+      (dedupe_key, storage_id, claim_token, raw_key, status, created_at, updated_at)
+      VALUES (?, 'interrupted', 'original-token', 'inbound/interrupted/message.eml', 'processing', ?, ?)`)
+      .run(dedupeKey, now, now);
+    const inbound = message();
+    await expect(handleInboundEmail(inbound.value, test.env)).rejects.toThrow('INBOUND_CLAIM_BUSY');
+    expect(inbound.rejected()).toBe('');
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+    expect(test.database.query('SELECT storage_id, claim_token, status FROM workspace_inbound_ingest_claims').get())
+      .toEqual({ storage_id: 'interrupted', claim_token: 'original-token', status: 'processing' });
+    expect(test.BUCKET.objects.size).toBe(0);
+    test.database.close();
+  });
+
   test('rejects a declared oversize message before reading or writing storage', async () => {
     const test = environment();
     test.env.INBOUND_MAX_RAW_BYTES = '100';
@@ -460,12 +512,28 @@ describe('inbound email persistence', () => {
     expect(test.BUCKET.objects.size).toBe(0);
   });
 
-  test('allows only one claimant for concurrent duplicate inbound messages', async () => {
+  test('only accepts a concurrent duplicate after the winning invocation persists mail', async () => {
     const test = environment();
-    await Promise.all([handleInboundEmail(message().value, test.env), handleInboundEmail(message().value, test.env)]);
+    const write = pauseNextWrite(test.BUCKET);
+    const first = handleInboundEmail(message().value, test.env);
+    await write.started;
+    const duplicate = message();
+    try {
+      await expect(handleInboundEmail(duplicate.value, test.env)).rejects.toMatchObject({ code: 'INBOUND_CLAIM_BUSY' });
+      expect(duplicate.rejected()).toBe('');
+      expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+      expect(test.BUCKET.objects.size).toBe(0);
+    } finally {
+      write.release();
+      await first;
+      write.restore();
+    }
+    await handleInboundEmail(message().value, test.env);
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
     expect(test.database.query("SELECT COUNT(*) AS count FROM workspace_inbound_ingest_claims WHERE status = 'completed'").get()).toEqual({ count: 1 });
     expect(test.BUCKET.objects.size).toBe(2);
+    expect(test.BUCKET.putCount).toBe(2);
+    test.database.close();
   });
 
   test('does not let same Message-ID concurrent variants overwrite the winner', async () => {
@@ -473,10 +541,26 @@ describe('inbound email persistence', () => {
     const gate = barrier(2);
     const variant = fixtureBytes();
     variant[variant.length - 3] = variant[variant.length - 3] === 65 ? 66 : 65;
-    await Promise.all([
+    const write = pauseNextWrite(test.BUCKET);
+    const invocations = [
       handleInboundEmail(message(fixtureBytes(), 'owner@example.test', undefined, gate).value, test.env),
       handleInboundEmail(message(variant, 'owner@example.test', undefined, gate).value, test.env)
-    ]);
+    ];
+    const concurrent = Promise.allSettled(invocations);
+    await write.started;
+    // Keep the winner paused until the competing invocation finishes its
+    // busy-claim check, so this does not depend on scheduler timing.
+    try {
+      await expect(Promise.race(invocations)).rejects.toMatchObject({ code: 'INBOUND_CLAIM_BUSY' });
+    } finally {
+      write.release();
+      await concurrent;
+      write.restore();
+    }
+    const results = await concurrent;
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const failed = results.find((result) => result.status === 'rejected');
+    expect(failed?.status === 'rejected' ? failed.reason : null).toMatchObject({ code: 'INBOUND_CLAIM_BUSY' });
 
     expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
     expect(test.BUCKET.objects.size).toBe(2);
@@ -486,6 +570,57 @@ describe('inbound email persistence', () => {
     const sameBytes = (left: Uint8Array, right: Uint8Array) =>
       left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
     expect(sameBytes(storedRaw, fixtureBytes()) || sameBytes(storedRaw, variant)).toBe(true);
+    test.database.close();
+  });
+
+  test('does not acknowledge the busy copy when the winning invocation subsequently fails', async () => {
+    const test = environment(true);
+    const write = pauseNextWrite(test.BUCKET);
+    const first = Promise.allSettled([handleInboundEmail(message().value, test.env)]);
+    await write.started;
+    const duplicate = message();
+    try {
+      await expect(handleInboundEmail(duplicate.value, test.env)).rejects.toMatchObject({ code: 'INBOUND_CLAIM_BUSY' });
+      expect(duplicate.rejected()).toBe('');
+    } finally {
+      write.release();
+      await first;
+      write.restore();
+    }
+    const [result] = await first;
+    expect(result?.status === 'rejected' ? result.reason.message : null).toBe('simulated d1 write failure');
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 0 });
+    expect(test.database.query('SELECT COUNT(*) AS count FROM workspace_inbound_ingest_claims').get()).toEqual({ count: 0 });
+    expect(test.BUCKET.objects.size).toBe(0);
+    test.DB.failBatch = false;
+    await handleInboundEmail(message().value, test.env);
+    expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+    expect(test.BUCKET.objects.size).toBe(2);
+    test.database.close();
+  });
+
+  test('accepts an already committed winner observed after the first dedupe lookup missed it', async () => {
+    const test = environment();
+    await handleInboundEmail(message().value, test.env);
+    test.database.query("UPDATE workspace_inbound_ingest_claims SET status = 'processing', completed_at = NULL").run();
+    const prepare = test.DB.prepare.bind(test.DB);
+    let firstLookup = true;
+    const spy = spyOn(test.DB, 'prepare').mockImplementation((sql) => {
+      if (firstLookup && sql.includes('SELECT id, raw_key FROM email_messages WHERE dedupe_key = ?')) {
+        firstLookup = false;
+        return { bind: () => ({ first: async () => null }) } as unknown as D1PreparedStatement;
+      }
+      return prepare(sql);
+    });
+    try {
+      await expect(handleInboundEmail(message().value, test.env)).resolves.toBeUndefined();
+      expect(test.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+      expect(test.BUCKET.objects.size).toBe(2);
+      expect(test.BUCKET.putCount).toBe(2);
+    } finally {
+      spy.mockRestore();
+      test.database.close();
+    }
   });
 
   test('releases a claim after R2 failure without deleting another claimant objects', async () => {

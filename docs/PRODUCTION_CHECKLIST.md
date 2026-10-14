@@ -252,6 +252,12 @@ recipient addresses or full R2 keys into shared evidence.
   existing catch-all were checked for priority and target. External catch-all
   rules were not changed; the operator understands that deleting an app-owned
   exact rule cannot block delivery through an external catch-all.
+- [ ] Cloudflare subaddressing and the intended alias behavior were reviewed.
+  An unregistered `name+tag` maps to its enabled base identity; a registered
+  literal alias takes precedence, and disabled/deleted aliases or bases are
+  rejected. The actual envelope recipient remains in the stored message.
+  Any real-mail smoke is explicitly authorized; local fixtures do not prove
+  production routing or SMTP failure/redelivery behavior.
 - [ ] Address deletion review used the authenticated live preview, checked its
   route observation and catch-all freshness, and selected either removal of a
   verified FlareMail rule or retention as the deleted tombstone's rejection

@@ -100,6 +100,84 @@ describe('trusted inbound address resolution', () => {
     db.close();
   });
 
+  test('maps plus recipients to their base identity while preserving the envelope address', async () => {
+    const db = makeDatabase();
+    insertAddress(db, { id: 'address-1', email: 'inbox@one.example.test' });
+    for (const recipient of ['Inbox+News@One.Example.Test', 'inbox+news+daily@one.example.test']) {
+      expect(await resolveInboundRecipient(new D1(db), recipient)).toEqual({
+        accepted: true,
+        recipient: recipient.toLowerCase(),
+        ownerUserId: 'owner-1',
+        mailDomainId: 'domain-1',
+        mailAddressId: 'address-1',
+        recipientStatus: 'managed'
+      });
+    }
+    expect(await resolveInboundRecipient(new D1(db), 'inbox+news@other.example.test'))
+      .toEqual({ accepted: false, reason: 'unknown_domain' });
+    db.close();
+  });
+
+  test('prefers an explicit plus identity over its base, including a disabled or deleted literal address', async () => {
+    const db = makeDatabase();
+    const now = Date.parse('2026-09-20T12:30:00.000Z');
+    db.query(`UPDATE mail_domains SET unknown_recipient_policy = 'collect', catch_all_target = 'this_worker',
+      catch_all_checked_at = '2026-09-20T12:00:00.000Z'`).run();
+    insertAddress(db, { id: 'base', email: 'inbox@one.example.test', lifecycle: 'disabled' });
+    insertAddress(db, { id: 'literal', email: 'inbox+news@one.example.test' });
+    expect(await resolveInboundRecipient(new D1(db), 'inbox+news@one.example.test', now))
+      .toMatchObject({ accepted: true, mailAddressId: 'literal' });
+
+    db.query("UPDATE mail_addresses SET lifecycle_status = 'active' WHERE id = 'base'").run();
+    for (const lifecycle of ['disabled', 'deleted']) {
+      db.query('UPDATE mail_addresses SET lifecycle_status = ? WHERE id = ?').run(lifecycle, 'literal');
+      expect(await resolveInboundRecipient(new D1(db), 'inbox+news@one.example.test', now))
+        .toEqual({ accepted: false, reason: 'address_unavailable' });
+    }
+    db.close();
+  });
+
+  test('applies base identity receiving and ownership guards before plus-address catch-all collection', async () => {
+    const now = Date.parse('2026-09-20T12:30:00.000Z');
+    const cases: Array<{
+      address: Parameters<typeof insertAddress>[1];
+      reason: 'address_unavailable' | 'address_domain_mismatch';
+    }> = [
+      { address: { id: 'base', email: 'inbox@one.example.test', lifecycle: 'disabled' }, reason: 'address_unavailable' },
+      { address: { id: 'base', email: 'inbox@one.example.test', lifecycle: 'deleted' }, reason: 'address_unavailable' },
+      { address: { id: 'base', email: 'inbox@one.example.test', receiving: 0 }, reason: 'address_unavailable' },
+      { address: { id: 'base', email: 'inbox@one.example.test', route: 'pending' }, reason: 'address_unavailable' },
+      { address: { id: 'base', email: 'inbox@one.example.test', route: 'error' }, reason: 'address_unavailable' },
+      { address: { id: 'base', email: 'inbox@one.example.test', owner: 'other-owner' }, reason: 'address_domain_mismatch' },
+      { address: { id: 'base', email: 'inbox@one.example.test', domain: 'other-domain' }, reason: 'address_domain_mismatch' }
+    ];
+    for (const { address, reason } of cases) {
+      const db = makeDatabase();
+      db.query(`UPDATE mail_domains SET unknown_recipient_policy = 'collect', catch_all_target = 'this_worker',
+        catch_all_checked_at = '2026-09-20T12:00:00.000Z'`).run();
+      insertAddress(db, address);
+      expect(await resolveInboundRecipient(new D1(db), 'inbox+news@one.example.test', now))
+        .toEqual({ accepted: false, reason });
+      db.close();
+    }
+  });
+
+  test('keeps plus recipients without a managed base under the existing unknown-recipient policy', async () => {
+    const db = makeDatabase();
+    const recipient = 'unlisted+news@one.example.test';
+    const now = Date.parse('2026-09-20T12:30:00.000Z');
+    expect(await resolveInboundRecipient(new D1(db), recipient, now))
+      .toEqual({ accepted: false, reason: 'address_unavailable' });
+    db.query(`UPDATE mail_domains SET unknown_recipient_policy = 'collect', catch_all_target = 'this_worker',
+      catch_all_checked_at = '2026-09-20T12:00:00.000Z'`).run();
+    expect(await resolveInboundRecipient(new D1(db), recipient, now))
+      .toMatchObject({ accepted: true, recipient, mailAddressId: null, recipientStatus: 'unregistered' });
+    db.query("UPDATE mail_domains SET catch_all_target = 'external'").run();
+    expect(await resolveInboundRecipient(new D1(db), recipient, now))
+      .toEqual({ accepted: false, reason: 'address_unavailable' });
+    db.close();
+  });
+
   test('collects unknown recipients only when policy and a fresh Worker catch-all check both allow it', async () => {
     const db = makeDatabase();
     db.query(`

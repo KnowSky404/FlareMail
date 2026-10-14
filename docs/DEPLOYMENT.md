@@ -285,6 +285,7 @@ canonical-row synchronization triggers. Migration
 `0016_outbound_attachments.sql` adds draft/message attachment relations,
 upload/ready/failure/delete-pending states, SHA-256 metadata, cleanup deadlines,
 and the draft attachment revision used by guarded sends.
+
 Migration `0017_r2_cleanup_queue_reliability.sql` append-only adds the durable
 claim/lease/retry/manual-review lifecycle. Migration
 `0018_outbound_rate_limits.sql` adds the per-user outbound rate-limit state and
@@ -298,6 +299,16 @@ stores the least-privileged privacy/summary snapshot and advances the current
 schema metadata to 22. Do not modify
 or downgrade published migrations; rollback restores Worker code while preserving newer D1
 columns and queue evidence.
+
+A fresh processing inbound claim without a committed message causes
+`INBOUND_CLAIM_BUSY`, not a successful duplicate receipt. A competing commit is
+rechecked before failing. An expired lease can be reclaimed by a subsequent
+delivery, but expiry or maintenance removal does not reconstruct the message
+or trigger replay. Do not treat stale-claim cleanup, a successful HTTP health
+check, or Email Routing's `dropped` label as proof of mail persistence. Use the
+application's message/R2 evidence and invocation outcome; sampled logs cannot
+establish historical completeness. See the
+[inbound reliability spec](./specs/inbound-delivery-reliability.md).
 
 The maintenance report also lists stale submitting attempts, attempts within
 one hour of the Resend 24-hour idempotency expiry, and expired attempts that
