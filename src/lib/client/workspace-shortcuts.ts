@@ -59,8 +59,12 @@ export class WorkspaceShortcutController {
     return action;
   }
 
-  dispose() {
+  reset() {
     this.clearPrefix();
+  }
+
+  dispose() {
+    this.reset();
   }
 
   private setPrefix() {

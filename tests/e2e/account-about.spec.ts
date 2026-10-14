@@ -71,6 +71,45 @@ test('opens a centered accessible About dialog in both themes without navigation
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('suppresses workspace shortcuts while About is open and restores them after closing', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.bringToFront();
+  const originalUrl = page.url();
+  const writes: string[] = [];
+  page.on('request', (request) => {
+    if (!['GET', 'HEAD'].includes(request.method())) writes.push(request.url());
+  });
+  const account = page.getByRole('button', { name: '账号菜单' });
+  await account.focus();
+  await expect(account).toBeFocused();
+  await page.keyboard.press('Enter');
+  const about = page.getByRole('menuitem', { name: '关于', exact: true });
+  await about.focus();
+  await expect(about).toBeFocused();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: '关于 FlareMail', exact: true });
+  const close = dialog.getByRole('button', { name: '关闭', exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(close).toBeFocused();
+  for (const key of ['/', 'c', 'j', 'k', 'r', 'a', 'f', '?', 'g', 's', 'g', 'd', 'g', 'i']) {
+    await test.step(`About ignores the workspace shortcut ${key}`, async () => {
+      await page.keyboard.press(key);
+      await expect(dialog).toBeVisible();
+      await expect(close).toBeFocused();
+      await expect(page).toHaveURL(originalUrl);
+      await expect(page.getByRole('dialog')).toHaveCount(1);
+    });
+  }
+  expect(writes).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(account).toBeFocused();
+  await page.keyboard.press('g');
+  await page.keyboard.press('s');
+  await expect(page).toHaveURL(/folder=sent/u);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('preserves unsaved settings when About closes by button or backdrop and retains sign out', async ({ page, consoleErrors }) => {
   await login(page);
   await selectSettings(page);
