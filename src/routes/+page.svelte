@@ -13,6 +13,7 @@
   import MessageList from '$lib/components/mail/MessageList.svelte';
   import AppSidebar from '$lib/components/shell/AppSidebar.svelte';
   import AppTopbar from '$lib/components/shell/AppTopbar.svelte';
+  import AboutDialog from '$lib/components/shell/AboutDialog.svelte';
   import MobileNavigation from '$lib/components/shell/MobileNavigation.svelte';
   import Dialog from '$lib/components/ui/Dialog.svelte';
   import ReaderDialog from '$lib/components/ui/ReaderDialog.svelte';
@@ -152,6 +153,14 @@
   type WorkspaceBodyDetail = { body: string; attachments: NonNullable<ComposeInput['attachments']> };
 
   let { data }: { data: PageData } = $props();
+  let aboutOpen = $state(false);
+  let aboutRestoreFocusElement = $state<HTMLElement | null>(null);
+
+  function openAbout(trigger: HTMLElement | null) {
+    aboutRestoreFocusElement = trigger;
+    aboutOpen = true;
+  }
+
   const i18n = useLocale();
   const { t } = i18n;
   const displayError = (error: unknown, fallback: string) =>
@@ -2931,10 +2940,7 @@
         unreadCount={unreadCount}
         searchQuery={searchQuery}
         {density}
-        onEditProfile={() => {
-          setSection('profile');
-          notify(t('notify.settingsOpened'));
-        }}
+        onOpenAbout={openAbout}
         onLogout={handleLogout}
         onSearchQueryChange={handleSearchQueryChange}
         onToggleDensity={toggleDensity}
@@ -2942,6 +2948,7 @@
 
       <div class:mobile-detail-nav-hidden={mobileDetailOpen}>
         <MobileNavigation
+          {profile}
           activeSection={activeSection}
           {managementView}
           {userLabels}
@@ -2955,6 +2962,8 @@
           onSelectLabel={selectLabel}
           onCreateLabel={() => editLabel('create')}
           onSelectManagementView={setManagementView}
+          onOpenAbout={openAbout}
+          onLogout={handleLogout}
         />
       </div>
 
@@ -3412,6 +3421,8 @@
         >{t('compose.loadingEditor')}</div>
       {/if}
     {/if}
+
+    <AboutDialog open={aboutOpen} version={data.projectVersion} restoreFocusElement={aboutRestoreFocusElement} onClose={() => (aboutOpen = false)} />
 
     <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} onClose={closeLabelEditor}>
       <form onsubmit={(event) => { event.preventDefault(); void saveLabel(); }}>

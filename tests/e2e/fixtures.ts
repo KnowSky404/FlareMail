@@ -54,6 +54,20 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
   expect(consoleErrors, `browser console errors: ${consoleErrors.join('\n')}`).toEqual([]);
 }
 
+export async function selectSettings(page: Page) {
+  const desktopSettings = page.getByRole('navigation', { name: '主导航' })
+    .getByRole('button', { name: '设置', exact: true });
+  if (await desktopSettings.isVisible().catch(() => false)) {
+    await desktopSettings.press('Enter');
+    return;
+  }
+  await page.getByRole('button', { name: '打开导航' }).press('Enter');
+  const mobileSettings = page.getByRole('navigation', { name: '移动端导航' })
+    .getByRole('button', { name: '设置', exact: true });
+  await mobileSettings.press('Enter');
+  await expect(mobileSettings).toBeHidden();
+}
+
 export async function openFolder(page: Page, folder: '收件箱' | '星标邮件' | '已发送' | '草稿箱' | '归档' | '垃圾箱') {
   const folderValue = { 收件箱: 'inbox', 星标邮件: 'starred', 已发送: 'sent', 草稿箱: 'drafts', 归档: 'archive', 垃圾箱: 'trash' }[folder];
   const backButton = page.getByRole('button', { name: '返回邮件列表' });

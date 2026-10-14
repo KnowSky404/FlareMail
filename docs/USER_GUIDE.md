@@ -63,6 +63,8 @@ Use the delivery timeline to review submission, delivery, and failure events. Su
 
 ## Settings and notifications
 
+Open Settings from the desktop sidebar or mobile navigation. The top-right account menu shows your account information, **About**, and **Sign out**. About opens a centered dialog with the project version, GitHub repository link, and `© KnowSky404` attribution. The version follows `package.json`; it does not include deployment identifiers. Close it with its Close button, Escape, or the backdrop; focus returns to the account button and unsaved settings remain intact.
+
 Settings groups profile, notifications, appearance, diagnostics, and Telegram controls. Choose English, Simplified Chinese, or the browser's language. Interface dates, counts, and accessibility labels follow the chosen language; original mail content remains unchanged.
 
 On desktop, open Display preferences in the top-right corner to choose a theme, density, or language directly from the option cards. Each group has one Tab stop; arrow keys switch choices, Home/End select the first/last choice, and Escape closes the panel. Language preferences persist across reloads. The circular service-status icon opens workspace status details; green indicates healthy status and red indicates attention is needed.
