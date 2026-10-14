@@ -13,15 +13,17 @@
   import Tag from '@lucide/svelte/icons/tag';
   import Plus from '@lucide/svelte/icons/plus';
   import { Drawer } from '$lib/components/ui';
-  import type { MailboxSection, MailUserLabel } from '$lib/domain/mail';
+  import type { MailboxSection, MailUserLabel, UserProfile } from '$lib/domain/mail';
   import { describeNavigationCount, formatNavigationCount, type NavigationCounts, type AttentionSection } from '$lib/client/navigation-counts';
   import BrandMark from './BrandMark.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
+  import AccountMenu from './AccountMenu.svelte';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
 
   let {
+    profile,
     activeSection,
     counts,
     managementView = 'settings',
@@ -32,8 +34,11 @@
     onSelectLabel,
     onCreateLabel,
     onSelectSection,
-    onSelectManagementView
+    onSelectManagementView,
+    onOpenAbout,
+    onLogout
   }: {
+    profile: UserProfile;
     activeSection: AppSection;
     counts: NavigationCounts;
     managementView?: 'settings' | 'domains' | 'addresses';
@@ -45,9 +50,12 @@
     onCreateLabel?: () => void;
     onSelectSection: (section: AppSection) => void;
     onSelectManagementView?: (view: 'domains' | 'addresses') => void;
+    onOpenAbout: (trigger: HTMLElement | null) => void;
+    onLogout: () => void | Promise<void>;
   } = $props();
 
   let open = $state(false);
+  let accountOpen = $state(false);
   const i18n = useLocale();
   const { t } = i18n;
 
@@ -90,7 +98,7 @@
 {/snippet}
 
 <header class="mobile-bar">
-  <button class="icon" type="button" aria-label={t('shell.openNavigation')} aria-expanded={open} onclick={() => (open = true)}>
+  <button class="icon" type="button" aria-label={t('shell.openNavigation')} aria-expanded={open} onclick={() => { accountOpen = false; open = true; }}>
     <Menu size={21} aria-hidden="true" />
   </button>
   <BrandMark compact />
@@ -98,6 +106,7 @@
   <button class="compose" type="button" aria-label={t('shell.compose')} title={t('shell.compose')} disabled={pending} onclick={onCompose}>
     <PenLine size={18} aria-hidden="true" /><span>{t('shell.compose')}</span>
   </button>
+  <AccountMenu id="mobile-account-menu" {profile} {pending} open={accountOpen} onOpenChange={(next) => { accountOpen = next; if (next) open = false; }} {onOpenAbout} {onLogout} />
 </header>
 
 <Drawer id="mobile-navigation-drawer" {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>

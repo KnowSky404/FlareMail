@@ -1,4 +1,5 @@
 import type { PageServerLoad } from './$types';
+import { version as projectVersion } from '../../package.json';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { MailboxSection } from '$lib/domain/mail';
 import { loadWorkspaceSnapshot } from '$lib/server/workspace';
@@ -42,6 +43,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
   const requestId = locals.requestId ?? crypto.randomUUID();
 
   const emptyData = (runtimeState: RuntimeState) => ({
+    projectVersion,
     dbBound,
     bucketBound,
     snapshotIdentity: requestId,
@@ -90,6 +92,7 @@ export const load: PageServerLoad = async ({ platform, locals, url }) => {
     const latest = workspace.activePage.messages[0] ?? null;
 
     return {
+      projectVersion,
       dbBound,
       bucketBound,
       snapshotIdentity: requestId,

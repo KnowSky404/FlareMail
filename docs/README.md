@@ -22,6 +22,7 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 
 | Document | Language | Purpose |
 | --- | --- | --- |
+| [Account menu and About spec](./specs/account-menu-and-about.md) | 中文 | Menu actions, project metadata, centered dialog, focus behavior and acceptance |
 | [Sidebar attention-count spec](./specs/sidebar-attention-counts.md) | 中文 | Attention badges, sending/exception states, identity scope and acceptance |
 | [Navigation and read-state spec](./specs/mailbox-navigation-and-read-state.md) | 中文 | Cache behavior, unread counters, partial state writes and acceptance |
 | [Workspace API](./API.md) | English | Authentication, identity management, mailbox pagination, search, drafts, mutations, and delivery contracts |

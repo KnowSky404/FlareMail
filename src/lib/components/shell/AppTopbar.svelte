@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import LogOut from '@lucide/svelte/icons/log-out';
   import Monitor from '@lucide/svelte/icons/monitor';
   import Moon from '@lucide/svelte/icons/moon';
   import Rows3 from '@lucide/svelte/icons/rows-3';
@@ -8,9 +7,10 @@
   import Sun from '@lucide/svelte/icons/sun';
   import type { UserProfile } from '$lib/domain/mail';
   import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
-  import { Avatar, DropdownMenu } from '$lib/components/ui';
+  import { DropdownMenu } from '$lib/components/ui';
   import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
   import BrandMark from './BrandMark.svelte';
+  import AccountMenu from './AccountMenu.svelte';
   import ServiceStatusMenu from './ServiceStatusMenu.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import MailSearchBar from '$lib/components/mail/MailSearchBar.svelte';
@@ -31,7 +31,7 @@
     searchQuery = '',
     density = 'comfortable',
     pending = false,
-    onEditProfile,
+    onOpenAbout,
     onLogout,
     onSearchQueryChange,
     onToggleDensity
@@ -50,7 +50,7 @@
     searchQuery?: string;
     density?: 'comfortable' | 'compact';
     pending?: boolean;
-    onEditProfile: () => void;
+    onOpenAbout: (trigger: HTMLElement | null) => void;
     onLogout: () => void | Promise<void>;
     onSearchQueryChange?: (query: string) => void;
     onToggleDensity?: () => void;
@@ -71,7 +71,6 @@
         ? t('shell.themeLight')
         : t('shell.themeDark')
   );
-  const initials = $derived(profile.name.trim().slice(0, 2).toUpperCase() || 'FM');
 
   onMount(() => {
     themePreference = readThemePreference();
@@ -214,35 +213,10 @@
       {/snippet}
     </DropdownMenu>
 
-    <DropdownMenu
-      id="account-menu"
-      open={accountOpen}
-      align="end"
-      triggerAriaLabel={t('shell.accountMenu')}
-      triggerTitle={t('shell.accountMenu')}
-      triggerClass="account-trigger"
-      onOpenChange={(open) => {
-        accountOpen = open;
-        if (open) preferencesOpen = false;
-      }}
-    >
-      {#snippet trigger()}
-        <Avatar name={profile.name} {initials} size="xs" />
-        <span class="account-trigger-label">{profile.name || profile.email}</span>
-      {/snippet}
-      {#snippet children()}
-        <div role="presentation" class="account-summary">
-          <strong>{profile.name || t('shell.workspaceFallback')}</strong>
-          <span>{profile.email}</span>
-        </div>
-        <button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={onEditProfile}>
-          <Settings2 class="size-4" aria-hidden="true" />{t('shell.openSettings')}
-        </button>
-        <button class="menu-action fm-touch-target text-[var(--fm-danger)]" role="menuitem" type="button" disabled={pending} onclick={onLogout}>
-          <LogOut class="size-4" aria-hidden="true" />{t('shell.logout')}
-        </button>
-      {/snippet}
-    </DropdownMenu>
+    <AccountMenu {profile} {pending} open={accountOpen} {onOpenAbout} {onLogout} onOpenChange={(open) => {
+      accountOpen = open;
+      if (open) preferencesOpen = false;
+    }} />
   </div>
 </header>
 
@@ -314,8 +288,7 @@
     gap: var(--space-2);
   }
 
-  :global(.topbar-icon-trigger),
-  :global(.account-trigger) {
+  :global(.topbar-icon-trigger) {
     height: 40px;
     border: 0;
     border-radius: var(--radius-pill);
@@ -327,20 +300,8 @@
     width: 40px;
   }
 
-  :global(.account-trigger) {
-    padding: 0 7px;
-    color: var(--fm-primary);
-    font-size: 12px;
-    font-weight: 700;
-  }
-
-  :global(.topbar-icon-trigger:hover),
-  :global(.account-trigger:hover) {
+  :global(.topbar-icon-trigger:hover) {
     background: var(--fm-surface-hover);
-  }
-
-  .account-trigger-label {
-    display: none;
   }
 
   :global(.menu-action) {
@@ -358,31 +319,6 @@
   :global(.menu-action:hover) {
     background: var(--fm-surface-hover);
     color: var(--fm-text);
-  }
-
-  .account-summary {
-    display: grid;
-    gap: 2px;
-    min-width: 180px;
-    padding: 0.5rem 0.625rem 0.625rem;
-    border-bottom: 1px solid var(--fm-border);
-  }
-
-  .account-summary strong,
-  .account-summary span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .account-summary strong {
-    color: var(--fm-text);
-    font-size: 13px;
-  }
-
-  .account-summary span {
-    color: var(--fm-text-muted);
-    font-size: 11px;
   }
 
   .preference-panel {

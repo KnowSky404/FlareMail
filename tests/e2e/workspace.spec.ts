@@ -1,4 +1,4 @@
-import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, test } from './fixtures';
+import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, selectSettings, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -826,14 +826,7 @@ async function installTelegramApiMock(page: Page) {
 }
 
 async function openSettings(page: Page) {
-  const profileButton = page.getByRole('button', { name: '账号菜单' });
-  if (await profileButton.isVisible().catch(() => false)) {
-    await profileButton.click();
-    await page.getByRole('menuitem', { name: '打开设置', exact: true }).click();
-  } else {
-    await page.getByRole('button', { name: '打开导航' }).click();
-    await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: '设置', exact: true }).click();
-  }
+  await selectSettings(page);
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
 }
 
@@ -1061,7 +1054,6 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   }));
   expect(workspaceBounds.bottom).toBeLessThanOrEqual(workspaceBounds.viewport + 1);
   expect(workspaceBounds.pageHeight).toBeLessThanOrEqual(workspaceBounds.viewport + 1);
-  await expect(page.locator('.topbar .account-trigger-label')).toBeHidden();
   const firstRowHeight = await page.locator('.mail-list-item').first().evaluate((item) => item.getBoundingClientRect().height);
   expect(firstRowHeight).toBeGreaterThanOrEqual(88);
   const columns = await page.locator('.mail-workspace').evaluate((workspace) => ({
@@ -1904,8 +1896,7 @@ test('loads management panels on demand, supports deep links, and recovers after
     await route.continue();
   });
   try {
-    await page.getByRole('button', { name: '账号菜单' }).click();
-    await page.getByRole('menuitem', { name: '打开设置', exact: true }).click();
+    await selectSettings(page);
     const managementLoading = page.locator('[data-management-loading]');
     await expect(managementLoading).toBeVisible();
     await expect(managementLoading).toContainText('正在打开设置');
@@ -1928,8 +1919,7 @@ test('loads management panels on demand, supports deep links, and recovers after
 
   await page.goto('/?folder=inbox');
   await page.route('**/_app/immutable/chunks/*.js', (route) => route.abort());
-  await page.getByRole('button', { name: '账号菜单' }).click();
-  await page.getByRole('menuitem', { name: '打开设置', exact: true }).click();
+  await selectSettings(page);
   await expect(page.getByRole('alert').filter({ hasText: '无法载入设置' })).toBeVisible();
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
@@ -2498,16 +2488,16 @@ test('uses shared decorative avatars across account, mailbox, and reading views'
   test.skip(testInfo.project.name === 'narrow', 'Desktop and 390 px mobile cover the avatar scale.');
   await login(page);
   if (testInfo.project.name === 'desktop') await page.setViewportSize({ width: 1505, height: 1045 });
-  const accountAvatar = page.locator('.topbar .fm-avatar');
-  if (testInfo.project.name === 'desktop') {
-    await expect(accountAvatar).toBeVisible();
-    const accountName = (await page.locator('.topbar .account-trigger-label').textContent())?.trim() ?? '';
-    await expect(accountAvatar).toHaveText(accountName.slice(0, 2).toUpperCase() || 'FM');
-    await expect(accountAvatar).toHaveAttribute('aria-hidden', 'true');
-    expect((await accountAvatar.boundingBox())?.width).toBe(28);
-  } else {
-    await expect(accountAvatar).toBeHidden();
-  }
+  const account = page.getByRole('button', { name: '账号菜单' });
+  const accountAvatar = account.locator('.fm-avatar');
+  await expect(accountAvatar).toBeVisible();
+  await account.press('Enter');
+  const accountName = (await page.getByRole('menu').locator('.account-summary strong').textContent())?.trim() ?? '';
+  await page.keyboard.press('Escape');
+  await expect(account).toBeFocused();
+  await expect(accountAvatar).toHaveText(accountName.slice(0, 2).toUpperCase() || 'FM');
+  await expect(accountAvatar).toHaveAttribute('aria-hidden', 'true');
+  expect((await accountAvatar.boundingBox())?.width).toBe(28);
 
   const inboxItem = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   const listAvatar = inboxItem.locator('.fm-avatar');
