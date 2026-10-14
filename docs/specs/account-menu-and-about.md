@@ -70,3 +70,11 @@ About 用例同时验证页面标题和非空工作区、无框架错误覆盖�
 环境排查：首轮缓存缺少 ffmpeg，后改用现有 `ffmpeg-1011`，三个引擎均显式使用匹配 Playwright 1.58.2 的浏览器二进制。一次手机初始化进程意外终止，重跑完成；WebKit 首轮初始焦点断言未通过，诊断重跑和明确聚焦后再发按键的最终完整用例通过，未放宽弹窗焦点断言。Firefox 二进制探测报告 user namespace `EPERM`，仅该本地测试使用 `MOZ_DISABLE_CONTENT_SANDBOX=1`，并将 XDG 目录置于 `/tmp`；未修改应用配置。
 
 日志：`/tmp/flaremail-about-{desktop,desktop-regression,mobile,narrow,webkit-desktop-final,firefox-desktop}.log`。截图：`/tmp/flaremail-about-<project>-{light,dark}.png`；已检查桌面、手机和窄屏截图。Linux WebKit、自动规则和 fake provider 不等于真实 iOS/Safari、屏幕阅读器或真实邮件供应商验收。本轮未运行 CI、PRE、生产部署或远程迁移。最终交付消息记录包含本 SPEC 的提交 SHA。
+
+## v1.0.0 发布准备（2026-10-14）
+
+上述本地记录完成后，功能提交 `6e7eab9c80876d59e140ce174bade942c890f72f` 已部署到 [PRE](https://mail-identities-flaremail.littlecontrol.workers.dev)，部署 ID 为 `86ad2334-c960-41b7-a06e-94209f111727`。公开只读验收确认登录页、健康接口、未认证接口保护和本地构建资源指纹；未持有 Owner 会话，未自行验证远程 About 交互或已认证 readiness。用户随后确认 PRE 无问题，并授权推送代码、生产部署和发布 1.0 正式版。
+
+本次将 `package.json.version` 更新为 `1.0.0`，About 随包声明显示 `v1.0.0`；不改动依赖、数据库或供应商配置。版本更新后的本地验证、PRE、当前提交的机器人审查、合并、生产和 Release 安全扫描分别保留证据，发布结果以实际部署及 GitHub 记录为准。
+
+1.0 本地产物重新通过 633 项测试、类型检查、构建及 high/critical 依赖审计；版本显示、两种主题、居中布局、键盘焦点和弹窗 WCAG 2.1 AA 检查在上述五个浏览器项目各通过一项。此轮复用一个隔离本地 fixture，仍为单 worker 串行运行。审查截图：[桌面](../images/account-about-desktop.png)、[手机](../images/account-about-mobile.png)。日志为 `/tmp/flaremail-v1-{unit,check,build,audit,browser}.log`。
