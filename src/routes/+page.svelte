@@ -157,6 +157,7 @@
   let aboutRestoreFocusElement = $state<HTMLElement | null>(null);
 
   function openAbout(trigger: HTMLElement | null) {
+    shortcuts.reset();
     aboutRestoreFocusElement = trigger;
     aboutOpen = true;
   }
@@ -2839,6 +2840,11 @@
 
     const handleShortcut = (event: KeyboardEvent) => {
       if (!authenticated || composeOpen) return;
+      if (aboutOpen) {
+        // Firefox's unmodified "/" quick-find would take focus from the modal.
+        if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault();
+        return;
+      }
       const action = shortcuts.handle(event, {
         helpOpen: shortcutHelpOpen,
         mobileDetailOpen,

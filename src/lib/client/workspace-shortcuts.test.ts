@@ -35,4 +35,14 @@ describe('WorkspaceShortcutController', () => {
     expect(prefix.prevented()).toBe(true);
     controller.dispose();
   });
+
+  test('cancels a pending folder sequence and remains usable after reset', () => {
+    const controller = new WorkspaceShortcutController();
+    controller.handle(key('g').event, context);
+    controller.reset();
+    expect(controller.handle(key('s').event, context)).toBeNull();
+    controller.handle(key('g').event, context);
+    expect(controller.handle(key('d').event, context)).toBe('folder-drafts');
+    controller.dispose();
+  });
 });
