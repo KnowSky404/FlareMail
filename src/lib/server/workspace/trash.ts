@@ -1,4 +1,5 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { decodeListCursor, encodeListCursor } from './list-cursor';
 import { ApiError } from '$lib/server/http/api';
 import { mapDraftRow, mapInboundRow, mapWorkspaceMessageRow, type WorkspaceContext, type WorkspaceDraftRow, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 import type { MailMessage } from '$lib/domain/mail';
@@ -121,23 +122,30 @@ async function optionalOwnedCleanupStatements(db: D1Database, userId: string, en
   return statements;
 }
 
-export async function listWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, limit = 100) {
+export async function listWorkspaceTrash(env: CloudflareEnv | undefined, session: WorkspaceContext, limit = 100, cursorValue: string | null = null) {
   const db = requireD1(env, session);
   const bounded = Math.max(1, Math.min(500, Math.trunc(limit)));
+  const cursor = decodeListCursor(cursorValue, 'trash', session.userId);
+  const boundary = (time: string, id: string, kind: string) => cursor
+    ? ` AND (${time} < ? OR (${time} = ? AND ${id} < ?) OR (${time} = ? AND ${id} = ? AND '${kind}' < ?))` : '';
+  const values = cursor ? [cursor.timestamp, cursor.timestamp, cursor.id, cursor.timestamp, cursor.id, cursor.kind] : [];
   const queryLimit = bounded + 1;
   const rows: TrashRow[] = [];
   const [messages, drafts, inbound] = await Promise.all([
-    db.prepare(`SELECT id, folder, from_name, from_email, to_name, to_email, to_json, subject, '' AS body, sent_at, labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at, inbox_category FROM workspace_messages WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT ?`).bind(session.userId, queryLimit).all<WorkspaceMessageRow>(),
-    db.prepare(`SELECT id, to_email, cc, to_json, cc_json, bcc_json, subject, '' AS body, is_starred, created_at, updated_at, message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id, deleted_at FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT ?`).bind(session.userId, queryLimit).all<WorkspaceDraftRow>(),
-    db.prepare(`SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet, e.inbox_category, e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at, s.deleted_at, COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred FROM email_messages AS e JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id WHERE e.owner_user_id = ? AND s.deleted_at IS NOT NULL ORDER BY s.deleted_at DESC, e.id DESC LIMIT ?`).bind(session.userId, session.userId, queryLimit).all<WorkspaceInboundRow & { deleted_at: string }>()
+    db.prepare(`SELECT id, folder, from_name, from_email, to_name, to_email, to_json, subject, '' AS body, sent_at, labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at, inbox_category FROM workspace_messages WHERE user_id = ? AND deleted_at IS NOT NULL${boundary('deleted_at', 'id', 'workspace')} ORDER BY deleted_at DESC, id DESC LIMIT ?`).bind(session.userId, ...values, queryLimit).all<WorkspaceMessageRow>(),
+    db.prepare(`SELECT id, to_email, cc, to_json, cc_json, bcc_json, subject, '' AS body, is_starred, created_at, updated_at, message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id, deleted_at FROM workspace_drafts WHERE user_id = ? AND deleted_at IS NOT NULL${boundary('deleted_at', 'id', 'draft')} ORDER BY deleted_at DESC, id DESC LIMIT ?`).bind(session.userId, ...values, queryLimit).all<WorkspaceDraftRow>(),
+    db.prepare(`SELECT e.id AS email_id, e."from", e."to", e.subject, e."timestamp", e.snippet, e.inbox_category, e.message_id, e.in_reply_to, e."references", e.thread_key, e.text_body, s.archived_at, s.deleted_at, COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred FROM email_messages AS e JOIN workspace_email_states AS s ON s.user_id = ? AND s.email_message_id = e.id WHERE e.owner_user_id = ? AND s.deleted_at IS NOT NULL${boundary('s.deleted_at', "('email:' || e.id)", 'inbound')} ORDER BY s.deleted_at DESC, e.id DESC LIMIT ?`).bind(session.userId, session.userId, ...values, queryLimit).all<WorkspaceInboundRow & { deleted_at: string }>()
   ]);
   for (const row of messages.results ?? []) rows.push({ id: row.id, kind: 'workspace', deletedAt: row.deleted_at!, message: mapWorkspaceMessageRow(row), r2Keys: [] });
   for (const row of drafts.results ?? []) rows.push({ id: row.id, kind: 'draft', deletedAt: row.deleted_at!, message: mapDraftRow(row, session.profile), r2Keys: [] });
   for (const row of inbound.results ?? []) rows.push({ id: `email:${row.email_id}`, kind: 'inbound', deletedAt: row.deleted_at, message: mapInboundRow(row, session.profile), r2Keys: [] });
-  rows.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt) || b.id.localeCompare(a.id));
+  const compare = (a: string, b: string) => a === b ? 0 : a < b ? 1 : -1;
+  rows.sort((a, b) => compare(a.deletedAt, b.deletedAt) || compare(a.id, b.id) || compare(a.kind, b.kind));
+  const last = rows.slice(0, bounded).at(-1);
   return {
     items: rows.slice(0, bounded).map(({ id, kind, deletedAt, message }) => ({ id, kind, deletedAt, originalFolder: message.archivedAt ? 'archive' : message.folder, message })),
     hasMore: rows.length > bounded,
+    nextCursor: rows.length > bounded && last ? encodeListCursor({ scope: 'trash', owner: session.userId, timestamp: last.deletedAt, id: last.id, kind: last.kind }) : null,
     metrics: await getMailboxMetrics(db, session.userId)
   };
 }

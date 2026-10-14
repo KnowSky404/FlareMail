@@ -1,13 +1,18 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import Pagination from '$lib/components/ui/Pagination.svelte';
+  import { createPageScroll } from '$lib/client/page-scroll';
+  import { CursorPager } from '$lib/client/cursor-pager';
   import Panel from '$lib/components/ui/Panel.svelte';
   import Switch from '$lib/components/ui/Switch.svelte';
   import {
     confirmTelegramBinding,
     createTelegramBinding,
     fetchTelegramSettings,
+    fetchTelegramDeliveries,
+    type TelegramDeliveryPage,
     retryTelegramDelivery,
     sendTelegramTest,
     setupTelegram,
@@ -18,6 +23,30 @@
   import { ClientApiError } from '$lib/client/api';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
+  let { active = true }: { active?: boolean } = $props();
+  let mounted = $state(false);
+  let history = $state<TelegramDeliveryPage>({ deliveries: [], nextCursor: null, hasMore: false });
+  let historyPage = $state(1);
+  let historyElement = $state<HTMLDivElement>();
+  const scrollHistoryPage = createPageScroll();
+  function turnHistoryPage(direction: -1 | 1) {
+    return scrollHistoryPage(historyElement, 'telegram', historyPage, () => direction < 0 ? historyPager.previous() : historyPager.next(), () => historyPage, () => active ? 'telegram' : '');
+  }
+  let historyLoading = $state(false);
+  let historyError = $state('');
+  const historyPager = new CursorPager(fetchTelegramDeliveries, {
+    onResult: (result, page) => { history = result; historyPage = page; historyError = ''; },
+    onLoading: (pending) => { historyLoading = pending; },
+    onError: () => { historyError = t('mail.listError'); }
+  });
+  $effect(() => {
+    const visible = active;
+    if (!mounted) return;
+    untrack(() => {
+      if (!visible) { cancelRefresh(); historyPager.cancel(); return; }
+      void (async () => { await refresh(); if (active && !disposed && telegramState?.schemaReady) await historyPager.load(historyPage, true); })();
+    });
+  });
   let telegramState = $state<TelegramSettingsStatus | null>(null);
   let bindingLink = $state<string | null>(null);
   let bindingExpiresAt = $state<string | null>(null);
@@ -79,7 +108,7 @@
   function scheduleRefresh() {
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = undefined;
-    if (disposed) return;
+    if (disposed || !active) return;
     // Use the challenge lifetime, not a fixed attempt count: Telegram may
     // stay in the foreground for several minutes before the user returns.
     const expiresAt = bindingExpiresAt ? Date.parse(bindingExpiresAt) : NaN;
@@ -91,7 +120,7 @@
 
   async function refresh() {
     cancelRefresh();
-    if (disposed) return;
+    if (disposed || !active) return;
     const revision = refreshRevision;
     const controller = new AbortController();
     refreshController = controller;
@@ -105,7 +134,7 @@
         bindingLink = null;
         bindingExpiresAt = null;
       }
-      if (revealCandidate) {
+      if (revealCandidate && active) {
         await tick();
         if (disposed || revision !== refreshRevision) return;
         candidateElement?.focus({ preventScroll: true });
@@ -125,14 +154,15 @@
 
   onMount(() => {
     const resume = () => {
-      if (document.visibilityState === 'hidden') cancelRefresh();
+      if (!active || document.visibilityState === 'hidden') { cancelRefresh(); historyPager.cancel(); }
       else if (!action) void refresh();
     };
     window.addEventListener('focus', resume);
     document.addEventListener('visibilitychange', resume);
-    void refresh();
+    mounted = true;
     return () => {
       disposed = true;
+      historyPager.reset();
       cancelRefresh();
       window.removeEventListener('focus', resume);
       document.removeEventListener('visibilitychange', resume);
@@ -152,8 +182,7 @@
       message = t('telegram.bindingInstructions');
       await refresh();
       await tick();
-      generatedLinkElement?.focus();
-      generatedLinkElement?.scrollIntoView({ block: 'center' });
+      if (active) { generatedLinkElement?.focus(); generatedLinkElement?.scrollIntoView({ block: 'center' }); }
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -183,8 +212,7 @@
       await navigator.clipboard.writeText(bindingCommand);
       message = t('telegram.commandCopied');
     } catch {
-      bindingCommandElement?.focus();
-      bindingCommandElement?.select();
+      if (active) { bindingCommandElement?.focus(); bindingCommandElement?.select(); }
       message = t('telegram.commandCopyFailed');
     }
   }
@@ -263,6 +291,7 @@
       await retryTelegramDelivery(id);
       message = t('telegram.retryQueued');
       await refresh();
+      if (active) await historyPager.load(historyPage, true);
     } catch (value) {
       error = errorMessage(value);
     } finally {
@@ -362,15 +391,22 @@
   {#if message}<p class="feedback" role="status" aria-live="polite">{message}</p>{/if}
   {#if error}<p class="feedback error" role="alert">{error}</p>{/if}
 
-  {#if telegramState?.recentDeliveries?.length}
-    <div class="history">
+  {#if telegramState?.schemaReady}
+    <div bind:this={historyElement} class="history" aria-busy={historyLoading}>
       <h3>{t('telegram.recentDeliveries')}</h3>
-      {#each telegramState.recentDeliveries as delivery (delivery.id)}
+      {#if historyError}
+        <p class="feedback error" role="alert">{historyError}</p>
+        <Button variant="secondary" disabled={historyLoading || action !== ''} onclick={() => void historyPager.load(historyPage, true)}>{t('mail.retry')}</Button>
+      {/if}
+      {#if historyLoading}<p role="status">{t('common.loading')}</p>{/if}
+      {#each history.deliveries as delivery (delivery.id)}
         <div class="delivery-row">
           <div><strong>{delivery.subject || t('mail.noSubject')}</strong><span>{formatDate(delivery.receivedAt)} · {deliveryStatusLabels[delivery.status]}</span></div>
-          {#if ['failed', 'retryable', 'unknown_delivery'].includes(delivery.status)}<Button variant="secondary" disabled={action !== ''} onclick={() => void retry(delivery.id)}>{delivery.status === 'unknown_delivery' ? t('telegram.manualRetry') : t('mail.retry')}</Button>{/if}
+          {#if ['failed', 'retryable', 'unknown_delivery'].includes(delivery.status)}<Button variant="secondary" disabled={action !== '' || historyLoading} onclick={() => void retry(delivery.id)}>{delivery.status === 'unknown_delivery' ? t('telegram.manualRetry') : t('mail.retry')}</Button>{/if}
         </div>
       {/each}
+      <Pagination page={historyPage} hasPrevious={historyPage > 1} hasNext={history.hasMore} empty={history.deliveries.length === 0}
+        pending={historyLoading || action !== ''} onPrevious={() => turnHistoryPage(-1)} onNext={() => turnHistoryPage(1)} />
     </div>
   {/if}
 </Panel>

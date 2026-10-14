@@ -7,7 +7,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
   const limit = Number(event.url.searchParams.get('limit') ?? '100');
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new ApiError(400, 'INVALID_LIMIT', '回收站分页参数无效。', undefined, undefined, false);
-  return apiSuccess(event, await listWorkspaceTrash(getRequestEnv(event), session, limit));
+  return apiSuccess(event, await listWorkspaceTrash(getRequestEnv(event), session, limit, event.url.searchParams.get('cursor')));
 });
 
 export const POST: RequestHandler = withApiHandler(async (event) => {

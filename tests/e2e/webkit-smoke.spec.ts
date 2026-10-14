@@ -576,12 +576,12 @@ test('keeps settings sections and save action reachable in WebKit', async ({ pag
   await login(page);
   await page.goto('/?folder=settings');
   await expect(page).toHaveTitle('FlareMail');
-  const sections = page.getByRole('navigation', { name: '设置分区' });
+  const sections = page.getByRole('tablist', { name: '设置分区' });
   const name = page.getByLabel('显示姓名');
   await name.fill('Unsaved WebKit settings draft');
 
-  await pressHeadlessControl(sections.getByRole('link', { name: '通知', exact: true }));
-  await expect(page).toHaveURL(/#settings-notifications$/u);
+  await pressHeadlessControl(sections.getByRole('tab', { name: '通知', exact: true }));
+  await expect(page).toHaveURL(/tab=notifications/u);
   const notification = page.locator('#settings-notifications');
   await expect(notification).toBeInViewport();
   await expect(sections).toBeInViewport();
@@ -592,9 +592,9 @@ test('keeps settings sections and save action reachable in WebKit', async ({ pag
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-settings-webkit-${testInfo.project.name}.png`), fullPage: false });
 
-  await pressHeadlessControl(sections.getByRole('link', { name: '诊断', exact: true }));
+  await pressHeadlessControl(sections.getByRole('tab', { name: '诊断', exact: true }));
   await expect(page.locator('#settings-diagnostics')).toBeInViewport();
-  await pressHeadlessControl(sections.getByRole('link', { name: '个人资料', exact: true }));
+  await pressHeadlessControl(sections.getByRole('tab', { name: '个人资料', exact: true }));
   await expect(name).toHaveValue('Unsaved WebKit settings draft');
   await assertNoConsoleErrors(consoleErrors);
 });

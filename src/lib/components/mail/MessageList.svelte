@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Pagination from '$lib/components/ui/Pagination.svelte';
   import { tick, untrack } from 'svelte';
   import { AlertCircle, RefreshCw } from '@lucide/svelte';
   import { Button, Skeleton } from '$lib/components/ui';
@@ -30,7 +31,9 @@
     viewKey = '',
     loadingMore = false,
     error = '',
-    paginationEnd = false,
+    pageNumber = 1,
+    totalPages,
+    onPreviousPage,
     hasMore = false,
     onSelect,
     onSelectThread,
@@ -62,7 +65,9 @@
     viewKey?: string;
     loadingMore?: boolean;
     error?: string;
-    paginationEnd?: boolean;
+    pageNumber?: number;
+    totalPages?: number;
+    onPreviousPage?: () => void | Promise<unknown>;
     hasMore?: boolean;
     onSelect?: (message: MailMessage) => void | Promise<void>;
     onSelectThread?: (thread: MailThread) => void | Promise<void>;
@@ -78,7 +83,6 @@
   } = $props();
 
   let listElement = $state<HTMLElement | null>(null);
-  let preservedScrollTop = $state<number | null>(null);
   const scrollPositions = new Map<string, number>();
   let previousViewKey: string | null = null;
   $effect.pre(() => {
@@ -113,7 +117,6 @@
     return threads.map((value) => ({ kind: 'thread', value }));
   });
 
-  const selectedCount = $derived(visibleItems.length);
   const isFiltered = $derived(Boolean(query.trim()) || filter !== 'all');
   const emptyTitle = $derived(isFiltered ? t('mail.noMatch') : t('mail.empty', { section: sectionLabels[activeSection] }));
   const emptyDescription = $derived(
@@ -132,20 +135,7 @@
     else void onSelect?.(item.value);
   };
 
-  function handleLoadMore() {
-    preservedScrollTop = listElement?.scrollTop ?? null;
-    void onLoadMore?.();
-  }
 
-  $effect(() => {
-    if (!loadingMore || preservedScrollTop === null || !listElement) return;
-    const target = preservedScrollTop;
-    listElement.scrollTop = target;
-    const frame = requestAnimationFrame(() => {
-      if (loadingMore && preservedScrollTop === target && listElement) listElement.scrollTop = target;
-    });
-    return () => cancelAnimationFrame(frame);
-  });
 </script>
 
 <section id={category ? "inbox-category-panel" : undefined} role={category ? "tabpanel" : undefined} aria-labelledby={category ? `inbox-tab-${category}` : undefined} bind:this={listElement} class="fm-list-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--fm-surface)]" class:fm-list-loading={loadingMore} aria-label={t('mail.listLabel', { section: sectionLabels[activeSection] })}>
@@ -227,12 +217,10 @@
         {/if}
       {/each}
     </div>
-    {#if hasMore && onLoadMore}
-      <div class="border-t border-[var(--fm-border)] px-4 py-4 text-center">
-        <Button variant="secondary" size="sm" loading={loadingMore} onclick={handleLoadMore}>{t('mail.loadMore')}</Button>
-      </div>
-    {:else if paginationEnd || selectedCount > 0}
-      <p class="border-t border-[var(--fm-border)] px-4 py-3 text-center text-[11px] text-[var(--fm-text-muted)]">{t('mail.allShown')}</p>
-    {/if}
+  {/if}
+  {#if !loading}
+    <Pagination page={pageNumber} {totalPages} hasPrevious={pageNumber > 1} hasNext={hasMore}
+      pending={pending || loadingMore || refreshing} empty={visibleItems.length === 0}
+      onPrevious={onPreviousPage} onNext={onLoadMore} />
   {/if}
 </section>

@@ -184,6 +184,18 @@ describe('mailbox controller', () => {
     expect(result.selectedMessageId).toBe(archived.id);
   });
 
+  test('keeps a full record page bounded while a newly saved message awaits revalidation', () => {
+    const messages = Array.from({ length: 40 }, (_, i) => message(`draft-${i}`, 'drafts', '2026-08-14T01:00:00.000Z'));
+    const page = { ...makePage('drafts', messages), hasMore: true, nextCursor: 'boundary' };
+    const before = { mailbox: { inbox: [], sent: [], drafts: messages }, mailboxPages: { drafts: page }, metrics };
+    const created = message('new-draft', 'drafts', '2026-08-14T02:00:00.000Z');
+    const result = mergeMessageDelta(before, delta(created), deltaOptions({ currentSection: 'drafts', preferredMessageId: created.id }));
+    expect(result.snapshot.mailbox.drafts).toHaveLength(40);
+    expect(result.snapshot.mailboxPages?.drafts?.messages).toHaveLength(40);
+    expect(result.snapshot.mailbox.drafts[0]?.id).toBe(created.id);
+    expect(result.snapshot.mailboxPages?.drafts?.nextCursor).toBe('boundary');
+  });
+
   test('drops an out-of-identity delta and its global metrics from the filtered view', () => {
     const baseline = { ...metrics, inboxCount: 99 };
     const before = snapshot(cloneMailbox());
@@ -479,4 +491,13 @@ test('signals a page interrupted by flags so navigation can resume after the wri
   resolvePage({ page: makePage('sent', [message('sent', 'sent', '2026-10-09T00:00:00Z')]) });
   expect(await navigation).toBe(false);
   expect(controller.patchFlags('inbox-message', { read: true })).toBe(false);
+});
+
+test('keeps cached sent replies in reading details without changing the inbox record page', async () => {
+  const { threadDetailMessages } = await import('./mailbox-controller');
+  const incoming = { ...message('received', 'inbox', '2026-10-01T00:00:00Z'), messageId: '<received@flaremail.test>' };
+  const sent = { ...message('reply', 'sent', '2026-10-01T01:00:00Z'), messageId: '<reply@flaremail.test>', inReplyTo: '<received@flaremail.test>' };
+  const mailbox = { ...cloneMailbox(), inbox: [incoming], sent: [sent] };
+  expect(threadDetailMessages(mailbox, 'inbox', [], incoming).map((item) => item.id)).toEqual(['received', 'reply']);
+  expect(mailbox.inbox).toEqual([incoming]);
 });

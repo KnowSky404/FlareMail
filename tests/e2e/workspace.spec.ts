@@ -200,39 +200,49 @@ test('lets users change the mail filter while search results load', async ({ pag
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('keeps loaded mail and scroll position while appending the next page', async ({ page, consoleErrors }, testInfo) => {
-  test.skip(testInfo.project.name === 'narrow', 'Desktop and 390 px mobile cover incremental pagination.');
+test('paginates mail without appending, preserves a failed page and restores the previous scroll position', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
-  let releaseNextPage: () => void = () => {};
-  const nextPageGate = new Promise<void>((resolve) => { releaseNextPage = resolve; });
-  await page.route('**/api/workspace/mailbox?**', async (route) => {
-    if (new URL(route.request().url()).searchParams.has('cursor')) await nextPageGate;
-    await route.continue().catch(() => {});
-  });
-
   const scrollRegion = page.locator('.fm-list-scroll');
   const rows = scrollRegion.getByRole('listitem');
-  const loadMore = scrollRegion.getByRole('button', { name: '加载更多' });
+  const next = scrollRegion.getByRole('button', { name: '下一页', exact: true });
+  const previous = scrollRegion.getByRole('button', { name: '上一页', exact: true });
+  await expect(previous).toBeDisabled();
   const initialCount = await rows.count();
-  expect(initialCount).toBeGreaterThan(0);
-  await loadMore.scrollIntoViewIfNeeded();
-  const initialScrollTop = await scrollRegion.evaluate((element) => element.scrollTop);
-  expect(initialScrollTop).toBeGreaterThan(0);
-  expect(await page.evaluate(() => window.scrollY)).toBe(0);
-  await expect(page.getByRole('heading', { name: '收件箱', exact: true })).toBeInViewport();
-  try {
-    await loadMore.click();
-    await expect(rows).toHaveCount(initialCount);
-    await expect(loadMore).toHaveAttribute('aria-busy', 'true');
-    expect(await scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThanOrEqual(initialScrollTop - 2);
-    await page.screenshot({ path: join(tmpdir(), `flaremail-load-more-pending-${testInfo.project.name}.png`), fullPage: false });
-  } finally {
-    releaseNextPage();
-  }
-  await expect.poll(() => rows.count()).toBeGreaterThan(initialCount);
-  await expect(loadMore).toHaveCount(0);
+  const initialText = await rows.first().textContent();
+  await next.scrollIntoViewIfNeeded();
+  const initialScroll = await scrollRegion.evaluate((element) => element.scrollTop);
+  await page.route('**/api/workspace/mailbox?**', async (route) => {
+    if (new URL(route.request().url()).searchParams.has('cursor')) return route.fulfill({ status: 503, json: { ok: false, error: { code: 'TEST_OFFLINE', message: 'Synthetic failure' } } });
+    await route.continue();
+  });
+  await next.click();
+  await expect(scrollRegion.getByRole('alert')).toBeVisible();
+  await expect(rows).toHaveCount(initialCount);
+  await expect(rows.first()).toHaveText(initialText!);
+  await expect(previous).toBeDisabled();
+  await page.unroute('**/api/workspace/mailbox?**');
+  await rows.first().getByRole('checkbox').check();
+  const scope = page.getByLabel('线程操作范围');
+  await expect(scope).toHaveValue('selected');
+  await scope.selectOption('filtered');
+  await scope.selectOption('owner');
+  await next.click();
+  await expect(previous).toBeEnabled();
+  await expect(next).toBeDisabled();
+  await expect(scrollRegion.getByRole('checkbox', { checked: true })).toHaveCount(0);
+  await expect(scope).toHaveCount(0);
+  expect(await rows.count()).toBeLessThan(initialCount);
+  expect(await rows.first().textContent()).not.toBe(initialText);
+  await rows.first().getByRole('checkbox').check();
+  await expect(scope).toHaveValue('selected');
+  await rows.first().getByRole('checkbox').uncheck();
+  await previous.click();
+  await expect(rows).toHaveCount(initialCount);
+  await expect(rows.first()).toHaveText(initialText!);
+  await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThanOrEqual(initialScroll - 2);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-pagination-${testInfo.project.name}.png`), fullPage: false });
   await assertNoHorizontalOverflow(page);
-  await assertNoConsoleErrors(consoleErrors);
+  await assertNoConsoleErrors(consoleErrors.filter((entry) => !/^Failed to load resource: the server responded with a status of 503/u.test(entry)));
 });
 
 test('shows one illustration in the empty mail detail pane', async ({ page, consoleErrors }, testInfo) => {
@@ -796,6 +806,7 @@ async function installTelegramApiMock(page: Page) {
       if (typeof input.summaryEnabled === 'boolean') state.summaryEnabled = input.summaryEnabled;
       return response(route, { settings: { enabled: state.enabled, privacyMode: state.privacyMode, summaryEnabled: state.summaryEnabled } });
     }
+    if (pathname.endsWith('/deliveries') && method === 'GET') return response(route, { deliveries: mockTelegramStatus(state).recentDeliveries, hasMore: false, nextCursor: null });
     if (pathname.endsWith('/bind') && method === 'POST') {
       return response(route, { state: 'pending', expiresAt: bindingExpiresAt, deepLink: 'https://t.me/flaremail_test_bot?start=abcdefghijklmnopqrstuvwxyz012345' });
     }
@@ -830,16 +841,16 @@ async function openSettings(page: Page) {
   await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible();
 }
 
-test('keeps settings sections reachable and the save action visible while scrolling', async ({ page, consoleErrors }, testInfo) => {
+test('keeps settings tabs reachable and the save action visible', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings');
   await expect(page).toHaveTitle('FlareMail');
-  const sections = page.getByRole('navigation', { name: '设置分区' });
+  const sections = page.getByRole('tablist', { name: '设置分区' });
   const name = page.getByLabel('显示姓名');
   await name.fill('  Unsaved section navigation  ');
 
-  await sections.getByRole('link', { name: '通知', exact: true }).click();
-  await expect(page).toHaveURL(/#settings-notifications$/u);
+  await sections.getByRole('tab', { name: '通知', exact: true }).click();
+  await expect(page).toHaveURL(/tab=notifications/u);
   await expect(page.locator('#settings-notifications')).toBeInViewport();
   await expect(sections).toBeInViewport();
   const save = page.getByRole('button', { name: '保存设置' });
@@ -847,27 +858,27 @@ test('keeps settings sections reachable and the save action visible while scroll
   const navBounds = await sections.boundingBox();
   const notificationBounds = await page.locator('#settings-notifications').boundingBox();
   const appbarBounds = await page.getByRole('banner').first().boundingBox();
-  expect(navBounds!.y).toBeLessThanOrEqual(appbarBounds!.y + appbarBounds!.height + 1);
+  expect(navBounds!.y).toBeGreaterThanOrEqual(appbarBounds!.y + appbarBounds!.height - 1);
   expect(notificationBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
   if (testInfo.project.name === 'mobile') await expect(page.getByRole('button', { name: '打开导航' })).toBeInViewport();
   const toast = page.locator('.toast-region .toast');
   if (await toast.count()) {
     const toastBounds = await toast.first().boundingBox();
     const saveBounds = await save.boundingBox();
-    expect(toastBounds!.y + toastBounds!.height).toBeLessThanOrEqual(saveBounds!.y);
+    expect(toastBounds!.y + toastBounds!.height <= saveBounds!.y || toastBounds!.y >= saveBounds!.y + saveBounds!.height).toBe(true);
   }
   await assertNoHorizontalOverflow(page);
   if (testInfo.project.name === 'desktop' || testInfo.project.name === 'mobile') {
     await page.screenshot({ path: `/tmp/flaremail-settings-sections-${testInfo.project.name}.png`, fullPage: false });
   }
 
-  await sections.getByRole('link', { name: '诊断', exact: true }).click();
+  await sections.getByRole('tab', { name: '诊断', exact: true }).click();
   await expect(page.locator('#settings-diagnostics')).toBeInViewport();
-  await sections.getByRole('link', { name: '个人资料', exact: true }).click();
+  await sections.getByRole('tab', { name: '个人资料', exact: true }).click();
   await expect(name).toHaveValue('  Unsaved section navigation  ');
-  await sections.getByRole('link', { name: '外观', exact: true }).focus();
+  await sections.getByRole('tab', { name: '外观', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/#settings-appearance$/u);
+  await expect(page).toHaveURL(/tab=appearance/u);
   await page.getByLabel('主题').selectOption('dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
@@ -2856,6 +2867,7 @@ test('binds, confirms, enables, tests, and unbinds Telegram from a non-default m
   await page.goto('/?folder=inbox&q=E2E%20Bulk%2030');
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   await openSettings(page);
+  await page.getByRole('tab', { name: 'Telegram 通知', exact: true }).click();
 
   await expect(page.getByRole('heading', { name: 'Telegram 通知', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
@@ -2913,6 +2925,7 @@ test('keeps Telegram binding polling alive beyond one minute and recovers from a
   const telegram = await installTelegramApiMock(page);
   await login(page);
   await openSettings(page);
+  await page.getByRole('tab', { name: 'Telegram 通知', exact: true }).click();
   await page.clock.install();
   await page.clock.pauseAt(new Date());
   await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
@@ -2935,10 +2948,12 @@ test('refreshes Telegram binding when returning to the page even after a reload 
   const telegram = await installTelegramApiMock(page);
   await login(page);
   await openSettings(page);
+  await page.getByRole('tab', { name: 'Telegram 通知', exact: true }).click();
   await page.getByRole('button', { name: '生成 Telegram 绑定链接' }).click();
   await page.reload();
   await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
   if (!await page.getByRole('heading', { name: '设置', exact: true }).isVisible()) await openSettings(page);
+  await page.getByRole('tab', { name: 'Telegram 通知', exact: true }).click();
   await expect(page.getByLabel('完整绑定命令（含一次性绑定码）')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '刷新绑定状态', exact: true })).toBeVisible();
   telegram.receiveStart();
@@ -2953,6 +2968,7 @@ test('expires Telegram binding commands and stops polling at the link deadline',
   const telegram = await installTelegramApiMock(page);
   await login(page);
   await openSettings(page);
+  await page.getByRole('tab', { name: 'Telegram 通知', exact: true }).click();
   const now = new Date();
   await page.clock.install({ time: now });
   await page.clock.pauseAt(now);
@@ -2972,6 +2988,7 @@ test('ignores a stale Telegram status read after confirmation and stops reads on
   telegram.receiveStart();
   await login(page);
   await openSettings(page);
+  await page.getByRole('tab', { name: 'Telegram 通知', exact: true }).click();
   await expect(page.getByRole('button', { name: '确认绑定', exact: true })).toBeVisible();
   let releaseRead: () => void = () => {};
   const heldRead = new Promise<void>((resolve) => { releaseRead = resolve; });
@@ -3014,6 +3031,7 @@ test('has an accessible Telegram settings panel on mobile', async ({ page, conso
   await installTelegramApiMock(page);
   await login(page);
   await openSettings(page);
+  await page.getByRole('tab', { name: 'Telegram 通知', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Telegram 通知', exact: true })).toBeVisible();
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);

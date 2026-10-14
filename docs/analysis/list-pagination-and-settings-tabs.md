@@ -1,6 +1,6 @@
 # 列表分页与设置标签页分析
 
-状态：已完成源码核查与需求确认；目标功能待实现。本次交付只新增分析、Spec 和文档索引，不改变运行行为。
+状态：文档阶段的历史源码核查与需求确认。以下现状和测试结果对应核查基线；后续功能实现与验收见目标 Spec。
 
 核查日期：2026-10-14。基线：`main@0961661b1bfb4a9ed2dc8ca2696dc80ed391988c`，已与 `origin/main` 及远端 main 核对一致。
 
@@ -36,6 +36,7 @@
 | 邮件分页单位 | 沿用邮件记录页，每页最多 40 封；继续复用现有邮件接口 |
 | 设置分组 | 个人资料、通知、外观、诊断、Telegram 五项 |
 | 保存范围 | 只保存当前标签；切换标签保留未保存输入；外观和 Telegram 延续现有生效方式 |
+| 批量范围（实现阶段补充确认） | 保留显式会话扩展；默认仅当前页，翻页清空选择并恢复默认范围 |
 
 Spec 的默认页大小为邮件 40 封、域名和地址 25 条、回收站 40 条、Telegram 20 条。此次不增加任意页跳转或每页条数选择器。
 
@@ -82,6 +83,6 @@ bun test \
 
 ## 文档关系与后续交付
 
-本分析解释基线现状，目标 Spec 定义下一步行为；两者均不将目标写成已实现。已有[资源管理 Spec](../specs/mail-resource-management.md)、[导航与已读 Spec](../specs/mailbox-navigation-and-read-state.md)及[UI/UX 记录](../UI_UE_REVIEW.md)包含历史实现和验收，应保留原来的基线与证据。
+本分析保留规划阶段的基线现状；功能实现状态和新增验收以 Spec 的后续记录为准。已有[资源管理 Spec](../specs/mail-resource-management.md)、[导航与已读 Spec](../specs/mailbox-navigation-and-read-state.md)及[UI/UX 记录](../UI_UE_REVIEW.md)包含历史实现和验收，应保留原来的基线与证据。
 
 功能实现后同步 [用户指南](../USER_GUIDE.md)、[API 契约](../API.md)、[Telegram 指南](../TELEGRAM.md)及对应设计说明，并记录新的提交与验证结果。按 [worktree 与 PR 流程](../DEVELOPMENT.md#worktree-and-pr-workflow)在隔离工作树开发、验证和提交；PRE、push/PR、合并及生产发布分别按授权执行。

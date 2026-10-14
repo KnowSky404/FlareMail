@@ -1,3 +1,4 @@
+import { decodeListCursor, encodeListCursor } from '$lib/server/workspace/list-cursor';
 import { nowIso } from '$lib/server/workspace/shared';
 import { FLAREMAIL_SCHEMA_VERSION } from './schema-version';
 
@@ -550,17 +551,27 @@ export function insertTelegramDeliveryIfEligible(
   `).bind(input.deliveryId, input.nextAttemptAt, input.now, input.now, input.emailMessageId, input.ownerUserId);
 }
 
-export async function listTelegramDeliveries(db: D1Database, userId: string, limit = 20) {
+export async function listTelegramDeliveryPage(db: D1Database, userId: string, limit = 20, cursorValue: string | null = null) {
   const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
+  const cursor = decodeListCursor(cursorValue, 'telegram', userId);
   const result = await db.prepare(`
     SELECT d.*, e.subject, COALESCE(e.created_at, e."timestamp") AS received_at
     FROM workspace_telegram_deliveries AS d
     JOIN email_messages AS e ON e.id = d.email_message_id AND e.owner_user_id = d.owner_user_id
     WHERE d.owner_user_id = ?
+      ${cursor ? 'AND (d.created_at < ? OR (d.created_at = ? AND d.id < ?))' : ''}
     ORDER BY d.created_at DESC, d.id DESC
     LIMIT ?
-  `).bind(userId, safeLimit).all<TelegramDeliveryDetailRow>();
-  return result.results ?? [];
+  `).bind(userId, ...(cursor ? [cursor.timestamp, cursor.timestamp, cursor.id] : []), safeLimit + 1).all<TelegramDeliveryDetailRow>();
+  const rows = result.results ?? [];
+  const deliveries = rows.slice(0, safeLimit);
+  const last = deliveries.at(-1);
+  const hasMore = rows.length > safeLimit;
+  return { deliveries, hasMore, nextCursor: hasMore && last ? encodeListCursor({ scope: 'telegram', owner: userId, timestamp: last.created_at, id: last.id }) : null };
+}
+
+export async function listTelegramDeliveries(db: D1Database, userId: string, limit = 20) {
+  return (await listTelegramDeliveryPage(db, userId, limit)).deliveries;
 }
 
 export async function retryTelegramDelivery(db: D1Database, userId: string, deliveryId: string) {

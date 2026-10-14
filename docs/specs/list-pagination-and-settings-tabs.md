@@ -1,6 +1,6 @@
 # 列表分页与设置标签页 Spec
 
-状态：需求已确认，功能待实现。本文件定义目标行为；当前仅交付文档，不能作为功能或远程验收通过的凭据。
+状态：功能已实现并通过下列本地验收；远程 PRE 和生产尚未验收。
 
 确认日期：2026-10-14。核查基线：`main@0961661b1bfb4a9ed2dc8ca2696dc80ed391988c`。
 
@@ -37,7 +37,7 @@
 
 邮件继续使用 `GET /api/workspace/mailbox` 和现有 `MailboxPage` 响应；不增加邮件总数查询或任意跳页接口。页级缓存保存原始记录页及游标，不再把下一页追加到当前渲染集合；分类、搜索、状态、身份、标签和 limit 共同决定分页上下文。
 
-列表聚合仅以当前记录页为基础，不借用其他页记录填满会话行。翻页清空当前页的批量选择，已存在的全选、批量操作和键盘列表选择只针对当前页；翻页不自动打开首封邮件。合法邮件深链仍可加载详情，不能为了显示目标而将其插入当前列表、突破分页上限。
+列表聚合仅以当前记录页为基础，不借用其他页记录填满会话行。翻页清空当前页的批量选择并恢复默认范围。全选、默认批量操作和键盘列表选择只针对当前页；保留用户主动选择的“当前筛选内的会话邮件”和“整个 Owner 会话”扩展选项，按原有服务端范围契约处理。翻页不自动打开首封邮件。合法邮件深链仍可加载详情，不能为了显示目标而将其插入当前列表、突破分页上限。
 
 保留已有状态修补、认证隔离和缓存失效规则。已读/星标变化不扩展到其他邮件或会话；不再匹配筛选的记录从对应缓存页移除。归档、删除、恢复等成员变化后使相关服务端页链失效并从第一页重新读取，避免停留在空末页；资源列表继续将页码收敛到最后一个有效页。
 
@@ -92,7 +92,7 @@ Telegram 第一次激活才读取状态及历史；离开标签后保留组件�
 
 ## 验收矩阵
 
-以下是后续功能实现的验收要求，当前尚未执行。
+以下矩阵定义验收要求；本次实际执行范围与结果记录在文末，不代表远程验收。
 
 | 场景 | 必须验证的结果 |
 | --- | --- |
@@ -100,7 +100,7 @@ Telegram 第一次激活才读取状态及历史；离开标签后保留组件�
 | 邮件前后翻页 | 当前页最多 40 封，不累积其他页；会话聚合及跨页出现符合记录页单位；上一页恢复对应内容 |
 | 分类、搜索、身份、状态及标签变化 | 回到第一页，游标和缓存不串用，统计口径对应当前查询 |
 | 快速切换、取消和请求失败 | 迟到响应不覆盖新页；失败保留原页和可重试入口；页码不提前提交 |
-| 批量选择及邮件深链 | 翻页不保留跨页选择、不自动打开首封；外页详情目标不混入当前记录页 |
+| 批量选择及邮件深链 | 默认仅当前页，显式会话扩展仍可选；翻页清空选择和扩展范围、不自动打开首封；外页详情目标不混入当前记录页 |
 | 域名和地址分页 | 筛选、排序先于切片；完整配置计数和能力不依赖当前页；单页控件可发现 |
 | 回收站超过 500 条 | 使用三类来源的混合合成数据，遍历所有页无遗漏或重复；同时间戳、公开 ID 前缀及稳定边界正确 |
 | 回收站恢复/删除及空末页 | 页链可重新建立，能返回有效页；原有清空和 R2 清理保护保持有效 |
@@ -117,8 +117,42 @@ Telegram 第一次激活才读取状态及历史；离开标签后保留组件�
 
 ## 兼容、文档与发布
 
-预期沿用当前 D1 schema、绑定和依赖，不新增迁移；新增两个读取接口的分页能力及客户端状态类型。Owner 权限、资源能力判断、供应商门禁、邮件已读语义和操作写入边界继续由现有业务契约约束。
+实现沿用当前 D1 schema、绑定和依赖，没有新增迁移；新增两个读取接口的分页能力及客户端状态类型。Owner 权限、资源能力判断、供应商门禁、邮件已读语义和操作写入边界继续由现有业务契约约束。
 
-本次文档在独立 worktree 内检查差异、命令存在性与链接后创建原子提交，不修改现有用户/API 指南来宣称目标已经实现。功能落地时同步 [用户指南](../USER_GUIDE.md)、[API](../API.md)、[Telegram 指南](../TELEGRAM.md)和[设计说明](../../DESIGN.md)，补充当前提交的验证记录；[资源管理](./mail-resource-management.md)和[导航与已读](./mailbox-navigation-and-read-state.md)的历史记录保持原基线。
+已同步 [用户指南](../USER_GUIDE.md)、[API](../API.md)、[Telegram 指南](../TELEGRAM.md)和[设计说明](../../DESIGN.md)。本次验收补充新记录；[资源管理](./mail-resource-management.md)和[导航与已读](./mailbox-navigation-and-read-state.md)的历史记录保持原基线。
 
 后续按 [worktree 与 PR 流程](../DEVELOPMENT.md#worktree-and-pr-workflow)执行本地门禁和原子提交；PRE 需对应提交的相关页面/API 验收，远程共享数据默认只读。push/PR、当前 head 的 Code Review 与 Security Review、合并和生产分别遵循仓库授权与门禁；本 Spec 不授权部署或远程写入。
+
+## 2026-10-14 实现与本地验收
+
+功能 worktree：`/tmp/FlareMail-list-pagination-settings-tabs`；分支：`feat/list-pagination-settings-tabs`。基线仍为 `0961661b1bfb4a9ed2dc8ca2696dc80ed391988c`，先带入文档提交 `ab8e2ef`；原主工作树及文档工作树保留。最终功能 SHA 以该分支的功能提交及 `/tmp/flaremail-pagination-evidence/validation.json` 为准。
+
+实现复用 [Pagination](../../src/lib/components/ui/Pagination.svelte) 和 [CursorPager](../../src/lib/client/cursor-pager.ts)，为邮件、回收站和 Telegram 保存独立的游标页；资源继续在完整集合上筛选、排序后分页。[设置辅助模块](../../src/lib/client/settings-tabs.ts)管理标签 URL 和独立提交字段，Telegram 首次进入才加载，隐藏时暂停读取并保留实例。
+
+复验发现并修复了三处分页边界：翻页不自动选择首封邮件；过期缓存页刷新失败时仍完成已接受页的选择清空与滚动恢复；回收站恢复后再次移入时使旧分页缓存失效。新保存记录保持页大小上限，成员或排序位置变化后重建第一页。
+
+环境为 Linux ARM64、Bun 1.4.3、项目锁定依赖及 Playwright 1.58.2。Browser 插件在本会话没有可调用工具，因此使用仓库 Playwright。D1/R2 状态位于 `/tmp/flaremail-e2e/list-pagination/<project>/state`，供应商使用 demo 或请求 mock。浏览器使用任务独立缓存；WebKit 解压的符号链接已修复，Firefox 使用可写字体缓存和测试进程的沙箱环境选项。
+
+| 本地检查 | 结果及实际覆盖 |
+| --- | --- |
+| `bun run test` | 657 pass、0 fail、4093 次断言；包括缓存替换、取消与迟到响应、独立保存和 API/integration 回归 |
+| 回收站读取 | 603 条三类混合记录，同时间戳及跨来源相同 ID，遍历无遗漏/重复；删除边界记录后游标仍可读取；错误参数和 Owner 隔离 |
+| Telegram 读取 | 55 条记录分为 20/20/15；分页 API 响应、认证、结构不可用、非法及跨 Owner/类型游标 |
+| `bun run check` | 0 errors、0 warnings；保留项目原有 tsconfig paths/baseUrl 启动提示 |
+| `bun run deploy:dry-run` | 内含 `bun run build`，构建与严格 Worker 打包通过；仅使用公开本地配置生成临时 dry-run 配置，未发布 |
+
+最终浏览器复验共 37 pass、0 fail、0 skip：
+
+| 项目 | 结果 | 视口/补充范围 |
+| --- | --- | --- |
+| Chromium desktop | 14 pass | 1280 × 900；补验回收站完整写入流程、草稿自动保存及恢复、全局语言和 Telegram 绑定/失效/迟到读取 |
+| Chromium mobile | 7 pass | 390 × 844；含 Telegram 面板 a11y |
+| Chromium narrow | 6 pass | 320 × 720 |
+| WebKit desktop | 5 pass | 1280 × 900 |
+| Firefox desktop | 5 pass | 1366 × 900；设置可达性另覆盖 1920/1440/768/390 px |
+
+共同覆盖回收站 40/1 条换页及失败保留、域名 25/1 和地址 25/25/1 分页及筛选重置、Telegram 20/1 条独立历史及隐藏轮询停止、设置草稿和双向独立保存、旧锚点/历史导航、键盘焦点、设置 a11y 与横向溢出检查。Chromium 另覆盖邮件页替换/失败/返回滚动，及显式会话扩展保留、翻页清空选择与恢复默认范围。此前相关测试还验证了分类页、外页邮件深链、缓存返回、回复身份和跨窗口资料刷新；未受最后修复影响的项目不重复执行。
+
+日志：`/tmp/flaremail-pagination-final-{unit,check,dry-run}.log` 和 `/tmp/flaremail-pagination-verified-<project>.log`。浏览器输出保留在 `/tmp/flaremail-pagination-evidence/<project>`。必要截图为 `/tmp/flaremail-tabs-<project>.png`、`flaremail-resource-pagination-<project>.png`、`flaremail-trash-pages-<project>.png` 及 `flaremail-telegram-pages-<project>.png`；均使用固定测试数据，已检查桌面、手机与窄屏画面。
+
+以上仅为本地/mock 证据。未执行 CI、远程 PRE、远程迁移、生产部署或真实邮件/Telegram 投递；Linux WebKit 和手机模拟器不等于真实 iOS/Safari 验收。工作分支和 worktree 保留供后续审查。
