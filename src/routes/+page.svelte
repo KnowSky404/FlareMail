@@ -1102,6 +1102,8 @@
     mailIdentityOptions = { domains: [], addresses: [] };
     mobileDetailOpen = false;
     shortcutHelpOpen = false;
+    aboutOpen = false;
+    aboutRestoreFocusElement = null;
     mailboxLoading = false;
     mailboxLoadingMore = false;
     trashItems = [];

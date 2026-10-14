@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFileSync } from 'node:fs';
-import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, selectSettings, test } from './fixtures';
+import { assertNoConsoleErrors, assertNoHorizontalOverflow, E2E_PASSWORD, E2E_USERNAME, expect, login, selectSettings, test } from './fixtures';
 
 const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 
@@ -103,6 +103,41 @@ test('suppresses workspace shortcuts while About is open and restores them after
   expect(writes).toEqual([]);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
+  await expect(account).toBeFocused();
+  await page.keyboard.press('g');
+  await page.keyboard.press('s');
+  await expect(page).toHaveURL(/folder=sent/u);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('clears About after a cross-tab session end and keeps it closed on sign-in', async ({ page, context, consoleErrors }) => {
+  await login(page);
+  await page.bringToFront();
+  const account = page.getByRole('button', { name: '账号菜单' });
+  await account.focus();
+  await expect(account).toBeFocused();
+  await page.keyboard.press('Enter');
+  const about = page.getByRole('menuitem', { name: '关于', exact: true });
+  await about.focus();
+  await expect(about).toBeFocused();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: '关于 FlareMail', exact: true });
+  await expect(dialog).toBeVisible();
+  await context.clearCookies();
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'session-ended', nonce: crypto.randomUUID(), at: Date.now() });
+    channel.close();
+  });
+  await expect(page.getByRole('heading', { name: '登录邮件工作台' })).toBeVisible();
+  await expect(dialog).toBeHidden();
+  // Sign in in place: a reload would discard the stale component state and hide the regression.
+  await page.getByLabel('管理员用户名').fill(E2E_USERNAME);
+  await page.getByLabel('密码').fill(E2E_PASSWORD);
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await account.focus();
   await expect(account).toBeFocused();
   await page.keyboard.press('g');
   await page.keyboard.press('s');
