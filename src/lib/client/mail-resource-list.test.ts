@@ -17,6 +17,38 @@ const addresses: Address[] = [
 ];
 
 describe('mail resource list helpers', () => {
+  test('defaults to ten rows and retains the complete total on later pages', () => {
+    const items = Array.from({ length: 21 }, (_, index) => index);
+
+    expect(paginateMailResources(items)).toMatchObject({
+      items: items.slice(0, 10), total: 21, page: 1, pageCount: 3, pageSize: 10
+    });
+    expect(paginateMailResources(items, 3)).toMatchObject({
+      items: [20], total: 21, page: 3, pageCount: 3, pageSize: 10
+    });
+  });
+
+  test('falls back to ten rows for invalid page sizes', () => {
+    const items = Array.from({ length: 21 }, (_, index) => index);
+
+    for (const pageSize of [0, -1, 0.5, NaN, Infinity]) {
+      expect(paginateMailResources(items, 1, pageSize)).toMatchObject({
+        items: items.slice(0, 10), pageSize: 10, pageCount: 3
+      });
+    }
+  });
+
+  test('uses the selected page size and clamps the page after increasing it', () => {
+    const items = Array.from({ length: 31 }, (_, index) => index);
+
+    expect(paginateMailResources(items, 2, 20)).toMatchObject({
+      items: items.slice(20), total: 31, page: 2, pageCount: 2, pageSize: 20
+    });
+    expect(paginateMailResources(items, 4, 50)).toMatchObject({
+      items, total: 31, page: 1, pageCount: 1, pageSize: 50
+    });
+  });
+
   test('filters the complete address collection before pagination', () => {
     const matching = filterMailAddresses(addresses, { search: 'alpha', domainId: 'd1' });
     const page = paginateMailResources(matching, 1, 1);

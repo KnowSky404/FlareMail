@@ -5,6 +5,9 @@
  * to that collection, sort the matching rows, then paginate them.
  */
 
+export const DEFAULT_RESOURCE_PAGE_SIZE = 10;
+export const RESOURCE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+
 export type ResourceLifecycle = 'active' | 'disabled' | 'deleted';
 
 export type MailDomainStatusFilter = 'all' | 'enabled' | 'disabled';
@@ -35,7 +38,7 @@ function normalizeQuery(query: string | undefined) {
 }
 
 function normalizePageSize(pageSize: number | undefined) {
-  return Number.isFinite(pageSize) && pageSize && pageSize > 0 ? Math.floor(pageSize) : 25;
+  return Number.isFinite(pageSize) && pageSize && pageSize >= 1 ? Math.floor(pageSize) : DEFAULT_RESOURCE_PAGE_SIZE;
 }
 
 function normalizePage(page: number | undefined) {
@@ -77,7 +80,7 @@ export function filterMailAddresses<T extends MailAddressListItem>(
 }
 
 /** Paginate after all list filters and sorting have been applied. */
-export function paginateMailResources<T>(items: readonly T[], page = 1, pageSize = 25): MailResourcePage<T> {
+export function paginateMailResources<T>(items: readonly T[], page = 1, pageSize = DEFAULT_RESOURCE_PAGE_SIZE): MailResourcePage<T> {
   const normalizedPageSize = normalizePageSize(pageSize);
   const total = items.length;
   const pageCount = Math.max(1, Math.ceil(total / normalizedPageSize));

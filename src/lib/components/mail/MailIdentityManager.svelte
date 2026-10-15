@@ -14,7 +14,7 @@
   import { ClientApiError, requestJson } from '$lib/client/api';
   import { AUTH_EXPIRED_EVENT, isClientAuthExpired } from '$lib/client/auth-session';
   import { LatestRequest } from '$lib/client/latest-request';
-  import { filterMailDomains, filterMailAddresses, paginateMailResources, type MailDomainStatusFilter, type MailAddressLifecycleFilter } from '$lib/client/mail-resource-list';
+  import { DEFAULT_RESOURCE_PAGE_SIZE, RESOURCE_PAGE_SIZE_OPTIONS, filterMailDomains, filterMailAddresses, paginateMailResources, type MailDomainStatusFilter, type MailAddressLifecycleFilter } from '$lib/client/mail-resource-list';
   import { mailHealthState } from '$lib/domain/mail/health';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
   import { summarizeDomainCapabilities, type DomainCapabilityState } from './domain-capabilities';
@@ -51,6 +51,7 @@
   let addressStatus = $state<MailAddressLifecycleFilter>('current');
   let domainFilter = $state('');
   let pageNumber = $state(1);
+  let pageSize = $state(DEFAULT_RESOURCE_PAGE_SIZE);
   let sortDescending = $state(false);
   let createAddressOpen = $state(false);
   let addDomainOpen = $state(false);
@@ -101,8 +102,8 @@
   const invalidDomainFilter = $derived(Boolean(domainFilter) && loadedOnce && !domains.some((domain) => domain.id === domainFilter));
   const visibleDomains = $derived(filterMailDomains(domains, domainSearch, domainStatus).sort((a, b) => (sortDescending ? -1 : 1) * a.domain_name.localeCompare(b.domain_name)));
   const visibleAddresses = $derived(filterMailAddresses(addresses, { search: addressSearch, domainId: domainFilter, lifecycle: addressStatus }).sort((a, b) => (sortDescending ? -1 : 1) * a.email.localeCompare(b.email)));
-  const domainPage = $derived(paginateMailResources(visibleDomains, pageNumber, 25));
-  const addressPage = $derived(paginateMailResources(visibleAddresses, pageNumber, 25));
+  const domainPage = $derived(paginateMailResources(visibleDomains, pageNumber, pageSize));
+  const addressPage = $derived(paginateMailResources(visibleAddresses, pageNumber, pageSize));
   const currentPage = $derived(view === 'domains' ? domainPage : addressPage);
   const totalResources = $derived(view === 'domains' ? domains.length : addresses.filter((address) => addressStatus === 'deleted' ? address.lifecycle_status === 'deleted' : addressStatus === 'all' || address.lifecycle_status !== 'deleted').length);
   const diagnosticsDomain = $derived(domains.find((domain) => domain.id === diagnosticsDomainId));
@@ -694,7 +695,14 @@
     <footer class="resource-pagination">
       <p role="status">{t('settings.filteredCount', { visible: currentPage.total, total: totalResources })}</p>
       {#if view === 'domains'}<span class="count-help">{t('settings.addressCountHelp')}</span>{/if}
-      {#if currentPage.pageCount > 1}<div><IconButton ariaLabel={t('settings.previousPage')} disabled={currentPage.page <= 1} onclick={() => pageNumber = currentPage.page - 1}><ChevronLeft size={17} aria-hidden="true" /></IconButton><span>{t('settings.resourcePage', { page: currentPage.page, pages: currentPage.pageCount })}</span><IconButton ariaLabel={t('settings.nextPage')} disabled={currentPage.page >= currentPage.pageCount} onclick={() => pageNumber = currentPage.page + 1}><ChevronRight size={17} aria-hidden="true" /></IconButton></div>{/if}
+      <div class="pagination-controls">
+        <label class="page-size-field" for="mail-resource-page-size">{t('settings.rowsPerPage')}
+          <select id="mail-resource-page-size" bind:value={pageSize} onchange={() => pageNumber = 1}>
+            {#each RESOURCE_PAGE_SIZE_OPTIONS as size}<option value={size}>{size}</option>{/each}
+          </select>
+        </label>
+        {#if currentPage.pageCount > 1}<div class="page-navigation"><IconButton ariaLabel={t('settings.previousPage')} disabled={currentPage.page <= 1} onclick={() => pageNumber = currentPage.page - 1}><ChevronLeft size={17} aria-hidden="true" /></IconButton><span>{t('settings.resourcePage', { page: currentPage.page, pages: currentPage.pageCount })}</span><IconButton ariaLabel={t('settings.nextPage')} disabled={currentPage.page >= currentPage.pageCount} onclick={() => pageNumber = currentPage.page + 1}><ChevronRight size={17} aria-hidden="true" /></IconButton></div>{/if}
+      </div>
     </footer>
   {/if}
 </section>
@@ -850,7 +858,7 @@
   .resource-toolbar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
   .resource-search { flex: 1; min-width: 12rem; }
   .toolbar-field { display: grid; gap: 5px; min-width: 8rem; max-width: 16rem; font-size: 13px; color: var(--fm-text-secondary); }
-  .toolbar-actions, .row-actions, .resource-pagination > div { display: flex; align-items: center; gap: 4px; }
+  .toolbar-actions, .row-actions, .page-navigation { display: flex; align-items: center; gap: 4px; }
   select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); background: var(--fm-surface); color: var(--fm-text); }
   .table-wrap { border: 1px solid var(--fm-border); border-radius: var(--radius-md); }
   table { width: 100%; table-layout: fixed; border-collapse: collapse; }
@@ -878,6 +886,9 @@
   .message { margin-block: 12px; overflow-wrap: anywhere; line-height: 1.6; }
   .table-loading { display: grid; gap: 1px; border: 1px solid var(--fm-border); border-radius: var(--radius-md); }
   .resource-pagination { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; padding-top: 10px; color: var(--fm-text-muted); font-size: 13px; }
+  .pagination-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .page-size-field { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .page-size-field select { width: auto; min-width: 72px; }
   .resource-manager :global([role="menuitem"]) { display: block; width: 100%; min-height: 40px; padding: 8px 10px; text-align: left; border-radius: 4px; font-size: 13px; overflow-wrap: anywhere; }
   .resource-manager :global([role="menuitem"]:hover:not(:disabled)) { background: var(--fm-surface-hover); }
   .resource-manager :global([role="menuitem"]:disabled) { opacity: .5; }

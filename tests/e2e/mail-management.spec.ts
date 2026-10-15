@@ -1182,6 +1182,94 @@ test.describe('mail resource management', () => {
     await expect(dialog).toBeHidden();
   });
 
+  test('changes management table page sizes with accessible controls and preserved filters', async ({ page, consoleErrors }, testInfo) => {
+    await login(page);
+    const original = await readIdentities(page);
+    const domains = Array.from({ length: 31 }, (_, index) => ({
+      ...original.domains[0],
+      id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, '0')}`,
+      domain_name: `pagination-${String(index + 1).padStart(2, '0')}.example.test`
+    }));
+    const addresses = domains.map((domain, index) => ({
+      ...original.addresses[0],
+      id: `00000000-0000-4000-8000-${String(index + 200).padStart(12, '0')}`,
+      domain_id: domain.id,
+      email: `pagination-${String(index + 1).padStart(2, '0')}@${domain.domain_name}`
+    }));
+    await page.route(identitiesUrl, async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      await route.fulfill({ json: { ok: true, data: { ...original, domains, addresses } } });
+    });
+
+    for (const view of ['domains', 'addresses'] as const) {
+      await gotoManagement(page, `/?folder=settings&view=${view}`);
+      await expect(managementHeading(page, view)).toBeVisible();
+      await expect(page).toHaveTitle(/FlareMail/u);
+      await expect(page.locator('vite-error-overlay')).toHaveCount(0);
+      const rows = managementTable(page, view).locator('tbody tr[data-domain-id], tbody tr[data-address-id]');
+      const pageSize = page.getByRole('combobox', { name: /每页条数|Rows per page/u });
+      const footer = page.locator('.resource-pagination');
+      const next = footer.getByRole('button', { name: /下一页|Next page/u });
+      const previous = footer.getByRole('button', { name: /上一页|Previous page/u });
+      await expect(pageSize).toHaveValue('10');
+      await expect(pageSize.locator('option')).toHaveText(['10', '20', '50', '100']);
+      await expect(rows).toHaveCount(10);
+
+      const search = page.locator('#mail-resource-search');
+      await search.fill('pagination-');
+      const state = view === 'domains' ? 'enabled' : 'active';
+      await page.locator('#mail-state-filter').selectOption(state);
+      const firstRow = await rows.first().getAttribute(view === 'domains' ? 'data-domain-id' : 'data-address-id');
+      await next.click();
+      await expect(footer).toContainText(/第 2 \/ 4 页|Page 2 of 4/u);
+
+      await pageSize.focus();
+      await pageSize.press('ArrowDown');
+      await pageSize.press('Enter');
+      await pageSize.press('Tab');
+      await expect(pageSize).toHaveValue('20');
+      await expect(rows).toHaveCount(20);
+      await expect(previous).toBeDisabled();
+      await expect(footer).toContainText(/第 1 \/ 2 页|Page 1 of 2/u);
+      await expect(rows.first()).toHaveAttribute(view === 'domains' ? 'data-domain-id' : 'data-address-id', firstRow!);
+      await expect(search).toHaveValue('pagination-');
+      await expect(page.locator('#mail-state-filter')).toHaveValue(state);
+      await next.click();
+      await expect(rows).toHaveCount(11);
+      await expect(next).toBeDisabled();
+
+      for (const size of ['50', '100']) {
+        await pageSize.selectOption(size);
+        await expect(rows).toHaveCount(31);
+        await expect(next).toHaveCount(0);
+        await expect(pageSize).toBeVisible();
+      }
+      await search.fill('no-pagination-matches');
+      await expect(rows).toHaveCount(0);
+      await pageSize.selectOption('10');
+      await expect(pageSize).toHaveValue('10');
+      await search.fill('');
+      await expect(rows).toHaveCount(10);
+      await expect(previous).toBeDisabled();
+      await expect(footer).toContainText(/显示 31 \/ 共 31|Showing 31 of 31/u);
+      await assertNoHorizontalOverflow(page);
+      expect((await new AxeBuilder({ page }).include('.resource-pagination').analyze()).violations).toEqual([]);
+      await dismissNotifications(page);
+      await footer.scrollIntoViewIfNeeded();
+      const directory = '/tmp/flaremail-table-page-size-evidence';
+      await mkdir(directory, { recursive: true });
+      await page.screenshot({ path: `${directory}/${view}-${testInfo.project.name}.png`, fullPage: false });
+      await pageSize.selectOption('20');
+      await page.locator('#refresh-mail-resources').click();
+      await expect(rows).toHaveCount(20);
+      await expect(pageSize).toHaveValue('20');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(pageSize).toHaveValue('10');
+      await expect(rows).toHaveCount(10);
+    }
+    await assertNoConsoleErrors(consoleErrors);
+  });
+
   test('covers long management collections at narrow widths and records table evidence', async ({ page, browser }, testInfo) => {
     await login(page);
     await prepareEvidenceDirectory();
@@ -1220,7 +1308,7 @@ test.describe('mail resource management', () => {
     await gotoManagement(page, '/?folder=settings&view=domains');
     await expect(managementTable(page, 'domains')).toBeVisible();
     await expect(page.getByText(/显示 30 \/ 共 30|Showing 30 of 30/iu)).toBeVisible();
-    await expect(managementTable(page, 'domains').locator('tbody tr[data-domain-id]')).toHaveCount(25);
+    await expect(managementTable(page, 'domains').locator('tbody tr[data-domain-id]')).toHaveCount(10);
     await expect(page.getByRole('button', { name: /下一页|Next page/u })).toBeEnabled();
     const domainSearch = page.locator('#mail-resource-search');
     await domainSearch.fill('very-long-management-domain-29');
@@ -1235,7 +1323,7 @@ test.describe('mail resource management', () => {
     await gotoManagement(page, '/?folder=settings&view=addresses');
     await expect(managementTable(page, 'addresses')).toBeVisible();
     await expect(managementTable(page, 'addresses')).toContainText('long-address-');
-    await expect(managementTable(page, 'addresses').locator('tbody tr[data-address-id]')).toHaveCount(25);
+    await expect(managementTable(page, 'addresses').locator('tbody tr[data-address-id]')).toHaveCount(10);
     await domainSearch.fill('long-address-29');
     await page.locator('#mail-state-filter').selectOption('all');
     await expect(managementTable(page, 'addresses').locator('tbody tr[data-address-id]')).toHaveCount(1);
