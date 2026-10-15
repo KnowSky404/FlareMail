@@ -6,7 +6,7 @@
 
 Open **Domains** or **Email addresses** from the sidebar. Each page starts with a table of the resources already saved for the Owner. Use the **Add domain** or **Add address** button for a dialog; edit an existing row from its accessible Edit pencil action. Refresh reads the saved list and keeps the current table context. A failed read is shown as an error instead of an empty configuration.
 
-Domains and addresses show 25 rows per page. Use Previous page and Next page; changing search, sort, or filters returns to the first page.
+Use Previous page and Next page to navigate the tables; changing search, sort, or filters returns to the first page.
 
 Use the domain and state filters to narrow the table. The domain address count includes every non-deleted address, including disabled addresses. Selecting **View addresses** applies that domain as a real address-list filter. Deleted addresses are available through the explicit deleted-state filter and expose only the recovery and diagnostics actions that apply to a tombstone.
 

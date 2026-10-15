@@ -1241,7 +1241,8 @@ test.describe('mail resource management', () => {
       for (const size of ['50', '100']) {
         await pageSize.selectOption(size);
         await expect(rows).toHaveCount(31);
-        await expect(next).toHaveCount(0);
+        await expect(next).toBeDisabled();
+        await expect(previous).toBeDisabled();
         await expect(pageSize).toBeVisible();
       }
       await search.fill('no-pagination-matches');
@@ -1256,7 +1257,7 @@ test.describe('mail resource management', () => {
       expect((await new AxeBuilder({ page }).include('.resource-pagination').analyze()).violations).toEqual([]);
       await dismissNotifications(page);
       await footer.scrollIntoViewIfNeeded();
-      const directory = '/tmp/flaremail-table-page-size-evidence';
+      const directory = process.env.FLAREMAIL_TABLE_PAGE_SIZE_EVIDENCE_DIR ?? '/tmp/flaremail-table-page-size-evidence';
       await mkdir(directory, { recursive: true });
       await page.screenshot({ path: `${directory}/${view}-${testInfo.project.name}.png`, fullPage: false });
       await pageSize.selectOption('20');
