@@ -115,7 +115,7 @@
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (tab !== 'profile' && tab !== 'notifications') return;
+    if (pending || (tab !== 'profile' && tab !== 'notifications')) return;
     const submittedTab = tab;
     const previous = createProfileDraft(profile);
     feedback[submittedTab] = { message: '', error: false };

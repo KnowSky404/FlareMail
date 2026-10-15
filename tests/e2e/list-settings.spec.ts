@@ -100,6 +100,49 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('serializes profile saves across tabs while a slow request is pending', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.goto('/?folder=settings');
+  const { data: { profile: baseline } } = await (await page.request.get('/api/workspace/profile')).json();
+  const tabs = page.getByRole('tablist', { name: '设置分区' });
+  const save = page.getByRole('tabpanel').locator('button[type="submit"]');
+  await tabs.getByRole('tab', { name: '通知', exact: true }).click();
+  await page.locator('#profile-forwarding').click();
+  await tabs.getByRole('tab', { name: '个人资料', exact: true }).click();
+  await page.getByLabel('显示姓名').fill('Serialized profile save');
+  const submissions: Array<Record<string, unknown>> = [];
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/workspace/profile', async (route) => {
+    if (route.request().method() === 'PUT') {
+      submissions.push(route.request().postDataJSON());
+      if (submissions.length === 1) await delayed;
+    }
+    await route.continue();
+  });
+  try {
+    await save.click();
+    await expect.poll(() => submissions.length).toBe(1);
+    await tabs.getByRole('tab', { name: '通知', exact: true }).click();
+    await expect(page.locator('#profile-forwarding')).toBeDisabled();
+    await expect(save).toBeDisabled();
+    // Native form submission must also respect the shared in-flight save.
+    await page.locator('#settings-panel-notifications form').evaluate((form) => (form as HTMLFormElement).requestSubmit());
+    release();
+    await expect(save).toBeEnabled();
+    await expect(page.locator('#profile-forwarding')).toHaveAttribute('aria-checked', String(!baseline.forwardingEnabled));
+    await save.click();
+    await expect(save).toBeEnabled();
+    expect(submissions).toHaveLength(2);
+    expect(submissions[1]).toMatchObject({ name: 'Serialized profile save', forwardingEnabled: !baseline.forwardingEnabled });
+    const { data: { profile: saved } } = await (await page.request.get('/api/workspace/profile')).json();
+    expect(saved).toMatchObject({ name: 'Serialized profile save', forwardingEnabled: !baseline.forwardingEnabled });
+    await assertNoConsoleErrors(consoleErrors);
+  } finally {
+    release();
+  }
+});
+
 test('Telegram history pages independently and keeps binding links while the hidden tab stops polling', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   let settingsReads = 0;
