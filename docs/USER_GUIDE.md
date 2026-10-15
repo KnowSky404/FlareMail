@@ -8,6 +8,8 @@ Open **Domains** or **Email addresses** from the sidebar. Each page starts with 
 
 Use the domain and state filters to narrow the table. The domain address count includes every non-deleted address, including disabled addresses. Selecting **View addresses** applies that domain as a real address-list filter. Deleted addresses are available through the explicit deleted-state filter and expose only the recovery and diagnostics actions that apply to a tombstone.
 
+Both tables start with 10 rows per page. Use **Rows per page** in the footer to choose 10, 20, 50, or 100. Changing the size returns to the first page and keeps your search, filters, and sort order. Reloading the browser page restores the default size.
+
 Use **Sync Cloudflare configuration** only when you want to discover eligible provider configuration and import identity records locally. It is separate from Refresh and does not modify remote routes. Sync results can be complete, partial, failed, or unknown; review the result and resource state before retrying a write.
 
 If a domain status check times out or otherwise has an uncertain result, the page reads the saved state again and keeps that domain's Check action locked while the result remains unknown. Refresh after the provider state is available to clear the lock.
