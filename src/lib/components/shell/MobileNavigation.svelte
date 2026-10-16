@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import FileText from '@lucide/svelte/icons/file-text';
   import Archive from '@lucide/svelte/icons/archive';
   import Inbox from '@lucide/svelte/icons/inbox';
@@ -13,12 +14,14 @@
   import Tag from '@lucide/svelte/icons/tag';
   import Plus from '@lucide/svelte/icons/plus';
   import { Drawer } from '$lib/components/ui';
+  import Select from '$lib/components/ui/Select.svelte';
   import type { MailboxSection, MailUserLabel, UserProfile } from '$lib/domain/mail';
   import { describeNavigationCount, formatNavigationCount, type NavigationCounts, type AttentionSection } from '$lib/client/navigation-counts';
   import BrandMark from './BrandMark.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import AccountMenu from './AccountMenu.svelte';
   import { useLocale } from '$lib/i18n/runtime.svelte';
+  import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
 
   type AppSection = MailboxSection | 'trash' | 'profile';
 
@@ -56,8 +59,16 @@
 
   let open = $state(false);
   let accountOpen = $state(false);
+  let themePreference = $state<ThemePreference>('system');
   const i18n = useLocale();
   const { t } = i18n;
+
+  onMount(() => {
+    const syncTheme = () => { themePreference = readThemePreference(); };
+    syncTheme();
+    window.addEventListener('flaremail:theme-change', syncTheme);
+    return () => window.removeEventListener('flaremail:theme-change', syncTheme);
+  });
 
   const labels = $derived<Record<AppSection, string>>({
     inbox: t('shell.inbox'),
@@ -147,7 +158,20 @@
       <button class:active={activeSection === 'profile' && managementView === 'settings'} type="button" onclick={() => select('profile')}>
         <Settings size={19} aria-hidden="true" /><span>{t('common.settings')}</span>
       </button>
-      <div class="mobile-language"><LanguageSwitcher /></div>
+      <div class="mobile-preferences">
+        <LanguageSwitcher />
+        <Select
+          id="mobile-theme"
+          label={t('settings.theme')}
+          value={themePreference}
+          options={[
+            { value: 'system', label: t('settings.themeSystem') },
+            { value: 'light', label: t('settings.themeLight') },
+            { value: 'dark', label: t('settings.themeDark') }
+          ]}
+          onchange={(value) => applyTheme(value as ThemePreference)}
+        />
+      </div>
     </nav>
 </Drawer>
 
@@ -225,7 +249,9 @@
     font-size: 11px;
   }
 
-  .mobile-language {
+  .mobile-preferences {
+    display: grid;
+    gap: var(--space-3);
     margin-top: var(--space-3);
     padding: var(--space-3) var(--space-3) 0;
     border-top: 1px solid var(--fm-border);

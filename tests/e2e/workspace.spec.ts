@@ -876,15 +876,22 @@ test('keeps settings tabs reachable and the save action visible', async ({ page,
   await expect(page.locator('#settings-diagnostics')).toBeInViewport();
   await sections.getByRole('tab', { name: '个人资料', exact: true }).click();
   await expect(name).toHaveValue('  Unsaved section navigation  ');
-  await sections.getByRole('tab', { name: '外观', exact: true }).focus();
+  await sections.getByRole('tab', { name: '诊断', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/tab=appearance/u);
-  await page.getByLabel('主题').selectOption('dark');
+  await expect(page).toHaveURL(/tab=diagnostics/u);
+  if (testInfo.project.name === 'desktop') {
+    await page.getByRole('button', { name: '显示偏好', exact: true }).click();
+    await page.getByRole('radiogroup', { name: '颜色主题', exact: true }).getByRole('radio', { name: '深色', exact: true }).press('Enter');
+  } else {
+    await page.getByRole('button', { name: '打开导航', exact: true }).click();
+    await page.getByRole('navigation', { name: '移动端导航', exact: true }).getByRole('combobox', { name: '颜色主题', exact: true }).selectOption('dark');
+  }
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.keyboard.press('Escape');
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);
   if (testInfo.project.name === 'desktop' || testInfo.project.name === 'mobile') {
-    await page.screenshot({ path: `/tmp/flaremail-settings-appearance-dark-${testInfo.project.name}.png`, fullPage: false });
+    await page.screenshot({ path: `/tmp/flaremail-settings-diagnostics-dark-${testInfo.project.name}.png`, fullPage: false });
   }
   if (testInfo.project.name === 'desktop') {
     await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '收件箱', exact: true }).click();

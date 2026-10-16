@@ -52,6 +52,7 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   await page.goto('/?folder=settings#settings-notifications');
   await expect(page).toHaveURL(/tab=notifications/u);
   const tabs = page.getByRole('tablist', { name: '设置分区' });
+  await expect(tabs.getByRole('tab')).toHaveText(['个人资料', '通知', '诊断', 'Telegram 通知']);
   await expect(page.getByRole('tabpanel')).toHaveCount(1);
   await tabs.getByRole('tab', { name: '个人资料', exact: true }).click();
   const original = await (await page.request.get('/api/workspace/profile')).json();
@@ -87,16 +88,56 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   await page.keyboard.press('Enter');
   await expect(page.locator('#profile-forwarding')).toHaveAttribute('aria-checked', String(baseline.forwardingEnabled));
   await expect(page.getByLabel('显示姓名')).toHaveCount(0);
-  await tabs.getByRole('tab', { name: '外观', exact: true }).click();
+  await page.keyboard.press('ArrowRight');
+  await expect(tabs.getByRole('tab', { name: '诊断', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: '保存设置', exact: true })).toHaveCount(0);
-  await page.getByLabel('颜色主题').selectOption('dark');
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.goBack();
   await expect(tabs.getByRole('tab', { name: '通知', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.settings-header').getByRole('combobox')).toHaveCount(0);
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-tabs-${testInfo.project.name}.png`), fullPage: false });
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('removed appearance links open profile while global display preferences keep working', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  for (const suffix of ['&tab=appearance', '#settings-appearance']) {
+    // Navigate from another route so each case exercises a direct legacy link,
+    // including a full Kit navigation for the old hash-only bookmark.
+    await page.goto('/?folder=inbox', { waitUntil: 'domcontentloaded' });
+    // Let pending reads finish before another full navigation: WebKit reports
+    // interrupted label reads as access-control console errors.
+    if (testInfo.project.name.startsWith('webkit')) await page.waitForLoadState('networkidle');
+    await page.goto(`/?folder=settings${suffix}`, { waitUntil: 'domcontentloaded' });
+    if (testInfo.project.name.startsWith('webkit')) await page.waitForLoadState('networkidle');
+    await expect(page).toHaveTitle('FlareMail');
+    const tabs = page.getByRole('tablist', { name: '设置分区' });
+    await expect(tabs.getByRole('tab', { name: '个人资料', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByLabel('显示姓名')).toBeVisible();
+    await expect.poll(() => new URL(page.url()).searchParams.has('tab')).toBe(false);
+    await expect.poll(() => new URL(page.url()).hash).toBe('');
+    await expect(tabs.getByRole('tab', { name: '外观', exact: true })).toHaveCount(0);
+    await expect(page.locator('#profile-theme')).toHaveCount(0);
+  }
+  const preferences = page.getByRole('button', { name: '显示偏好', exact: true });
+  if (await preferences.isVisible()) {
+    await preferences.click();
+    await page.getByRole('radiogroup', { name: '颜色主题', exact: true }).getByRole('radio', { name: '深色', exact: true }).press('Enter');
+  } else {
+    await page.getByRole('button', { name: '打开导航', exact: true }).click();
+    await page.getByRole('navigation', { name: '移动端导航', exact: true }).getByRole('combobox', { name: '颜色主题', exact: true }).selectOption('dark');
+  }
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.keyboard.press('Escape');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  if (testInfo.project.name.startsWith('webkit')) await page.waitForLoadState('networkidle');
+  await expect(page.getByLabel('显示姓名')).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-settings-no-appearance-${testInfo.project.name}.png`), fullPage: false });
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -172,7 +213,7 @@ test('Telegram history pages independently and keeps binding links while the hid
   await expect(panel).toContainText('Synthetic delivery 20');
   await panel.getByRole('button', { name: '生成 Telegram 绑定链接', exact: true }).click();
   await expect(panel.getByRole('link', { name: '打开 Telegram 继续绑定' })).toBeVisible();
-  await tabs.getByRole('tab', { name: '外观', exact: true }).click();
+  await tabs.getByRole('tab', { name: '诊断', exact: true }).click();
   const readsWhileHidden = settingsReads;
   await page.waitForTimeout(5500);
   expect(settingsReads).toBe(readsWhileHidden);

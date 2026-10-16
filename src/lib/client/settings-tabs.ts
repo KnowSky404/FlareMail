@@ -1,7 +1,7 @@
 import type { UserProfile } from '$lib/domain/mail';
 import { mergeProfileDraft } from './profile-draft';
 
-export const settingsTabs = ['profile', 'notifications', 'appearance', 'diagnostics', 'telegram'] as const;
+export const settingsTabs = ['profile', 'notifications', 'diagnostics', 'telegram'] as const;
 export type SettingsTab = typeof settingsTabs[number];
 export type EditableSettingsTab = 'profile' | 'notifications';
 export function isSettingsTab(value: string | null): value is SettingsTab { return settingsTabs.includes(value as SettingsTab); }
