@@ -75,7 +75,7 @@ Telegram 按现有 `createdAt DESC, id DESC` 顺序分页，多取一条判断�
 
 URL 使用 `folder=settings&tab=<值>`，保留 `view=domains|addresses` 与 `domain` 的既有管理语义。个人资料的默认 URL 可省略 tab；缺失或非法 tab 回到个人资料。标签激活记录历史，刷新及前进/后退恢复标签；离开设置或进入资源管理时清除 tab 和设置锚点。
 
-兼容 `#settings-profile`、`#settings-notifications`、`#settings-diagnostics`、`#settings-telegram`：没有合法 tab 时映射旧锚点到对应标签，使用 replace 规范化 URL；合法 tab 优先。标签切换不再执行页面分区锚点跳转。设置页已移除重复的外观标签和主题选择器，桌面通过全局显示偏好、手机通过全局导航抽屉切换主题，继续即时生效并持久化；旧 `tab=appearance` 和 `#settings-appearance` 链接按无效标签回到个人资料并规范化 URL。
+兼容 `#settings-profile`、`#settings-notifications`、`#settings-diagnostics`、`#settings-telegram`：没有合法 tab 时映射旧锚点到对应标签，使用 replace 规范化 URL；合法 tab 优先。标签切换不再执行页面分区锚点跳转。设置页已移除重复的外观标签和主题选择器，桌面通过全局显示偏好、手机通过全局导航抽屉切换主题，继续即时生效并持久化；浏览器禁止主题存储时，当前标签页的选择器仍与已应用主题同步。旧 `tab=appearance` 和 `#settings-appearance` 链接按无效标签回到个人资料并规范化 URL。
 
 移除外观标签后的[桌面](../images/settings-without-appearance-desktop.png)和[手机](../images/settings-without-appearance-mobile.png)截图来自隔离本地 synthetic 数据；不代表远程 Owner 验收。
 

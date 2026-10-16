@@ -64,8 +64,11 @@
   const { t } = i18n;
 
   onMount(() => {
-    const syncTheme = () => { themePreference = readThemePreference(); };
-    syncTheme();
+    themePreference = readThemePreference();
+    const syncTheme = (event: Event) => {
+      const detail = (event as CustomEvent<{ preference?: ThemePreference }>).detail;
+      if (detail?.preference) themePreference = detail.preference;
+    };
     window.addEventListener('flaremail:theme-change', syncTheme);
     return () => window.removeEventListener('flaremail:theme-change', syncTheme);
   });

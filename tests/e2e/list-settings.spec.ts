@@ -141,6 +141,40 @@ test('removed appearance links open profile while global display preferences kee
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('mobile theme control follows the applied preference when storage is blocked', async ({ page, consoleErrors }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    const getItem = Storage.prototype.getItem;
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.getItem = function (key: string) {
+      if (key === 'flaremail-theme') throw new DOMException('Storage blocked', 'SecurityError');
+      return getItem.call(this, key);
+    };
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key === 'flaremail-theme') throw new DOMException('Storage blocked', 'SecurityError');
+      return setItem.call(this, key, value);
+    };
+  });
+  await login(page);
+  await page.getByRole('button', { name: '打开导航', exact: true }).click();
+  const theme = page.getByRole('navigation', { name: '移动端导航', exact: true }).getByRole('combobox', { name: '颜色主题', exact: true });
+  for (const preference of ['dark', 'light', 'system']) {
+    await theme.selectOption(preference);
+    await expect(theme).toHaveValue(preference);
+    await expect(page.locator('html')).toHaveAttribute('data-theme-preference', preference);
+  }
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByRole('button', { name: '显示偏好', exact: true }).click();
+  await page.getByRole('radiogroup', { name: '颜色主题', exact: true }).getByRole('radio', { name: '深色', exact: true }).press('Enter');
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '打开导航', exact: true }).click();
+  await expect(theme).toHaveValue('dark');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('serializes profile saves across tabs while a slow request is pending', async ({ page, consoleErrors }) => {
   await login(page);
   await page.goto('/?folder=settings');
