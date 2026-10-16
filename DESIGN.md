@@ -575,11 +575,10 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 
 ### 12.2 设置
 
-使用独立标签面板，只有当前标签可见：
+使用四个独立标签面板，只有当前标签可见：
 
 - 个人资料（包括显示身份、签名和自动回复说明）
 - 通知
-- 外观
 - 诊断（包括域名、邮箱管理入口）
 - Telegram（包括绑定、通知和分页历史）
 
@@ -587,7 +586,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 
 个人资料编辑中的未保存字段不得被后台会话刷新或其他标签页的身份变更覆盖；未编辑字段可同步服务端新值，保存成功后以服务端规范化结果为准。
 
-个人资料和通知分别保存本标签字段，切换标签保留另一标签草稿。语言从全局入口切换，设置标题不重复提供切换器。标签 URL、键盘交互和所有独立数据列表的分页契约见[列表分页与设置标签 Spec](docs/specs/list-pagination-and-settings-tabs.md)。
+个人资料和通知分别保存本标签字段，切换标签保留另一标签草稿。语言和主题从桌面全局显示偏好或手机导航抽屉切换，设置页不重复提供相同入口；旧外观链接回到个人资料。标签 URL、键盘交互和所有独立数据列表的分页契约见[列表分页与设置标签 Spec](docs/specs/list-pagination-and-settings-tabs.md)。
 
 诊断不得泄露 secret 值，只显示已配置/缺失、最近成功的入站/外发事件和安全 ID。
 
@@ -595,7 +594,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 
 - 支持 `light`、`dark`、`system`。
 - 首次默认跟随系统。
-- 持久化用户显式选择。
+- 浏览器存储可用时持久化用户显式选择；存储受限时，当前标签页的主题和选择器仍保持同步。
 - system 模式下响应系统主题实时变化。
 - 在首屏绘制前应用主题，避免闪烁。
 - 所有 primitive 和状态都必须支持两个主题。
@@ -749,7 +748,7 @@ API 受理不能显示为“已送达”。在 webhook 确认之前使用“已�
 | 规范职责 | 当前路径 | 目标路径/改造边界 |
 | --- | --- | --- |
 | 登录 | `src/lib/components/mail/LoginView.svelte`、`src/routes/+page.server.ts`、`src/hooks.server.ts` | 使用无 demo 凭据的生产配置；登录面板保持中性 canvas，字段具备 autocomplete，错误对用户通用、细节只进安全日志 |
-| 个人资料/设置 | `src/lib/components/mail/ProfilePane.svelte`、`src/routes/api/workspace/profile/+server.ts` | 按个人资料、发件身份、自动回复、通知、外观、诊断分区；供应商信息只在相关设置/诊断上下文出现 |
+| 个人资料/设置 | `src/lib/components/mail/ProfilePane.svelte`、`src/routes/api/workspace/profile/+server.ts` | 个人资料、通知、诊断和 Telegram 四个标签；显示身份、签名和自动回复说明归个人资料，主题使用全局入口；供应商信息只在相关设置/诊断上下文出现 |
 | 会话、工作区和消息 API | `src/routes/api/workspace/**`、`src/lib/server/workspace.ts`、`workspace-api.ts` | 保持 API 与 UI 状态边界；可深链状态进入 URL；加载、错误、成功结果具备明确 aria-live/视觉呈现 |
 | D1/R2/Email Routing/Resend 适配 | `src/lib/server/cloudflare.ts`、`cloudflare-email.ts`、`email.ts`、`inbound-email.ts`、`outbound.ts` | 平台逻辑留在 `src/lib/server/` 与 `worker/index.ts`；UI 只消费安全、语义化状态 |
 | Worker 入口和邮件事件 | `worker/index.ts` | 继续统一承载 `fetch` 与 `email()`；不把供应商技术标识提升为主导航 |
