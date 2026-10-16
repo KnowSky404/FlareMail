@@ -24,7 +24,17 @@ describe('settings tabs', () => {
     expect(readWorkspaceUrl(normalized).settingsTab).toBe('telegram');
     expect(updateWorkspaceUrl(normalized, { section: 'inbox' }).searchParams.has('tab')).toBe(false);
     expect(updateWorkspaceUrl(normalized, { managementView: 'domains' }).searchParams.has('tab')).toBe(false);
-    expect(readSettingsTab(new URL('https://flaremail.test/?tab=appearance#settings-telegram'))).toBe('appearance');
+    expect(readSettingsTab(new URL('https://flaremail.test/?tab=notifications#settings-telegram'))).toBe('notifications');
     expect(readSettingsTab(new URL('https://flaremail.test/?tab=invalid'))).toBe('profile');
+  });
+  test('falls back to profile for removed appearance links and normalizes the URL', () => {
+    for (const suffix of ['&tab=appearance', '#settings-appearance']) {
+      const old = new URL(`https://flaremail.test/?folder=settings${suffix}`);
+      const state = readWorkspaceUrl(old);
+      expect(state.settingsTab).toBe('profile');
+      const normalized = updateWorkspaceUrl(old, { settingsTab: state.settingsTab });
+      expect(normalized.searchParams.has('tab')).toBe(false);
+      expect(normalized.hash).toBe('');
+    }
   });
 });

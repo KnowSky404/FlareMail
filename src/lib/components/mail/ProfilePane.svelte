@@ -1,15 +1,13 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
-  import Select from '$lib/components/ui/Select.svelte';
   import Switch from '$lib/components/ui/Switch.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
-  import { applyTheme, readThemePreference, type ThemePreference } from '$lib/theme';
   import { settingsTabs, profileSubmission, acceptProfileSave, type SettingsTab, type EditableSettingsTab } from '$lib/client/settings-tabs';
   import { formatNumber } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
@@ -84,7 +82,7 @@
       if (tab === current) document.getElementById(`settings-tab-${current}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   });
-  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), appearance: t('settings.appearance'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title') });
+  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title') });
 
   function moveTab(event: KeyboardEvent, index: number) {
     const next = event.key === 'ArrowRight' ? (index + 1) % settingsTabs.length : event.key === 'ArrowLeft' ? (index - 1 + settingsTabs.length) % settingsTabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? settingsTabs.length - 1 : null;
@@ -95,13 +93,7 @@
     element?.focus();
     element?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
-  let themePreference = $state<ThemePreference>('system');
   let lastServerProfile: UserProfile | null = null;
-
-
-  onMount(() => {
-    themePreference = readThemePreference();
-  });
 
   $effect(() => {
     const incoming = profile;
@@ -231,27 +223,6 @@
         onchange={(checked) => (nextProfile.forwardingEnabled = checked)}
       />
       <p class="section-note">{t('settings.systemNotifications')}：{diagnostics?.notificationEnabled ? t('settings.runtimeEnabled') : t('settings.runtimeDisabled')}。{t('settings.notificationAddressHidden')}</p>
-    </Panel>
-
-    {/if}
-    {#if tab === 'appearance'}
-    <Panel id="settings-appearance" class="scroll-mt-[5.25rem]" title={t('settings.appearance')} description={t('settings.appearanceDescription')}>
-      <div class="theme-field">
-        <Select
-          id="profile-theme"
-          label={t('settings.theme')}
-          value={themePreference}
-          options={[
-            { value: 'system', label: t('settings.themeSystem') },
-            { value: 'light', label: t('settings.themeLight') },
-            { value: 'dark', label: t('settings.themeDark') }
-          ]}
-          onchange={(value) => {
-            themePreference = value as ThemePreference;
-            applyTheme(themePreference);
-          }}
-        />
-      </div>
     </Panel>
 
     {/if}
@@ -444,10 +415,6 @@
     border: 1px solid var(--fm-border);
     border-radius: var(--radius-md);
     background: var(--fm-surface);
-  }
-
-  .theme-field {
-    max-width: 320px;
   }
 
   .save-row p {

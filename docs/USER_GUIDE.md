@@ -71,7 +71,7 @@ Mail folders, categories, search, Starred, and label views show up to 40 mail re
 
 Open Settings from the desktop sidebar or mobile navigation. The top-right account menu shows your account information, **About**, and **Sign out**. About opens a centered dialog with the project version, GitHub repository link, and `© KnowSky404` attribution. The version follows `package.json`; it does not include deployment identifiers. Close it with its Close button, Escape, or the backdrop; focus returns to the account button and unsaved settings remain intact.
 
-Settings has five tabs: Profile, Notifications, Appearance, Diagnostics, and Telegram. Only the selected tab is shown. Switching tabs keeps unsaved inputs; Profile and Notifications each save their own fields. Appearance applies immediately, and Telegram uses its own actions. Diagnostics includes shortcuts to Domains and Email addresses.
+Settings has four tabs: Profile, Notifications, Diagnostics, and Telegram. Only the selected tab is shown. Switching tabs keeps unsaved inputs; Profile and Notifications each save their own fields. Choose a theme from the global Display preferences control on desktop or the navigation drawer on mobile; old Appearance settings links open Profile. Telegram uses its own actions. Diagnostics includes shortcuts to Domains and Email addresses.
 
 Use the global language control in desktop Display preferences or the mobile navigation drawer. Choose English, Simplified Chinese, or the browser's language. Interface dates, counts, and accessibility labels follow the chosen language; original mail content remains unchanged.
 
