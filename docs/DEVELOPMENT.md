@@ -107,6 +107,11 @@ credentials from another checkout.
 
 ### Rebase merge and cleanup
 
+After opening a PR or pushing a new commit, actively check whether Codex bot
+review has started. If triggered, wait for review of the current head to finish
+and address findings before merging. A review that has not appeared yet does
+not establish that review is disabled; follow the configured review gates below.
+
 Every PR must complete Codex bot review before merge, including documentation
 and instruction changes. The current bot is `chatgpt-codex-connector[bot]`;
 some `gh` output omits the `[bot]` suffix. Verify the actual author and reviewed
