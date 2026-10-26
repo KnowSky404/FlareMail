@@ -1,5 +1,16 @@
 # Repository Guidelines
 
+## 默认开发工作流
+
+Bug 修复和功能迭代统一优先在本地完成，使用以下工作流；小修复也不跳过 worktree、提交和 PR 流程：
+
+**独立本地 worktree + 任务分支 → 本地修复/迭代与验证 → 原子提交 → 推送任务分支并提交 PR → review 完成并处理反馈 → rebase 合并到 `main` → 核对并同步主分支 → 删除已合并的本地/远端任务分支及 worktree**。
+
+- 开始修改前，从已核对的最新 `origin/main` 创建独立 worktree 和新分支；继续已有任务则复用对应 worktree/分支。禁止直接在 `main` 或用户正在使用的工作树中修改。
+- 本地验证通过后提交代码，再按授权推进 push、PR 和合并。功能改动提 PR 前仍需完成下文要求的 PRE 验收；纯文档/约束更新无需部署 PRE。
+- PR 默认以 `main` 为目标并使用 rebase 合并；合并前完成当前 head 的 Code Review、Security Review 及反馈处理。确认实际合并并核对改动已进入主分支后，默认完成本任务的分支和 worktree 清理；未合并、含未保存改动或用户要求保留时不得删除。
+- 此工作流定义执行顺序，不额外授予 push、PR、合并或部署权限。用户已明确授权的同一范围无需重复确认；普通开发请求不自动触发远程或生产部署。具体门禁见下文“本地优先与发布顺序”和“Rebase 合并与任务收尾”。
+
 ## 项目结构与模块组织
 
 `src/` 是 SvelteKit 主应用目录。页面放在 `src/routes/`，接口使用 `+server.ts`，例如 `src/routes/api/messages/+server.ts`。纯邮件契约放在 `src/lib/domain/mail/`；仅服务端可用的认证、D1、入站、出站与工作区逻辑放在 `src/lib/server/`。Worker 包装入口位于 `worker/index.ts`，统一承载网页/API 的 `fetch` 与 Email Routing 的 `email()`。D1 变更以 `migrations/` 为权威顺序，`schema.sql` 只是最新结构快照。`build/`、`.svelte-kit/`、`.wrangler/` 均为构建产物，不要手改。
