@@ -41,6 +41,20 @@ preview. Production uses Resend and rejects missing required bindings or secrets
 
 ## Worktree and PR workflow
 
+Bug fixes and feature iterations start locally and follow the same workflow,
+including small fixes:
+
+**Dedicated local worktree + task branch → local implementation and verification
+→ atomic commit → push and PR → completed review and resolved findings → rebase
+merge into `main` → verify and sync main → remove the merged local/remote task
+branches and worktree.**
+
+Follow the authorization and PRE gates below before the corresponding steps;
+this sequence does not grant additional push, PR, merge or deployment authority.
+Documentation-only changes do not require PRE. Cleanup is part of completing
+an authorized merge unless the user requests retention; preserve unmerged work
+and unsaved files.
+
 Inspect the current directory, branch, upstream, status and existing worktrees
 before changing anything. For a new task, fetch and inspect the latest
 `origin/main`, then create a new branch in a separate checkout. For example,
