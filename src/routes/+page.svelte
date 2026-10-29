@@ -1,6 +1,6 @@
 <script lang="ts">
   import { navigationCounts } from '$lib/client/navigation-counts';
-  import { afterNavigate, beforeNavigate, goto, pushState, replaceState } from '$app/navigation';
+  import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, tick, untrack } from 'svelte';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
@@ -445,12 +445,19 @@
   let browserWorkspaceUrl = $state<string | null>(null);
   let recordWorkspaceHistory: (() => void) | null = null;
   let managementHistoryTransition: 'undo' | 'replay' | null = null;
+  // Kit 3 stores both indices in its history metadata; shallow entries still
+  // bypass beforeNavigate, so the dirty-form guard needs their exact delta.
+  const readSvelteKitHistoryMetadata = (state: unknown) => {
+    const value = state && typeof state === 'object'
+      ? (state as Record<string, unknown>)['sveltekit:metadata'] : null;
+    return value && typeof value === 'object' ? value as Record<string, unknown> : null;
+  };
   const readSvelteKitHistoryIndex = (state: unknown) => {
-    const value = state && typeof state === 'object' ? (state as Record<string, unknown>)['sveltekit:history'] : null;
+    const value = readSvelteKitHistoryMetadata(state)?.historyIndex;
     return typeof value === 'number' ? value : null;
   };
   const readSvelteKitNavigationIndex = (state: unknown) => {
-    const value = state && typeof state === 'object' ? (state as Record<string, unknown>)['sveltekit:navigation'] : null;
+    const value = readSvelteKitHistoryMetadata(state)?.navigationIndex;
     return typeof value === 'number' ? value : null;
   };
   const currentWorkspaceUrl = $derived(browserWorkspaceUrl ? new URL(browserWorkspaceUrl) : new URL(page.url.href));
@@ -1190,7 +1197,7 @@
       : null;
   }
 
-  function updateWorkspaceUrl(
+  async function updateWorkspaceUrl(
     updates: {
       section?: AppSection;
       managementView?: WorkspaceUrlState['managementView'];
@@ -1207,11 +1214,7 @@
   ) {
     const next = buildWorkspaceUrl(currentWorkspaceUrl, updates);
     browserWorkspaceUrl = next.href;
-    if (replaceHistory) {
-      replaceState(next, page.state);
-    } else {
-      pushState(next, page.state);
-    }
+    await goto(next, { state: page.state, shallow: true, replace: replaceHistory });
     recordWorkspaceHistory?.();
   }
 

@@ -49,13 +49,20 @@ an automatic retry target.
 
 ## Configuration
 
-The checked-in cf JSON targets keep Telegram disabled. For a personal online
-deployment, put the values below in the Cloudflare Dashboard under **Workers
-& Pages → your Worker → Settings → Variables and Secrets**. The production
-example also sets `keep_vars = true`, so later code deployments keep the
-Dashboard-managed values instead of replacing them with the checked-in
-placeholders. The private `cloudflare.deploy.json` remains available for
-operators who prefer file-based deployment:
+The checked-in cf JSON targets keep Telegram disabled. For an online deployment,
+put all reviewed non-secret Telegram settings in the private
+`cloudflare.deploy.json` under `vars`. The native cf configuration treats this
+file as authoritative: the next code deployment replaces Dashboard-only variable
+edits with the target values. Before the first cf deployment, migrate existing
+Dashboard non-secret variables into this target, including an intentionally
+enabled `TELEGRAM_ENABLED`, the bot username, base URL and timeout. Do not rely on
+the retired `keep_vars` behavior.
+
+Store secret values in the Worker's Dashboard secrets or provide a reviewed
+restricted secrets file through the production release workflow. List required
+existing secret names in the target `secrets` array; never store their values in
+JSON targets, command arguments or Git. Production deployment remains a
+separately authorized step.
 
 | Variable | Kind | Required when enabled | Purpose |
 | --- | --- | --- | --- |
