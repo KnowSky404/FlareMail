@@ -12,12 +12,16 @@
 不直接在 `main` 或用户原工作树中修改；步骤见
 [开发指南](./DEVELOPMENT.md#worktree-and-pr-workflow)。先在隔离本地数据和
 fake/demo provider 上完成实现、测试、检查和构建，提交后再在已授权的范围内
-发布远程 PRE（Preview）并完成业务验收，然后才推送任务分支并提 PR 到 `main`。
+发布远程 PRE（Preview）并完成业务验收。每次推送任务提交和每次创建 PR 前
+分别在任务 worktree 中执行本地 `/review`，解决所有有效问题并复审通过后，
+才可推送任务分支、提 PR 到 `main`；本地 review 记录须与最终 head 和基线一致。
 PR 附验收提交 SHA、URL、部署/版本 ID、相关页面/API 结果和未覆盖项；仅健康
 检查或发布成功不算验收完成。后续影响实现的提交需补做本地/PRE 验收再合并；
 PRE 阻塞时保留分支并报告原因，绕过门禁需明确授权。纯文档/约束更新检查
-差异、命令和链接后即可提 PR，标明 PRE 不适用。合并、直接推送 `main` 及
-生产发布分别按明确授权执行，内容变化的最终提交需重新验证。普通开发或文档
+差异、命令和链接并完成本地 `/review` 后即可提 PR，标明 PRE 不适用。任务分支
+push、PR、review 通过后的 rebase 合并和清理按仓库默认授权连续完成，用户
+有限制时遵从；直接推送 `main` 及 Preview/生产发布仍需单独授权，内容变化的
+最终提交需重新验证及本地 review。普通开发或文档
 修改不自动部署。`bun run preview` 是本地 Worker，`wrangler preview` 才发布
 原生远程 Preview；版本预览用于需要复用生产 secrets 检查某个上传版本的场景。
 `bun run deploy:dry-run` 只检查公开本地配置的打包，不能代替目标 Preview 的
@@ -25,7 +29,7 @@ PRE 阻塞时保留分支并报告原因，绕过门禁需明确授权。纯文�
 
 所有 PR（含纯文档）先等待当前 head 的 Codex Code Review 及已启用的
 Security Review 完成并处理反馈；机器人审查不由 Actions 检查列表代替。
-已授权 PR 再以 rebase 合并；确认 `MERGED`、主分支合并提交及内容完整后，
+两项 review 通过且有效问题均处理后，按默认授权 rebase 合并；确认 `MERGED`、主分支合并提交及内容完整后，
 快进同步干净的本地 `main`，再清理本任务已合并且无新增提交的 worktree 和
 本地/远端分支。保留未保存文件、私有配置和验收证据，不强制移除工作树；
 远端分支删除用已合并 head 的显式 lease，阻止删除并发新增提交。

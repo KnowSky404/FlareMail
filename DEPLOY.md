@@ -177,9 +177,12 @@ acceptable when its full SHA is recorded. Do not use a dirty worktree or rely
 on a feature branch relationship from an old release.
 
 Develop changes in a dedicated worktree and task branch, complete local gates
-and remote PRE business acceptance, then open a PR targeting `main`. Merge,
-direct pushes to `main`, and production deployment require their respective
-authorizations. Compare the final release SHA and contents with PRE evidence;
+and remote PRE business acceptance. Before each task-commit push and again
+before PR creation, run local `/review`, resolve valid findings and record the
+reviewed base/head SHAs and result. Task push, PR, reviewed rebase merge and
+cleanup have standing authorization unless the user restricts the task; direct
+pushes to `main`, Preview and production deployment need separate authorization.
+Compare the final release SHA and contents with PRE evidence;
 changed contents require renewed verification and acceptance. Documentation-only
 changes do not require PRE deployment. See the
 [development workflow](./docs/DEVELOPMENT.md#worktree-and-pr-workflow) for the
@@ -187,7 +190,8 @@ PR gate and evidence requirements.
 
 Every PR first waits for Codex Code Review and enabled Security Review to
 complete for its current head, with findings handled. Documentation-only PRs
-also follow this gate. Authorized PRs then use rebase merge by default.
+also follow this gate. Once both reviews pass and valid findings are resolved,
+proceed with rebase merge unless the user restricts it or requests another strategy.
 Verify the merged result, sync a
 clean local main checkout by fast-forward, then remove the completed task's
 clean worktree and local/remote branches, preserving configuration and evidence.
