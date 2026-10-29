@@ -46,12 +46,19 @@ test('cf consumes protected SQL files without inline query data in argv', async 
   try {
     const file = join(directory, 'credential request.sql');
     await writeFile(file, 'SELECT 42 AS safe_transport', { mode: 0o600 });
-    const options = { persistTo: join(directory, 'state') };
+    const options = { config: 'cloudflare.local.json', persistTo: join(directory, 'state') };
     const command = createD1Command(options, `@${file}`);
     expect(command).toContain(`@${file}`);
     expect(command.join(' ')).not.toContain('safe_transport');
-    const results = JSON.parse(await executeD1(options, `@${file}`));
-    expect(results[0].results[0].safe_transport).toBe(42);
+    const previous = process.env.FLAREMAIL_CF_CONFIG;
+    try {
+      process.env.FLAREMAIL_CF_CONFIG = '/does-not-exist-unrelated-worker-target.json';
+      const results = JSON.parse(await executeD1(options, `@${file}`));
+      expect(results[0].results[0].safe_transport).toBe(42);
+    } finally {
+      if (previous === undefined) delete process.env.FLAREMAIL_CF_CONFIG;
+      else process.env.FLAREMAIL_CF_CONFIG = previous;
+    }
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 30_000);
 

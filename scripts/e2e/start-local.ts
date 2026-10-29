@@ -1,10 +1,11 @@
-import { localDatabaseId, localStateArgs, executeD1 } from '../cloudflare-target';
+import { readCloudflareTarget, localStateArgs, executeD1 } from '../cloudflare-target';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createLocalCloudflareEnvironment } from '../cloudflare-environment';
 
 const root = resolve(import.meta.dir, '../..');
+const localTarget = readCloudflareTarget('cloudflare.local.json');
 const argument = (name: string, fallback: string) => {
   const index = process.argv.indexOf(name);
   return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
@@ -36,16 +37,22 @@ const htmlCidBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
 const timestamp = '2026-08-13T08:00:00.000Z';
 const identityCheckedAt = new Date().toISOString();
 const webhookSecret = `whsec_${btoa('FlareMail E2E webhook secret 2026')}`;
+const e2eEnvironment = {
+  ...createLocalCloudflareEnvironment(),
+  FLAREMAIL_CF_CONFIG: join(root, 'cloudflare.local.json'),
+  FLAREMAIL_STATE_DIR: persistTo,
+  FLAREMAIL_DEV_HOST: '127.0.0.1',
+  FLAREMAIL_DEV_PORT: port,
+  FLAREMAIL_E2E: 'true',
+  FLAREMAIL_E2E_WEBHOOK_SECRET: webhookSecret
+};
 
 type Child = { exited: Promise<number>; kill: (signal?: string) => void };
 
-async function run(command: string, args: string[], env?: Record<string, string>) {
+async function run(command: string, args: string[]) {
   const child = Bun.spawn([command, ...args], {
     cwd: root,
-    env: {
-      ...createLocalCloudflareEnvironment(process.env),
-      ...env
-    },
+    env: e2eEnvironment,
     stdout: 'inherit',
     stderr: 'inherit'
   });
@@ -86,7 +93,7 @@ const draftSeed = draftSubjects.map((subject, index) => `INSERT OR IGNORE INTO w
 
 await rm(persistTo, { recursive: true, force: true });
 await run('bun', ['run', 'build']);
-await run('cf', ['d1', 'migrations', 'apply', localDatabaseId, '--dir', 'migrations', ...localStateArgs(persistTo)]);
+await run('cf', ['d1', 'migrations', 'apply', localTarget.databaseId, '--dir', 'migrations', ...localStateArgs(persistTo)]);
 
 const { hashPassword } = await import('../../src/lib/server/auth/password');
 const credentialHash = await hashPassword(adminPassword);
@@ -203,17 +210,17 @@ INSERT OR IGNORE INTO workspace_outbound_receipts (
 ${draftSeed}
 `;
 
-await executeD1({ persistTo }, seed);
+await executeD1({ config: 'cloudflare.local.json', persistTo }, seed);
 
 const htmlCidFile = join(persistenceRoot, 'html-cid.png');
 await Bun.write(htmlCidFile, htmlCidBytes);
-await run('cf', ['r2', 'objects', 'put', htmlCidKey, '--bucket-name', 'flaremail-bucket', '--file', htmlCidFile, '--content-type', 'image/png', ...localStateArgs(persistTo)]);
+await run('cf', ['r2', 'objects', 'put', htmlCidKey, '--bucket-name', localTarget.bucket, '--file', htmlCidFile, '--content-type', 'image/png', ...localStateArgs(persistTo)]);
 
 const worker = Bun.spawn(
   ['cf', 'dev', '--mode', 'development'],
   {
     cwd: join(root, 'worker'),
-    env: { ...createLocalCloudflareEnvironment(), FLAREMAIL_STATE_DIR: persistTo, FLAREMAIL_DEV_HOST: '127.0.0.1', FLAREMAIL_DEV_PORT: port, FLAREMAIL_E2E: 'true', FLAREMAIL_E2E_WEBHOOK_SECRET: webhookSecret },
+    env: e2eEnvironment,
     stdout: 'inherit', stderr: 'inherit'
   }
 ) as unknown as Child;
