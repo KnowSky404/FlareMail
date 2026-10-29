@@ -33,11 +33,11 @@ function numberValue(value: unknown) {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
-function localStore(persistTo: string): MailIdentityBackfillStore {
+export function localStore(persistTo: string): MailIdentityBackfillStore {
   const localStatePath = resolve(persistTo);
 
   async function execute(sql: string, _mutating = false) {
-    return extractD1Rows(await executeD1({ persistTo: localStatePath }, sql));
+    return extractD1Rows(await executeD1({ config: 'cloudflare.local.json', persistTo: localStatePath }, sql));
   }
 
   return {

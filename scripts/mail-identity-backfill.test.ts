@@ -1,3 +1,7 @@
+import { localStore } from './mail-identity-backfill';
+import { executeD1 } from './cloudflare-target';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -330,3 +334,30 @@ function sqliteStoreForLegacy(db: Database, legacyTarget: MailIdentityBackfillTa
     }
   };
 }
+
+
+test('backfill keeps its recorded local target when the cf environment changes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-backfill-target-'));
+  const config = join(directory, 'alternate.json');
+  const state = join(directory, 'state');
+  const previous = process.env.FLAREMAIL_CF_CONFIG;
+  try {
+    const alternate = JSON.parse(readFileSync(join(repositoryRoot, 'cloudflare.local.json'), 'utf8'));
+    alternate.databaseId = '11111111-1111-4111-8111-111111111111';
+    await writeFile(config, JSON.stringify(alternate));
+    const setup = (version: number) => [
+      'CREATE TABLE workspace_schema_metadata (schema_name TEXT PRIMARY KEY, schema_version INTEGER)',
+      `INSERT INTO workspace_schema_metadata VALUES ('flaremail', ${version})`
+    ];
+    await executeD1({ config: 'cloudflare.local.json', persistTo: state }, setup(28));
+    await executeD1({ config, persistTo: state }, setup(999));
+    process.env.FLAREMAIL_CF_CONFIG = config;
+    const store = localStore(state);
+    expect(store.executionTarget.config).toBe('cloudflare.local.json');
+    expect(await store.getSchemaVersion()).toBe(28);
+  } finally {
+    if (previous === undefined) delete process.env.FLAREMAIL_CF_CONFIG;
+    else process.env.FLAREMAIL_CF_CONFIG = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);

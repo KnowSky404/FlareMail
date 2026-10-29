@@ -13,7 +13,7 @@ All project Cloudflare commands invoke global `cf`. The native Worker workspace 
 ## Local validation
 
 - `bun install --frozen-lockfile`: PASS.
-- `bun run test`: 661 passed, 0 failed (114 files, 4,100 assertions).
+- `bun run test`: 662 passed, 0 failed (114 files).
 - `bun run check`: PASS, 0 Svelte diagnostics.
 - `bun run build`: PASS, including native cf Build Output.
 - `FLAREMAIL_CF_CONFIG=/does-not-exist-private-target.json bun run deploy:dry-run`: PASS. The offline path explicitly forces the public local target for both build stages and does not read the private target or upload.
@@ -42,6 +42,6 @@ The axe upgrade exposed Label in Name issues. Message buttons now derive names f
 
 ## Local review and remote boundaries
 
-The initial `codex review --base origin/main` found three valid issues: child-environment typing, missing HMR bindings/persistence, and dropped SELECT result sets in the migration audit. All were fixed. The new audit regression uses two historical fixture users and an explicit cf batch; type checks and HMR/readiness validation cover the other fixes. Final review evidence records its exact head separately, avoiding a self-referential evidence commit.
+The initial `codex review --base origin/main` found three valid issues: child-environment typing, missing HMR bindings/persistence, and dropped SELECT result sets in the migration audit. All were fixed. The new audit regression uses two historical fixture users and an explicit cf batch; type checks and HMR/readiness validation cover the other fixes. Additional review/verification found Kit 3 history metadata/async state changes, an environment override inconsistent with the backfill plan target, and retired Dashboard variable-preservation guidance. History navigation now awaits shallow `goto`, backfill explicitly uses its recorded public local target (covered by a two-database regression), and the Telegram guide requires migrating non-secret variables into the authoritative private JSON target. Dirty Back/Forward tests pass for shallow and full Kit history transitions on Chromium, WebKit and Firefox (two scenarios per browser). Final review evidence records its exact head separately, avoiding a self-referential evidence commit.
 
 No PRE or production code was deployed, no remote migration ran, and no real mail/Telegram was sent. Cloudflare metadata was read to verify the existing parent Worker; identifiers and variable values are excluded from committed evidence. PRE business acceptance and PR creation remain pending an existing Owner login/session and the reviewed private Preview setup. Health or build success is not PRE acceptance; preserve the task worktree/commit until this gate is complete.
