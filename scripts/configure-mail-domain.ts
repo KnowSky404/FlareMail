@@ -29,7 +29,7 @@ async function executeDatabase(extraArguments: string[]) {
   const commandIndex = extraArguments.indexOf('--command');
   const fileIndex = extraArguments.indexOf('--file');
   const sql = commandIndex >= 0 ? extraArguments[commandIndex + 1]!
-    : await Bun.file(extraArguments[fileIndex + 1]!).text();
+    : `@${extraArguments[fileIndex + 1]!}`;
   return extractD1Rows(await executeD1({ remote, config }, sql));
 }
 

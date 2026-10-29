@@ -28,7 +28,7 @@ The build has two stages: SvelteKit 3 creates the application, then global `cf b
 
 `deploy:dry-run` builds the public local target and runs `cf deploy --prebuilt --dry-run`; it does not read a private target, authenticate, upload or migrate remote D1. `bun run release:preflight -- --json` also requires a clean committed worktree and runs the local release gates.
 
-Local D1/R2 and `bun run preview` share `.cloudflare/state`. Override `FLAREMAIL_STATE_DIR` for isolated tests. The old `.wrangler` state is not implicitly reused. `bun run dev` is the Svelte HMR server with the public local target and shared isolated persistence; use `bun run preview` to exercise the complete Worker. Host/port are configured with `FLAREMAIL_DEV_HOST` and `FLAREMAIL_DEV_PORT` (default `::`, `8787`).
+Local D1/R2 and `bun run preview` share `.cloudflare/state`. Override `FLAREMAIL_STATE_DIR` for isolated tests. The old `.wrangler` state is not implicitly reused. `bun run dev` is the Svelte HMR server with the selected local target and shared isolated persistence; use `bun run preview` to exercise the complete Worker. Host/port are configured with `FLAREMAIL_DEV_HOST` and `FLAREMAIL_DEV_PORT` (default `::`, `8787`).
 
 ## Configuration and migration
 
@@ -63,7 +63,7 @@ Production is a separate, explicitly authorized step from a clean verified `orig
 bun run deploy
 ```
 
-This builds the application and runs global `cf deploy --mode production` in `worker/`. It is not a PRE command. Do not apply triggers or deploy an uploaded version separately to bypass the release gates. List required existing Worker secret names in the target `secrets` array; values never belong in JSON targets. Keep secret files outside the repo with mode `0600`; when needed, pass the reviewed `--secrets-file <path>` through `bun run deploy -- ...`. Check the installed CLI's help and inspect secret **names only**, never values. Migrate all existing Dashboard non-secret variables into the private target before deploying: native cf replaces variables with `target.vars`, and Dashboard-only edits are not preserved. Review required existing secret names separately; do not assume a code upload configures a new account.
+This builds the application and runs global `cf deploy --mode production` in `worker/`. Production provisioning is disabled (`--provision=false`): a mistyped/missing binding fails instead of creating replacement resources. Secret-file paths are resolved from the caller directory before entering `worker/`. It is not a PRE command. Do not apply triggers or deploy an uploaded version separately to bypass the release gates. List required existing Worker secret names in the target `secrets` array; values never belong in JSON targets. Keep secret files outside the repo with mode `0600`; when needed, pass the reviewed `--secrets-file <path>` through `bun run deploy -- ...`. Check the installed CLI's help and inspect secret **names only**, never values. Migrate all existing Dashboard non-secret variables into the private target before deploying: native cf replaces variables with `target.vars`, and Dashboard-only edits are not preserved. Review required existing secret names separately; do not assume a code upload configures a new account.
 
 ## Data, Owner and provider setup
 

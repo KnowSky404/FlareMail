@@ -1,3 +1,4 @@
+import { createDeployInvocation, normalizeDeployArguments } from './deploy-command';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { defaultStatePath, localStateArgs, projectRoot, readCloudflareTarget } from './cloudflare-target';
@@ -39,9 +40,11 @@ if (command === 'typegen') {
   // Force the public target for both stages; never consume a private PRE build.
   await run(['bun', 'run', 'build:app'], projectRoot);
   await run(['cf', 'build', '--mode', 'development']);
-  await run(['cf', 'deploy', '--prebuilt', '--dry-run']);
+  const invocation = createDeployInvocation('dry-run', environment);
+  await run([invocation.command, ...invocation.args]);
 } else if (command === 'deploy' || command === 'pre') {
-  if (args.some((arg) => /^(?:--(?:mode|prebuilt|worker|config)|-m)(?:=|$)/u.test(arg))) throw new Error('The release mode and build target are controlled by this script.');
+  const forwardedArgs = normalizeDeployArguments(args);
   readCloudflareTarget(process.env.FLAREMAIL_CF_CONFIG ?? (command === 'deploy' ? 'cloudflare.deploy.json' : 'cloudflare.preview.json'), true);
-  await run(command === 'deploy' ? ['cf', 'deploy', '--mode', mode, ...args] : ['cf', 'previews', 'deploy', '--mode', mode, ...args]);
+  const invocation = createDeployInvocation('deploy', environment, args);
+  await run(command === 'deploy' ? [invocation.command, ...invocation.args] : ['cf', 'previews', 'deploy', '--mode', mode, ...forwardedArgs]);
 } else throw new Error('Usage: bun scripts/cloudflare.ts <build|preview|typegen|migrate|dry-run|deploy|pre>');
