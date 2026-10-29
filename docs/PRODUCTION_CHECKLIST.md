@@ -18,8 +18,13 @@ recipient addresses or full R2 keys into shared evidence.
   changes received updated local/PRE evidence. Documentation-only changes
   record diff, command and link review with PRE marked not applicable; any
   bypass of the feature PRE gate has explicit authorization.
-- [ ] Merge, any direct push to `main`, and production deployment are covered
-  by the respective user authorizations. The final release SHA and contents
+- [ ] Each task-commit push and PR creation was preceded by a completed local
+  `/review` covering the full task diff, with valid findings resolved. Commands,
+  times, base/head SHAs and results are recorded; edits and follow-up commits
+  received new local review. Documentation-only changes follow the same gate.
+- [ ] The task's push, PR and rebase merge followed the standing Git authorization
+  and any user restrictions. Any direct push to `main` and production deployment
+  have their own explicit authorizations. The final release SHA and contents
   are compared with PRE evidence; changed contents are verified and accepted
   again before production publication.
 - [ ] Before merge, Codex Code Review and enabled Security Review completed for

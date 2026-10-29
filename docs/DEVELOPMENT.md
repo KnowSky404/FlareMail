@@ -27,13 +27,15 @@ bun run db:migrate:local
 The checked-in `wrangler.toml` uses local D1/R2, `AUTH_MODE=local`, and the demo outbound provider with `ALLOW_FAKE_SERVICES=true`. Optional local overrides belong in the ignored `.dev.vars`; see `.dev.vars.example`. Keep real credentials out of Git.
 
 The workflow is a dedicated worktree and branch, local implementation and
-verification, a committed change, authorized remote PRE (Preview) acceptance,
-then a PR targeting `main`. Wait for Codex bot review of the current head and
-address its findings before merging, including for documentation-only PRs.
-An authorized PR uses rebase merge by default,
-followed by verification, main synchronization and task worktree/branch cleanup.
-Production publication requires its own authorization. Ordinary development
-does not automatically deploy.
+verification, a committed change, and authorized remote PRE (Preview) acceptance
+for feature changes. Run local `/review` and resolve findings before each task
+push and again before creating a PR targeting `main`, including for
+documentation-only changes. Wait for Codex bot review of the current head and
+address its findings, then rebase merge, verify and sync main, and clean up the
+merged task worktree and branches. These Git steps have standing authorization
+for requested changes unless the user limits the task. Preview and production
+publication each require separate authorization. Ordinary development does not
+automatically deploy.
 The repository's configured preview environments share production D1/R2 and
 the Owner account; writes there affect production. Use local state for
 development and read the [preview guide](./PREVIEW.md) before using a remote
@@ -41,19 +43,24 @@ preview. Production uses Resend and rejects missing required bindings or secrets
 
 ## Worktree and PR workflow
 
-Bug fixes and feature iterations start locally and follow the same workflow,
-including small fixes:
+All feature iterations, bug fixes, refactors, tests, configuration and
+documentation/instruction changes follow the same workflow, including small fixes:
 
 **Dedicated local worktree + task branch → local implementation and verification
-→ atomic commit → push and PR → completed review and resolved findings → rebase
-merge into `main` → verify and sync main → remove the merged local/remote task
-branches and worktree.**
+→ atomic commit → local `/review` and resolved findings before each push and PR
+creation → push and PR → completed Codex bot review of the current head and
+resolved findings → rebase merge into `main` → verify and sync main → remove the
+merged local/remote task branches and worktree.**
 
-Follow the authorization and PRE gates below before the corresponding steps;
-this sequence does not grant additional push, PR, merge or deployment authority.
-Documentation-only changes do not require PRE. Cleanup is part of completing
-an authorized merge unless the user requests retention; preserve unmerged work
-and unsaved files.
+For changes the user requests, task-branch push, PR creation, rebase merge after
+review, and merged task cleanup have standing authorization once their gates
+pass. Continue without asking for separate confirmation at each Git step, unless
+the user requests local-only work, withholds a step, or asks to retain a branch or
+worktree. This authorization excludes direct pushes to `main`, Preview or
+production deployment, remote migrations and production data writes; those still
+need their own authorization. Follow the local review and PRE gates below.
+Documentation-only changes do not require PRE but still require local `/review`.
+Preserve unmerged work and unsaved files.
 
 Inspect the current directory, branch, upstream, status and existing worktrees
 before changing anything. For a new task, fetch and inspect the latest
@@ -89,21 +96,60 @@ credentials from another checkout.
 2. With Preview authorization, publish that commit and complete relevant
    business acceptance under [PREVIEW.md](./PREVIEW.md). Record the SHA, URL,
    deployment/version ID, checks and limitations. Health alone is insufficient.
-3. Only after PRE acceptance, push the task branch and open a PR targeting
-   `main`, within the user's authorization. Include the base SHA, accepted SHA,
-   local and PRE evidence, and uncovered behavior. Documentation-only changes
-   use diff, command and link review and mark PRE as not applicable.
+3. After PRE acceptance, complete local `/review` and resolve findings before
+   pushing the task branch; run it again before creating a PR targeting `main`.
+   Include the base SHA, accepted SHA, local review and verification evidence,
+   PRE evidence, and uncovered behavior. Documentation-only changes use diff,
+   command and link checks plus local `/review`, and mark PRE as not applicable.
 4. Changes to the implementation after acceptance require affected local gates
    and PRE acceptance again before merge. If PRE is blocked, retain the branch
    and report the blocker; bypassing the gate requires explicit authorization.
    Record alternative verification for handlers PRE cannot exercise.
-5. Merge, direct pushes to `main`, and production deployment each require
-   authorization covering that action. The default path is an accepted PR
-   rebased into `main`; an explicitly requested direct push still follows the
-   local and PRE gates. Before production, check the final SHA and contents
+5. Once local and bot review gates pass and valid findings are resolved, rebase
+   merge into `main` and complete cleanup under the standing Git authorization,
+   unless the user restricts the task. Direct pushes to `main` and production
+   deployment still need separate explicit authorization; an authorized direct
+   push still follows local `/review`, verification and PRE gates. Before
+   production, check the final SHA and contents
    against PRE evidence, repeat verification and acceptance if contents changed,
    and follow the exact-commit gates in the
    [production checklist](./PRODUCTION_CHECKLIST.md).
+
+### Local review before push and PR
+
+Before every push of task commits and separately before every PR creation,
+actually run Codex's built-in `/review` in the task worktree. This includes the
+initial push, follow-up commits, fixes to bot findings, base synchronization and
+documentation/instruction changes. Reading a diff, a verbal self-check, passing
+tests or a later bot review does not satisfy this gate. Conditional deletion of
+an already merged remote branch follows the cleanup procedure below.
+
+Review the complete task diff against the target `origin/main`, rather than
+only the last commit or an empty uncommitted diff. In interactive Codex, use
+`/review` and choose the base-branch review. The non-interactive equivalent is:
+
+```bash
+codex review --base origin/main
+```
+
+Check the installed `codex review --help` when needed. See the
+[official local review guide](https://learn.chatgpt.com/docs/code-review#review-local-changes).
+Assess every finding, fix all confirmed issues and record evidence for false
+positives or inapplicable findings. After fixes, run affected local gates, create
+atomic commits, complete required PRE acceptance, then run `/review` again until
+no valid issue remains unresolved. Resolve issues before pushing or opening a PR.
+
+Record the command/scope, time, base SHA, reviewed head SHA, result and finding
+disposition. Before push or PR creation, verify that the final head, diff and
+base still match the review evidence. Any later edit, commit, rebase or conflict
+resolution requires affected verification and a new `/review`; do not reuse
+stale results. Include the evidence in the PR and update it for follow-up commits.
+
+If local `/review` is unavailable, fails, remains incomplete or lacks verifiable
+passing evidence, retain the local branch/worktree and report the blocker;
+do not push task commits or create a PR. Retain any existing PR without merging.
+Local review and the PR bot's Code Review and Security Review are independent
+gates and all must pass.
 
 ### Rebase merge and cleanup
 
@@ -125,15 +171,17 @@ an isolated 👍, or `COMMENTED` alone is insufficient evidence for this gate.
 
 Assess each finding, fix confirmed issues and run affected verification, or
 record evidence explaining a false positive or inapplicable finding. Do not
-merge with an unresolved valid blocking finding. Any new commit requires
-completed review for the new head, plus affected local/PRE gates. If review
+merge with an unresolved valid finding. Before pushing a fix, complete local
+`/review` again. Any new commit requires completed bot review for the new head,
+plus affected local/PRE gates. If review
 is pending, failed or lacks current-head evidence, retain the PR, branch and
 worktree and report the status; elapsed time does not waive review. Do not
 enable auto-merge before this gate has passed. Record completion times, review
 SHA and result links with the PR's acceptance evidence. See the
 [official Codex review guide](https://learn.chatgpt.com/docs/third-party/github).
 
-For an authorized merge, use rebase unless the user specifies another strategy.
+After all gates pass, proceed with rebase merge under the standing authorization
+unless the user withholds merge or specifies another strategy.
 Inspect the PR's base branch, head SHA, commits/files, mergeability and required
 checks, and confirm the bot review gate above has passed. Lock the merge to the
 verified and reviewed head using

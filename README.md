@@ -25,12 +25,14 @@ For local development, use the [development guide](./docs/DEVELOPMENT.md). Use t
 
 Mail addresses are managed resources under one workspace Owner; login credentials and profile email are configured separately.
 
-Develop each task in a dedicated worktree and new branch. Feature changes pass
-local checks and remote PRE acceptance before a PR to `main`; merge and
-production deployment follow explicit authorization. All PRs wait for Codex
-bot review of the current head and handling of findings. Authorized PRs use rebase
-merge by default, followed by main synchronization and completed task
-worktree/branch cleanup. See the
+Develop every change in a dedicated worktree and new branch. Before each task
+push and again before PR creation, run local `/review` and resolve all valid
+findings. Feature changes also require remote PRE acceptance before a PR to
+`main`. All PRs wait for Code Review and Security Review of the current head and
+resolution of findings, then use rebase merge, main synchronization and merged
+task worktree/branch cleanup. These Git steps proceed by default unless the user
+restricts the task; Preview and production deployment need separate authorization.
+See the
 [development workflow](./docs/DEVELOPMENT.md#worktree-and-pr-workflow).
 
 ## Documentation
