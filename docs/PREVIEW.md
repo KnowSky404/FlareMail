@@ -11,7 +11,9 @@
 5. **共享生产数据，默认只读**。不要运行 E2E seed、fixture、Owner bootstrap、数据库重置或迁移。打开未读邮件会自动写入已读状态；使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
 6. PRE 业务验收完成后，分别在 push 和创建 PR 前实际执行 `codex review --base origin/main` 并处理有效问题。等待当前 head 的 Codex Code Review 和 Security Review 完成，再按仓库默认授权 rebase 合并和收尾。实现提交追加后补做受影响本地/PRE 验收及两种 review。
 
-原生 Preview 需要父 Worker 的既有配置/密钥。检查已安装 cf 帮助和父 Worker 现状；不要为了缺少配置改用生产 `cf deploy`。需要上传独立版本而不切生产流量时，可使用 `cf workers versions create --mode production`；先在 `worker/` 核对 `--help`、绑定、secrets 及版本预览域名现状，并记录该路径不能覆盖的原生 Preview 行为。禁止擅自创建生产 deployment 或应用 triggers。
+原生 Preview 不继承生产 secrets；新 Preview 从 Previews Base 获取 secrets。仅在 JSON 中声明 secret 名称不会复制其值，发布成功也不能证明密钥齐全。检查已安装 cf 帮助、Base 和实际部署绑定；不要为了缺少配置改用生产 `cf deploy`，也不要为验收重置密钥。
+
+需要复用生产既有 secrets 时，可上传独立版本而不切生产流量：先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。沿用同一份私有 `cloudflare.preview.json`，保持 `APP_ENV=preview`、关闭自动动作和 Cron，不能改成 production mode。先核对 `--help`、绑定、secrets 及版本预览域名现状，再核对上传版本和生产 deployment 指针。记录该路径不能覆盖的原生 Preview 行为。禁止擅自创建生产 deployment 或应用 triggers。
 
 本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
 
