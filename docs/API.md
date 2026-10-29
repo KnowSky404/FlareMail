@@ -493,7 +493,8 @@ message display goes through the server sanitizer and the sandboxed HTML route:
   sender styling; ordinary links keep their layout and show the URL on hover.
   Already allowlisted reader HTML is normalized with parse5 in a div context
   so malformed tables cannot escape the content wrapper. The normalized HTML,
-  CSS and trusted notices share the output byte limit. Compose sanitization is unchanged;
+  CSS and trusted notices share the output byte limit. Repaired DOM depth and
+  node count are checked iteratively before recursive serialization. Compose sanitization is unchanged;
 - links receive safe target/rel handling and remote images are blocked by
   default, with an explicit per-viewer consent path;
 - inline CID images are resolved only through an ownership-checked attachment

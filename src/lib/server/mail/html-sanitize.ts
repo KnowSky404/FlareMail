@@ -1,4 +1,4 @@
-import { defaultTreeAdapter, html as html5, parseFragment, serialize } from 'parse5';
+import { defaultTreeAdapter, html as html5, parseFragment, serialize, type DefaultTreeAdapterTypes } from 'parse5';
 import { emailCssIdentifier, sanitizeEmailInlineCss, sanitizeEmailStylesheet } from './css-sanitize';
 
 const textEncoder = new TextEncoder();
@@ -530,7 +530,27 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
     // Normalize the already allowlisted fragment in the same <div> context
     // used by the reader before embedding it beside trusted notices.
     const context = defaultTreeAdapter.createElement('div', html5.NS.HTML, []);
-    html = serialize(parseFragment(context, html, { scriptingEnabled: false }));
+    const fragment = parseFragment(context, html, { scriptingEnabled: false });
+    // HTML5 repair can deepen self-closing non-void tags and add table nodes.
+    // Walk iteratively before parse5's recursive serializer so the repaired
+    // tree obeys the same safety limits and cannot overflow the call stack.
+    const pending: Array<{ node: DefaultTreeAdapterTypes.Node; depth: number }> = [{ node: fragment, depth: 0 }];
+    let repairedNodes = 0;
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (current.node !== fragment) repairedNodes += 1;
+      if (repairedNodes > limits.maxNodes) {
+        throw new SafeHtmlError('HTML_COMPLEXITY_LIMIT', 'HTML 正文结构过于复杂。', { limit: limits.maxNodes, actual: repairedNodes });
+      }
+      const depth = current.depth + ('tagName' in current.node ? 1 : 0);
+      if (depth > limits.maxDepth) {
+        throw new SafeHtmlError('HTML_NESTING_TOO_DEEP', 'HTML 正文嵌套层级过深。', { limit: limits.maxDepth, actual: depth });
+      }
+      if ('childNodes' in current.node) {
+        for (const child of current.node.childNodes) pending.push({ node: child, depth });
+      }
+    }
+    html = serialize(fragment);
     const actual = byteLength(html) + stylesBytes + linkNoticeBytes;
     if (actual > limits.maxOutputBytes) {
       throw new SafeHtmlError('HTML_OUTPUT_TOO_LARGE', '清洗后的 HTML 正文超过大小限制。', { limit: limits.maxOutputBytes, actual });
