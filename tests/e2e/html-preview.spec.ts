@@ -26,6 +26,7 @@ test('preserves email table styles, responsive padding and light canvas in the s
   const frame = page.frameLocator('iframe[title="安全 HTML 邮件正文"]');
   await expect(frame.getByText('Safe HTML fixture', { exact: true })).toBeVisible();
   await expect(frame.locator('script, form, iframe, link')).toHaveCount(0);
+  await expect(frame.locator('.fm-email-content #fm-user-table-recovery')).toHaveText('Table recovery fixture');
   const table = frame.locator('table.fm-user-newsletter');
   await expect(table).toHaveCSS('background-color', 'rgb(241, 245, 249)');
   const metrics = await table.evaluate((element) => {
@@ -60,7 +61,7 @@ test('preserves email table styles, responsive padding and light canvas in the s
   await expect(frame.locator('img[src^="http:"]')).toHaveCount(0);
   await detail.getByRole('button', { name: '撤销远程图片权限' }).click({ force: true });
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
-  await detail.getByRole('button', { name: '纯文本' , exact: true }).press('Enter');
+  await detail.getByRole('button', { name: '纯文本', exact: true }).press('Enter');
   await expect(iframe).toHaveCount(0);
   await expect(detail).toContainText('Safe HTML fixture text fallback.');
   // Local Wrangler injects its explorer script; the mail sandbox blocks it.

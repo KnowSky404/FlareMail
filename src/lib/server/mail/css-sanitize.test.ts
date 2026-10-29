@@ -70,6 +70,18 @@ describe('email presentation CSS', () => {
     expect(link.linkNotices).toContain('显示文本与目标不一致');
   });
 
+  test('normalizes malformed table nesting and budgets the final UTF-8 document fragments', () => {
+    const result = sanitizeHtml('<style>p{color:red}</style><table><div><table></table></div></table><div style="margin-top:-35px">中文<a href="http://attacker.example">https://bank.example</a></div>', { preserveStyles: true });
+    expect(result.html).toStartWith('<div></div><table></table><table></table><div');
+    const bytes = new TextEncoder().encode(result.html + result.styles + result.linkNotices).byteLength;
+    const input = '<style>p{color:red}</style><table><div><table></table></div></table><div style="margin-top:-35px">中文<a href="http://attacker.example">https://bank.example</a></div>';
+    expect(sanitizeHtml(input, { preserveStyles: true, maxOutputBytes: bytes }).html).toBe(result.html);
+    expect(() => sanitizeHtml(input, { preserveStyles: true, maxOutputBytes: bytes - 1 })).toThrow();
+    const repaired = sanitizeHtml('<table><tr><td>x</td></tr></table>', { preserveStyles: true });
+    expect(repaired.html).toContain('<tbody>');
+    expect(() => sanitizeHtml('<table><tr><td>x</td></tr></table>', { preserveStyles: true, maxOutputBytes: repaired.html.length - 1 })).toThrow();
+  });
+
   test('bounds malformed and deeply nested CSS and accounts for stylesheet output', () => {
     expect(sanitizeEmailStylesheet('a{color:red')).toBe('');
     expect(sanitizeEmailInlineCss(`width:${'calc('.repeat(100)}1px${')'.repeat(100)}`)).toBe('');

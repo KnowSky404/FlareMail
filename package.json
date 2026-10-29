@@ -50,7 +50,8 @@
     "jose": "^6.2.13",
     "postal-mime": "^4.1.4",
     "svelte": "^5.57.3",
-    "css-tree": "^3.2.1"
+    "css-tree": "^3.2.1",
+    "parse5": "^8.0.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",

@@ -62,4 +62,5 @@ FlareMail 采用 [GNU Affero General Public License](./LICENSE) 第 3 版，
 
 实现参考 [Roundcube](https://github.com/roundcube/roundcubemail/blob/master/program/lib/Roundcube/rcube_washtml.php)
 和 [SnappyMail](https://github.com/the-djmaze/snappymail/blob/master/dev/Common/Html.js) 对排版与 CSS 清洗的处理，
-使用 [CSSTree](https://github.com/csstree/csstree) 解析及验证 CSS。
+使用 [CSSTree](https://github.com/csstree/csstree) 解析及验证 CSS，
+并用 [parse5](https://github.com/inikulin/parse5) 规范化 HTML5 结构，避免畸形表格逃出正文容器。
