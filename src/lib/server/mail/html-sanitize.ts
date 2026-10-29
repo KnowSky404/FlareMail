@@ -1,5 +1,5 @@
 import { defaultTreeAdapter, html as html5, parseFragment, serialize, type DefaultTreeAdapterTypes } from 'parse5';
-import { emailCssIdentifier, sanitizeEmailInlineCss, sanitizeEmailStylesheet } from './css-sanitize';
+import { emailCssIdentifier, sanitizeEmailLegacyColor, sanitizeEmailInlineCss, sanitizeEmailStylesheet } from './css-sanitize';
 
 const textEncoder = new TextEncoder();
 
@@ -269,6 +269,8 @@ function mapAttributes(attributes: Attribute[]): Map<string, string> {
 }
 
 function presentationValue(property: string, value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if (property === 'color' || property === 'background-color') return sanitizeEmailLegacyColor(value);
   if (!value) return null;
   const declaration = sanitizeEmailInlineCss(`${property}:${value}`);
   return declaration.startsWith(`${property}:`) && !declaration.includes(';') && !declaration.includes('!important')

@@ -34,6 +34,8 @@ test('preserves email table styles, responsive padding and light canvas in the s
   await expect(frame.locator('#fm-user-root-cascade')).toHaveCSS('box-sizing', 'border-box');
   expect(await frame.locator('#fm-user-root-cascade').evaluate((element) => element.getBoundingClientRect().width <= element.closest('.fm-email-content')!.clientWidth)).toBe(true);
   await expect(frame.locator('td.fm-user-cascade-cell')).toHaveCSS('background-color', 'rgb(17, 17, 17)');
+  await expect(frame.locator('#fm-user-legacy-hex')).toHaveCSS('background-color', 'rgb(0, 0, 0)');
+  await expect(frame.locator('#fm-user-legacy-hex')).toHaveCSS('color', 'rgb(255, 255, 255)');
   const table = frame.locator('table.fm-user-newsletter');
   await expect(table).toHaveCSS('background-color', 'rgb(241, 245, 249)');
   const metrics = await table.evaluate((element) => {
