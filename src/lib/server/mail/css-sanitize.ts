@@ -20,6 +20,31 @@ const functions = new Set(['rgb', 'rgba', 'hsl', 'hsla', 'lab', 'lch', 'oklab', 
   'repeating-linear-gradient', 'repeating-radial-gradient', 'repeating-conic-gradient']);
 const simpleIdentifier = /^[a-zA-Z_][a-zA-Z0-9_-]*$/u;
 
+/** WHATWG legacy color parsing for bgcolor, body text and font color.
+ * https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-a-legacy-colour-value
+ * The result is a named color or hex color, never arbitrary CSS tokens.
+ */
+export function sanitizeEmailLegacyColor(input: string): string | null {
+  if (!input) return null;
+  let value = input.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu, '');
+  if (value.toLowerCase() === 'transparent') return null;
+  if (/^[a-z]+$/iu.test(value) && lexer.matchType('named-color', value).matched) return value.toLowerCase();
+  if (/^#[0-9a-f]{3}$/iu.test(value)) return value.toLowerCase();
+  value = value.replace(/[\u{10000}-\u{10ffff}]/gu, '00').slice(0, 128).replace(/^#/u, '').replace(/[^0-9a-f]/giu, '0');
+  while (!value.length || value.length % 3) value += '0';
+  let length = value.length / 3;
+  let components = [value.slice(0, length), value.slice(length, 2 * length), value.slice(2 * length)];
+  if (length > 8) {
+    components = components.map((component) => component.slice(-8));
+    length = 8;
+  }
+  while (length > 2 && components.every((component) => component.startsWith('0'))) {
+    components = components.map((component) => component.slice(1));
+    length -= 1;
+  }
+  return '#' + components.map((component) => component.slice(0, 2).padStart(2, '0')).join('').toLowerCase();
+}
+
 export function emailCssIdentifier(value: string): string | null {
   return simpleIdentifier.test(value) ? `fm-user-${value}` : null;
 }

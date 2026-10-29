@@ -498,7 +498,9 @@ message display goes through the server sanitizer and the sandboxed HTML route:
   node count are checked iteratively before recursive serialization; element
   creation is also capped during parsing. Logical html/body roots are synthesized
   when omitted and retain type-selector specificity without matching div/span
-  rules. Legacy presentation hints retain their lower cascade priority. Compose sanitization is unchanged;
+  rules. Legacy presentation hints retain their lower cascade priority, and
+  bgcolor/text/font colors follow HTML legacy-color parsing rather than CSS
+  syntax alone (including hex colors without a leading #). Compose sanitization is unchanged;
 - links receive safe target/rel handling and remote images are blocked by
   default, with an explicit per-viewer consent path;
 - inline CID images are resolved only through an ownership-checked attachment

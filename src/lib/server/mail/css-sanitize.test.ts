@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { sanitizeEmailInlineCss, sanitizeEmailStylesheet } from './css-sanitize';
+import { sanitizeEmailInlineCss, sanitizeEmailLegacyColor, sanitizeEmailStylesheet } from './css-sanitize';
 import { SafeHtmlError, sanitizeHtml } from './html-sanitize';
 
 describe('email presentation CSS', () => {
@@ -72,6 +72,22 @@ describe('email presentation CSS', () => {
   test('retains border-box sizing with responsive width and padding', () => {
     expect(sanitizeEmailInlineCss('width:100%;padding:24px;box-sizing:border-box')).toContain('box-sizing:border-box');
     expect(sanitizeEmailStylesheet('.card{width:100%;padding:24px;box-sizing:border-box}')).toContain('box-sizing:border-box');
+  });
+
+  test('normalizes native legacy colors without losing dark backgrounds', () => {
+    expect(sanitizeEmailLegacyColor('000000')).toBe('#000000');
+    expect(sanitizeEmailLegacyColor('ffffff')).toBe('#ffffff');
+    expect(sanitizeEmailLegacyColor('#fff')).toBe('#fff');
+    expect(sanitizeEmailLegacyColor('RED')).toBe('red');
+    expect(sanitizeEmailLegacyColor('transparent')).toBeNull();
+    expect(sanitizeEmailLegacyColor('')).toBeNull();
+    expect(sanitizeEmailLegacyColor('0')).toBe('#000000');
+    expect(sanitizeEmailLegacyColor('fff')).toBe('#0f0f0f');
+    expect(sanitizeEmailLegacyColor('chucknorris')).toBe('#c00000');
+    const result = sanitizeHtml('<body bgcolor="000000" text="ffffff"><font color="ffffff">Receipt</font><table bgcolor="000000"><tr><td>cell</td></tr></table></body>', { preserveStyles: true });
+    expect(result.html).toContain('<font color="#ffffff">Receipt</font>');
+    expect(result.html).toContain('<table bgcolor="#000000">');
+    expect(result.styles).toContain('background-color:#000000;color:#ffffff');
   });
 
   test('keeps buttons free of injected labels and risk notices outside sender CSS', () => {
