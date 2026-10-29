@@ -1,3 +1,5 @@
+import { emailCssIdentifier, sanitizeEmailInlineCss, sanitizeEmailStylesheet } from './css-sanitize';
+
 const textEncoder = new TextEncoder();
 
 export const SAFE_HTML_DEFAULT_LIMITS = {
@@ -30,6 +32,8 @@ export class SafeHtmlError extends Error {
 export type CidImageResolver = (cid: string) => string | null;
 
 export interface SafeHtmlSanitizerOptions {
+  /** Reader-only presentation; compose/provider HTML retains its existing policy. */
+  preserveStyles?: boolean;
   maxInputBytes?: number;
   maxOutputBytes?: number;
   maxNodes?: number;
@@ -42,6 +46,8 @@ export interface SafeHtmlSanitizerOptions {
 
 export interface SafeHtmlResult {
   html: string;
+  styles: string;
+  linkNotices: string;
   text: string;
   removedElements: number;
   blockedImages: number;
@@ -53,16 +59,16 @@ export interface SafeHtmlResult {
 type Attribute = { name: string; value: string };
 type ParsedTag = { name: string; closing: boolean; selfClosing: boolean; attributes: Attribute[] };
 type LinkFrame = { hostname: string; textStart: number; warnings: string[] };
-type Frame = { name: string; emitted: boolean; link?: LinkFrame };
+type Frame = { outputName?: string; name: string; emitted: boolean; link?: LinkFrame };
 
 const allowedTags = new Set([
   'p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
   'strong', 'b', 'em', 'i', 'u', 's', 'del', 'span',
   'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'a',
-  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'
+  'hr', 'font', 'center', 'html', 'body', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'
 ]);
-const voidTags = new Set(['br']);
-const suppressedTags = new Set(['script', 'style', 'iframe', 'frame', 'frameset', 'form', 'object', 'embed', 'svg', 'math']);
+const voidTags = new Set(['br', 'hr']);
+const suppressedTags = new Set(['script', 'title', 'style', 'iframe', 'frame', 'frameset', 'form', 'object', 'embed', 'svg', 'math']);
 const tagNamePattern = /^[A-Za-z][A-Za-z0-9:-]*/u;
 const attributeNamePattern = /^[A-Za-z_:][A-Za-z0-9:._-]*/u;
 const safeCidPathPattern = /^\/api\/(?!\/)[^\u0000-\u001f\u007f<>"']+$/u;
@@ -261,6 +267,34 @@ function mapAttributes(attributes: Attribute[]): Map<string, string> {
   return result;
 }
 
+function presentationAttributes(attributes: Attribute[], tag: string): string {
+  const values = mapAttributes(attributes);
+  let output = '';
+  const classes = (values.get('class') ?? '').split(/\s+/u).map(emailCssIdentifier).filter(Boolean);
+  if (tag === 'html' || tag === 'body') classes.push(`fm-tag-${tag}`);
+  if (classes.length) output += ` class="${classes.join(' ')}"`;
+  const id = emailCssIdentifier(values.get('id') ?? '');
+  if (id) output += ` id="${id}"`;
+  const legacy: string[] = [];
+  const color = values.get(tag === 'font' ? 'color' : 'bgcolor');
+  if (color) legacy.push(`${tag === 'font' ? 'color' : 'background-color'}:${color}`);
+  if (tag === 'font' && values.get('face')) legacy.push(`font-family:${values.get('face')}`);
+  if (tag === 'center') legacy.push('text-align:center');
+  const style = sanitizeEmailInlineCss([...legacy, values.get('style') ?? ''].join(';'));
+  if (style) output += ` style="${escapeAttribute(style)}"`;
+  for (const name of ['width', 'height', 'cellpadding', 'cellspacing', 'border']) {
+    const value = values.get(name);
+    if (value && /^\d{1,4}%?$/u.test(value)) output += ` ${name}="${value}"`;
+  }
+  for (const name of ['align', 'valign', 'dir']) {
+    const value = values.get(name)?.toLowerCase();
+    const valid = name === 'align' ? ['left', 'center', 'right', 'justify'] : name === 'valign' ? ['top', 'middle', 'bottom', 'baseline'] : ['ltr', 'rtl', 'auto'];
+    if (value && valid.includes(value)) output += ` ${name}="${value}"`;
+  }
+  if (values.get('role') === 'presentation') output += ' role="presentation"';
+  return output;
+}
+
 export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = {}): SafeHtmlResult {
   const limits = { ...SAFE_HTML_DEFAULT_LIMITS, ...options };
   const inputBytes = byteLength(input);
@@ -269,6 +303,8 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
   }
 
   let html = '';
+  let styles = '';
+  let linkNotices = '';
   let text = '';
   let position = 0;
   let nodes = 0;
@@ -292,7 +328,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
   };
   const append = (value: string) => {
     const next = html + value;
-    const actual = byteLength(next);
+    const actual = byteLength(next) + byteLength(styles) + byteLength(linkNotices);
     if (actual > limits.maxOutputBytes) {
       throw new SafeHtmlError('HTML_OUTPUT_TOO_LARGE', '清洗后的 HTML 正文超过大小限制。', { limit: limits.maxOutputBytes, actual });
     }
@@ -317,7 +353,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
   const suppressed = () => stack.some((frame) => !frame.emitted);
   const closeFrame = (frame: Frame) => {
     if (!frame.emitted || voidTags.has(frame.name)) return;
-    append(`</${frame.name}>`);
+    append(`</${frame.outputName ?? frame.name}>`);
     if (!frame.link) return;
     if (options.decorateLinks !== false) {
       const visibleHostname = displayedHostname(text.slice(frame.link.textStart));
@@ -326,7 +362,17 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       const warning = warnings.length
         ? ` <span class="fm-link-warning" aria-label="链接风险：${escapeAttribute(warnings.join('、'))}">⚠ ${escapeText(warnings.join('、'))}</span>`
         : '';
-      append(` <span class="fm-link-target" aria-label="链接目标域名 ${escapeAttribute(frame.link.hostname)}">[${escapeText(frame.link.hostname)}]</span>${warning}`);
+      const annotation = ` <span class="fm-link-target" aria-label="链接目标域名 ${escapeAttribute(frame.link.hostname)}">[${escapeText(frame.link.hostname)}]</span>${warning}`;
+      if (options.preserveStyles) {
+        // Risk notices sit outside the sender's styled subtree. Harmless links
+        // retain their original layout, including buttons and navigation rows.
+        if (warnings.length) {
+          linkNotices += `<p>${annotation}</p>`;
+          append(''); // Include notices in the shared output budget.
+        }
+      } else {
+        append(annotation);
+      }
       if (warnings.length) linkWarnings += 1;
     }
   };
@@ -379,12 +425,30 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       continue;
     }
 
+    if (parsed.name === 'style' && options.preserveStyles) {
+      // style is raw text, not HTML. Never pass its contents through the tag loop.
+      const end = /<\/style\s*>/giu;
+      end.lastIndex = position;
+      const closing = end.exec(input);
+      const source = input.slice(position, closing?.index ?? input.length);
+      const media = firstAttribute(parsed.attributes, 'media')?.trim().toLowerCase();
+      const css = sanitizeEmailStylesheet(!media || media === 'all' || media === 'screen' ? source : `@media ${media}{${source}}`);
+      if (byteLength(html) + byteLength(styles) + byteLength(linkNotices) + byteLength(css) > limits.maxOutputBytes) {
+        throw new SafeHtmlError('HTML_OUTPUT_TOO_LARGE', '清洗后的 HTML 正文超过大小限制。', { limit: limits.maxOutputBytes });
+      }
+      styles += css;
+      position = closing ? end.lastIndex : input.length;
+      continue;
+    }
+
     if (suppressedTags.has(parsed.name)) {
       removedElements += 1;
       stack.push({ name: parsed.name, emitted: false });
       checkDepth();
       continue;
     }
+
+    const presentation = options.preserveStyles ? presentationAttributes(parsed.attributes, parsed.name) : '';
 
     if (parsed.name === 'img') {
       const source = firstAttribute(parsed.attributes, 'src');
@@ -394,7 +458,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
         const mapped = safeMappedCidUrl(options.resolveCidImage(cid));
         if (mapped) {
           const altAttribute = alt ? ` alt="${escapeAttribute(alt)}"` : '';
-          append(`<img src="${escapeAttribute(mapped)}"${altAttribute}>`);
+          append(`<img src="${escapeAttribute(mapped)}"${altAttribute}${presentation}>`);
           allowedCidImages += 1;
           if (alt) appendPlainText(alt);
           continue;
@@ -403,7 +467,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       const remote = source ? safeRemoteImageUrl(source) : null;
       if (remote && options.allowRemoteImages) {
         const altAttribute = alt ? ` alt="${escapeAttribute(alt)}"` : '';
-        append(`<img src="${escapeAttribute(remote)}"${altAttribute} loading="lazy" referrerpolicy="no-referrer">`);
+        append(`<img src="${escapeAttribute(remote)}"${altAttribute}${presentation} loading="lazy" referrerpolicy="no-referrer">`);
         allowedRemoteImages += 1;
         if (alt) appendPlainText(alt);
         continue;
@@ -414,7 +478,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       continue;
     }
 
-    if (!allowedTags.has(parsed.name)) {
+    if (!allowedTags.has(parsed.name) || (!options.preserveStyles && ['html', 'body', 'font', 'center', 'hr'].includes(parsed.name))) {
       removedElements += 1;
       continue;
     }
@@ -426,23 +490,24 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
         removedElements += 1;
         continue;
       }
-      append(`<a href="${escapeAttribute(safeHref)}" target="_blank" rel="noopener noreferrer">`);
+      append(`<a href="${escapeAttribute(safeHref)}" target="_blank" rel="noopener noreferrer"${options.preserveStyles ? ` title="${escapeAttribute(safeHref)}"` : ''}${presentation}>`);
       stack.push({ name: parsed.name, emitted: true, link: externalLinkFrame(safeHref, text.length) });
       checkDepth();
       continue;
     }
 
     const attributes = mapAttributes(parsed.attributes);
-    let serializedAttributes = '';
+    let serializedAttributes = presentation;
     if (parsed.name === 'th' || parsed.name === 'td') {
       for (const name of ['colspan', 'rowspan']) {
         const value = attributes.get(name);
         if (value && /^[1-9][0-9]{0,2}$/u.test(value)) serializedAttributes += ` ${name}="${value}"`;
       }
     }
-    append(`<${parsed.name}${serializedAttributes}>`);
+    const outputName = ['html', 'body', 'center'].includes(parsed.name) ? 'div' : parsed.name === 'font' ? 'span' : parsed.name;
+    append(`<${outputName}${serializedAttributes}>`);
     if (!voidTags.has(parsed.name) && !parsed.selfClosing) {
-      stack.push({ name: parsed.name, emitted: true });
+      stack.push({ name: parsed.name, outputName, emitted: true });
       checkDepth();
     }
   }
@@ -452,5 +517,5 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
     if (frame) closeFrame(frame);
   }
 
-  return { html, text, removedElements, blockedImages, allowedCidImages, allowedRemoteImages, linkWarnings };
+  return { html, styles, linkNotices, text, removedElements, blockedImages, allowedCidImages, allowedRemoteImages, linkWarnings };
 }

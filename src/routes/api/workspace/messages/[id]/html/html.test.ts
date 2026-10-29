@@ -156,6 +156,24 @@ describe('safe HTML workspace routes', () => {
     expect(html).toContain('已阻止 3 个未授权或不安全的图片');
   });
 
+  test('preserves presentation without permitting CSS resource requests after image consent', async () => {
+    const { database, env } = fixture();
+    database.query('UPDATE email_messages SET html_body = ? WHERE id = ?').run(
+      '<style>.card{background:url(https://tracker.example/css);color:#123456}@import "https://tracker.example/import";</style><table class="card" cellpadding="0" cellspacing="0"><tr><td style="padding:24px;background-color:#eee">Newsletter</td></tr></table>',
+      'mail-1'
+    );
+    const response = await GET_HTML(event('/api/workspace/messages/email:mail-1/html?remote=1', env, { id: 'email:mail-1' }));
+    const html = await response.text();
+    expect(response.status).toBe(200);
+    expect(html).toContain('.fm-email-content .fm-user-card{color:#123456}');
+    expect(html).toContain('style="padding:24px;background-color:#eee"');
+    expect(html).toContain('<meta name="color-scheme" content="light">');
+    expect(html).not.toContain('tracker.example');
+    expect(html).not.toContain('th, td { border:');
+    expect(response.headers.get('content-security-policy')).toContain("script-src 'none'");
+    expect(response.headers.get('content-security-policy')).toContain("font-src 'none'");
+  });
+
   test('loads only HTTPS remote images after exact per-message consent', async () => {
     const { env } = fixture();
     const response = await GET_HTML(event(
