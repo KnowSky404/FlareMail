@@ -67,7 +67,7 @@ This builds the application and runs global `cf deploy --mode production` in `wo
 
 ## Data, Owner and provider setup
 
-Migrations remain append-only in `migrations/`; `schema.sql` is a snapshot. Local: `bun run db:migrate:local`. Remote: inspect the exact D1 UUID, pending list, recovery bookmark and current production-code compatibility first, then run `bun run db:migrate:remote` only with explicit authorization. Never run fixtures or automated browser seeds against shared PRE/production data.
+Migrations remain append-only in `migrations/`; `schema.sql` is a snapshot. Local: `bun run db:migrate:local`. Remote: inspect the exact D1 UUID, pending list, recovery bookmark and current production-code compatibility first, then run `bun run db:migrate:remote` only with explicit authorization. Both scripts accept `-- --dry-run`, forwarding it to cf without applying migrations; unknown options fail before invoking cf. Never run fixtures or automated browser seeds against shared PRE/production data.
 
 Discover resource commands using anonymous queries such as `cf cli search "list database migrations"`; inspect help/schema and a dry-run before a new operation. cf's local SQL command is `cf d1 raw <database-id> --local --persist-to <isolated-state> --sql <sql>`; `cf d1 query` is not the local equivalent. Raw result column/value arrays are normalized by the maintenance scripts without discarding statement metadata.
 
@@ -84,5 +84,7 @@ After deployment, `/api/health` proves liveness. Authenticated `/api/readiness` 
 `bun run build` 会先构建 SvelteKit，再由全局 `cf` 原生打包 Worker；`bun run preview` 是本地预览，`bun run deploy:pre -- <名称>` 是授权后的远程 PRE，`bun run deploy` 是需单独授权的生产发布。私有配置分别为 `cloudflare.preview.json` 和 `cloudflare.deploy.json`，由对应公开示例填写，禁止提交真实资源标识或密钥。
 
 PRE 共用生产数据和 Owner，默认只读验收。本地测试使用独立 `.cloudflare/state`，不会自动读取旧 `.wrangler` 状态。普通功能改动必须完成对应提交的本地检查、PRE 业务验收、本地 `/review` 及当前 head 的两项机器人审查，再合并主分支；合并不等于生产发布。
+
+本地与远程迁移脚本均支持 `-- --dry-run`，会透传给 cf，仅预检而不应用迁移；未知选项直接报错，避免拼错参数后意外执行写入。
 
 The [archived Wrangler guide](docs/archive/wrangler-deployment.md) preserves the former workflow for historical reference only. Current command authority is this guide and the [official cf documentation](https://developers.cloudflare.com/cf/).

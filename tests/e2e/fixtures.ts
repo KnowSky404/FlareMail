@@ -57,11 +57,13 @@ export async function assertNoConsoleErrors(consoleErrors: string[]) {
 export async function selectSettings(page: Page) {
   const desktopSettings = page.getByRole('navigation', { name: '主导航' })
     .getByRole('button', { name: '设置', exact: true });
+  const mobileToggle = page.getByRole('button', { name: '打开导航' });
+  await expect(desktopSettings.or(mobileToggle)).toBeVisible();
   if (await desktopSettings.isVisible().catch(() => false)) {
     await desktopSettings.press('Enter');
     return;
   }
-  await page.getByRole('button', { name: '打开导航' }).press('Enter');
+  await mobileToggle.press('Enter');
   const mobileSettings = page.getByRole('navigation', { name: '移动端导航' })
     .getByRole('button', { name: '设置', exact: true });
   await mobileSettings.press('Enter');

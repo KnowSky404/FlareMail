@@ -834,7 +834,7 @@
         class:bg-[var(--fm-primary-soft)]={dragActive}
         role="button"
         tabindex="0"
-        aria-label={t('compose.dropAttachment')}
+        aria-label={`${t('compose.dropAttachment')}: ${t('compose.attachmentLimits')}`}
         ondragenter={(event) => { event.preventDefault(); dragActive = true; }}
         ondragover={(event) => event.preventDefault()}
         ondragleave={() => (dragActive = false)}
