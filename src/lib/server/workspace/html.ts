@@ -33,26 +33,25 @@ function safeHtmlDocument(result: SafeHtmlResult): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="light">
   <meta name="referrer" content="no-referrer">
   <title>安全 HTML 邮件视图</title>
   <style>
-    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; }
-    body { max-width: 76ch; margin: 0 auto; padding: 20px; color: CanvasText; background: Canvas; overflow-wrap: anywhere; line-height: 1.65; }
-    img { max-width: 100%; height: auto; }
-    table { max-width: 100%; border-collapse: collapse; overflow-wrap: anywhere; }
-    th, td { border: 1px solid color-mix(in srgb, CanvasText 24%, transparent); padding: 6px 8px; vertical-align: top; }
-    pre { max-width: 100%; overflow: auto; white-space: pre-wrap; }
-    blockquote { margin-inline: 0; padding-inline-start: 12px; border-inline-start: 3px solid color-mix(in srgb, CanvasText 28%, transparent); }
-    a { color: LinkText; text-decoration-thickness: from-font; }
+    :root { color-scheme: light; font-family: Arial, Helvetica, sans-serif; }
+    body { margin: 0; padding: 16px; color: #222; background: #fff; font-size: 14px; line-height: 1.5; }
+    .fm-email-content { min-width: 0; overflow: auto; overflow-wrap: break-word; }
+    .fm-email-content img { max-width: 100%; height: auto; }
+    .fm-email-content pre { overflow: auto; }
+    a { color: #1558b0; }
     .fm-privacy-note { margin: 0 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; font-size: 12px; }
     .fm-link-target { font-size: .78em; color: GrayText; white-space: nowrap; }
     .fm-link-warning { font-size: .78em; color: #b45309; font-weight: 600; }
-    @media print { body { max-width: none; padding: 0; } .fm-privacy-note { display: none; } a { color: inherit; } }
+    @media (max-width: 480px) { body { padding: 8px; } }
+    @media print { body { padding: 0; } .fm-privacy-note { display: none; } a { color: inherit; } }
   </style>
+  <style>${result.styles}</style>
 </head>
-<body>${imageNotice}${result.html || '<p>这封邮件没有可显示的 HTML 正文。</p>'}</body>
+<body>${imageNotice}${result.linkNotices ? `<aside class="fm-link-notices" aria-label="链接风险">${result.linkNotices}</aside>` : ''}<div class="fm-email-content">${result.html || '<p>这封邮件没有可显示的 HTML 正文。</p>'}</div></body>
 </html>`;
 }
 
@@ -106,6 +105,7 @@ export async function renderOwnedSafeHtml(
   let sanitized: SafeHtmlResult;
   try {
     sanitized = sanitizeHtml(html, {
+      preserveStyles: true,
       allowRemoteImages: options.allowRemoteImages === true,
       resolveCidImage: (cid) => cidUrls.get(normalizeContentId(cid) ?? '') ?? null
     });

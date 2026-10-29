@@ -485,6 +485,13 @@ message display goes through the server sanitizer and the sandboxed HTML route:
 
 - scripts, event-handler attributes, forms, frames, SVG, `javascript:`/unsafe
   `data:` URLs, and unsafe CSS are removed;
+- inbound HTML reading preserves allowlisted inline CSS, scoped class/id rules,
+  width media queries, and table presentation attributes using CSSTree. CSS URLs,
+  imports, web fonts, active functions, and positioning are removed even when
+  HTTPS images are enabled. The isolated mail canvas stays light and does not add
+  borders or padding to layout-table cells. Risky link notices are placed outside
+  sender styling; ordinary links keep their layout and show the URL on hover.
+  Compose sanitization is unchanged;
 - links receive safe target/rel handling and remote images are blocked by
   default, with an explicit per-viewer consent path;
 - inline CID images are resolved only through an ownership-checked attachment

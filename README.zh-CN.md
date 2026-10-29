@@ -53,3 +53,13 @@ Cloudflare 操作统一使用全局 `cf`（Node.js ≥ 22.18），可用 `bun ad
 
 FlareMail 采用 [GNU Affero General Public License](./LICENSE) 第 3 版，
 或（由你选择）任何更高版本（`AGPL-3.0-or-later`）。
+
+## HTML 邮件阅读
+
+安全 HTML 阅读器在隔离的浅色画布中保留常用字体、配色、表格布局和按宽度响应的样式。
+远程图片仍需手动授权，CSS 资源请求始终阻止，写信清洗策略保持不变。
+详见 [HTML 安全边界](docs/API.md#html-safety-boundary)。
+
+实现参考 [Roundcube](https://github.com/roundcube/roundcubemail/blob/master/program/lib/Roundcube/rcube_washtml.php)
+和 [SnappyMail](https://github.com/the-djmaze/snappymail/blob/master/dev/Common/Html.js) 对排版与 CSS 清洗的处理，
+使用 [CSSTree](https://github.com/csstree/csstree) 解析及验证 CSS。

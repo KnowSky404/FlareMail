@@ -53,3 +53,14 @@ See the
 
 FlareMail is licensed under the [GNU Affero General Public License](./LICENSE),
 version 3 or (at your option) any later version (`AGPL-3.0-or-later`).
+
+## HTML message rendering
+
+The Safe HTML reader preserves common email typography, colors, table layouts and
+responsive width rules on an isolated light canvas. Remote images require consent;
+CSS resource loads remain blocked. See the [HTML safety boundary](docs/API.md#html-safety-boundary).
+
+The approach follows the presentation/CSS separation in
+[Roundcube](https://github.com/roundcube/roundcubemail/blob/master/program/lib/Roundcube/rcube_washtml.php)
+and [SnappyMail](https://github.com/the-djmaze/snappymail/blob/master/dev/Common/Html.js),
+using [CSSTree](https://github.com/csstree/csstree) for CSS parsing and validation.
