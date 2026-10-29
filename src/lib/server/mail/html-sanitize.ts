@@ -448,10 +448,11 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
 
     if (parsed.name === 'style' && options.preserveStyles) {
       // style is raw text, not HTML. Never pass its contents through the tag loop.
-      const end = /<\/style\s*>/giu;
+      const end = /<\/style(?=[\t\n\f\r />])/gi;
       end.lastIndex = position;
       const closing = end.exec(input);
-      const source = input.slice(position, closing?.index ?? input.length);
+      const closingEnd = closing ? findTagEnd(input, closing.index + closing[0].length) : -1;
+      const source = input.slice(position, closing && closingEnd >= 0 ? closing.index : input.length);
       const media = firstAttribute(parsed.attributes, 'media')?.trim().toLowerCase();
       const css = sanitizeEmailStylesheet(!media || media === 'all' || media === 'screen' ? source : `@media ${media}{${source}}`);
       const cssBytes = byteLength(css);
@@ -460,7 +461,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       }
       styles += css;
       stylesBytes += cssBytes;
-      position = closing ? end.lastIndex : input.length;
+      position = closingEnd >= 0 ? closingEnd + 1 : input.length;
       continue;
     }
 

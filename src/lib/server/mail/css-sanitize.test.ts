@@ -60,6 +60,15 @@ describe('email presentation CSS', () => {
     expect(sanitizeEmailInlineCss('background:linear-gradient(red,url(https://tracker.example/bg.png))')).toBe('');
   });
 
+  test('recognizes recoverable HTML style end tags without swallowing following content', () => {
+    for (const end of ['</style/>', '</STYLE >', '</style type="text/css">', '</style data-note=">">']) {
+      const result = sanitizeHtml(`<style>p{color:red}${end}<p>Receipt</p>`, { preserveStyles: true });
+      expect(result.html).toContain('<p>Receipt</p>');
+      expect(result.styles).toBe('.fm-email-content p{color:red}');
+    }
+    expect(sanitizeHtml('<style>p{color:red}</style-not><p>Still CSS</p>', { preserveStyles: true }).html).toBe('');
+  });
+
   test('keeps buttons free of injected labels and risk notices outside sender CSS', () => {
     const result = sanitizeHtml('<style>span{display:none!important}</style><p><a href="https://example.com">Open account</a></p><a href="https://other.example">https://example.com</a>', { preserveStyles: true });
     expect(result.html).not.toContain('fm-link-target');
