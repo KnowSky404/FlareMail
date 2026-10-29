@@ -6,7 +6,7 @@ const properties = new Set(`
   color background background-color font font-family font-size font-style font-weight
   font-variant line-height letter-spacing word-spacing text-align text-decoration
   text-indent text-transform white-space word-break overflow-wrap vertical-align
-  width min-width max-width height min-height max-height margin margin-top margin-right
+  box-sizing width min-width max-width height min-height max-height margin margin-top margin-right
   margin-bottom margin-left padding padding-top padding-right padding-bottom padding-left
   border border-top border-right border-bottom border-left border-width border-style
   border-color border-top-width border-right-width border-bottom-width border-left-width

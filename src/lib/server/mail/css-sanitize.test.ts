@@ -69,6 +69,11 @@ describe('email presentation CSS', () => {
     expect(sanitizeHtml('<style>p{color:red}</style-not><p>Still CSS</p>', { preserveStyles: true }).html).toBe('');
   });
 
+  test('retains border-box sizing with responsive width and padding', () => {
+    expect(sanitizeEmailInlineCss('width:100%;padding:24px;box-sizing:border-box')).toContain('box-sizing:border-box');
+    expect(sanitizeEmailStylesheet('.card{width:100%;padding:24px;box-sizing:border-box}')).toContain('box-sizing:border-box');
+  });
+
   test('keeps buttons free of injected labels and risk notices outside sender CSS', () => {
     const result = sanitizeHtml('<style>span{display:none!important}</style><p><a href="https://example.com">Open account</a></p><a href="https://other.example">https://example.com</a>', { preserveStyles: true });
     expect(result.html).not.toContain('fm-link-target');
