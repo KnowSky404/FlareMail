@@ -51,7 +51,7 @@ function safeHtmlDocument(result: SafeHtmlResult): string {
   </style>
   <style>${result.styles}</style>
 </head>
-<body>${imageNotice}${result.linkNotices ? `<aside class="fm-link-notices" aria-label="链接风险">${result.linkNotices}</aside>` : ''}<div class="fm-email-content">${result.html || '<p>这封邮件没有可显示的 HTML 正文。</p>'}</div></body>
+<body>${imageNotice}${result.linkNotices ? `<aside class="fm-link-notices" aria-label="链接目标及风险">${result.linkNotices}</aside>` : ''}<div class="fm-email-content">${result.html || '<p>这封邮件没有可显示的 HTML 正文。</p>'}</div></body>
 </html>`;
 }
 

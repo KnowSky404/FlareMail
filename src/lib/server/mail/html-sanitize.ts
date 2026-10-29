@@ -271,7 +271,7 @@ function presentationAttributes(attributes: Attribute[], tag: string): string {
   const values = mapAttributes(attributes);
   let output = '';
   const classes = (values.get('class') ?? '').split(/\s+/u).map(emailCssIdentifier).filter(Boolean);
-  if (tag === 'html' || tag === 'body') classes.push(`fm-tag-${tag}`);
+  if (['html', 'body', 'font', 'center'].includes(tag)) classes.push(`fm-tag-${tag}`);
   if (classes.length) output += ` class="${classes.join(' ')}"`;
   const id = emailCssIdentifier(values.get('id') ?? '');
   if (id) output += ` id="${id}"`;
@@ -356,20 +356,21 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
     append(`</${frame.outputName ?? frame.name}>`);
     if (!frame.link) return;
     if (options.decorateLinks !== false) {
-      const visibleHostname = displayedHostname(text.slice(frame.link.textStart));
+      const label = text.slice(frame.link.textStart);
+      const visibleHostname = displayedHostname(label);
+      const targetHostname = frame.link.hostname;
+      const mentionedHostnames = [...label.matchAll(/https?:\/\/[^\s/?#<>]+/giu)].map(([url]) => displayedHostname(url));
       const warnings = [...frame.link.warnings];
-      if (visibleHostname && visibleHostname !== frame.link.hostname) warnings.push('显示文本与目标不一致');
+      if ((visibleHostname && visibleHostname !== frame.link.hostname) || mentionedHostnames.some((hostname) => hostname && hostname !== targetHostname)) warnings.push('显示文本与目标不一致');
       const warning = warnings.length
         ? ` <span class="fm-link-warning" aria-label="链接风险：${escapeAttribute(warnings.join('、'))}">⚠ ${escapeText(warnings.join('、'))}</span>`
         : '';
       const annotation = ` <span class="fm-link-target" aria-label="链接目标域名 ${escapeAttribute(frame.link.hostname)}">[${escapeText(frame.link.hostname)}]</span>${warning}`;
       if (options.preserveStyles) {
-        // Risk notices sit outside the sender's styled subtree. Harmless links
-        // retain their original layout, including buttons and navigation rows.
-        if (warnings.length) {
-          linkNotices += `<p>${annotation}</p>`;
-          append(''); // Include notices in the shared output budget.
-        }
+        // Always disclose real targets outside sender CSS, which can hide or
+        // change link labels. Keep annotations out of buttons/navigation rows.
+        linkNotices += `<p>${annotation}</p>`;
+        append(''); // Include notices in the shared output budget.
       } else {
         append(annotation);
       }

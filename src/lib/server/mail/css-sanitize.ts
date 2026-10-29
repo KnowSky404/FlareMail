@@ -23,7 +23,7 @@ export function emailCssIdentifier(value: string): string | null {
 }
 
 function boundedSource(source: string): boolean {
-  if (/[<>\\\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(source)) return false;
+  if (/[<\\\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(source)) return false;
   // CSSTree's non-recursive tokenizer bounds nesting before AST parsing,
   // without counting punctuation inside comments, URLs or font-family strings.
   let depth = 0;
@@ -81,7 +81,7 @@ function scopedSelectors(node: CssNode): string {
         else value += `${part.type === 'ClassSelector' ? '.' : '#'}${name}`;
       } else if (part.type === 'TypeSelector' && /^(?:[a-zA-Z][a-zA-Z0-9-]*|\*)$/u.test(part.name)) {
         const name = part.name.toLowerCase();
-        value += name === 'html' || name === 'body' ? `.fm-tag-${name}` : name;
+        value += ['html', 'body', 'font', 'center'].includes(name) ? `.fm-tag-${name}` : name;
       } else if (part.type === 'Combinator' && [' ', '>', '+', '~'].includes(part.name)) {
         value += part.name;
       } else if (part.type === 'PseudoClassSelector' && !part.children && ['first-child', 'last-child', 'only-child', 'empty'].includes(part.name)) {
