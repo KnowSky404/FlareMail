@@ -489,7 +489,8 @@ message display goes through the server sanitizer and the sandboxed HTML route:
   width media queries, and table presentation attributes using CSSTree. CSS URLs,
   imports, web fonts, active functions, and positioning are removed even when
   HTTPS images are enabled. The isolated mail canvas stays light and does not add
-  borders or padding to layout-table cells. Risky link notices are placed outside
+  borders or padding to layout-table cells. Solid fallback colors are retained
+  when a background image URL is removed; safe local gradients remain supported. Risky link notices are placed outside
   sender styling; ordinary links keep their layout and show the URL on hover.
   Already allowlisted reader HTML is normalized with parse5 in a div context
   so malformed tables cannot escape the content wrapper. The normalized HTML,
