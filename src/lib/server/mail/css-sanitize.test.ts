@@ -58,6 +58,18 @@ describe('email presentation CSS', () => {
     expect(sanitizeHtml('<style media="print">p{display:none}</style><p>screen</p>', { preserveStyles: true }).styles).toBe('');
   });
 
+  test('preserves child selectors and remaps legacy presentation tags', () => {
+    const result = sanitizeHtml('<style>.card>p{color:red}font{font-weight:bold}center{font-size:36px}</style><div class="card"><p>Child</p></div><center><font>Legacy</font></center>', { preserveStyles: true });
+    expect(result.styles).toContain('.fm-email-content .fm-user-card>p{color:red}');
+    expect(result.styles).toContain('.fm-email-content .fm-tag-font{font-weight:bold}');
+    expect(result.styles).toContain('.fm-email-content .fm-tag-center{font-size:36px}');
+    expect(result.html).toContain('<div class="fm-tag-center"');
+    expect(result.html).toContain('<span class="fm-tag-font">');
+    const link = sanitizeHtml('<a href="https://attacker.example"><span style="display:none">https://attacker.example/</span>https://bank.example</a>', { preserveStyles: true });
+    expect(link.linkNotices).toContain('[attacker.example]');
+    expect(link.linkNotices).toContain('显示文本与目标不一致');
+  });
+
   test('bounds malformed and deeply nested CSS and accounts for stylesheet output', () => {
     expect(sanitizeEmailStylesheet('a{color:red')).toBe('');
     expect(sanitizeEmailInlineCss(`width:${'calc('.repeat(100)}1px${')'.repeat(100)}`)).toBe('');
