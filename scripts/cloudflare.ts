@@ -29,9 +29,11 @@ if (command === 'typegen') {
   if (before !== null && types !== before) throw new Error('Worker binding types are stale; run bun run cf:typegen.');
   if (before === null) await writeFile(join(projectRoot, 'worker-configuration.d.ts'), types);
 } else if (command === 'migrate') {
+  const unknown = args.find((argument) => !['--remote', '--dry-run'].includes(argument));
+  if (unknown) throw new Error(`Unknown migration option: ${unknown}`);
   const remote = args.includes('--remote');
   const target = readCloudflareTarget(process.env.FLAREMAIL_CF_CONFIG ?? (remote ? 'cloudflare.deploy.json' : 'cloudflare.local.json'), remote);
-  await run(['cf', 'd1', 'migrations', 'apply', target.databaseId, '--dir', join(projectRoot, 'migrations'), ...(remote ? [] : localStateArgs())]);
+  await run(['cf', 'd1', 'migrations', 'apply', target.databaseId, '--dir', join(projectRoot, 'migrations'), ...(args.includes('--dry-run') ? ['--dry-run'] : []), ...(remote ? [] : localStateArgs())]);
 } else if (command === 'build') {
   await run(['cf', 'build', '--mode', mode]);
 } else if (command === 'preview') {

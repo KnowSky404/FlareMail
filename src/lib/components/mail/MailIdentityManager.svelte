@@ -629,11 +629,11 @@
               {@const count = associated.filter((address) => address.lifecycle_status !== 'deleted').length}
               <tr data-domain-id={domain.id} data-resource-row data-resource-kind="domain">
                 <td class="identity-cell"><button type="button" class="identity-link" onclick={(event) => openDiagnostics(domain, undefined, event)}>{domain.domain_name}</button>
-                  <div class="mobile-summary"><span>{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span><button type="button" class="text-action" title={t('settings.addressCountHelp')} aria-label={`${t('settings.viewAddresses')}: ${domain.domain_name} (${count})`} onclick={() => onViewAddressesForDomain?.(domain.id)}>{t('shell.addresses')} {count}</button></div>
+                  <div class="mobile-summary"><span>{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span><button type="button" class="text-action" title={t('settings.addressCountHelp')} onclick={() => onViewAddressesForDomain?.(domain.id)}><span class="sr-only">{t('settings.viewAddresses')}: {domain.domain_name} </span>{t('shell.addresses')} {count}</button></div>
                   <div class="mobile-capabilities"><span>{t('settings.receive')}: {capabilityLabel(capabilities.receiving)}</span><span>{t('settings.send')}: {capabilityLabel(capabilities.sending)}</span></div>
                   {#if capabilities.receiving === 'needs_check' || capabilities.sending === 'needs_check' || domain.cloudflare_error_code || domain.resend_error_code}<button type="button" class="attention detail-link" onclick={(event) => openDiagnostics(domain, undefined, event)}><AlertTriangle size={13} aria-hidden="true" />{t('settings.needsCheckDetails')}</button>{/if}
                 </td>
-                <td class="secondary-column"><button type="button" class="text-action" title={t('settings.addressCountHelp')} aria-label={`${t('settings.viewAddresses')}: ${domain.domain_name} (${count})`} onclick={() => onViewAddressesForDomain?.(domain.id)}>{count}</button></td>
+                <td class="secondary-column"><button type="button" class="text-action" title={t('settings.addressCountHelp')} onclick={() => onViewAddressesForDomain?.(domain.id)}><span class="sr-only">{t('settings.viewAddresses')}: {domain.domain_name} </span>{count}</button></td>
                 <td class="secondary-column"><span class="state-badge">{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span></td>
                 <td class="capability-column">{@render stateBadge(capabilities.receiving)}</td><td class="capability-column">{@render stateBadge(capabilities.sending)}</td>
                 <td class="actions-column"><div class="row-actions" data-resource-actions>

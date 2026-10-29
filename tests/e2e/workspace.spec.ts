@@ -912,6 +912,7 @@ test('opens dedicated domain and address tables with modal management actions', 
   await expect(domainTable).toContainText('flaremail.test');
   await expect(page.locator('section[aria-labelledby="resource-manager-title"]')).toBeVisible();
   await expect(page.getByRole('dialog')).toBeHidden();
+  await domainTable.locator('tbody tr').first().hover();
   expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: `/tmp/flaremail-domains-${testInfo.project.name}.png` });
@@ -948,18 +949,30 @@ test('opens dedicated domain and address tables with modal management actions', 
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('keeps a partially configured address visible after its modal save', async ({ page }) => {
+test('keeps a partially configured address visible without replaying an uncertain create', async ({ page }) => {
   await login(page);
   await page.goto('/?folder=settings&view=addresses&domain=00000000-0000-4000-8000-000000000011');
+  let createRequests = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/workspace/mail-identities') createRequests++;
+  });
   const trigger = page.locator('#add-mail-address');
   await trigger.click();
   const dialog = page.locator('#add-mail-address-dialog');
   await dialog.getByLabel(/地址前缀|Address prefix|邮件地址或本地部分|Mail address or local part/u).fill('full-e2e');
   await dialog.getByRole('button', { name: /创建并配置收信规则|Create and configure|保存/u }).last().click();
-  await expect(page.getByRole('status').filter({ hasText: /地址已保存|saved|待处理|attention/u })).toBeVisible();
+  // The local fixture has no routing token. D1 can save the address before
+  // the routing step returns 503, so the existing UI keeps the outcome unknown.
+  await expect(dialog.getByRole('alert')).toContainText(/已找到此地址的记录|address.*found|record.*address/iu);
+  await expect(dialog.getByRole('button', { name: /创建并配置收信规则|Create and configure|保存/u }).last()).toBeDisabled();
   await expect(page.getByRole('table', { name: /邮箱地址|Email addresses/u })).toContainText('full-e2e@flaremail.test');
+  await dialog.getByRole('button', { name: /取消|Cancel/u }).click();
+  const discard = page.locator('#discard-mail-resource-changes');
+  if (await discard.isVisible()) await discard.getByRole('button', { name: /放弃更改|Discard changes/u }).click();
+  await expect(dialog).toBeHidden();
   await page.reload();
   await expect(page.getByRole('table', { name: /邮箱地址|Email addresses/u })).toContainText('full-e2e@flaremail.test');
+  expect(createRequests).toBe(1);
   await assertNoHorizontalOverflow(page);
 });
 
@@ -2863,7 +2876,7 @@ test('keeps the primary mail journey accessible in both themes', async ({ page, 
       ['', '设置'], ['domains', '域名'], ['addresses', '邮箱地址']
     ] as const) {
       await page.goto(`/?folder=settings${view ? `&view=${view}` : ''}`);
-      await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: new RegExp(`^${heading}(?:\\s+\\d+)?$`, 'u') })).toBeVisible();
       await scan(`${theme} ${view || 'settings'}`);
     }
   }
