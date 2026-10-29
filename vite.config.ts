@@ -5,11 +5,11 @@ import adapter from '@sveltejs/adapter-cloudflare';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { adapterOptions } from './scripts/adapter-config.mjs';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [tailwindcss(), sveltekit({
     preprocess: vitePreprocess(),
     alias: { '$lib': 'src/lib' },
-    adapter: adapter(adapterOptions()),
+    adapter: adapter(adapterOptions(command === 'serve')),
     csp: {
       mode: 'nonce',
       directives: {
@@ -28,4 +28,4 @@ export default defineConfig({
   })],
   ssr: { noExternal: true, external: ['cloudflare:email'] },
   build: { rolldownOptions: { external: ['cloudflare:email'] } }
-});
+}));
