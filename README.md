@@ -63,4 +63,5 @@ CSS resource loads remain blocked. See the [HTML safety boundary](docs/API.md#ht
 The approach follows the presentation/CSS separation in
 [Roundcube](https://github.com/roundcube/roundcubemail/blob/master/program/lib/Roundcube/rcube_washtml.php)
 and [SnappyMail](https://github.com/the-djmaze/snappymail/blob/master/dev/Common/Html.js),
-using [CSSTree](https://github.com/csstree/csstree) for CSS parsing and validation.
+using [CSSTree](https://github.com/csstree/csstree) for CSS parsing and validation
+and [parse5](https://github.com/inikulin/parse5) for HTML5 structure normalization.

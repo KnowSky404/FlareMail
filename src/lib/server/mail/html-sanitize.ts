@@ -1,3 +1,4 @@
+import { defaultTreeAdapter, html as html5, parseFragment, serialize } from 'parse5';
 import { emailCssIdentifier, sanitizeEmailInlineCss, sanitizeEmailStylesheet } from './css-sanitize';
 
 const textEncoder = new TextEncoder();
@@ -305,6 +306,8 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
   let html = '';
   let styles = '';
   let linkNotices = '';
+  let stylesBytes = 0;
+  let linkNoticeBytes = 0;
   let text = '';
   let position = 0;
   let nodes = 0;
@@ -328,7 +331,7 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
   };
   const append = (value: string) => {
     const next = html + value;
-    const actual = byteLength(next) + byteLength(styles) + byteLength(linkNotices);
+    const actual = byteLength(next) + stylesBytes + linkNoticeBytes;
     if (actual > limits.maxOutputBytes) {
       throw new SafeHtmlError('HTML_OUTPUT_TOO_LARGE', '清洗后的 HTML 正文超过大小限制。', { limit: limits.maxOutputBytes, actual });
     }
@@ -369,7 +372,9 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       if (options.preserveStyles) {
         // Always disclose real targets outside sender CSS, which can hide or
         // change link labels. Keep annotations out of buttons/navigation rows.
-        linkNotices += `<p>${annotation}</p>`;
+        const notice = `<p>${annotation}</p>`;
+        linkNotices += notice;
+        linkNoticeBytes += byteLength(notice);
         append(''); // Include notices in the shared output budget.
       } else {
         append(annotation);
@@ -434,10 +439,12 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
       const source = input.slice(position, closing?.index ?? input.length);
       const media = firstAttribute(parsed.attributes, 'media')?.trim().toLowerCase();
       const css = sanitizeEmailStylesheet(!media || media === 'all' || media === 'screen' ? source : `@media ${media}{${source}}`);
-      if (byteLength(html) + byteLength(styles) + byteLength(linkNotices) + byteLength(css) > limits.maxOutputBytes) {
+      const cssBytes = byteLength(css);
+      if (byteLength(html) + stylesBytes + linkNoticeBytes + cssBytes > limits.maxOutputBytes) {
         throw new SafeHtmlError('HTML_OUTPUT_TOO_LARGE', '清洗后的 HTML 正文超过大小限制。', { limit: limits.maxOutputBytes });
       }
       styles += css;
+      stylesBytes += cssBytes;
       position = closing ? end.lastIndex : input.length;
       continue;
     }
@@ -516,6 +523,18 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
   while (stack.length) {
     const frame = stack.pop();
     if (frame) closeFrame(frame);
+  }
+
+  if (options.preserveStyles) {
+    // HTML5 table repair/adoption can move nodes outside a string wrapper.
+    // Normalize the already allowlisted fragment in the same <div> context
+    // used by the reader before embedding it beside trusted notices.
+    const context = defaultTreeAdapter.createElement('div', html5.NS.HTML, []);
+    html = serialize(parseFragment(context, html, { scriptingEnabled: false }));
+    const actual = byteLength(html) + stylesBytes + linkNoticeBytes;
+    if (actual > limits.maxOutputBytes) {
+      throw new SafeHtmlError('HTML_OUTPUT_TOO_LARGE', '清洗后的 HTML 正文超过大小限制。', { limit: limits.maxOutputBytes, actual });
+    }
   }
 
   return { html, styles, linkNotices, text, removedElements, blockedImages, allowedCidImages, allowedRemoteImages, linkWarnings };
