@@ -81,7 +81,7 @@ function scopedSelectors(node: CssNode): string {
         else value += `${part.type === 'ClassSelector' ? '.' : '#'}${name}`;
       } else if (part.type === 'TypeSelector' && /^(?:[a-zA-Z][a-zA-Z0-9-]*|\*)$/u.test(part.name)) {
         const name = part.name.toLowerCase();
-        value += ['html', 'body', 'font', 'center'].includes(name) ? `.fm-tag-${name}` : name;
+        value += name === 'html' || name === 'body' ? `fm-email-${name}` : name;
       } else if (part.type === 'Combinator' && [' ', '>', '+', '~'].includes(part.name)) {
         value += part.name;
       } else if (part.type === 'PseudoClassSelector' && !part.children && ['first-child', 'last-child', 'only-child', 'empty'].includes(part.name)) {

@@ -174,6 +174,19 @@ describe('safe HTML workspace routes', () => {
     expect(response.headers.get('content-security-policy')).toContain("font-src 'none'");
   });
 
+  test('retains the visible empty-body fallback after all sender content is removed', async () => {
+    const { database, env } = fixture();
+    database.query('UPDATE email_messages SET html_body = ? WHERE id = ?').run(
+      '<style>p{display:none}</style><script>evil</script>', 'mail-1'
+    );
+    const response = await GET_HTML(event('/api/workspace/messages/email:mail-1/html', env, { id: 'email:mail-1' }));
+    const html = await response.text();
+    expect(response.status).toBe(200);
+    expect(html).toContain('这封邮件没有可显示的 HTML 正文。');
+    expect(html).not.toContain('display:none');
+    expect(html).not.toContain('evil');
+  });
+
   test('loads only HTTPS remote images after exact per-message consent', async () => {
     const { env } = fixture();
     const response = await GET_HTML(event(

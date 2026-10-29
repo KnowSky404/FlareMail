@@ -40,6 +40,7 @@ function safeHtmlDocument(result: SafeHtmlResult): string {
     :root { color-scheme: light; font-family: Arial, Helvetica, sans-serif; }
     body { margin: 0; padding: 16px; color: #222; background: #fff; font-size: 14px; line-height: 1.5; }
     .fm-email-content { min-width: 0; overflow: auto; overflow-wrap: break-word; }
+    fm-email-html, fm-email-body { display: block; }
     .fm-email-content img { max-width: 100%; height: auto; }
     .fm-email-content pre { overflow: auto; }
     a { color: #1558b0; }
