@@ -27,6 +27,11 @@ test('preserves email table styles, responsive padding and light canvas in the s
   await expect(frame.getByText('Safe HTML fixture', { exact: true })).toBeVisible();
   await expect(frame.locator('script, form, iframe, link')).toHaveCount(0);
   await expect(frame.locator('.fm-email-content #fm-user-table-recovery')).toHaveText('Table recovery fixture');
+  await expect(frame.locator('fm-email-html')).toHaveCSS('padding-top', '0px');
+  await expect(frame.locator('fm-email-body')).toHaveCSS('padding-top', '0px');
+  await expect(frame.locator('#fm-user-root-cascade')).toHaveCSS('padding-top', '20px');
+  await expect(frame.locator('#fm-user-root-cascade')).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await expect(frame.locator('td.fm-user-cascade-cell')).toHaveCSS('background-color', 'rgb(17, 17, 17)');
   const table = frame.locator('table.fm-user-newsletter');
   await expect(table).toHaveCSS('background-color', 'rgb(241, 245, 249)');
   const metrics = await table.evaluate((element) => {

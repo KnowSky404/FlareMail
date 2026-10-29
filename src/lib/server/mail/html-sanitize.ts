@@ -268,21 +268,31 @@ function mapAttributes(attributes: Attribute[]): Map<string, string> {
   return result;
 }
 
+function presentationValue(property: string, value: string | undefined): string | null {
+  if (!value) return null;
+  const declaration = sanitizeEmailInlineCss(`${property}:${value}`);
+  return declaration.startsWith(`${property}:`) && !declaration.includes(';') && !declaration.includes('!important')
+    ? declaration.slice(property.length + 1)
+    : null;
+}
+
 function presentationAttributes(attributes: Attribute[], tag: string): string {
   const values = mapAttributes(attributes);
   let output = '';
   const classes = (values.get('class') ?? '').split(/\s+/u).map(emailCssIdentifier).filter(Boolean);
-  if (['html', 'body', 'font', 'center'].includes(tag)) classes.push(`fm-tag-${tag}`);
+  if (tag === 'html' || tag === 'body') classes.push(`fm-tag-${tag}`);
   if (classes.length) output += ` class="${classes.join(' ')}"`;
   const id = emailCssIdentifier(values.get('id') ?? '');
   if (id) output += ` id="${id}"`;
-  const legacy: string[] = [];
-  const color = values.get(tag === 'font' ? 'color' : 'bgcolor');
-  if (color) legacy.push(`${tag === 'font' ? 'color' : 'background-color'}:${color}`);
-  if (tag === 'font' && values.get('face')) legacy.push(`font-family:${values.get('face')}`);
-  if (tag === 'center') legacy.push('text-align:center');
-  const style = sanitizeEmailInlineCss([...legacy, values.get('style') ?? ''].join(';'));
+  const style = sanitizeEmailInlineCss(values.get('style') ?? '');
   if (style) output += ` style="${escapeAttribute(style)}"`;
+  // Keep native HTML hints at their original cascade priority.
+  const hints = tag === 'font' ? [['color', 'color'], ['face', 'font-family']] : [['bgcolor', 'background-color']];
+  for (const [attribute, property] of hints) {
+    const value = presentationValue(property, values.get(attribute));
+    if (value) output += ` ${attribute}="${escapeAttribute(value)}"`;
+  }
+  if (tag === 'font' && /^[+-]?[1-7]$/u.test(values.get('size') ?? '')) output += ` size="${values.get('size')}"`;
   for (const name of ['width', 'height', 'cellpadding', 'cellspacing', 'border']) {
     const value = values.get(name);
     if (value && /^\d{1,4}%?$/u.test(value)) output += ` ${name}="${value}"`;
@@ -305,6 +315,11 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
 
   let html = '';
   let styles = '';
+  let htmlRootAttributes = ' class="fm-tag-html"';
+  let bodyRootAttributes = ' class="fm-tag-body"';
+  let hasHtmlRoot = false;
+  let hasBodyRoot = false;
+  let rootHints = '';
   let linkNotices = '';
   let stylesBytes = 0;
   let linkNoticeBytes = 0;
@@ -457,6 +472,25 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
     }
 
     const presentation = options.preserveStyles ? presentationAttributes(parsed.attributes, parsed.name) : '';
+    if (options.preserveStyles && (parsed.name === 'html' || parsed.name === 'body')) {
+      // The reader always has one logical html/body pair, including fragments
+      // that omit either tag. Keep their hints/attributes on those roots.
+      if (parsed.name === 'html' && !hasHtmlRoot) {
+        htmlRootAttributes = presentation;
+        hasHtmlRoot = true;
+      } else if (parsed.name === 'body' && !hasBodyRoot) {
+        bodyRootAttributes = presentation;
+        hasBodyRoot = true;
+        const hints: string[] = [];
+        for (const [attribute, property] of [['bgcolor', 'background-color'], ['text', 'color']]) {
+          const value = presentationValue(property, firstAttribute(parsed.attributes, attribute));
+          if (value) hints.push(`${property}:${value}`);
+        }
+        if (hints.length) rootHints = `:where(.fm-email-content .fm-tag-body){${hints.join(';')}}`;
+      }
+      continue;
+    }
+
 
     if (parsed.name === 'img') {
       const source = firstAttribute(parsed.attributes, 'src');
@@ -512,9 +546,9 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
         if (value && /^[1-9][0-9]{0,2}$/u.test(value)) serializedAttributes += ` ${name}="${value}"`;
       }
     }
-    const outputName = ['html', 'body', 'center'].includes(parsed.name) ? 'div' : parsed.name === 'font' ? 'span' : parsed.name;
+    const outputName = parsed.name;
     append(`<${outputName}${serializedAttributes}>`);
-    if (!voidTags.has(parsed.name) && !parsed.selfClosing) {
+    if (!voidTags.has(parsed.name) && (options.preserveStyles || !parsed.selfClosing)) {
       stack.push({ name: parsed.name, outputName, emitted: true });
       checkDepth();
     }
@@ -530,12 +564,25 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
     // Normalize the already allowlisted fragment in the same <div> context
     // used by the reader before embedding it beside trusted notices.
     const context = defaultTreeAdapter.createElement('div', html5.NS.HTML, []);
-    const fragment = parseFragment(context, html, { scriptingEnabled: false });
+    let createdElements = 2; // Logical html/body wrappers emitted below.
+    const treeAdapter: typeof defaultTreeAdapter = {
+      ...defaultTreeAdapter,
+      createElement(tagName, namespaceURI, attributes) {
+        // parse5 adds an html scaffold for fragments. Sender roots have already
+        // been extracted, so that scaffold is not part of the returned tree.
+        if (tagName !== 'html') createdElements += 1;
+        if (createdElements > limits.maxNodes) {
+          throw new SafeHtmlError('HTML_COMPLEXITY_LIMIT', 'HTML 正文结构过于复杂。', { limit: limits.maxNodes, actual: createdElements });
+        }
+        return defaultTreeAdapter.createElement(tagName, namespaceURI, attributes);
+      }
+    };
+    const fragment = parseFragment(context, html, { scriptingEnabled: false, treeAdapter });
     // HTML5 repair can deepen self-closing non-void tags and add table nodes.
     // Walk iteratively before parse5's recursive serializer so the repaired
     // tree obeys the same safety limits and cannot overflow the call stack.
-    const pending: Array<{ node: DefaultTreeAdapterTypes.Node; depth: number }> = [{ node: fragment, depth: 0 }];
-    let repairedNodes = 0;
+    const pending: Array<{ node: DefaultTreeAdapterTypes.Node; depth: number }> = [{ node: fragment, depth: 2 }];
+    let repairedNodes = 2;
     while (pending.length) {
       const current = pending.pop()!;
       if (current.node !== fragment) repairedNodes += 1;
@@ -550,7 +597,10 @@ export function sanitizeHtml(input: string, options: SafeHtmlSanitizerOptions = 
         for (const child of current.node.childNodes) pending.push({ node: child, depth });
       }
     }
-    html = serialize(fragment);
+    const normalized = serialize(fragment);
+    html = normalized ? `<fm-email-html${htmlRootAttributes}><fm-email-body${bodyRootAttributes}>${normalized}</fm-email-body></fm-email-html>` : '';
+    styles = normalized ? rootHints + styles : '';
+    stylesBytes = byteLength(styles);
     const actual = byteLength(html) + stylesBytes + linkNoticeBytes;
     if (actual > limits.maxOutputBytes) {
       throw new SafeHtmlError('HTML_OUTPUT_TOO_LARGE', '清洗后的 HTML 正文超过大小限制。', { limit: limits.maxOutputBytes, actual });
