@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { sanitizeEmailInlineCss, sanitizeEmailStylesheet } from './css-sanitize';
-import { sanitizeHtml } from './html-sanitize';
+import { SafeHtmlError, sanitizeHtml } from './html-sanitize';
 
 describe('email presentation CSS', () => {
   test('preserves common newsletter layout and responsive class/id rules', () => {
@@ -80,6 +80,16 @@ describe('email presentation CSS', () => {
     const repaired = sanitizeHtml('<table><tr><td>x</td></tr></table>', { preserveStyles: true });
     expect(repaired.html).toContain('<tbody>');
     expect(() => sanitizeHtml('<table><tr><td>x</td></tr></table>', { preserveStyles: true, maxOutputBytes: repaired.html.length - 1 })).toThrow();
+  });
+
+  test('bounds repaired DOM depth before recursive HTML serialization', () => {
+    const code = (input: string, limits = {}) => {
+      try { sanitizeHtml(input, { preserveStyles: true, ...limits }); }
+      catch (error) { return error instanceof SafeHtmlError ? error.code : String(error); }
+    };
+    expect(code('<div/>'.repeat(9000))).toBe('HTML_NESTING_TOO_DEEP');
+    expect(code('<table><tr><td>x</td></tr></table>', { maxDepth: 3 })).toBe('HTML_NESTING_TOO_DEEP');
+    expect(code('hello', { maxNodes: 0 })).toBe('HTML_COMPLEXITY_LIMIT');
   });
 
   test('bounds malformed and deeply nested CSS and accounts for stylesheet output', () => {
