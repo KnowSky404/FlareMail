@@ -95,7 +95,7 @@ export default defineConfig({
       use: {
         ...devices['Desktop Safari'],
         locale: 'zh-CN',
-        reducedMotion: 'reduce',
+        reducedMotion: 'reduce' as const,
         viewport: { width: 1280, height: 900 },
         video: nonChromiumVideo,
         launchOptions: webkitLaunchOptions
@@ -118,7 +118,7 @@ export default defineConfig({
       use: {
         ...devices['iPhone 13'],
         locale: 'zh-CN',
-        reducedMotion: 'reduce',
+        reducedMotion: 'reduce' as const,
         video: nonChromiumVideo,
         launchOptions: webkitLaunchOptions
       }
@@ -129,7 +129,7 @@ export default defineConfig({
       use: {
         ...devices['iPad (gen 7)'],
         locale: 'zh-CN',
-        reducedMotion: 'reduce',
+        reducedMotion: 'reduce' as const,
         video: nonChromiumVideo,
         launchOptions: webkitLaunchOptions
       }

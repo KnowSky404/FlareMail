@@ -82,7 +82,7 @@ function createDatabase() {
 
 function sqliteStore(db: Database): MailIdentityBackfillStore {
   return {
-    executionTarget: { mode: 'local', database: 'flaremail-db', config: 'wrangler.toml', persistTo: '/tmp/flaremail-test-copy' },
+    executionTarget: { mode: 'local', database: 'flaremail-db', config: 'cloudflare.local.json', persistTo: '/tmp/flaremail-test-copy' },
     async getSchemaVersion() {
       return (db.query("SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = 'flaremail'").get() as { schema_version: number }).schema_version;
     },

@@ -19,7 +19,7 @@ export interface MailIdentityBackfillTarget {
 export interface MailIdentityBackfillExecutionTarget {
   mode: 'local';
   database: 'flaremail-db';
-  config: 'wrangler.toml';
+  config: 'cloudflare.local.json';
   persistTo: string;
 }
 
@@ -322,7 +322,7 @@ export function validateMailIdentityBackfillPlan(value: unknown): MailIdentityBa
     throw new Error('Plan record count or batch limit is invalid.');
   }
   if (!plan.executionTarget || plan.executionTarget.mode !== 'local' || plan.executionTarget.database !== 'flaremail-db' ||
-      plan.executionTarget.config !== 'wrangler.toml' || !plan.executionTarget.persistTo ||
+      plan.executionTarget.config !== 'cloudflare.local.json' || !plan.executionTarget.persistTo ||
       !plan.target || !plan.target.ownerUserId || !plan.target.addressId || !plan.target.domainId ||
       normalizedEmail(plan.target.addressEmail) !== plan.target.addressEmail) {
     throw new Error('Plan target is incomplete or invalid.');

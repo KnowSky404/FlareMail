@@ -1,0 +1,31 @@
+{
+  "name": "flaremail",
+  "compatibilityDate": "2026-08-19",
+  "compatibilityFlags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "APP_ENV": "preview",
+    "AUTH_MODE": "local",
+    "OUTBOUND_PROVIDER": "resend",
+    "ALLOW_FAKE_SERVICES": "false",
+    "AUTO_REPLY_ENABLED": "false",
+    "INBOUND_NOTIFICATION_ENABLED": "false",
+    "TELEGRAM_ENABLED": "false",
+    "APP_BASE_URL": "https://mail-identities-flaremail.example.workers.dev",
+    "APP_VERSION": "preview+replace-with-commit",
+    "MAIL_IDENTITY_WORKER_NAME": "flaremail"
+  },
+  "databaseId": "replace-with-production-database-id",
+  "databaseName": "replace-with-production-database",
+  "bucket": "replace-with-production-bucket",
+  "cron": [],
+  "observability": {
+    "enabled": true
+  },
+  "secrets": [
+    "RESEND_API_KEY",
+    "RESEND_WEBHOOK_SECRET",
+    "CLOUDFLARE_EMAIL_ROUTING_TOKEN"
+  ]
+}

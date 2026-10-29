@@ -94,13 +94,13 @@ describe('maintenance CLI safety helpers', () => {
   });
 
   test('derives cleanup buckets only from the selected BUCKET binding', () => {
-    const localConfig = `[vars]\nAPP_ENV = "development"\n\n[[r2_buckets]]\nbinding = "BUCKET"\nbucket_name = "mail-local"\npreview_bucket_name = "mail-preview"`;
-    const previewConfig = localConfig.replace('development', 'preview');
+    const localConfig = JSON.stringify({"name": "test-worker", "compatibilityDate": "2026-08-19", "compatibilityFlags": ["nodejs_compat"], "vars": {"APP_ENV": "development"}, "databaseId": "00000000-0000-0000-0000-000000000000", "databaseName": "flaremail-db", "bucket": "mail-local", "cron": []});
+    const previewConfig = localConfig.replace('development', 'preview').replace('mail-local', 'mail-preview');
     expect(configuredCleanupBucket(localConfig, false)).toBe('mail-local');
     expect(configuredCleanupBucket(previewConfig, true)).toBe('mail-preview');
-    expect(() => configuredCleanupBucket(`[vars]\nAPP_ENV = "production"\n\n[[r2_buckets]]\nbinding = "BUCKET"\nbucket_name = "mail-production"`, true)).toThrow('Production cleanup is refused');
+    expect(() => configuredCleanupBucket(JSON.stringify({"name": "test-worker", "compatibilityDate": "2026-08-19", "compatibilityFlags": ["nodejs_compat"], "vars": {"APP_ENV": "production"}, "databaseId": "00000000-0000-0000-0000-000000000000", "databaseName": "flaremail-db", "bucket": "mail-production", "cron": []}), true)).toThrow('Production cleanup is refused');
     expect(() => configuredCleanupBucket(localConfig, true)).toThrow('APP_ENV=preview');
-    expect(maintenanceD1TargetFlag({ command: 'cleanup-report', remote: true })).toBe('--preview');
+    expect(maintenanceD1TargetFlag({ command: 'cleanup-report', remote: true })).toBe('--remote');
     expect(maintenanceD1TargetFlag({ command: 'retention', remote: true })).toBe('--remote');
     expect(maintenanceD1TargetFlag({ command: 'cleanup-drain', remote: false })).toBe('--local');
   });

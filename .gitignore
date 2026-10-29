@@ -17,3 +17,11 @@ test-results
 wrangler.deploy.toml
 wrangler.*.deploy.toml
 !wrangler.deploy.toml.example
+
+.cloudflare/
+worker/.cloudflare/
+worker/dist/
+
+cloudflare.deploy.json
+cloudflare.preview.json
+cloudflare.*.private.json

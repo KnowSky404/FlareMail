@@ -1,0 +1,46 @@
+{
+  "name": "flaremail",
+  "compatibilityDate": "2026-08-19",
+  "compatibilityFlags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "APP_ENV": "development",
+    "ALLOW_FAKE_SERVICES": "true",
+    "OUTBOUND_PROVIDER": "demo",
+    "AUTH_MODE": "local",
+    "OUTBOUND_FROM_EMAIL": "dev@example.com",
+    "OUTBOUND_FROM_NAME": "FlareMail",
+    "AUTO_REPLY_ENABLED": "false",
+    "AUTO_REPLY_SUBJECT_PREFIX": "Re:",
+    "AUTO_REPLY_TEXT": "你好，我们已经收到你的邮件，会尽快处理。\n\nThis is an automated reply from FlareMail on Cloudflare Workers.",
+    "INBOUND_NOTIFICATION_ENABLED": "false",
+    "TELEGRAM_ENABLED": "false",
+    "TELEGRAM_BOT_USERNAME": "replace_with_bot_username",
+    "APP_BASE_URL": "http://127.0.0.1:8787",
+    "TELEGRAM_TIMEOUT_MS": "5000",
+    "INBOUND_MAX_RAW_BYTES": "26214400",
+    "INBOUND_MAX_ATTACHMENT_COUNT": "50",
+    "INBOUND_MAX_ATTACHMENT_BYTES": "15728640",
+    "INBOUND_MAX_ATTACHMENT_TOTAL_BYTES": "25165824",
+    "NOTIFICATION_EMAIL": "ops@example.com",
+    "NOTIFICATION_SUBJECT_PREFIX": "[FlareMail] 新入站邮件"
+  },
+  "databaseId": "00000000-0000-4000-8000-000000000001",
+  "databaseName": "flaremail-db",
+  "bucket": "flaremail-bucket",
+  "cron": [
+    "* * * * *"
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "headSamplingRate": 0.25
+    },
+    "traces": {
+      "enabled": true,
+      "headSamplingRate": 0.05
+    }
+  }
+}

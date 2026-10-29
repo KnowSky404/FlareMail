@@ -80,7 +80,7 @@ should use an isolated preview Worker and preview D1/R2 resources, then:
    `preview_required`; the command never fabricates Workers CPU, memory, or
    subrequest values.
 3. deploy the exact tested commit to the preview Worker and verify `/api/health`;
-4. use Workers Logs or `wrangler tail` and record `cpuTime`, duration,
+4. use Workers Logs in the Cloudflare Dashboard and record `cpuTime`, duration,
    invocation outcome, and any `exceededCpu` event;
 5. test login (successful and rejected), an SSR mailbox request, and inbound
    MIME fixtures at approximately 1 MiB, 5 MiB, and near the configured limit;

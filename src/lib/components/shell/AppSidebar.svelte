@@ -101,7 +101,7 @@
             type="button"
             class:active={isActive(item.id)}
             aria-current={isActive(item.id) ? 'page' : undefined}
-            aria-label={item.label}
+            aria-label={item.count && item.count > 0 ? `${item.label} ${formatNavigationCount(i18n.locale, item.count)}` : item.label}
             aria-describedby={collapsed ? tooltipId : countDescription ? `sidebar-${item.id}-count` : undefined}
             class="fm-touch-target"
             onclick={() => item.id === 'domains' || item.id === 'addresses' ? onSelectManagementView?.(item.id) : onSelectSection(item.id)}

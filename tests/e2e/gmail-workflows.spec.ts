@@ -67,9 +67,9 @@ function row(page: Page, subject: string) {
 }
 
 async function clickCategory(page: Page, label: string, category: Category) {
-  await page.getByRole('tablist', { name: '收件箱分类' }).getByRole('tab', { name: label, exact: true }).click();
+  await page.getByRole('tablist', { name: '收件箱分类' }).getByRole('tab', { name: new RegExp(`^${label}(?:\\s|$)`, 'u') }).click();
   await expect(page.locator('#inbox-category-panel')).toHaveAttribute('aria-labelledby', `inbox-tab-${category}`);
-  await expect(page.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: new RegExp(`^${label}(?:\\s|$)`, 'u') })).toHaveAttribute('aria-selected', 'true');
 }
 
 test.beforeEach(async ({ page, baseURL }) => {
@@ -614,7 +614,7 @@ test('shows identity-wide unread badges and auto-reads deep links once per visib
     const response = await page.request.get(`/api/workspace/mailbox/metrics?identity=${scope}`);
     const { data } = await response.json();
     if (testInfo.project.name === 'desktop') {
-      const count = page.locator('#fm-main-sidebar').getByRole('button', { name: '收件箱', exact: true }).locator('.count');
+      const count = page.locator('#fm-main-sidebar').getByRole('button', { name: /^收件箱(?:\s|$)/u }).locator('.count');
       await expect(count).toHaveText(String(data.metrics.unreadCount));
       await expect(count).toHaveAttribute('aria-label', `${data.metrics.unreadCount} 未读`);
     } else {
@@ -725,7 +725,7 @@ test('keeps scoped attention counts after undoing a draft trash action', async (
     const compact = testInfo.project.name !== 'desktop';
     if (compact) await page.getByRole('button', { name: '打开导航' }).click();
     const navigation = page.getByRole('navigation', { name: compact ? '移动端导航' : '主导航', exact: true });
-    const count = navigation.getByRole('button', { name: '草稿箱', exact: true }).locator(compact ? 'small' : '.count');
+    const count = navigation.getByRole('button', { name: /^草稿箱(?:\s|$)/u }).locator(compact ? 'small' : '.count');
     await expect(count).toHaveCount(0);
     if (compact) await page.keyboard.press('Escape');
     await page.getByRole('status').filter({ hasText: '已移入垃圾箱' }).getByRole('button', { name: '撤销' }).click();

@@ -14,14 +14,14 @@
 
 ## 项目结构与模块组织
 
-`src/` 是 SvelteKit 主应用目录。页面放在 `src/routes/`，接口使用 `+server.ts`，例如 `src/routes/api/messages/+server.ts`。纯邮件契约放在 `src/lib/domain/mail/`；仅服务端可用的认证、D1、入站、出站与工作区逻辑放在 `src/lib/server/`。Worker 包装入口位于 `worker/index.ts`，统一承载网页/API 的 `fetch` 与 Email Routing 的 `email()`。D1 变更以 `migrations/` 为权威顺序，`schema.sql` 只是最新结构快照。`build/`、`.svelte-kit/`、`.wrangler/` 均为构建产物，不要手改。
+`src/` 是 SvelteKit 主应用目录。页面放在 `src/routes/`，接口使用 `+server.ts`，例如 `src/routes/api/messages/+server.ts`。纯邮件契约放在 `src/lib/domain/mail/`；仅服务端可用的认证、D1、入站、出站与工作区逻辑放在 `src/lib/server/`。Worker 包装入口位于 `worker/index.ts`，统一承载网页/API 的 `fetch` 与 Email Routing 的 `email()`。D1 变更以 `migrations/` 为权威顺序，`schema.sql` 只是最新结构快照。`build/`、`.svelte-kit/`、`.cloudflare/` 均为构建产物，不要手改。
 
 ## 工具与依赖版本
 
 - Bun 默认使用本机最新已安装的稳定版；开工时核对 `command -v bun` 与 `bun --version`，确保非交互 shell 解析到预期版本。不要为了匹配旧记录下载或切换旧版，也不要把“本机最新”理解为每次任务都执行全局升级。
 - `package.json` 的 `engines.bun` 是最低支持版本；`packageManager` 是 CI 的可复现基准，不要求本地版本与之完全相等。CI 从 `package.json` 读取版本，避免多个位置重复硬编码。更新基准时先在本机完成相关验证。
 - 项目依赖安装默认使用 `bun install --frozen-lockfile`。只有明确调整依赖时才用 `bun install` 或 `bun update` 更新 `bun.lock`，并将依赖声明和锁文件一起提交。Bun 运行时更新不意味着批量更新依赖。
-- 本地构建、迁移和测试优先使用项目脚本及锁定的 Wrangler。原生 Worker Preview 要求 Wrangler >= 4.135.0；此时按 [Preview 指南](docs/PREVIEW.md) 检查较新全局 CLI 的版本和命令帮助，不把该例外扩展到其他命令，也不为普通任务自动升级依赖。
+- Cloudflare 操作统一使用全局 `cf`（Node.js >= 22.18）；先核对 `command -v cf`、`cf --version`。禁止直接使用 Wrangler CLI 或把 `cf` 安装到项目依赖。项目脚本从 PATH 调用全局 `cf`；官方 SvelteKit 适配器内部的传递兼容依赖不作为操作入口。命令先 `cf cli search`，再检查帮助和 dry-run；原生配置以 `cloudflare.config.ts` 及公开/私有 JSON target 为准。
 - 库、SDK、CLI 或云服务的用法、配置和版本迁移先查 Context7：先 `resolve-library-id`，再用匹配的库 ID 调用 `query-docs`；用户给出精确 ID 时可直接查询。工具未列出时先发现工具，确认不可用后再用官方文档及已安装版本的帮助/类型核对。纯业务逻辑调试、重构和代码审查无需为此查询文档。
 - 安装全局 JavaScript CLI 时依次优先 Bun、pnpm、npm，并确认非交互 shell 能找到二进制；不要将本机工具安装混入项目依赖更新。
 
@@ -31,12 +31,12 @@
 - `bun run dev`：启动本地 SvelteKit 开发环境
 - `bun run check`：执行类型检查与路由校验
 - `bun run build`：构建 Cloudflare Workers 产物
-- `bun run preview`：用 Wrangler 本地预览 Worker
+- `bun run preview`：用全局 `cf dev` 本地预览 Worker
 - `bun run test`：运行 `src/` 与 `scripts/` 的 Bun unit/integration 测试
 - `bun run db:migrate:local`：顺序应用 `migrations/` 到本地 D1
 - `bun run deploy:dry-run`：从公开本地配置生成临时配置，构建并校验 Worker 打包；不读取私有生产配置、不发布
 - `bun run release:preflight -- --json`：检查干净提交及本地发布门禁，不执行远程部署或远程迁移
-- `bun run deploy`：使用私有 `wrangler.deploy.toml` 构建并发布生产 Worker，仅在明确授权生产发布时使用
+- `bun run deploy`：使用私有 `cloudflare.deploy.json` 构建并发布生产 Worker，仅在明确授权生产发布时使用
 
 ## Worktree 与分支隔离
 
@@ -51,7 +51,7 @@
 
 1. 先在隔离本地 D1/R2 和 demo/fake provider 上实现、验证，再提交当前任务。不要用共享 Preview 数据做 fixture、自动化测试或破坏性验收。
 2. 需要远程验收且用户已授权发布 Preview 时，先通过本地门禁和打包检查，再按 [Preview 指南](docs/PREVIEW.md) 发布已验证的提交。未指定生产的发布请求优先使用 Preview，不直接调用 `bun run deploy`。普通修复、审查或约束更新不自动触发部署。
-3. 区分 `bun run preview`（本地 Worker）、`wrangler preview`（原生远程 Preview）和 `wrangler versions upload`（版本预览）。原生 Preview 是默认远程验收方式；需要复用生产既有 secrets 检查上传版本时，按指南使用版本预览。不得用 `wrangler deploy` 代替 Preview 发布，也不得擅自执行 `versions deploy` 或 `triggers deploy`。
+3. 区分 `bun run preview`（本地 Worker）、`cf previews deploy`（原生远程 Preview）和 `cf workers versions create`（版本预览）。原生 Preview 是默认远程验收方式；需要复用生产既有 secrets 检查上传版本时，按指南使用版本预览。不得用 `cf deploy` 代替 Preview 发布，也不得擅自执行 `cf workers deployments create` 或 `cf workers triggers deploy`。
 4. 当前 Preview 有意共用生产 D1/R2 和 Owner，发布代码不切换生产流量，但写入会影响生产数据。默认只读验收；写入、真实邮件/Telegram、远程迁移或路由/DNS 变更必须在用户授权范围内。已明确授权的同一范围无需重复确认。不要为发布 Preview 初始化 Owner、重置数据库或自动创建/删除云资源。
 5. Preview 发布后记录提交 SHA、URL、部署/版本 ID，核对登录、相关页面/API、绑定和生产流量指向。`/api/health` 只证明存活；数据库/绑定就绪另查已认证的 `/api/readiness`。Preview HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
    功能改动只有在对应提交完成 PRE 相关页面/API 验收后才可提 PR；仅发布成功或健康检查通过不算验收完成。PR 后追加影响实现的提交，必须补做受影响的本地验证和 PRE 验收后才能合并。PRE 无法覆盖的 handler 需记录替代验证路径；环境阻塞不能记为通过或自动跳过，绕过此门禁需用户明确授权。纯文档/约束改动完成差异、命令、链接检查及本地 `/review` 后即可提 PR，无需为此部署 PRE。
@@ -102,7 +102,7 @@
 
 ## 安全与配置提示
 
-不要提交真实的 Cloudflare 凭据、`database_id`、生产桶名称或密钥。修改 `wrangler.toml`、`schema.sql`、邮件接收逻辑时，保持 D1、R2 与 API 字段定义一致。
+不要提交真实的 Cloudflare 凭据、`databaseId`、生产桶名称或密钥。修改 `cloudflare.config.ts` / JSON target、`schema.sql`、邮件接收逻辑时，保持 D1、R2 与 API 字段定义一致。
 
 私有 `.env`、`.dev.vars` 和部署配置保持 Git 忽略，密钥文件权限使用 `0600`。命令输出、截图和共享记录不得暴露密码、Token、Cookie、邮件正文或完整收件地址。未经明确授权不进行生产数据清理、恢复、资源删除、密钥轮换或邮件路由变更。
 

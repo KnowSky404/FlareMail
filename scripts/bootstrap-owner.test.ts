@@ -27,7 +27,7 @@ describe('controlled Owner bootstrap selection', () => {
     })).toThrow(/choose one explicitly/u);
   });
 
-  test('parses Wrangler JSON rows without exposing fields beyond the caller query', () => {
+  test('parses cf JSON rows without exposing fields beyond the caller query', () => {
     expect(extractD1Rows('[{"results":[{"id":"owner-1"}],"success":true}]')).toEqual([{ id: 'owner-1' }]);
   });
 

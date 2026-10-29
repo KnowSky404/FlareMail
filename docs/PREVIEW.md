@@ -1,136 +1,19 @@
-# Preview 域名与邮件身份管理
+# 使用全局 cf 验收 PRE
 
-使用 Cloudflare 原生 Worker Previews 部署，要求 Wrangler >= 4.135.0。
-已有较新全局 Wrangler 时可直接使用全局命令。仓库本地构建、迁移与测试继续遵循
-本机最新已安装的 Bun 稳定版（满足 `engines.bun` 最低版本）及项目锁定的 Wrangler；
-`packageManager` 仅记录 CI 基准，不强制本地 Bun 与之完全相等。
-不要使用本地旧版 Wrangler 执行新 Preview 命令。
+使用全局 `cf`（已验证 `1.0.0-beta.25`，Node.js ≥ 22.18）和原生 `cloudflare.config.ts`。不再使用直接 Wrangler 命令。旧配置/命令见[历史记录](archive/wrangler-preview.md)，不作为当前操作依据。
 
 ## 默认验收顺序
 
-所有开发先创建独立 worktree 和任务分支，从核对过的最新 `origin/main` 开始，
-不直接在 `main` 或用户原工作树中修改；步骤见
-[开发指南](./DEVELOPMENT.md#worktree-and-pr-workflow)。先在隔离本地数据和
-fake/demo provider 上完成实现、测试、检查和构建，提交后再在已授权的范围内
-发布远程 PRE（Preview）并完成业务验收。每次推送任务提交和每次创建 PR 前
-分别在任务 worktree 中执行本地 `/review`，解决所有有效问题并复审通过后，
-才可推送任务分支、提 PR 到 `main`；本地 review 记录须与最终 head 和基线一致。
-PR 附验收提交 SHA、URL、部署/版本 ID、相关页面/API 结果和未覆盖项；仅健康
-检查或发布成功不算验收完成。后续影响实现的提交需补做本地/PRE 验收再合并；
-PRE 阻塞时保留分支并报告原因，绕过门禁需明确授权。纯文档/约束更新检查
-差异、命令和链接并完成本地 `/review` 后即可提 PR，标明 PRE 不适用。任务分支
-push、PR、review 通过后的 rebase 合并和清理按仓库默认授权连续完成，用户
-有限制时遵从；直接推送 `main` 及 Preview/生产发布仍需单独授权，内容变化的
-最终提交需重新验证及本地 review。普通开发或文档
-修改不自动部署。`bun run preview` 是本地 Worker，`wrangler preview` 才发布
-原生远程 Preview；版本预览用于需要复用生产 secrets 检查某个上传版本的场景。
-`bun run deploy:dry-run` 只检查公开本地配置的打包，不能代替目标 Preview 的
-绑定、变量和 secrets 核对。
+1. 在独立 worktree 从最新 `origin/main` 开发，完成 `bun run test`、`bun run check`、`bun run build`、相关浏览器 QA、`bun run deploy:dry-run`，创建干净原子提交。
+2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。必须使用现有生产 Worker 名称、同一 D1/R2 和 Owner；`APP_ENV=preview`，实际 Provider/Auth 配置，关闭自动回复、通知、Telegram，`cron=[]`。不得创建替代资源或初始化 Owner。Preview 使用的生产邮件路由目的 Worker/account 保持不变。
+3. `bun run deploy:pre -- <preview-name>` 先构建 Svelte 应用，再在 `worker/` 通过全局 `cf previews deploy --mode preview` 构建并上传原生 Preview，不切换生产流量。名称是合法稳定名称，不把 `/` 等分支字符直接拼进去。记录命令时间、提交 SHA、Preview URL 和部署/版本 ID。
+4. 对该提交验收登录、相关业务页面/API、已认证 `/api/readiness`、D1/R2 绑定，并核对生产流量指向没有变化。`/api/health` 仅证明存活，不能替代业务验收；HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
+5. **共享生产数据，默认只读**。不要运行 E2E seed、fixture、Owner bootstrap、数据库重置或迁移。打开未读邮件会自动写入已读状态；使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
+6. PRE 业务验收完成后，分别在 push 和创建 PR 前实际执行 `codex review --base origin/main` 并处理有效问题。等待当前 head 的 Codex Code Review 和 Security Review 完成，再按仓库默认授权 rebase 合并和收尾。实现提交追加后补做受影响本地/PRE 验收及两种 review。
 
-所有 PR（含纯文档）先等待当前 head 的 Codex Code Review 及已启用的
-Security Review 完成并处理反馈；机器人审查不由 Actions 检查列表代替。
-两项 review 通过且有效问题均处理后，按默认授权 rebase 合并；确认 `MERGED`、主分支合并提交及内容完整后，
-快进同步干净的本地 `main`，再清理本任务已合并且无新增提交的 worktree 和
-本地/远端分支。保留未保存文件、私有配置和验收证据，不强制移除工作树；
-远端分支删除用已合并 head 的显式 lease，阻止删除并发新增提交。
-具体检查与例外见[收尾流程](./DEVELOPMENT.md#rebase-merge-and-cleanup)。
-合并和清理不代表生产部署。
+原生 Preview 需要父 Worker 的既有配置/密钥。检查已安装 cf 帮助和父 Worker 现状；不要为了缺少配置改用生产 `cf deploy`。需要上传独立版本而不切生产流量时，可使用 `cf workers versions create --mode production`；先在 `worker/` 核对 `--help`、绑定、secrets 及版本预览域名现状，并记录该路径不能覆盖的原生 Preview 行为。禁止擅自创建生产 deployment 或应用 triggers。
 
-本项目采用**共用生产数据、独立发布代码**的 Preview 模式。`previews.d1_databases`
-的 `database_id` 与生产 `DB` 相同，`previews.r2_buckets` 的 `bucket_name` 与生产
-`BUCKET` 相同。邮件、域名、地址、Owner 账号及持久化设置共用；在 Preview 中
-保存、删除或配置规则会直接影响生产。新代码可单独发布到 Preview，无需同时
-发布生产代码。
-
-默认远程验收使用只读页面/API。保存、删除、域名同步、真实发信/Telegram 及
-路由变更需要覆盖相应生产影响的用户授权；不要运行自动化 fixture 或初始化
-Owner。打开未读收件邮件（包括分栏和独立阅读链接）会自动 PATCH 已读状态，
-属于生产数据写入；默认只读验收使用列表和 GET 元数据/统计接口，不打开这类
-阅读页面或启用分栏。读/未读交互测试优先回到隔离本地环境，或使用另行授权
-的独立测试资源。行为契约见 [导航与已读状态 Spec](./specs/mailbox-navigation-and-read-state.md)。
-发布后记录提交 SHA、URL、部署/版本 ID、目标绑定及验证结果，核对生产流量未
-切换；`/api/health` 只证明存活，已认证的 `/api/readiness` 才检查就绪状态。
-
-1. 将 `wrangler.preview.deploy.toml.example` 复制为被忽略的
-   `wrangler.preview.deploy.toml`，从当前生产绑定填写 D1/R2 标识及账号 ID，
-   核对线上实际绑定；真实资源标识不得提交。域名接入的
-   `MAIL_IDENTITY_WORKER_NAME` 指向生产收信 Worker。复制生产非敏感变量，
-   保留 Preview 专用的 `APP_ENV`、`APP_BASE_URL`、`APP_VERSION`。
-2. 默认使用 Cloudflare 返回的
-   `https://<preview-name>-<worker>.<account-subdomain>.workers.dev`，
-   并将 `APP_BASE_URL` 设置为该地址。不创建 Preview 自定义域名关联。
-3. 检查共享数据库的 schema 版本与待发布代码兼容。
-   后续 schema 变更同时影响两套代码，必须按远程迁移授权流程核验并保证当前
-   生产版本兼容；不要为发布 Preview 自动迁移或重置数据库。
-4. 使用现有生产 Owner 账号登录，不初始化或覆盖 Owner，不导入原临时 Preview
-   账号。不同 hostname 的 Cookie 独立，需要分别登录。此前创建的独立 Preview
-   数据库、临时账号、空 R2 桶及本机登录文件已按用户要求删除。旧部署历史仍可
-   保留代码记录，但其旧数据绑定已不可用；不再使用旧部署地址。
-   **原生 Worker Preview** 不继承生产 secrets，也无法从 Cloudflare 读取其明文；需单独输入或
-   使用权限 `0600` 的私有 secrets 文件配置。缺少对应 Key 时，该服务不可用。
-   域名和邮箱地址页面优先显示当前环境未配置密钥的提示；共享 D1 中的历史
-   供应商错误会保留，但不能据此认定当前 Preview 的密钥无效或权限不足。
-   缺少 Telegram Token 时将 Preview 的 `TELEGRAM_ENABLED` 设为 `false`，
-   避免配置校验阻止网页访问；生产 Telegram 功能及其他生产配置保持不变。
-5. 完成 `bun test`、`bun run check`、`bun run build` 和 Chromium 桌面/手机 QA，
-   提交后执行：
-
-   ```sh
-   wrangler preview --config wrangler.preview.deploy.toml --name mail-identities --ignore-base-config --message "git <commit>"
-   ```
-
-6. 核对 Preview 部署 ID、D1/R2 与生产一致、应用版本、登录、身份管理页面及
-   `/api/health`，再确认生产 deployment ID 没有变化。不要执行 `wrangler deploy`
-   来发布原生 Preview，它会部署生产。
-
-## 直接复用生产密钥的版本预览
-
-如果需要与生产共用数据库和现有密钥，可使用 **Version URL**。这是与上述
-原生 Worker Preview 不同的发布方式：`wrangler versions upload` 上传新版本，
-保留当前 Worker 的既有 secret 绑定，但不改变生产流量分配。密钥不会被读取、
-导出或重新输入；缺少的密钥也不会自动生成。
-
-1. 从 `wrangler.version-preview.deploy.toml.example` 创建被忽略的私有
-   `wrangler.version-preview.deploy.toml`。填入生产 D1/R2 绑定和线上非敏感变量，
-   包括 Telegram 开关、Bot 用户名等；不要只依据可能过时的本机生产配置。
-2. 将 `APP_ENV`、`APP_BASE_URL`、`APP_VERSION` 设置为此预览的值，
-   `MAIL_IDENTITY_WORKER_NAME` 仍指向生产收信 Worker。保留当前生产的
-   compatibility date/flags。不要配置新的 routes、DNS 或 Cron。
-3. 完成构建和校验，使用 `--dry-run` 检查版本打包，再执行：
-
-   ```sh
-   wrangler versions upload --config wrangler.version-preview.deploy.toml --preview-alias function-check --secrets-file .env --message "git <commit>"
-   ```
-
-4. 用返回的 `https://function-check-<worker>.<account-subdomain>.workers.dev`
-   入口验证，核对新版本的 D1/R2、secret **名称**、Telegram 开关和生产 deployment
-   ID。不执行 `wrangler versions deploy`、`wrangler deploy` 或 `wrangler triggers deploy`。
-
-两个入口分别核验。原生 Preview 的资源元数据 `urls` 应包含默认的 `workers.dev`
-入口，HTTPS、登录页与健康接口均应可访问。此前的 Preview 自定义域名已按用户
-要求移除，不在后续发布中自动恢复。移除旧关联时先核对域名 changeset 只删除目标
-Preview 域名，没有新增/冲突及生产域名修改；保留生产域名、其他域名和流量。
-此清理只涉及 Preview 网站入口，不调整邮件 MX 或邮件路由。
-
-本机项目根目录的 `.env` 用于保存有明文来源的应用密钥，权限必须为 `0600`，
-且已被 Git 忽略。当前保存 `CLOUDFLARE_EMAIL_ROUTING_TOKEN`；后续对话和版本
-预览部署从此文件读取，无需重新传递 Token。`--secrets-file .env` 将它作为 secret
-上传，已有的 Resend/Telegram secret 绑定继续保留。不要把 `.env` 当作已保存所有
-远程密钥的备份：Cloudflare 上现有 secret 的明文无法读取回本机。
-
-配置 Token 时先只读验证有效性、目标 Zone 和规则读取能力；验证不创建邮件
-路由、不改 catch-all 或 DNS。设置 secret 不等于验证真实收发信。
-存在未发布的新版本时，`wrangler secret put` 会拒绝直接更新生产，
-`wrangler versions secret put` 则基于最新上传版本创建版本。使用上述版本上传
-命令更新 Preview，避免为配置 Token 将预览代码发布生产。
-
-核对生产配置时，先读取生产 deployment 指向的 version，再检查该 version 的
-bindings；Worker settings 可能显示最新上传的预览配置，不代表生产流量配置。
-
-Version URL 与原生 Worker Preview 都使用各自的 `workers.dev` 地址；原生 Preview
-不会自动切换到 Version URL 的版本，也不会因此取得生产密钥。
-两种入口均使用生产 Owner，但需要分别登录。生产密钥轮换后需重新上传版本，
-既有预览不会自动同步新值。Email Routing 和 Cron 仍执行生产部署的代码。
+本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
 
 ## 从网页接入邮件域名
 
@@ -142,15 +25,7 @@ Version URL 与原生 Worker Preview 都使用各自的 `workers.dev` 地址；�
   若不提供单独读取 Token，管理 Token 还需包含 Zone Read 和规则读取权限。
 - `RESEND_API_KEY`：发信与域名发信状态检查使用生产 Resend 账号所需的 Key。
 
-向一个原生 Preview 添加 secret 使用：
-
-```sh
-wrangler preview secret put CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN --name mail-identities --config wrangler.preview.deploy.toml
-```
-
-通过交互式输入传递 Token，不写入配置、命令参数或版本控制。重新部署时使用
-所需 secrets 的受限文件和 `--secrets-file`，并核对部署后的 secret 名称；当前
-命令采用 `--ignore-base-config`，不从 Previews Base 自动补入 secrets。
+在 Cloudflare Dashboard 的对应 Preview 中配置和核对所需 secret 名称。当前全局 cf 的 Preview secret 能力以已安装帮助为准，不把父 Worker 的 secret 写入命令用于 Preview。Token 不写入 JSON target、命令参数或版本控制；密钥文件保持 `0600`，不要输出值。重新部署后检查实际绑定和读取能力。
 
 进入“域名”或“邮箱地址”时，页面只读取本地配置，首屏显示已保存资源表格。
 用户选择“同步 Cloudflare 配置”后，页面才通过已登录的
@@ -180,7 +55,7 @@ Worker 的生产 handler，不能选择某个原生 Preview。本项目共用数
 Worker 收信及执行定时任务，Preview 网页可查看其写入的邮件，但收信处理代码
 仍是生产版本。只有需要测试新的 `email()` / `scheduled()` 代码时，才另行安排
 接收/定时任务测试；无需为了网页 Preview 同时发布生产。配置收信规则时使用
-生产 Worker；不要把 Wrangler OAuth 登录凭据当成应用的长期管理 Token。
+生产 Worker；不要把 cf OAuth 登录凭据当成应用的长期管理 Token。
 
 参考：[Worker Previews](https://developers.cloudflare.com/workers/previews/)、
 [自定义域名](https://developers.cloudflare.com/workers/previews/custom-domains/)、

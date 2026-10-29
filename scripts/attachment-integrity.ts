@@ -1,6 +1,7 @@
+import { createD1Command, normalizeD1Output, parseCloudflareTarget, localStateArgs } from './cloudflare-target';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createLocalWranglerEnvironment } from './wrangler-environment';
+import { createLocalCloudflareEnvironment } from './cloudflare-environment';
 import {
   MAX_ATTACHMENT_INTEGRITY_BYTES,
   repairInboundAttachmentChecksums,
@@ -18,7 +19,7 @@ export const attachmentIntegrityUsage = `Usage: bun scripts/attachment-integrity
 Options:
   --apply                 Persist repairs (default is report-only)
   --remote                Select the Preview resources in an explicit config
-  --config <path>         Wrangler config path (default: wrangler.toml)
+  --config <path>         Cloudflare config path (default: cloudflare.local.json)
   --database <binding>    D1 binding/name (default: DB)
   --limit <1..500>        Maximum rows to inspect (default: 100)
   --cursor <attachment>   Resume after an attachment ID
@@ -82,7 +83,7 @@ export function parseAttachmentIntegrityArgs(args: string[]): AttachmentIntegrit
     remote: false,
     json: false,
     repairMismatches: false,
-    config: 'wrangler.toml',
+    config: process.env.FLAREMAIL_CF_CONFIG ?? 'cloudflare.local.json',
     database: 'DB',
     limit: 100,
     cursor: null,
@@ -115,7 +116,7 @@ export function parseAttachmentIntegrityArgs(args: string[]): AttachmentIntegrit
   if (!/^[A-Za-z0-9._-]{1,128}$/u.test(options.database)) {
     throw new AttachmentIntegrityCliError('INVALID_DATABASE', '--database must be a bounded binding name.');
   }
-  if (!options.remote && /(?:^|[\\/])wrangler\.deploy\.toml$/u.test(options.config)) {
+  if (!options.remote && /(?:^|[\\/])cloudflare\.deploy\.json$/u.test(options.config)) {
     throw new AttachmentIntegrityCliError('REMOTE_EXPLICIT', 'The deployment config requires explicit --remote.');
   }
   return options;
@@ -123,7 +124,7 @@ export function parseAttachmentIntegrityArgs(args: string[]): AttachmentIntegrit
 
 function isProductionTarget(options: AttachmentIntegrityCliOptions, environment: Record<string, string | undefined>) {
   const appEnv = environment.APP_ENV?.trim().toLowerCase();
-  return appEnv === 'production' || /(?:^|[\\/])wrangler\.deploy\.toml$/u.test(options.config);
+  return appEnv === 'production' || /(?:^|[\\/])cloudflare\.deploy\.json$/u.test(options.config);
 }
 
 export function assertAttachmentIntegrityTarget(
@@ -171,7 +172,7 @@ export interface AttachmentIntegrityCliDependencies {
   configSource?: string;
 }
 
-interface WranglerAttachmentRow {
+interface CloudflareAttachmentRow {
   id: string;
   user_id: string;
   message_id: string;
@@ -181,42 +182,14 @@ interface WranglerAttachmentRow {
   sha256: string | null;
 }
 
-function tomlSection(source: string, name: string) {
-  const lines = source.split(/\r?\n/u);
-  const start = lines.findIndex((line) => line.trim() === `[${name}]`);
-  if (start < 0) return '';
-  const output: string[] = [];
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (/^\s*\[/u.test(lines[index])) break;
-    output.push(lines[index]);
-  }
-  return output.join('\n');
-}
-
-function tomlString(source: string, key: string) {
-  return source.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"\\s*$`, 'mu'))?.[1] ?? null;
-}
-
-function r2BindingBlock(source: string) {
-  return source.split(/^\[\[r2_buckets\]\]\s*$/mu).slice(1)
-    .map((part) => part.split(/^\[\[/mu, 1)[0])
-    .find((block) => tomlString(block, 'binding') === 'BUCKET') ?? '';
-}
-
-function readWranglerTarget(source: string, options: AttachmentIntegrityCliOptions) {
-  const appEnv = tomlString(tomlSection(source, 'vars'), 'APP_ENV')?.toLowerCase() ?? null;
-  assertAttachmentIntegrityTarget(options, { APP_ENV: appEnv ?? undefined });
-  if (options.remote && appEnv !== 'preview') {
-    throw new AttachmentIntegrityCliError('PREVIEW_REQUIRED', 'Remote attachment integrity requires an explicit APP_ENV=preview config.');
-  }
-  if (!options.remote && appEnv !== 'development' && appEnv !== 'test') {
-    throw new AttachmentIntegrityCliError('LOCAL_CONFIG_REQUIRED', 'Local attachment integrity requires an APP_ENV=development or test config.');
-  }
-  const block = r2BindingBlock(source);
-  const bucket = tomlString(block, options.remote ? 'preview_bucket_name' : 'bucket_name');
-  if (!bucket || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$/u.test(bucket)) {
-    throw new AttachmentIntegrityCliError('R2_BINDING_INVALID', 'The selected BUCKET binding is missing or invalid.');
-  }
+function readCloudflareBindings(source: string, options: AttachmentIntegrityCliOptions) {
+  const target = parseCloudflareTarget(source);
+  const appEnv = target.vars.APP_ENV;
+  assertAttachmentIntegrityTarget(options, { APP_ENV: appEnv });
+  if (options.remote && appEnv !== 'preview') throw new AttachmentIntegrityCliError('PREVIEW_REQUIRED', 'Remote attachment integrity requires an explicit APP_ENV=preview config.');
+  if (!options.remote && appEnv !== 'development' && appEnv !== 'test') throw new AttachmentIntegrityCliError('LOCAL_CONFIG_REQUIRED', 'Local attachment integrity requires an APP_ENV=development or test config.');
+  const bucket = target.bucket;
+  if (!bucket || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$/u.test(bucket)) throw new AttachmentIntegrityCliError('R2_BINDING_INVALID', 'The selected BUCKET binding is missing or invalid.');
   return { appEnv, bucket };
 }
 
@@ -236,9 +209,9 @@ ORDER BY a.id ASC LIMIT ${options.limit}`;
 function parseD1Results(stdout: string): Array<Record<string, unknown>> {
   let value: unknown;
   try { value = JSON.parse(stdout); } catch {
-    throw new AttachmentIntegrityCliError('D1_RESPONSE_INVALID', 'Wrangler returned an invalid D1 response.');
+    throw new AttachmentIntegrityCliError('D1_RESPONSE_INVALID', 'Cloudflare returned an invalid D1 response.');
   }
-  if (!Array.isArray(value)) throw new AttachmentIntegrityCliError('D1_RESPONSE_INVALID', 'Wrangler returned an invalid D1 response.');
+  if (!Array.isArray(value)) throw new AttachmentIntegrityCliError('D1_RESPONSE_INVALID', 'Cloudflare returned an invalid D1 response.');
   return value.flatMap((entry) => {
     if (!entry || typeof entry !== 'object') return [];
     const results = (entry as { results?: unknown }).results;
@@ -246,15 +219,15 @@ function parseD1Results(stdout: string): Array<Record<string, unknown>> {
   });
 }
 
-function parseAttachmentRow(value: Record<string, unknown>): WranglerAttachmentRow | null {
-  const row = value as Partial<WranglerAttachmentRow>;
+function parseAttachmentRow(value: Record<string, unknown>): CloudflareAttachmentRow | null {
+  const row = value as Partial<CloudflareAttachmentRow>;
   if (![row.id, row.user_id, row.message_id, row.raw_key, row.r2_key].every((item) => typeof item === 'string')) return null;
   if (!Number.isSafeInteger(row.size) || (row.size as number) < 0) return null;
   if (row.sha256 !== null && typeof row.sha256 !== 'string') return null;
-  return row as WranglerAttachmentRow;
+  return row as CloudflareAttachmentRow;
 }
 
-function isOwnedInboundObject(row: WranglerAttachmentRow) {
+function isOwnedInboundObject(row: CloudflareAttachmentRow) {
   if (!SAFE_IDENTIFIER.test(row.id) || !SAFE_IDENTIFIER.test(row.user_id) || !SAFE_IDENTIFIER.test(row.message_id)) return false;
   const rawMatch = row.raw_key.match(/^(inbound\/\d{4}-\d{2}-\d{2}\/[A-Za-z0-9._:-]{1,256})\/message\.eml$/u);
   if (!rawMatch || row.r2_key.length > 1024 || /[\u0000-\u001f\u007f]/u.test(row.r2_key)) return false;
@@ -277,14 +250,14 @@ export async function runAttachmentCommand(
   return { exitCode, stdout, stderr };
 }
 
-export async function readAttachmentObjectWithWrangler(
+export async function readAttachmentObjectWithCloudflare(
   bucket: string,
   key: string,
   options: AttachmentIntegrityCliOptions,
   environment: Record<string, string | undefined>
 ): Promise<{ status: 'ok'; bytes: Uint8Array } | { status: 'missing' | 'storage_error' | 'too_large' }> {
-  const args = ['x', 'wrangler', 'r2', 'object', 'get', `${bucket}/${key}`, '--pipe', '--config', options.config, options.remote ? '--remote' : '--local'];
-  const child = Bun.spawn(['bun', ...args], { env: environment as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+  const args = ['r2', 'objects', 'get', key, '--bucket-name', bucket, ...(options.remote ? [] : localStateArgs())];
+  const child = Bun.spawn(['cf', ...args], { env: environment as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
   const reader = child.stdout.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -311,11 +284,11 @@ export async function readAttachmentObjectWithWrangler(
 }
 
 function d1Args(options: AttachmentIntegrityCliOptions, sql: string) {
-  return ['x', 'wrangler', 'd1', 'execute', options.database, '--command', sql, '--json', '--yes', '--config', options.config, options.remote ? '--preview' : '--local'];
+  return createD1Command(options, sql).slice(1);
 }
 
 async function updateDigest(
-  row: WranglerAttachmentRow,
+  row: CloudflareAttachmentRow,
   digest: string,
   options: AttachmentIntegrityCliOptions,
   runner: AttachmentCommandRunner,
@@ -323,28 +296,28 @@ async function updateDigest(
 ) {
   const checksumGuard = row.sha256 === null ? 'sha256 IS NULL' : `sha256 = ${sqlLiteral(row.sha256)}`;
   const sql = `UPDATE workspace_attachments SET sha256 = ${sqlLiteral(digest)}, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ${sqlLiteral(row.id)} AND user_id = ${sqlLiteral(row.user_id)} AND message_id = ${sqlLiteral(row.message_id)} AND relation_type = 'inbound' AND ${checksumGuard}`;
-  const result = await runner('bun', d1Args(options, sql), environment);
+  const result = await runner('cf', d1Args(options, sql), environment);
   if (result.exitCode !== 0) return false;
   let envelope: unknown;
-  try { envelope = JSON.parse(result.stdout); } catch { return false; }
+  try { envelope = normalizeD1Output(JSON.parse(result.stdout)); } catch { return false; }
   return Array.isArray(envelope) && envelope.some((entry) => Number((entry as { meta?: { changes?: unknown } })?.meta?.changes ?? 0) === 1);
 }
 
-async function runWranglerAttachmentIntegrity(
+async function runCloudflareAttachmentIntegrity(
   options: AttachmentIntegrityCliOptions,
   dependencies: AttachmentIntegrityCliDependencies,
   environment: Record<string, string | undefined>
 ): Promise<AttachmentRepairResult> {
   let configSource: string;
   try { configSource = dependencies.configSource ?? await readFile(resolve(options.config), 'utf8'); } catch {
-    throw new AttachmentIntegrityCliError('CONFIG_UNAVAILABLE', 'The selected Wrangler config could not be read.');
+    throw new AttachmentIntegrityCliError('CONFIG_UNAVAILABLE', 'The selected Cloudflare config could not be read.');
   }
-  const { bucket } = readWranglerTarget(configSource, options);
+  const { bucket } = readCloudflareBindings(configSource, options);
   const runner = dependencies.commandRunner ?? runAttachmentCommand;
-  const objectReader = dependencies.objectReader ?? readAttachmentObjectWithWrangler;
-  const query = await runner('bun', d1Args(options, selectSql(options)), environment);
+  const objectReader = dependencies.objectReader ?? readAttachmentObjectWithCloudflare;
+  const query = await runner('cf', d1Args(options, selectSql(options)), environment);
   if (query.exitCode !== 0) throw new AttachmentIntegrityCliError('D1_QUERY_FAILED', 'The bounded attachment query failed.');
-  const rows = parseD1Results(query.stdout);
+  const rows = parseD1Results(JSON.stringify(normalizeD1Output(JSON.parse(query.stdout))));
   const output: AttachmentRepairResult['rows'] = [];
   let updated = 0;
 
@@ -384,16 +357,16 @@ async function runWranglerAttachmentIntegrity(
     }
     output.push({ id: row.id, messageId: row.message_id, status });
   }
-  const validRows = rows.map(parseAttachmentRow).filter((row): row is WranglerAttachmentRow => row !== null);
+  const validRows = rows.map(parseAttachmentRow).filter((row): row is CloudflareAttachmentRow => row !== null);
   return { scanned: rows.length, updated, rows: output, nextCursor: validRows.at(-1)?.id ?? null };
 }
 
-/** Run the bounded integrity audit through injected Worker bindings or Wrangler. */
+/** Run the bounded integrity audit through injected Worker bindings or Cloudflare. */
 export async function runAttachmentIntegrityCli(
   options: AttachmentIntegrityCliOptions,
   dependencies: AttachmentIntegrityCliDependencies = {}
 ): Promise<AttachmentRepairResult> {
-  const environment = createLocalWranglerEnvironment(dependencies.environment ?? process.env);
+  const environment = createLocalCloudflareEnvironment(dependencies.environment ?? process.env);
   assertAttachmentIntegrityTarget(options, environment);
   if (dependencies.bindings) {
     const repair = dependencies.repair ?? repairInboundAttachmentChecksums;
@@ -404,7 +377,7 @@ export async function runAttachmentIntegrityCli(
       repairMismatches: options.repairMismatches
     });
   }
-  return runWranglerAttachmentIntegrity(options, dependencies, environment);
+  return runCloudflareAttachmentIntegrity(options, dependencies, environment);
 }
 
 function printReport(report: AttachmentRepairResult, json: boolean) {

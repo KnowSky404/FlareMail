@@ -19,6 +19,8 @@
 
 ## 开始使用
 
+Cloudflare 操作统一使用全局 `cf`（Node.js ≥ 22.18），可用 `bun add --global cf` 安装。项目已弃用直接 Wrangler 命令；构建及配置迁移见[部署指南](./DEPLOY.md)。
+
 自托管请按[部署指南](./DEPLOY.md)操作。需要 Cloudflare 账号、已配置 Email Routing 的域名，以及用于发件的 Resend。
 
 本地开发请参阅[开发指南](./docs/DEVELOPMENT.md)。默认使用本机最新已安装的 Bun 稳定版（最低 **1.4.0**）。测试和部署在本机执行；GitHub 仅在发布 Release 或手动触发时扫描依赖安全，使用 `package.json` 记录的 Bun 版本。项目提供本地演示邮件服务。

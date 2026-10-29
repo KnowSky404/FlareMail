@@ -224,7 +224,7 @@ export async function measureRuntimeFixtures(options: RuntimeMeasureOptions, dep
     mode: 'offline-local-harness',
     reportOnly: true,
     telemetry: 'process-memory-and-wall-time; not-Workers-isolate-telemetry',
-    previewCorrelationGuide: 'Use each case correlationId as a marker in a controlled Preview invocation, then search that exact ID in Workers Logs or wrangler tail output. This local report does not query Preview.',
+    previewCorrelationGuide: 'Use each case correlationId as a marker in a controlled Preview invocation, then search that exact ID in Workers Logs in the Cloudflare dashboard. This local report does not query Preview.',
     unmeasuredTelemetry: {
       cpuTime: 'preview_required',
       isolateMemory: 'preview_required',
@@ -243,7 +243,7 @@ export function formatRuntimeMeasureHuman(report: RuntimeMeasureReport) {
   const lines = [
     'FlareMail runtime measurement (offline local harness; report-only)',
     'Telemetry: process memory and wall time only; not Workers isolate telemetry.',
-    'Preview mapping: use each correlation ID in a controlled Preview invocation, then search it in Workers Logs or wrangler tail. CPU time, isolate memory, and subrequest counts are preview-required.'
+    'Preview mapping: use each correlation ID in a controlled Preview invocation, then search it in Workers Logs in the Cloudflare dashboard. CPU time, isolate memory, and subrequest counts are preview-required.'
   ];
   for (const item of report.cases) {
     const phases = RUNTIME_PHASES.filter((phase) => phase !== 'parser').map((phase) => `${phase}=${item.phases[phase].status}`).join(',');

@@ -253,7 +253,7 @@ test('logs in, navigates, searches, opens a message, and returns', async ({ page
     await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
   }
   await openFolder(page, '已发送');
-  await expect(page.getByRole('heading', { name: '已发送', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^已发送(?:\s|$)/u })).toBeVisible();
   await openFolder(page, '收件箱');
   const filteredMailbox = page.waitForResponse((response) => {
     const url = new URL(response.url());

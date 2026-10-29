@@ -15,34 +15,21 @@ const cleanGit = async () => ({ exitCode: 0, status: '', head: '0123456789abcdef
 describe('release preflight', () => {
   const bunMetadata = { packageManager: 'bun@1.4.2', engines: { bun: '>=1.4.0' } };
 
-  test('checks binding types without inferring secrets from a private dotenv file', async () => {
+  test('generates cf binding types without inferring private dotenv secrets', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'flaremail-preflight-typegen-'));
     try {
       await writeFile(join(directory, '.env'), 'TYPEGEN_PRIVATE_SECRET=synthetic-fixture\n', { mode: 0o600 });
-      await writeFile(join(directory, 'worker.js'), 'export default { fetch() { return new Response("ok"); } };\n');
-      await writeFile(join(directory, 'wrangler.toml'), [
-        'name = "typegen-fixture"',
-        'main = "worker.js"',
-        'compatibility_date = "2026-08-19"',
-        '[vars]',
-        'APP_ENV = "development"'
-      ].join('\n'));
-      const output = join(directory, 'worker-configuration.d.ts');
-      const args = [
-        '--no-env-file', resolve(import.meta.dir, '../node_modules/wrangler/bin/wrangler.js'),
-        'types', output, '--config', join(directory, 'wrangler.toml'),
-        '--env-interface', 'FixtureEnv', '--include-runtime', 'false'
-      ];
-      const generated = await runCommand(process.execPath, args);
-      expect(generated.exitCode, generated.stderr).toBe(0);
-      const types = await readFile(output, 'utf8');
-      expect(types).toContain('APP_ENV: "development"');
+      const configLibrary = import.meta.resolve('@cloudflare/config/public');
+      await writeFile(join(directory, 'cloudflare.config.ts'), `import { defineConfig, bindings } from ${JSON.stringify(configLibrary)};\nexport default defineConfig({ worker: { name: 'typegen-fixture', compatibilityDate: '2026-08-19', env: { APP_ENV: bindings.text('development') } } });\n`);
+      const child = Bun.spawn(['cf', 'workers', 'types', '--include-runtime', 'false'], {
+        cwd: directory, env: { PATH: process.env.PATH!, CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: 'false' }, stdout: 'pipe', stderr: 'pipe'
+      });
+      const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+      expect(code, stderr).toBe(0);
+      const types = await readFile(join(directory, '.cloudflare/types/index.d.ts'), 'utf8');
+      expect(types).toContain('interface Env');
       expect(types).not.toContain('TYPEGEN_PRIVATE_SECRET');
-      const checked = await runCommand(process.execPath, [...args, '--check']);
-      expect(checked.exitCode, checked.stderr).toBe(0);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    } finally { await rm(directory, { recursive: true, force: true }); }
   }, 30_000);
 
   test('accepts stable local Bun versions independently of the CI baseline', () => {

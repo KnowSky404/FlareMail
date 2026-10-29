@@ -1,4 +1,4 @@
-import { createLocalWranglerEnvironment, inheritWranglerEnvironment } from './wrangler-environment';
+import { executeD1 } from './cloudflare-target';
 
 export type SearchIndexMode = 'verify' | 'rebuild' | 'prepare-export' | 'restore-export';
 
@@ -18,7 +18,7 @@ Options:
   --mode <verify|rebuild|prepare-export|restore-export>
   --remote             Target remote D1 (default: local)
   --apply              Required for rebuild or export preparation/restoration
-  --config <path>      Wrangler config path
+  --config <path>      cf config path
   --database <name>    D1 database name (default: flaremail-db)
   --persist-to <path>  Isolate local D1 storage (not valid with --remote)
   --json                Print machine-readable output
@@ -52,7 +52,7 @@ export function parseSearchIndexArgs(args: string[]): SearchIndexOptions {
     remote,
     apply,
     json: args.includes('--json'),
-    config: optionValue(args, '--config') ?? (remote ? 'wrangler.deploy.toml' : 'wrangler.toml'),
+    config: optionValue(args, '--config') ?? process.env.FLAREMAIL_CF_CONFIG ?? (remote ? 'cloudflare.deploy.json' : 'cloudflare.local.json'),
     database: optionValue(args, '--database') ?? 'flaremail-db',
     ...(persistTo ? { persistTo } : {})
   };
@@ -168,29 +168,9 @@ function rows(value: unknown): Array<Record<string, unknown>> {
   return [];
 }
 
-function parseJsonOutput(output: string): unknown {
-  const trimmed = output.trim();
-  try { return JSON.parse(trimmed); } catch { /* Fall through to prefixed output. */ }
-  const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try { return JSON.parse(lines[index]!); } catch { /* Wrangler may prefix progress output. */ }
-  }
-  throw new Error('Wrangler did not return JSON.');
-}
 
 async function execute(options: SearchIndexOptions, sql: string) {
-  const child = Bun.spawn([
-    'bun', 'x', 'wrangler', 'd1', 'execute', options.database,
-    options.remote ? '--remote' : '--local', '--config', options.config,
-    ...(options.persistTo ? ['--persist-to', options.persistTo] : []), '--command', sql, '--json',
-    ...(options.apply ? ['--yes'] : [])
-  ], {
-    stdout: 'pipe', stderr: 'pipe',
-    env: options.remote ? inheritWranglerEnvironment() : createLocalWranglerEnvironment()
-  });
-  const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-  if (exitCode !== 0) throw new Error(`Wrangler command failed with exit code ${exitCode}.`);
-  return parseJsonOutput(stdout);
+  return JSON.parse(await executeD1(options, sql));
 }
 
 export async function runSearchIndex(options: SearchIndexOptions) {

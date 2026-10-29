@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { handle, isAccessExemptPath, isPrivateReaderPath, sessionCookieNamesForRequest } from './hooks.server';
+import { handleError, handle, isAccessExemptPath, isPrivateReaderPath, sessionCookieNamesForRequest } from './hooks.server';
 import { legacyWorkspaceSessionCookie, secureWorkspaceSessionCookie, workspaceSessionCookie } from '$lib/server/workspace';
 
 describe('request session cookie policy', () => {
@@ -54,5 +54,15 @@ describe('request session cookie policy', () => {
     expect(isAccessExemptPath('/api/webhooks/telegram')).toBe(true);
     expect(isAccessExemptPath('/api/workspace/session')).toBe(false);
     expect(isAccessExemptPath('/api/webhooks/telegram/extra')).toBe(false);
+  });
+});
+
+
+describe('SvelteKit 3 error hooks', () => {
+  test('preserves intentional application and framework error statuses and messages', async () => {
+    const event = { request: new Request('https://mail.example.test/missing'), url: new URL('https://mail.example.test/missing'), locals: { requestId: 'test-error-request' } };
+    expect(await handleError({ kind: 'app', error: { status: 403, message: 'Access denied' }, event } as never)).toMatchObject({ status: 403, message: 'Access denied', requestId: 'test-error-request' });
+    expect(await handleError({ kind: 'framework', error: { status: 404, message: 'Not found' }, event } as never)).toMatchObject({ status: 404, message: 'Not found' });
+    expect(await handleError({ kind: 'unknown', error: new Error('private server detail'), event } as never)).toMatchObject({ message: '服务器暂时无法完成请求。', requestId: 'test-error-request' });
   });
 });

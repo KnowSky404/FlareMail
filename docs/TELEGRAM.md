@@ -49,12 +49,12 @@ an automatic retry target.
 
 ## Configuration
 
-The checked-in Wrangler files keep Telegram disabled. For a personal online
+The checked-in cf JSON targets keep Telegram disabled. For a personal online
 deployment, put the values below in the Cloudflare Dashboard under **Workers
 & Pages → your Worker → Settings → Variables and Secrets**. The production
 example also sets `keep_vars = true`, so later code deployments keep the
 Dashboard-managed values instead of replacing them with the checked-in
-placeholders. The private `wrangler.deploy.toml` remains available for
+placeholders. The private `cloudflare.deploy.json` remains available for
 operators who prefer file-based deployment:
 
 | Variable | Kind | Required when enabled | Purpose |
@@ -145,7 +145,7 @@ webhook, or send a real Telegram message.
 3. Deploy with `TELEGRAM_ENABLED=false` first, upload the Telegram Bot Token
    through the approved secret path, and optionally upload an independent
    webhook-secret override. Verify `/api/health` and the public HTTPS origin.
-   Do not place secret values in `wrangler.deploy.toml`.
+   Do not place secret values in `cloudflare.deploy.json`.
 4. Set `TELEGRAM_ENABLED=true`, `TELEGRAM_BOT_USERNAME`, and the exact
    `APP_BASE_URL` in the reviewed private deployment config. Deploy the same
    code/config/schema combination and verify the health/config gate again.
@@ -223,7 +223,7 @@ always scoped to the current authenticated session.
 
 ## Dispatcher, Cron, and limits
 
-The Worker exports `scheduled()` and both checked-in Wrangler configurations
+The Worker exports `scheduled()` and both checked-in cf target configurations
 declare `* * * * *`. Each run uses bounded sequential claims with a D1 lease
 and claim token. Stale processing rows that had already started an external
 request become `unknown_delivery`; stale rows that had not started can be
@@ -254,22 +254,7 @@ rows older than 180 days. Each category is capped at 500 rows per Cron run;
 `unknown_delivery` rows are retained for operator review. This is a bounded
 retention pass, not a destructive live-mail cleanup.
 
-For local Worker preview, Wrangler's scheduled-test middleware can expose a
-direct test endpoint for the configured Cron expression:
-
-```bash
-bun x wrangler dev --config wrangler.toml --local --test-scheduled --ip 0.0.0.0 --port 8787
-curl -fsS -X POST 'http://127.0.0.1:8787/__scheduled?cron=*+*+*+*+*'
-```
-
-If the installed Wrangler instead prints that scheduled Workers are not
-automatically triggered during local development, use its standard local
-scheduled endpoint:
-
-```bash
-bun x wrangler dev --config wrangler.toml --local --ip 0.0.0.0 --port 8787
-curl -fsS 'http://127.0.0.1:8787/cdn-cgi/local/scheduled'
-```
+For local Worker preview, use `bun run preview` (global cf dev). Its Local Explorer API exposes a scheduled-handler route under `/cdn-cgi/local/explorer/api/local/scheduled`. Inspect the running server's OpenAPI schema for the request body, then invoke only against isolated local D1/R2 with fake fetch/provider behavior. Do not assume the former Wrangler scheduled-test endpoints exist, and do not invoke production/PRE scheduled work as an automated test.
 
 This proves only local code, local D1, and injected/fake fetch behavior. It is
 not evidence of Cloudflare Cron execution or Telegram delivery.

@@ -34,13 +34,13 @@ export function selectOwnerForBootstrap(input: {
 export function extractD1Rows(output: string): Array<Record<string, unknown>> {
   const startCandidates = [output.indexOf('['), output.indexOf('{')].filter((index) => index >= 0);
   const start = Math.min(...startCandidates);
-  if (!Number.isFinite(start)) throw new Error('Wrangler returned no JSON result.');
+  if (!Number.isFinite(start)) throw new Error('cf returned no JSON result.');
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(output.slice(start));
   } catch {
-    throw new Error('Wrangler returned an unreadable JSON result.');
+    throw new Error('cf returned an unreadable JSON result.');
   }
 
   const rows: Array<Record<string, unknown>> = [];

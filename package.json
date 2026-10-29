@@ -4,14 +4,15 @@
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.4",
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.0",
+    "node": ">=22.18.0"
   },
   "scripts": {
     "dev": "vite dev",
-    "build": "svelte-kit sync && vite build",
-    "preview": "bun run build && bun ./scripts/wrangler-local.ts dev worker/index.ts --local",
+    "build": "bun run build:app && bun scripts/cloudflare.ts build",
+    "preview": "bun run build && bun scripts/cloudflare.ts preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test src scripts",
     "test:unit": "bun test src/lib/client src/lib/components/mail/domain-capabilities.test.ts src/lib/components/ui src/lib/domain/mail src/lib/domain/utf8.test.ts src/lib/i18n src/lib/server/auth src/lib/server/config src/lib/server/body.test.ts src/lib/server/cloudflare-email-routing.test.ts src/lib/server/db/attachments.test.ts src/lib/server/db/capabilities.test.ts src/lib/server/db/deliveries.test.ts src/lib/server/db/mail-identities.test.ts src/lib/server/db/messages.test.ts src/lib/server/email.test.ts src/lib/server/inbound/parser.test.ts src/lib/server/mail-identities/check.test.ts src/lib/server/mail-identities/domains.test.ts src/lib/server/mail-identities/sync.test.ts src/lib/server/mail-identities/health-refresh.test.ts src/lib/server/mail-identities/routing.test.ts src/lib/server/mail-identities/sending.test.ts src/lib/server/mail-identities/validation.test.ts src/lib/server/mail/html-sanitize.test.ts src/lib/server/outbound/gateway.test.ts src/lib/server/outbound/rate-limit.test.ts src/lib/server/outbound/system.test.ts src/lib/server/resend-domains.test.ts src/lib/server/search/fts.test.ts src/lib/server/workspace/compose-body.test.ts src/lib/server/telegram/api.test.ts src/lib/server/telegram/config.test.ts src/lib/server/telegram/message.test.ts src/lib/server/scheduled.test.ts",
@@ -26,9 +27,9 @@
     "release:preflight": "bun scripts/release-preflight.ts",
     "attachment:integrity": "bun scripts/attachment-integrity.ts",
     "audit:dependencies": "bun audit --audit-level=high",
-    "cf:typegen": "bun ./scripts/wrangler-local.ts types worker-configuration.d.ts --env-interface CloudflareEnv",
-    "db:migrate:local": "bun ./scripts/wrangler-local.ts d1 migrations apply flaremail-db --local --config wrangler.toml",
-    "db:migrate:remote": "wrangler d1 migrations apply flaremail-db --remote --config wrangler.deploy.toml",
+    "cf:typegen": "bun scripts/cloudflare.ts typegen",
+    "db:migrate:local": "bun scripts/cloudflare.ts migrate",
+    "db:migrate:remote": "bun scripts/cloudflare.ts migrate --remote",
     "auth:bootstrap:local": "bun ./scripts/bootstrap-admin.ts",
     "auth:bootstrap:access": "bun ./scripts/bootstrap-admin.ts --access-only",
     "auth:bootstrap:remote": "bun ./scripts/bootstrap-admin.ts --remote",
@@ -36,43 +37,36 @@
     "mail:domain:configure": "bun ./scripts/configure-mail-domain.ts",
     "mail:identity:dry-run": "bun ./scripts/mail-identity-migration-dry-run.ts",
     "mail:identity:backfill": "bun ./scripts/mail-identity-backfill.ts",
-    "deploy:dry-run": "bun run build && bun ./scripts/deploy.mjs dry-run",
-    "deploy": "bun run build && bun ./scripts/deploy.mjs",
+    "deploy:dry-run": "bun scripts/cloudflare.ts dry-run",
+    "deploy": "bun run build:app && bun scripts/cloudflare.ts deploy",
     "maintenance": "bun ./scripts/maintenance.ts",
-    "search:index": "bun ./scripts/search-index.ts"
+    "search:index": "bun ./scripts/search-index.ts",
+    "build:app": "svelte-kit sync && vite build",
+    "deploy:pre": "bun run build:app && bun scripts/cloudflare.ts pre"
   },
   "dependencies": {
-    "@lucide/svelte": "^1.33.0",
-    "@sveltejs/kit": "^2.70.3",
-    "jose": "^6.2.12",
-    "postal-mime": "^3.0.0",
-    "svelte": "^5.56.10"
+    "@lucide/svelte": "^1.63.0",
+    "@sveltejs/kit": "^3.1.0",
+    "jose": "^6.2.13",
+    "postal-mime": "^4.1.4",
+    "svelte": "^5.57.3"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.13.0",
-    "@cloudflare/workers-types": "^5.20260823.1",
-    "@playwright/test": "1.58.2",
-    "@sveltejs/adapter-cloudflare": "^7.2.9",
-    "@sveltejs/vite-plugin-svelte": "^6.2.4",
-    "@tailwindcss/postcss": "^4.3.3",
-    "@types/bun": "^1.4.0",
-    "postcss": "^8.5.26",
-    "svelte-check": "^4.7.6",
+    "@axe-core/playwright": "^4.14.0",
+    "@cloudflare/config": "^0.29.0",
+    "@cloudflare/vite-plugin": "^2.0.0-beta.v.7",
+    "@cloudflare/workers-types": "^5.20261029.1",
+    "@playwright/test": "1.64.1",
+    "@sveltejs/adapter-cloudflare": "^8.0.1",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/bun": "^1.4.4",
+    "svelte-check": "^4.7.7",
     "tailwindcss": "^4.3.3",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.6",
-    "wrangler": "4.113.0"
+    "typescript": "6",
+    "vite": "^8.3.5"
   },
-  "overrides": {
-    "@cloudflare/workerd-darwin-64": "1.20260820.1",
-    "@cloudflare/workerd-darwin-arm64": "1.20260820.1",
-    "@cloudflare/workerd-linux-64": "1.20260820.1",
-    "@cloudflare/workerd-linux-arm64": "1.20260820.1",
-    "@cloudflare/workerd-windows-64": "1.20260820.1",
-    "devalue": "5.9.3",
-    "sharp": "0.35.5",
-    "source-map-js": "1.2.2",
-    "undici": "7.29.1",
-    "workerd": "1.20260820.1"
-  }
+  "workspaces": [
+    "worker"
+  ]
 }

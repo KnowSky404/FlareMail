@@ -5,9 +5,12 @@ import type { CloudflareEnv } from '../src/lib/server/cloudflare';
 import { handleInboundEmail } from '../src/lib/server/email';
 import { scheduleMaintenance } from '../src/lib/server/scheduled';
 
+// The adapter emits its own runtime types; use this wrapper's generated contract.
+const appFetch = app.fetch as unknown as NonNullable<ExportedHandler<CloudflareEnv>['fetch']>;
+
 export default {
   fetch(request, env, ctx) {
-    return app.fetch(request, env, ctx);
+    return appFetch(request, env, ctx);
   },
 
   email(message, env, ctx) {

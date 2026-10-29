@@ -327,7 +327,7 @@ async function main() {
     const fixture = renderRuntimeFixtureCase(spec.id);
     const path = join(output, spec.filename);
     await Bun.write(path, fixture.payload);
-    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', fixture.payload));
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(fixture.payload)));
     const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
     generated.push({ ...spec, bytes: fixture.payload.byteLength, sha256, path });
   }

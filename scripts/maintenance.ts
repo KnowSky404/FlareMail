@@ -1,8 +1,9 @@
+import { executeD1 as executeCloudflareD1, parseCloudflareTarget, localStateArgs } from './cloudflare-target';
 import { readFile } from 'node:fs/promises';
 import {
-  createLocalWranglerEnvironment,
-  inheritWranglerEnvironment
-} from './wrangler-environment';
+  createLocalCloudflareEnvironment,
+  inheritCloudflareEnvironment
+} from './cloudflare-environment';
 import {
   CLEANUP_BACKOFF_MAX_MS,
   CLEANUP_DEFAULT_LIMIT,
@@ -58,7 +59,7 @@ const usage = `Usage: bun scripts/maintenance.ts [options]
 Options:
   --remote                       Target remote D1/R2 (default: local)
   --apply                        Apply deletes (requires explicit --apply)
-  --config <path>               Wrangler config path
+  --config <path>               Cloudflare config path
   --database <name>             D1 database name (default: flaremail-db)
   --bucket <name>               R2 bucket name (default: flaremail-bucket)
   --session-retention-days <n>  Keep revoked/expired sessions for n days (default: 30)
@@ -114,7 +115,7 @@ export function parseMaintenanceArgs(args: string[]): MaintenanceOptions {
   const remote = hasFlag(args, '--remote');
   const apply = hasFlag(args, '--apply');
   const command = (args.find((arg) => ['cleanup-report', 'cleanup-drain', 'cleanup-retry'].includes(arg)) ?? 'retention') as MaintenanceOptions['command'];
-  const config = optionValue(args, '--config') ?? (remote ? 'wrangler.deploy.toml' : 'wrangler.toml');
+  const config = optionValue(args, '--config') ?? process.env.FLAREMAIL_CF_CONFIG ?? (remote ? 'cloudflare.deploy.json' : 'cloudflare.local.json');
   const bucketOption = optionValue(args, '--bucket');
   if (command !== 'retention' && bucketOption !== undefined) throw new Error('--bucket is not accepted by cleanup commands; use the configured FlareMail BUCKET binding.');
   return {
@@ -134,25 +135,14 @@ export function parseMaintenanceArgs(args: string[]): MaintenanceOptions {
   };
 }
 
-function configuredValue(source: string, key: string) {
-  return source.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"\\s*$`, 'mu'))?.[1] ?? null;
-}
-
 export function configuredCleanupBucket(source: string, remote: boolean) {
-  const vars = source.split(/^\[vars\]\s*$/mu)[1]?.split(/^\[/mu, 1)[0] ?? '';
-  const appEnv = configuredValue(vars, 'APP_ENV')?.toLowerCase() ?? null;
+  const target = parseCloudflareTarget(source);
+  const appEnv = target.vars.APP_ENV;
   if (appEnv === 'production') throw new Error('Production cleanup is refused; use a separately reviewed operator workflow.');
   if (remote && appEnv !== 'preview') throw new Error('Remote cleanup requires an explicit APP_ENV=preview config.');
   if (!remote && appEnv !== 'development' && appEnv !== 'test') throw new Error('Local cleanup requires an APP_ENV=development or test config.');
-  const block = source.split(/^\[\[r2_buckets\]\]\s*$/mu).slice(1)
-    .map((part) => part.split(/^\[\[/mu, 1)[0])
-    .find((part) => configuredValue(part, 'binding') === 'BUCKET') ?? '';
-  const key = remote && appEnv === 'preview' ? 'preview_bucket_name' : 'bucket_name';
-  const bucket = configuredValue(block, key);
-  if (!bucket || !/^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$/u.test(bucket)) {
-    throw new Error('The selected Wrangler config does not contain a valid FlareMail BUCKET binding.');
-  }
-  return bucket;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$/u.test(target.bucket)) throw new Error('Invalid FlareMail BUCKET binding.');
+  return target.bucket;
 }
 
 const sqlLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -190,7 +180,7 @@ function parseJsonOutput(output: string): unknown {
       try {
         return JSON.parse(lines[index]);
       } catch {
-        // Wrangler may print a progress line before its JSON result.
+        // Cloudflare may print a progress line before its JSON result.
       }
     }
   }
@@ -242,8 +232,7 @@ export function d1StatementResults(value: unknown, expectedStatements: number) {
 }
 
 export function maintenanceD1TargetFlag(options: Pick<MaintenanceOptions, 'command' | 'remote'>) {
-  if (!options.remote) return '--local';
-  return options.command === 'retention' ? '--remote' : '--preview';
+  return options.remote ? '--remote' : '--local';
 }
 
 export function referencedKeys(value: unknown) {
@@ -287,11 +276,11 @@ export function metadataDeleteSql(keys: string[]) {
 
 export const bodyMetadataDeleteSql = metadataDeleteSql;
 
-async function runWrangler(args: string[], remote: boolean) {
-  const child = Bun.spawn(['bun', 'x', 'wrangler', ...args], {
+async function runCloudflare(args: string[], remote: boolean) {
+  const child = Bun.spawn(['cf', ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
-    env: remote ? inheritWranglerEnvironment() : createLocalWranglerEnvironment()
+    env: remote ? inheritCloudflareEnvironment() : createLocalCloudflareEnvironment()
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
@@ -300,26 +289,23 @@ async function runWrangler(args: string[], remote: boolean) {
   ]);
   if (exitCode !== 0) {
     void stderr;
-    throw new Error(`Wrangler command failed with exit code ${exitCode}.`);
+    throw new Error(`Cloudflare command failed with exit code ${exitCode}.`);
   }
   return stdout;
 }
 
-async function executeD1(options: MaintenanceOptions, sql: string, write = false) {
-  const args = ['d1', 'execute', options.database, maintenanceD1TargetFlag(options), '--config', options.config, '--command', sql, '--json'];
-  if (write) args.push('--yes');
-  return parseJsonOutput(await runWrangler(args, options.remote));
+async function executeD1(options: MaintenanceOptions, sql: string, _write = false) {
+  return JSON.parse(await executeCloudflareD1(options, sql));
 }
 
 async function executeD1Batch(options: MaintenanceOptions, statements: string[], write = false) {
   if (statements.length === 0) return [];
-  const sql = statements.map((statement) => statement.replace(/;\s*$/u, '')).join('; ');
-  return d1StatementResults(await executeD1(options, sql, write), statements.length);
+  return d1StatementResults(JSON.parse(await executeCloudflareD1(options, statements)), statements.length);
 }
 
 function manifestKeys(value: unknown): R2Object[] {
-  const source = Array.isArray(value) ? value : value && typeof value === 'object' && Array.isArray((value as Record<string, unknown>).objects)
-    ? (value as Record<string, unknown>).objects
+  const source: unknown[] = Array.isArray(value) ? value : value && typeof value === 'object' && Array.isArray((value as Record<string, unknown>).objects)
+    ? (value as { objects: unknown[] }).objects
     : [];
   return source.flatMap((item) => {
     if (typeof item === 'string') return [{ key: item }];
@@ -361,8 +347,8 @@ async function deleteR2Objects(options: MaintenanceOptions, objects: R2Object[])
       skippedUnsafeDeletes += 1;
       continue;
     }
-    await runWrangler(
-      ['r2', 'object', 'delete', `${options.bucket}/${object.key}`, options.remote ? '--remote' : '--local', '--config', options.config],
+    await runCloudflare(
+      ['r2', 'objects', 'delete', object.key, '--bucket-name', options.bucket, '--force', ...(options.remote ? [] : localStateArgs())],
       options.remote
     );
     deleted += 1;
@@ -430,7 +416,7 @@ function cleanupLog(event: string, detail: Record<string, string | number>) {
 async function runCleanupMaintenance(options: MaintenanceOptions): Promise<CleanupMaintenanceReport> {
   let configSource: string;
   try { configSource = await readFile(options.config, 'utf8'); } catch {
-    throw new Error('Unable to read the selected Wrangler config.');
+    throw new Error('Unable to read the selected Cloudflare config.');
   }
   options = { ...options, bucket: configuredCleanupBucket(configSource, options.remote) };
   const now = new Date().toISOString();
@@ -481,7 +467,7 @@ async function runCleanupMaintenance(options: MaintenanceOptions): Promise<Clean
     drain.claimed += 1;
     const started = Date.now();
     try {
-      await runWrangler(['r2', 'object', 'delete', `${options.bucket}/${key}`, options.remote ? '--remote' : '--local', '--config', options.config], options.remote);
+      await runCloudflare(['r2', 'objects', 'delete', key, '--bucket-name', options.bucket, '--force', ...(options.remote ? [] : localStateArgs())], options.remote);
       const finalized = await executeD1(options, `UPDATE workspace_r2_cleanup_queue SET status = 'completed', completed_at = ${sqlLiteral(now)}, claim_token = NULL, lease_expires_at = NULL, last_error = NULL, updated_at = ${sqlLiteral(now)} WHERE id = ${sqlLiteral(id)} AND status = 'processing' AND claim_token = ${sqlLiteral(token)}`, true);
       if (d1Changes(finalized) === 1) { drain.completed += 1; cleanupLog('cleanup_completed', { jobId: id, objectKind: kind, attempt: Number(candidate.attempt_count ?? 0) + 1, durationMs: Date.now() - started }); }
       else { drain.lostClaim += 1; }

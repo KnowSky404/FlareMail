@@ -12,7 +12,7 @@ export const workspaceSessionCookie = 'flaremail_session';
 export const secureWorkspaceSessionCookie = '__Host-flaremail_session';
 export const legacyWorkspaceSessionCookie = 'flaremail_workspace';
 export const workspaceSessionCookieNames = [secureWorkspaceSessionCookie, workspaceSessionCookie, legacyWorkspaceSessionCookie] as const;
-export type CookieOptions = Parameters<Cookies['set']>[2];
+export type CookieOptions = NonNullable<Parameters<Cookies['set']>[2]>;
 
 const SESSION_HOURS = 12;
 const REMEMBER_SESSION_DAYS = 7;

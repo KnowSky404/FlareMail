@@ -1,8 +1,8 @@
+import { executeD1 } from './cloudflare-target';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { extractD1Rows } from './bootstrap-owner';
-import { createLocalWranglerEnvironment, inheritWranglerEnvironment } from './wrangler-environment';
 import {
   normalizeCloudflareZoneId,
   normalizeEmailWorkerName,
@@ -22,26 +22,18 @@ if (cloudflareAccountId && !/^[a-f0-9]{32}$/iu.test(cloudflareAccountId)) {
   throw new Error('FLAREMAIL_CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal ID when supplied.');
 }
 
-const config = remote ? 'wrangler.deploy.toml' : 'wrangler.toml';
-const wranglerEnvironment = remote ? inheritWranglerEnvironment() : createLocalWranglerEnvironment();
+const config = process.env.FLAREMAIL_CF_CONFIG ?? (remote ? 'cloudflare.deploy.json' : 'cloudflare.local.json');
 const sqlText = (value: string) => "'" + value.replaceAll("'", "''") + "'";
 
-async function executeWrangler(extraArguments: string[]) {
-  const child = Bun.spawn([
-    'bun', 'x', 'wrangler', 'd1', 'execute', 'flaremail-db',
-    remote ? '--remote' : '--local', '--config', config, '--json', ...extraArguments
-  ], {
-    stdout: 'pipe',
-    stderr: 'inherit',
-    env: wranglerEnvironment
-  });
-  const stdout = await new Response(child.stdout).text();
-  const exitCode = await child.exited;
-  if (exitCode !== 0) throw new Error('Wrangler D1 ' + (remote ? 'remote' : 'local') + ' command failed (' + exitCode + ').');
-  return extractD1Rows(stdout);
+async function executeDatabase(extraArguments: string[]) {
+  const commandIndex = extraArguments.indexOf('--command');
+  const fileIndex = extraArguments.indexOf('--file');
+  const sql = commandIndex >= 0 ? extraArguments[commandIndex + 1]!
+    : await Bun.file(extraArguments[fileIndex + 1]!).text();
+  return extractD1Rows(await executeD1({ remote, config }, sql));
 }
 
-const ownerRows = await executeWrangler([
+const ownerRows = await executeDatabase([
   '--command',
   'SELECT user_id FROM workspace_owner WHERE singleton = 1'
 ]);
@@ -50,7 +42,7 @@ if (typeof ownerId !== 'string' || !ownerId) {
   throw new Error('Initialize the stable workspace Owner before configuring a mail domain.');
 }
 
-const existingRows = await executeWrangler([
+const existingRows = await executeDatabase([
   '--command',
   'SELECT id, owner_user_id, cloudflare_zone_id, cloudflare_account_id, worker_name, unknown_recipient_policy ' +
     'FROM mail_domains WHERE lower(domain_name) = ' + sqlText(domainName)
@@ -83,7 +75,7 @@ const sqlFile = join(directory, 'configure.sql');
 try {
   await writeFile(sqlFile, statement, { mode: 0o600 });
   await chmod(sqlFile, 0o600);
-  await executeWrangler(['--file', sqlFile]);
+  await executeDatabase(['--file', sqlFile]);
 } finally {
   await rm(directory, { recursive: true, force: true });
 }
