@@ -6,6 +6,9 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { adapterOptions } from './scripts/adapter-config.mjs';
 
 export default defineConfig(({ command }) => ({
+  // The portable ESM bundle embeds CSS grammar data instead of loading JSON
+  // with createRequire, which breaks after bundling into a Worker.
+  resolve: { alias: [{ find: /^css-tree$/, replacement: 'css-tree/dist/csstree.esm' }] },
   plugins: [tailwindcss(), sveltekit({
     preprocess: vitePreprocess(),
     alias: { '$lib': 'src/lib' },

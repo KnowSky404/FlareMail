@@ -73,7 +73,7 @@ test('preserves email table styles, responsive padding and light canvas in the s
   await detail.getByRole('button', { name: '纯文本', exact: true }).press('Enter');
   await expect(iframe).toHaveCount(0);
   await expect(detail).toContainText('Safe HTML fixture text fallback.');
-  // Local Wrangler injects its explorer script; the mail sandbox blocks it.
+  // The local runtime injects its explorer script; the mail sandbox blocks it.
   await assertNoConsoleErrors(consoleErrors.filter((message) => !(
     message.startsWith('Blocked script execution in ') &&
     message.includes('/api/workspace/messages/email%3Ae2e-html-inbox-message/html?remote=') &&
