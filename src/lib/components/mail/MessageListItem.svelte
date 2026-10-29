@@ -95,9 +95,6 @@
   });
   const counterpartEmail = $derived(thread?.counterpartEmail ||
     (isDraft || itemMessage?.folder === 'sent' ? itemMessage?.toEmail : itemMessage?.fromEmail) || '');
-  const accessibleCounterpart = $derived(counterpartEmail && counterpart !== counterpartEmail
-    ? `${counterpart} <${counterpartEmail}>`
-    : counterpart);
   const starredSourceLabel = $derived(itemMessage?.folder === 'drafts' ? t('shell.drafts')
     : itemMessage?.folder === 'sent' ? t('shell.sent')
     : itemMessage?.archivedAt ? t('shell.archive') : t('shell.inbox'));
@@ -127,14 +124,13 @@
     };
     return status ? labels[status] || status : '';
   };
-  const accessibleLabel = $derived([
+  const accessibleState = $derived([
     selected ? t('mail.listSelected') : '',
     isUnread ? t('mail.unread') : '',
-    isStarred ? t('mail.starred') : '',
-    accessibleCounterpart,
-    itemSubject,
-    itemCount > 1 ? translateCount(i18n.locale, 'mail.threadCount', itemCount) : '',
-    activeSection === 'starred' || activeSection === 'label' ? starredSourceLabel : '',
+    isStarred ? t('mail.starred') : ''
+  ].filter(Boolean).join(', '));
+  const accessibleDetails = $derived([
+    counterpartEmail,
     userLabels.length ? `${t('mail.label')}: ${userLabels.map((label) => label.name).join(', ')}` : '',
     itemMessage?.hasAttachments || itemMessage?.labels.includes('attachment') ? t('mail.hasAttachment') : '',
     activeSection === 'sent' && itemMessage?.deliveryStatus
@@ -185,9 +181,9 @@
       type="button"
       class="mail-list-item-button flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fm-focus)]"
       aria-current={selected ? 'true' : undefined}
-      aria-label={accessibleLabel}
       onclick={handleSelect}
     >
+      {#if accessibleState}<span class="sr-only">{accessibleState}, </span>{/if}
       <span class="unread-dot grid size-2 shrink-0 place-items-center" aria-hidden="true">
         {#if isUnread}<span class="size-2 rounded-full bg-[var(--fm-primary)]"></span>{/if}
       </span>
@@ -240,6 +236,7 @@
           <span class="inline-flex sm:hidden" title={formatDelivery(itemMessage.deliveryStatus)}><DeliveryIcon class="size-3.5 text-[var(--fm-text-muted)]" aria-hidden="true" /></span>
         {/if}
       </span>
+      {#if accessibleDetails}<span class="sr-only">, {accessibleDetails}</span>{/if}
     </button>
     {#if activeSection !== 'trash'}
       <span class="row-star">

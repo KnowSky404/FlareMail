@@ -12,8 +12,8 @@ declare global {
     interface Platform {
       env: CloudflareEnv;
       cf?: IncomingRequestCfProperties;
-      ctx: ExecutionContext;
-      context: ExecutionContext;
+      ctx: Pick<ExecutionContext, 'waitUntil'>;
+      context: Pick<ExecutionContext, 'waitUntil'>;
       caches: CacheStorage;
     }
 

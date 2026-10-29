@@ -1,7 +1,8 @@
+import { localDatabaseId, localStateArgs, executeD1 } from '../cloudflare-target';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { createLocalWranglerEnvironment } from '../wrangler-environment';
+import { createLocalCloudflareEnvironment } from '../cloudflare-environment';
 
 const root = resolve(import.meta.dir, '../..');
 const argument = (name: string, fallback: string) => {
@@ -42,7 +43,7 @@ async function run(command: string, args: string[], env?: Record<string, string>
   const child = Bun.spawn([command, ...args], {
     cwd: root,
     env: {
-      ...createLocalWranglerEnvironment(process.env, { logFileName: 'flaremail-e2e-wrangler.log' }),
+      ...createLocalCloudflareEnvironment(process.env),
       ...env
     },
     stdout: 'inherit',
@@ -85,9 +86,7 @@ const draftSeed = draftSubjects.map((subject, index) => `INSERT OR IGNORE INTO w
 
 await rm(persistTo, { recursive: true, force: true });
 await run('bun', ['run', 'build']);
-await run('bunx', [
-  'wrangler', 'd1', 'migrations', 'apply', 'flaremail-db', '--local', '--config', 'wrangler.toml', '--persist-to', persistTo
-]);
+await run('cf', ['d1', 'migrations', 'apply', localDatabaseId, '--dir', 'migrations', ...localStateArgs(persistTo)]);
 
 const { hashPassword } = await import('../../src/lib/server/auth/password');
 const credentialHash = await hashPassword(adminPassword);
@@ -204,34 +203,18 @@ INSERT OR IGNORE INTO workspace_outbound_receipts (
 ${draftSeed}
 `;
 
-await run('bunx', [
-  'wrangler', 'd1', 'execute', 'flaremail-db', '--local', '--config', 'wrangler.toml', '--persist-to', persistTo,
-  '--command', seed
-]);
+await executeD1({ persistTo }, seed);
 
 const htmlCidFile = join(persistenceRoot, 'html-cid.png');
 await Bun.write(htmlCidFile, htmlCidBytes);
-await run('bunx', [
-  'wrangler', 'r2', 'object', 'put', `flaremail-bucket-preview/${htmlCidKey}`,
-  '--file', htmlCidFile, '--content-type', 'image/png', '--local', '--config', 'wrangler.toml', '--persist-to', persistTo
-]);
+await run('cf', ['r2', 'objects', 'put', htmlCidKey, '--bucket-name', 'flaremail-bucket', '--file', htmlCidFile, '--content-type', 'image/png', ...localStateArgs(persistTo)]);
 
 const worker = Bun.spawn(
-  [
-    'bunx', 'wrangler', 'dev', '--config', 'wrangler.toml', '--local', '--persist-to', persistTo,
-    '--port', port, '--ip', '127.0.0.1',
-    // Keep parallel local suites deterministic without network-interface probing.
-    '--inspector-port', process.env.FLAREMAIL_E2E_INSPECTOR_PORT ?? String(Number(port) + 10000),
-    '--inspector-ip', '127.0.0.1', '--show-interactive-dev-session=false',
-    '--var', 'APP_ENV:development', '--var', 'ALLOW_FAKE_SERVICES:true', '--var', 'OUTBOUND_PROVIDER:demo',
-    '--var', 'OUTBOUND_FROM_EMAIL:e2e@flaremail.test', '--var', 'OUTBOUND_FROM_NAME:FlareMail E2E',
-    '--var', `RESEND_WEBHOOK_SECRET:${webhookSecret}`
-  ],
+  ['cf', 'dev', '--mode', 'development'],
   {
-    cwd: root,
-    env: createLocalWranglerEnvironment(process.env, { logFileName: 'flaremail-e2e-wrangler.log' }),
-    stdout: 'inherit',
-    stderr: 'inherit'
+    cwd: join(root, 'worker'),
+    env: { ...createLocalCloudflareEnvironment(), FLAREMAIL_STATE_DIR: persistTo, FLAREMAIL_DEV_HOST: '127.0.0.1', FLAREMAIL_DEV_PORT: port, FLAREMAIL_E2E: 'true', FLAREMAIL_E2E_WEBHOOK_SECRET: webhookSecret },
+    stdout: 'inherit', stderr: 'inherit'
   }
 ) as unknown as Child;
 

@@ -5,15 +5,11 @@ The complete first-deployment and ordinary upgrade flow is
 read-only-by-default maintenance, FTS-aware export, cleanup and incident
 recovery. It does not authorize production operations by itself.
 
-`wrangler.toml` is the local development template. Copy
-`wrangler.deploy.toml.example` to the private `wrangler.deploy.toml`, replace
+`cloudflare.local.json` is the local development template. Copy
+`cloudflare.deploy.json.example` to the private `cloudflare.deploy.json`, replace
 the D1 and R2 placeholders, and keep that file out of Git.
 
-Remote maintenance inherits the operator's normal Wrangler OAuth keyring or
-`CLOUDFLARE_API_TOKEN` environment. It does not redirect the Wrangler config
-directory. Authenticate with `bun x wrangler login --use-keyring` (add
-`--device` for a remote terminal when needed), then verify the active identity
-with `bun x wrangler whoami` before any explicitly authorized remote command.
+Remote maintenance uses global cf's OAuth profile or `CLOUDFLARE_API_TOKEN`. Authenticate with `cf auth login` (`--no-browser` for SSH); verify the account without sharing identity or credential output. Project scripts select an explicit JSON target. Production operations still require separate authorization.
 
 The local template enables Workers Observability logs and traces for isolated
 debugging. The deployment template keeps application logs but disables Worker
@@ -53,8 +49,8 @@ reviewed secret update, `getMe`, `setWebhook`, and `getWebhookInfo` sequence.
 `bun run mail:identity:backfill` workflow creates a bounded plan, applies only
 after `--apply` plus the matching `--confirm <sha256>`, and verifies the same
 plan. It requires an explicit Owner ID, address ID, current schema version 27, and
-local Wrangler persistence directory. Its parser rejects `--remote`; the
-Wrangler invocation is fixed to `--local`, `wrangler.toml`, and
+local cf persistence directory. Its parser rejects `--remote`; the
+global cf invocation is fixed to `--local`, `cloudflare.local.json`, and
 `flaremail-db`. Do not point it at a shared development store when reviewing a
 production copy.
 
@@ -68,8 +64,7 @@ the audit, plan, apply, and verification commands:
 LOCAL_STATE=/secure/flaremail-reviewed-local-copy
 PLAN_FILE=/secure/flaremail-address-backfill-plan.json
 
-bun ./scripts/wrangler-local.ts d1 migrations apply flaremail-db \
-  --local --config wrangler.toml --persist-to "$LOCAL_STATE"
+FLAREMAIL_STATE_DIR="$LOCAL_STATE" bun run db:migrate:local
 bun run mail:identity:dry-run -- --domain example.com --persist-to "$LOCAL_STATE" --json
 bun run mail:identity:backfill -- plan --persist-to "$LOCAL_STATE" \
   --owner-id 'STABLE_OWNER_ID' --address-id 'MANAGED_ADDRESS_ID' \
@@ -113,8 +108,8 @@ sessions, stale inbound claims, delivery review windows, old `workspace_outbound
 live mail/body/attachment metadata:
 
 ```bash
-bun scripts/maintenance.ts --config wrangler.toml
-bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --json
+bun scripts/maintenance.ts --config cloudflare.local.json
+bun scripts/maintenance.ts --remote --config cloudflare.deploy.json --json
 ```
 
 Retention defaults are 30 days for sessions and 180 days for webhook events.
@@ -137,8 +132,8 @@ Review a dry-run report first. Applying D1 and R2 cleanup requires the separate
 `--apply` flag:
 
 ```bash
-bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest /secure/reviewed-r2-inventory.json --json
-bun scripts/maintenance.ts --remote --config wrangler.deploy.toml --r2-manifest /secure/reviewed-r2-inventory.json --apply
+bun scripts/maintenance.ts --remote --config cloudflare.deploy.json --r2-manifest /secure/reviewed-r2-inventory.json --json
+bun scripts/maintenance.ts --remote --config cloudflare.deploy.json --r2-manifest /secure/reviewed-r2-inventory.json --apply
 ```
 
 The retention/orphan `--apply` path deletes only unreferenced managed `inbound/YYYY-MM-DD/<id>/...`,
@@ -164,10 +159,10 @@ instead of auto-deleting an object.
 Use the dedicated commands for local or isolated Preview queue work:
 
 ```bash
-bun run maintenance -- cleanup-report --config wrangler.toml --json
-bun run maintenance -- cleanup-drain --dry-run --limit 50 --config wrangler.toml --json
-bun run maintenance -- cleanup-drain --apply --limit 50 --config wrangler.toml --json
-bun run maintenance -- cleanup-retry --dry-run --limit 50 --max-attempts 8 --config wrangler.toml --json
+bun run maintenance -- cleanup-report --config cloudflare.local.json --json
+bun run maintenance -- cleanup-drain --dry-run --limit 50 --config cloudflare.local.json --json
+bun run maintenance -- cleanup-drain --apply --limit 50 --config cloudflare.local.json --json
+bun run maintenance -- cleanup-retry --dry-run --limit 50 --max-attempts 8 --config cloudflare.local.json --json
 ```
 
 Remote execution requires both `--remote` and a separately maintained
@@ -197,7 +192,7 @@ bun run attachment:integrity -- --apply --limit 100 --cursor ATTACHMENT_ID --jso
 ```
 
 The default is local/report-only. An isolated Preview run additionally requires
-`--remote --config wrangler.preview.toml`; the config must declare
+`--remote --config cloudflare.preview.json`; the config must declare
 `APP_ENV=preview` plus Preview D1/R2 resources. Replacing a non-null mismatched
 digest also requires `--repair-mismatches`. Production configs are refused.
 Reports contain internal IDs and stable result categories, never filenames,
@@ -236,11 +231,11 @@ mutation, `--apply`.
 Prefer D1 Time Travel for production rollback evidence:
 
 ```bash
-bun x wrangler d1 info flaremail-db --config wrangler.deploy.toml
-bun x wrangler d1 time-travel info flaremail-db --config wrangler.deploy.toml
+cf d1 get <reviewed-database-id>
+cf d1 time-travel get-bookmark <reviewed-database-id>
 ```
 
-These commands act on remote production D1; the current Wrangler CLI does not
+These commands act on remote production D1; the current cf CLI does not
 need a `--remote` flag for `d1 info` or `d1 time-travel`. Record the returned
 bookmark without running `time-travel restore`. A logical export is appropriate
 only when a longer-lived SQL artifact is explicitly required.
@@ -250,11 +245,11 @@ sequence. The canonical projection table remains intact while the unsupported
 virtual layer is absent:
 
 ```bash
-bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --json
-bun run search:index -- --mode prepare-export --remote --config wrangler.deploy.toml --apply
-bun x wrangler d1 export flaremail-db --remote --config wrangler.deploy.toml --output /secure/path/flaremail-logical.sql
-bun run search:index -- --mode restore-export --remote --config wrangler.deploy.toml --apply
-bun run search:index -- --mode verify --remote --config wrangler.deploy.toml --json
+bun run search:index -- --mode verify --remote --config cloudflare.deploy.json --json
+bun run search:index -- --mode prepare-export --remote --config cloudflare.deploy.json --apply
+# Export the reviewed database through Cloudflare Dashboard to a protected SQL file.
+bun run search:index -- --mode restore-export --remote --config cloudflare.deploy.json --apply
+bun run search:index -- --mode verify --remote --config cloudflare.deploy.json --json
 ```
 
 If export fails, restore the virtual layer before reopening traffic. After any
@@ -262,9 +257,8 @@ SQL import or Time Travel restore, run the reviewed rebuild command. The
 current restore command accepts a bookmark or timestamp:
 
 ```bash
-bun x wrangler d1 time-travel restore flaremail-db \
-  --bookmark='<RECORDED_BOOKMARK>' \
-  --config wrangler.deploy.toml
+# Discover `cf d1 time-travel restore`, inspect help/schema and the exact target.
+# Execute only after separate recovery authorization; never infer flags from cf.
 ```
 
 Time Travel restore overwrites the target database, cancels in-flight queries,

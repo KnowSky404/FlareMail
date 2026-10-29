@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { executeD1 } from './cloudflare-target';
 import { describe, expect, test } from 'bun:test';
 import { buildMailIdentityDryRunReport, parseMailIdentityAuditArguments } from './mail-identity-audit-core';
 
@@ -31,3 +35,18 @@ describe('local mail identity migration audit', () => {
     expect(report.safety).toMatchObject({ noWritesPerformed: true, profileAndLoginEmailsAreNotTreatedAsSenders: true });
   });
 });
+
+
+test('local cf audit preserves all SELECT result sets for historical users', async () => {
+  const state = await mkdtemp(join(tmpdir(), 'flaremail-audit-batch-'));
+  try {
+    await executeD1({ persistTo: state }, [
+      'CREATE TABLE workspace_users (id TEXT PRIMARY KEY, login_email TEXT, email TEXT)',
+      "INSERT INTO workspace_users VALUES ('audit-user-1', '', ''), ('audit-user-2', '', '')"
+    ]);
+    const child = Bun.spawn(['bun', 'scripts/mail-identity-migration-dry-run.ts', '--persist-to', state, '--json'], { stdout: 'pipe', stderr: 'pipe' });
+    const [stdout, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout).owner.historicalUserCount).toBe(2);
+  } finally { await rm(state, { recursive: true, force: true }); }
+}, 30_000);

@@ -1,10 +1,10 @@
+import { executeD1 } from './cloudflare-target';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hashPassword } from '../src/lib/server/auth/password';
 import { isValidLoginUsername, normalizeLoginUsername } from '../src/lib/server/auth/rate-limit';
 import { buildLocalCredentialResetStatements, extractD1Rows, selectOwnerForBootstrap } from './bootstrap-owner';
-import { createLocalWranglerEnvironment, inheritWranglerEnvironment } from './wrangler-environment';
 
 const remote = process.argv.includes('--remote');
 const accessOnly = process.argv.includes('--access-only');
@@ -45,25 +45,17 @@ const ownerStateQuery = `
   UNION ALL
   SELECT 'owner' AS kind, user_id AS value FROM workspace_owner WHERE singleton = 1
 `;
-const config = remote ? 'wrangler.deploy.toml' : 'wrangler.toml';
-const wranglerEnvironment = remote ? inheritWranglerEnvironment() : createLocalWranglerEnvironment();
+const config = process.env.FLAREMAIL_CF_CONFIG ?? (remote ? 'cloudflare.deploy.json' : 'cloudflare.local.json');
 
-async function executeWrangler(extraArguments: string[]) {
-  const child = Bun.spawn([
-    'bun', 'x', 'wrangler', 'd1', 'execute', 'flaremail-db',
-    remote ? '--remote' : '--local', '--config', config, '--json', ...extraArguments
-  ], {
-    stdout: 'pipe',
-    stderr: 'inherit',
-    env: wranglerEnvironment
-  });
-  const stdout = await new Response(child.stdout).text();
-  const exitCode = await child.exited;
-  if (exitCode !== 0) throw new Error(`Wrangler D1 ${remote ? 'remote' : 'local'} command failed (${exitCode}).`);
-  return stdout;
+async function executeDatabase(extraArguments: string[]) {
+  const commandIndex = extraArguments.indexOf('--command');
+  const fileIndex = extraArguments.indexOf('--file');
+  const sql = commandIndex >= 0 ? extraArguments[commandIndex + 1]!
+    : await Bun.file(extraArguments[fileIndex + 1]!).text();
+  return executeD1({ remote, config }, sql);
 }
 
-const stateRows = extractD1Rows(await executeWrangler(['--command', ownerStateQuery]));
+const stateRows = extractD1Rows(await executeDatabase(['--command', ownerStateQuery]));
 const userIds = stateRows.filter((row) => row.kind === 'user' && typeof row.value === 'string').map((row) => row.value as string);
 const mappedOwnerId = stateRows.find((row) => row.kind === 'owner' && typeof row.value === 'string')?.value as string | undefined;
 const selection = selectOwnerForBootstrap({
@@ -108,8 +100,8 @@ const sqlFile = join(temporaryDirectory, 'bootstrap.sql');
 try {
   await writeFile(sqlFile, statements.join('\n'), { mode: 0o600 });
   await chmod(sqlFile, 0o600);
-  await executeWrangler(['--file', sqlFile]);
-  const verificationRows = extractD1Rows(await executeWrangler([
+  await executeDatabase(['--file', sqlFile]);
+  const verificationRows = extractD1Rows(await executeDatabase([
     '--command', 'SELECT user_id AS owner_id FROM workspace_owner WHERE singleton = 1'
   ]));
   if (verificationRows[0]?.owner_id !== selection.userId) {

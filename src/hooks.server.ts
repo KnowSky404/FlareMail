@@ -1,4 +1,5 @@
-import type { Handle, HandleServerError } from '@sveltejs/kit';
+import { resolveCloudflarePlatform } from '$lib/server/cloudflare-platform';
+import type { Handle, HandleServerError } from '@sveltejs/kit/hooks';
 import { validateCsrfOrigin } from '$lib/server/auth/csrf';
 import { validateEnvironment } from '$lib/server/config/env';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
@@ -42,6 +43,10 @@ export const isAccessExemptPath = (pathname: string): boolean =>
   pathname === '/api/health' || pathname === '/api/webhooks/resend' || pathname === '/api/webhooks/telegram';
 
 export const handle: Handle = async ({ event, resolve }) => {
+  if (!event.platform) {
+    const platform = await resolveCloudflarePlatform(event.platform);
+    if (platform) Object.defineProperty(event, 'platform', { value: platform });
+  }
   event.locals.requestStartedAt = performance.now();
   const requestId = getRequestId(event);
   const env = event.platform?.env as CloudflareEnv | undefined;
@@ -220,8 +225,11 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 };
 
-export const handleError: HandleServerError = ({ error, event, status }) => {
+export const handleError: HandleServerError = (input) => {
+  const { error, event } = input;
   const requestId = getRequestId(event);
+  if (input.kind !== 'unknown') return { ...input.error, requestId };
+  const status = 500;
   console.error(JSON.stringify({
     level: 'error',
     event: 'request_failed',

@@ -77,7 +77,7 @@ export async function openFolder(page: Page, folder: '收件箱' | '星标邮件
     await expect(backButton).toBeHidden();
     await expect(page).not.toHaveURL(/message=/u);
   }
-  const direct = page.getByRole('button', { name: folder, exact: true }).first();
+  const direct = page.getByRole('button', { name: new RegExp(`^${folder}(?:\\s|$)`, 'u') }).first();
   const navigationToggle = page.getByRole('button', { name: '打开导航' });
   await expect(direct.or(navigationToggle)).toBeVisible();
   if (await direct.isVisible().catch(() => false)) {

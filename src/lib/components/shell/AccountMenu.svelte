@@ -37,7 +37,7 @@
 </script>
 
 <div class="account-control" bind:this={rootElement}>
-  <DropdownMenu {id} {open} align="end" triggerAriaLabel={t('shell.accountMenu')} triggerTitle={t('shell.accountMenu')} triggerClass="account-trigger" {onOpenChange}>
+  <DropdownMenu {id} {open} align="end" triggerAriaLabel={`${t('shell.accountMenu')} ${initials}`} triggerTitle={t('shell.accountMenu')} triggerClass="account-trigger" {onOpenChange}>
     {#snippet trigger()}
       <Avatar name={profile.name} {initials} size="xs" />
     {/snippet}

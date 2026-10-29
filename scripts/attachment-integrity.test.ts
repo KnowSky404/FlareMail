@@ -24,19 +24,19 @@ describe('attachment-integrity CLI', () => {
   });
 
   test('requires explicit apply and remote flags in the parsed contract', () => {
-    expect(parseAttachmentIntegrityArgs(['--apply', '--remote', '--config', 'wrangler.preview.toml', '--repair-mismatches']))
-      .toMatchObject({ apply: true, remote: true, repairMismatches: true, config: 'wrangler.preview.toml' });
+    expect(parseAttachmentIntegrityArgs(['--apply', '--remote', '--config', 'cloudflare.preview.json', '--repair-mismatches']))
+      .toMatchObject({ apply: true, remote: true, repairMismatches: true, config: 'cloudflare.preview.json' });
     expect(() => parseAttachmentIntegrityArgs(['--limit', '501'])).toThrow(AttachmentIntegrityCliError);
     expect(() => parseAttachmentIntegrityArgs(['--cursor', 'filename with spaces'])).toThrow(AttachmentIntegrityCliError);
   });
 
-  test('audits a local Wrangler target without exposing object keys', async () => {
+  test('audits a local cf target without exposing object keys', async () => {
     const options = parseAttachmentIntegrityArgs(['--json']);
     const content = new TextEncoder().encode('hello');
     const commands: string[][] = [];
     const report = await runAttachmentIntegrityCli(options, {
       environment: { APP_ENV: 'development' },
-      configSource: `[vars]\nAPP_ENV = "development"\n\n[[r2_buckets]]\nbinding = "BUCKET"\nbucket_name = "local-bucket"`,
+      configSource: JSON.stringify({"name": "test-worker", "compatibilityDate": "2026-08-19", "compatibilityFlags": ["nodejs_compat"], "vars": {"APP_ENV": "development"}, "databaseId": "00000000-0000-0000-0000-000000000000", "databaseName": "flaremail-db", "bucket": "local-bucket", "cron": []}),
       commandRunner: async (_executable, args) => {
         commands.push(args);
         return {
@@ -66,7 +66,7 @@ describe('attachment-integrity CLI', () => {
     const options = parseAttachmentIntegrityArgs(['--apply']);
     const commands: string[][] = [];
     const report = await runAttachmentIntegrityCli(options, {
-      configSource: `[vars]\nAPP_ENV = "development"\n\n[[r2_buckets]]\nbinding = "BUCKET"\nbucket_name = "local-bucket"`,
+      configSource: JSON.stringify({"name": "test-worker", "compatibilityDate": "2026-08-19", "compatibilityFlags": ["nodejs_compat"], "vars": {"APP_ENV": "development"}, "databaseId": "00000000-0000-0000-0000-000000000000", "databaseName": "flaremail-db", "bucket": "local-bucket", "cron": []}),
       commandRunner: async (_executable, args) => {
         commands.push(args);
         if (commands.length === 1) return {
@@ -88,14 +88,14 @@ describe('attachment-integrity CLI', () => {
   });
 
   test('fails closed for production and non-preview remote targets', async () => {
-    const remote = parseAttachmentIntegrityArgs(['--remote', '--config', 'wrangler.preview.toml']);
+    const remote = parseAttachmentIntegrityArgs(['--remote', '--config', 'cloudflare.preview.json']);
     expect(() => assertAttachmentIntegrityTarget(remote, { APP_ENV: 'production' })).toThrow(/refused/u);
-    const productionConfig = parseAttachmentIntegrityArgs(['--remote', '--config', 'wrangler.deploy.toml']);
+    const productionConfig = parseAttachmentIntegrityArgs(['--remote', '--config', 'cloudflare.deploy.json']);
     expect(() => assertAttachmentIntegrityTarget(productionConfig, { APP_ENV: 'preview' })).toThrow(/refused/u);
     await expect(runAttachmentIntegrityCli(remote, {
-      configSource: `[vars]\nAPP_ENV = "development"\n\n[[r2_buckets]]\nbinding = "BUCKET"\npreview_bucket_name = "preview-bucket"`
+      configSource: JSON.stringify({"name": "test-worker", "compatibilityDate": "2026-08-19", "compatibilityFlags": ["nodejs_compat"], "vars": {"APP_ENV": "development"}, "databaseId": "00000000-0000-0000-0000-000000000000", "databaseName": "flaremail-db", "bucket": "preview-bucket", "cron": []})
     })).rejects.toMatchObject({ code: 'PREVIEW_REQUIRED' });
-    const result = await main(['--json', '--config', 'missing-wrangler.toml'], { APP_ENV: 'development' });
+    const result = await main(['--json', '--config', 'missing-cloudflare.local.json'], { APP_ENV: 'development' });
     expect(result).toBe(1);
   });
 });

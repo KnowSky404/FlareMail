@@ -453,7 +453,7 @@
     const value = state && typeof state === 'object' ? (state as Record<string, unknown>)['sveltekit:navigation'] : null;
     return typeof value === 'number' ? value : null;
   };
-  const currentWorkspaceUrl = $derived(browserWorkspaceUrl ? new URL(browserWorkspaceUrl) : page.url);
+  const currentWorkspaceUrl = $derived(browserWorkspaceUrl ? new URL(browserWorkspaceUrl) : new URL(page.url.href));
   const urlState = $derived(readWorkspaceUrl(currentWorkspaceUrl));
   function managementUrlLeavesCurrentView(nextUrl: URL) {
     if (!managementNavigationGuard || activeSection !== 'profile' || managementView === 'settings') return false;
@@ -1662,7 +1662,7 @@
       resetWorkspace();
       void goto(buildWorkspaceUrl(currentWorkspaceUrl, {
         section: 'inbox', query: '', filter: 'all', messageId: null
-      }), { replaceState: true, noScroll: true, keepFocus: false });
+      }), { replaceState: true, reset: false });
       return;
     }
 
@@ -2013,7 +2013,7 @@
       }
       await goto(buildWorkspaceUrl(currentWorkspaceUrl, {
         section: 'inbox', query: '', filter: 'all', messageId: null
-      }), { replaceState: true, noScroll: true, keepFocus: false });
+      }), { replaceState: true, reset: false });
       notify(t('notify.loggedOut'), 'success');
     } catch (error) {
       notifyError(error, t('notify.logoutFailed'));

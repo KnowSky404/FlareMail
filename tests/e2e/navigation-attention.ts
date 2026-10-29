@@ -19,7 +19,7 @@ export async function verifyNavigationAttention(page: Page, consoleErrors: strin
       await expect(navigation).toBeVisible();
     }
   }
-  const button = (label: string) => navigation.getByRole('button', { name: label, exact: true });
+  const button = (label: string) => navigation.getByRole('button', { name: new RegExp(`^${label}(?:\\s|$)`, 'u') });
   const badge = (label: string) => button(label).locator(badgeSelector);
   await showNavigation();
   const response = await page.request.get('/api/workspace/mailbox/metrics');

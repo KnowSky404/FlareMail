@@ -1,3 +1,4 @@
+import { executeD1 } from './cloudflare-target';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { extractD1Rows } from './bootstrap-owner';
@@ -20,7 +21,6 @@ import {
   type MailIdentityBackfillStore,
   type MailIdentityBackfillTarget
 } from './mail-identity-backfill-core';
-import { createLocalWranglerEnvironment } from './wrangler-environment';
 
 const planFileMaxBytes = 1_000_000;
 
@@ -35,28 +35,16 @@ function numberValue(value: unknown) {
 
 function localStore(persistTo: string): MailIdentityBackfillStore {
   const localStatePath = resolve(persistTo);
-  const environment = createLocalWranglerEnvironment();
 
-  async function execute(sql: string, mutating = false) {
-    const child = Bun.spawn([
-      'bun', 'x', 'wrangler', 'd1', 'execute', 'flaremail-db',
-      '--local', '--config', 'wrangler.toml', '--persist-to', localStatePath, '--json',
-      ...(mutating ? ['--yes'] : []), '--command', sql
-    ], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: environment
-    });
-    const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-    if (exitCode !== 0) throw new Error('Wrangler local D1 command failed; no remote target is supported.');
-    return extractD1Rows(stdout);
+  async function execute(sql: string, _mutating = false) {
+    return extractD1Rows(await executeD1({ persistTo: localStatePath }, sql));
   }
 
   return {
     executionTarget: {
       mode: 'local',
       database: 'flaremail-db',
-      config: 'wrangler.toml',
+      config: 'cloudflare.local.json',
       persistTo: localStatePath
     },
     async getSchemaVersion() {

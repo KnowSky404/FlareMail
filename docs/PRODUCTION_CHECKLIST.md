@@ -10,6 +10,8 @@ Record the command, UTC timestamp, target and result for each checked item.
 Never put secrets, passwords, cookies, message bodies, raw MIME, complete
 recipient addresses or full R2 keys into shared evidence.
 
+Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md). The official Svelte adapter still uses an internal compatibility library; no direct Wrangler CLI commands are part of release operations.
+
 ## Release identity
 
 - [ ] Development took place in a dedicated worktree and task branch. The
@@ -70,16 +72,16 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] The target is explicitly recorded as production and uses production
   application variables. Preview deliberately shares D1/R2 and the Owner under
   [PREVIEW.md](./PREVIEW.md), but its code release does not switch production traffic.
-- [ ] The private `wrangler.deploy.toml` was created from
-  `wrangler.deploy.toml.example` and `git check-ignore wrangler.deploy.toml`
+- [ ] The private `cloudflare.deploy.json` was created from
+  `cloudflare.deploy.json.example` and `git check-ignore cloudflare.deploy.json`
   confirms it is ignored.
-- [ ] `wrangler.toml` is not being used for a production deploy.
+- [ ] `cloudflare.local.json` is not being used for a production deploy.
 - [ ] `APP_ENV=production`; every browser-facing Worker hostname is HTTPS.
 - [ ] `OUTBOUND_PROVIDER=resend` and `RESEND_API_BASE_URL` is the official
   `https://api.resend.com` origin or is omitted to use the code default.
 - [ ] `DB`, `BUCKET` and `ASSETS` bindings point to the reviewed production
   resources. A preview R2 bucket is not required by the production config.
-- [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Wrangler
+- [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Worker
   secrets; record only presence, never values. Domain status checks require
   Full access under Resend's current key model; Sending access is send-only.
 - [ ] The chosen managed sender address belongs to its exact From domain, and
@@ -128,22 +130,22 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] The intended D1 target is confirmed with:
 
   ```bash
-  bun x wrangler d1 info flaremail-db --config wrangler.deploy.toml
+  cf d1 get <reviewed-database-id>
   ```
 
 - [ ] The current Time Travel state/bookmark is recorded before migration:
 
   ```bash
-  bun x wrangler d1 time-travel info flaremail-db --config wrangler.deploy.toml
+  cf d1 time-travel get-bookmark <reviewed-database-id>
   ```
 
-  These Time Travel commands are remote-only in the current Wrangler CLI; do
+  These Time Travel commands are remote-only in the global cf CLI; do
   not add a legacy `--remote` option to them.
 - [ ] The migration list was reviewed against the checked-out files:
 
   ```bash
   rg --files migrations | sort | tail -n 1
-  bun x wrangler d1 migrations list flaremail-db --remote --config wrangler.deploy.toml
+  cf d1 migrations list <reviewed-database-id> --dir migrations
   ```
 
 - [ ] Before applying `0023`–`0026` to an existing database, a reviewed local
@@ -228,7 +230,7 @@ recipient addresses or full R2 keys into shared evidence.
 - [ ] The Resend secrets and, when managed address mutations are enabled, the
   separate zone-scoped Cloudflare read and management tokens were uploaded with the
   final code using
-  `bun x wrangler deploy --secrets-file <secure-outside-repo-path>` so
+  `bun run deploy -- --secrets-file <secure-outside-repo-path>` so
   code/config/bindings/secrets form one reviewed release. If the fallback
   `secret put` process was used, Email Routing remained disabled while the
   intermediate versions were incomplete and a final `bun run deploy` followed.

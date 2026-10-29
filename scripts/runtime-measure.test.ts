@@ -43,7 +43,7 @@ describe('runtime measurement harness', () => {
     expect(report.cases[0]?.phases.download.status).toBe('preview_required');
     expect(report.cases[0]?.phases.send_preparation.status).toBe('preview_required');
     expect(report.previewCorrelationGuide).toContain('Workers Logs');
-    expect(report.previewCorrelationGuide).toContain('wrangler tail');
+    expect(report.previewCorrelationGuide).toContain('Workers Logs');
     expect(report.unmeasuredTelemetry).toEqual({
       cpuTime: 'preview_required',
       isolateMemory: 'preview_required',
@@ -94,7 +94,7 @@ describe('runtime measurement harness', () => {
     expect(output).toContain('flaremail-rc1-content-length-mismatch');
     expect(output).toContain('parser=ok');
     expect(output).toContain('d1=preview_required');
-    expect(output).toContain('wrangler tail');
+    expect(output).toContain('Workers Logs');
     expect(output).not.toContain('Content-Length:');
   });
 });

@@ -24,7 +24,7 @@ test.beforeEach(async ({ page }) => {
 test('renders inbox and focused reading without Firefox errors', async ({ page, consoleErrors }) => {
   await login(page);
   await expect(page).toHaveTitle(/FlareMail/u);
-  await expect(page.getByRole('heading', { name: '收件箱', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^收件箱(?:\s|$)/u })).toBeVisible();
   await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
   await assertNoHorizontalOverflow(page);
   await page.setViewportSize({ width: 1505, height: 1045 });

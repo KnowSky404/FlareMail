@@ -1,31 +1,19 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { executeD1 } from './cloudflare-target';
 import { extractD1Rows } from './bootstrap-owner';
-import { createLocalWranglerEnvironment } from './wrangler-environment';
 import { buildMailIdentityDryRunReport, parseMailIdentityAuditArguments, type MailIdentityAuditRow } from './mail-identity-audit-core';
 
 const options = parseMailIdentityAuditArguments(process.argv.slice(2));
-const config = 'wrangler.toml';
-const environment = createLocalWranglerEnvironment();
+const config = 'cloudflare.local.json';
 
-async function wranglerD1(extraArguments: string[]) {
-  const child = Bun.spawn([
-    'bun', 'x', 'wrangler', 'd1', 'execute', 'flaremail-db',
-    '--local', '--config', config, '--json',
-    ...(options.persistTo ? ['--persist-to', options.persistTo] : []), ...extraArguments
-  ], {
-    stdout: 'pipe',
-    stderr: 'inherit',
-    env: environment
-  });
-  const stdout = await new Response(child.stdout).text();
-  const exitCode = await child.exited;
-  if (exitCode !== 0) throw new Error('Wrangler local D1 read-only audit failed (' + exitCode + ').');
-  return stdout;
+async function executeDatabase(extraArguments: string[]) {
+  const commandIndex = extraArguments.indexOf('--command');
+  const fileIndex = extraArguments.indexOf('--file');
+  const sql = commandIndex >= 0 ? extraArguments[commandIndex + 1]!
+    : await Bun.file(extraArguments[fileIndex + 1]!).text();
+  return executeD1({ config, persistTo: options.persistTo }, sql);
 }
 
-const catalogRows = extractD1Rows(await wranglerD1([
+const catalogRows = extractD1Rows(await executeDatabase([
   '--command',
   "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
 ]));
@@ -33,7 +21,7 @@ const tables = new Set(catalogRows.map((row) => String(row.name ?? '')));
 
 async function columnsFor(table: string) {
   if (!tables.has(table)) return new Set<string>();
-  const rows = extractD1Rows(await wranglerD1(['--command', `PRAGMA table_info("${table}")`]));
+  const rows = extractD1Rows(await executeDatabase(['--command', `PRAGMA table_info("${table}")`]));
   return new Set(rows.map((row) => String(row.name ?? '')));
 }
 
@@ -145,18 +133,9 @@ if (tables.has('workspace_telegram_deliveries')) {
   add("SELECT 'telegram_delivery_ownership' AS report_section, owner_user_id AS owner_id, status, COUNT(*) AS count FROM workspace_telegram_deliveries GROUP BY owner_user_id, status");
 }
 
-let resultRows: MailIdentityAuditRow[] = [];
-if (queries.length) {
-  const directory = await mkdtemp(join(tmpdir(), 'flaremail-identity-audit-'));
-  const sqlFile = join(directory, 'audit.sql');
-  try {
-    await writeFile(sqlFile, queries.join('\n'), { mode: 0o600 });
-    const output = await wranglerD1(['--file', sqlFile]);
-    resultRows = extractD1Rows(output) as MailIdentityAuditRow[];
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}
+const resultRows = queries.length
+  ? extractD1Rows(await executeD1({ config, persistTo: options.persistTo }, queries)) as MailIdentityAuditRow[]
+  : [];
 
 const report = buildMailIdentityDryRunReport(resultRows, options.domains);
 if (!options.json) console.log('Local read-only migration audit. No D1 mutation statements or object storage changes were performed.');

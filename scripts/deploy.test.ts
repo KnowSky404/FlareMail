@@ -1,98 +1,29 @@
 import { describe, expect, test } from 'bun:test';
-import { tmpdir } from 'node:os';
-import { join, win32 } from 'node:path';
-import {
-  createCiDryRunConfig,
-  createDeployInvocation,
-  parseDeployMode,
-  requireDeployConfig
-} from './deploy-command';
-import {
-  createLocalWranglerEnvironment,
-  inheritWranglerEnvironment
-} from './wrangler-environment';
+import { createDeployInvocation, parseDeployMode, requireDeployConfig } from './deploy-command';
+import { createD1Command, localDatabaseId, normalizeD1Output, readCloudflareTarget } from './cloudflare-target';
 
-describe('cross-platform Wrangler commands', () => {
-  test('constructs strict deploy and dry-run modes without changing authentication state', () => {
-    const authEnvironment = {
-      CLOUDFLARE_API_TOKEN: 'redacted-test-token',
-      XDG_CONFIG_HOME: '/operator/config'
-    };
-    const deploy = createDeployInvocation('deploy', { environment: authEnvironment });
-    expect(deploy.args).toEqual([
-      'x', 'wrangler', 'deploy', '--strict', '--config', 'wrangler.deploy.toml'
-    ]);
-    expect(deploy.outdir).toBeNull();
-    expect(deploy.env).toEqual(authEnvironment);
-
-    const dryRun = createDeployInvocation('dry-run', {
-      environment: authEnvironment,
-      temporaryDirectory: '/portable-temp'
-    });
-    expect(dryRun.args).toContain('--dry-run');
-    expect(dryRun.args).toContain('--outdir');
-    expect(dryRun.outdir).toBe('/portable-temp/flaremail-dry-run');
-    expect(dryRun.env).toEqual({
-      ...authEnvironment,
-      WRANGLER_LOG_PATH: '/portable-temp/flaremail-deploy-dry-run.log'
-    });
-
-    const defaultDryRun = createDeployInvocation('dry-run', { environment: {} });
-    expect(defaultDryRun.outdir).toBe(join(tmpdir(), 'flaremail-dry-run'));
+describe('global cf commands', () => {
+  test('separates production uploads from an offline prebuilt dry run', () => {
+    const environment = { CLOUDFLARE_API_TOKEN: 'test-placeholder', PATH: '/global/bin' };
+    expect(createDeployInvocation('deploy', environment)).toEqual({ command: 'cf', args: ['deploy', '--mode', 'production'], env: environment });
+    expect(createDeployInvocation('dry-run', environment).args).toEqual(['deploy', '--prebuilt', '--dry-run']);
   });
-
-  test('uses the supplied platform path implementation for Windows temporary output', () => {
-    const invocation = createDeployInvocation('dry-run', {
-      environment: {},
-      temporaryDirectory: 'C:\\Users\\operator\\AppData\\Local\\Temp',
-      joinPath: win32.join
-    });
-    expect(invocation.outdir).toBe(
-      'C:\\Users\\operator\\AppData\\Local\\Temp\\flaremail-dry-run'
-    );
-    expect(invocation.env.XDG_CONFIG_HOME).toBe(
-      'C:\\Users\\operator\\AppData\\Local\\Temp\\flaremail-wrangler-config'
-    );
-    expect(invocation.env.WRANGLER_LOG_PATH).toBe(
-      'C:\\Users\\operator\\AppData\\Local\\Temp\\flaremail-deploy-dry-run.log'
-    );
-  });
-
-  test('inherits remote credentials exactly and isolates only explicit local commands', () => {
-    expect(inheritWranglerEnvironment({ CLOUDFLARE_API_TOKEN: 'redacted' })).toEqual({
-      CLOUDFLARE_API_TOKEN: 'redacted'
-    });
-    expect(createLocalWranglerEnvironment({}, {
-      temporaryDirectory: '/portable-temp'
-    })).toEqual({
-      XDG_CONFIG_HOME: '/portable-temp/flaremail-wrangler-config',
-      WRANGLER_LOG_PATH: '/portable-temp/flaremail-wrangler.log'
-    });
-  });
-
-  test('fails closed for unknown modes and a missing private deployment config', () => {
+  test('fails closed for unsupported modes and missing private targets', () => {
     expect(() => parseDeployMode('preview')).toThrow('Unsupported deploy mode');
-    expect(() => requireDeployConfig('wrangler.deploy.toml', () => false)).toThrow(
-      'Missing wrangler.deploy.toml.'
-    );
-    expect(requireDeployConfig('wrangler.deploy.toml', () => true)).toBe(
-      'wrangler.deploy.toml'
-    );
+    expect(() => requireDeployConfig('cloudflare.deploy.json', () => false)).toThrow('Missing cloudflare.deploy.json');
+    expect(() => readCloudflareTarget('cloudflare.local.json', true)).toThrow('Remote commands require');
   });
-
-  test('generates a secret-free dry-run config with absolute project paths', () => {
-    const source = `name = "flaremail"\nmain = "worker/index.ts"\n[assets]\ndirectory = "build"\n[[d1_databases]]\nmigrations_dir = "migrations"\n`;
-    const generated = createCiDryRunConfig(source, '/workspace/flaremail', (...parts) => parts.join('/'));
-    expect(generated).toContain('main = "/workspace/flaremail/worker/index.ts"');
-    expect(generated).toContain('directory = "/workspace/flaremail/build"');
-    expect(generated).toContain('migrations_dir = "/workspace/flaremail/migrations"');
-    expect(generated).not.toContain('RESEND_API_KEY');
-    expect(generated).not.toContain('CLOUDFLARE_API_TOKEN');
+  test('uses cf raw SQL with an explicit local ID and isolated state', () => {
+    expect(createD1Command({ persistTo: '/tmp/cf-fixture-state' }, 'SELECT 1')).toEqual([
+      'cf', 'd1', 'raw', localDatabaseId, '--sql', 'SELECT 1', '--local', '--persist-to', '/tmp/cf-fixture-state'
+    ]);
+    expect(() => createD1Command({ database: 'another-database' }, 'SELECT 1')).toThrow('must match');
+    const batch = createD1Command({}, ['SELECT 1', 'SELECT 2']);
+    expect(batch).toContain('--batch');
+    expect(JSON.parse(batch[batch.indexOf('--batch') + 1]!)).toEqual([{ sql: 'SELECT 1' }, { sql: 'SELECT 2' }]);
   });
-
-  test('rejects a public config that is missing required dry-run paths', () => {
-    expect(() => createCiDryRunConfig('name = "flaremail"\n', '/workspace')).toThrow(
-      'Unable to locate main'
-    );
+  test('preserves named columns, nulls, batch results and metadata from cf raw', () => {
+    expect(normalizeD1Output([{ success: true, results: { columns: ['value'], rows: [[42]] }, meta: { changes: 1 } }])).toEqual([{ success: true, results: [{ value: 42 }], meta: { changes: 1 } }]);
+    expect(normalizeD1Output({ result: [{ columns: ['name', 'count'], rows: [['fixture', 2], [null, 0]], meta: { changes: 1 } }] })).toEqual({ result: [{ columns: ['name', 'count'], rows: [['fixture', 2], [null, 0]], results: [{ name: 'fixture', count: 2 }, { name: null, count: 0 }], meta: { changes: 1 } }] });
   });
 });

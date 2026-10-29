@@ -1,3 +1,4 @@
+import { parseCloudflareTarget, localDatabaseId } from './cloudflare-target';
 import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -88,12 +89,10 @@ async function readText(root: string, relativePath: string) {
   return await readFile(join(root, relativePath), 'utf8');
 }
 
-function tomlValue(source: string, key: string) {
-  return source.match(new RegExp(`^${key}\\s*=\\s*"([^"]*)"\\s*$`, 'mu'))?.[1] ?? null;
-}
-
-function hasBinding(source: string, binding: string) {
-  return new RegExp(`^binding\\s*=\\s*"${binding}"\\s*$`, 'mu').test(source);
+function targetValue(source: string, key: string) {
+  const target = parseCloudflareTarget(source);
+  if (key === 'compatibility_date') return target.compatibilityDate;
+  return target.vars[key] ?? null;
 }
 
 function hasAny(source: string, patterns: RegExp[]) {
@@ -119,7 +118,7 @@ function safeCommandEnvironment() {
     const value = source[key];
     if (value !== undefined) environment[key] = value;
   }
-  // Never inherit HOME/XDG config or any provider credentials. Wrangler is
+  // Never inherit HOME/XDG config or any provider credentials. cf is
   // only used by the typegen check and receives no authentication state.
   environment.CI ??= 'true';
   environment.NODE_ENV ??= 'test';
@@ -209,28 +208,29 @@ async function checkGit(root: string, gitInspector: GitInspector): Promise<Prefl
 }
 
 async function checkConfig(root: string): Promise<PreflightCheck> {
-  const publicConfig = await readText(root, 'wrangler.toml');
-  const deployExample = await readText(root, 'wrangler.deploy.toml.example');
-  const publicEnv = tomlValue(publicConfig, 'APP_ENV');
-  const publicProvider = tomlValue(publicConfig, 'OUTBOUND_PROVIDER');
-  const deployEnv = tomlValue(deployExample, 'APP_ENV');
-  const deployProvider = tomlValue(deployExample, 'OUTBOUND_PROVIDER');
-  const compatibilityDate = tomlValue(publicConfig, 'compatibility_date');
-  const deployCompatibilityDate = tomlValue(deployExample, 'compatibility_date');
-  const legacyAppOrigin = tomlValue(deployExample, 'APP_ORIGIN');
-  const resendBaseUrl = tomlValue(deployExample, 'RESEND_API_BASE_URL');
-  const publicTelegramEnabled = tomlValue(publicConfig, 'TELEGRAM_ENABLED');
-  const deployTelegramEnabled = tomlValue(deployExample, 'TELEGRAM_ENABLED');
-  const publicTelegramUsername = tomlValue(publicConfig, 'TELEGRAM_BOT_USERNAME');
-  const deployTelegramUsername = tomlValue(deployExample, 'TELEGRAM_BOT_USERNAME');
-  const publicCron = /\[triggers\][\s\S]*?crons\s*=\s*\[\s*"\* \* \* \* \*"\s*\]/u.test(publicConfig);
-  const deployCron = /\[triggers\][\s\S]*?crons\s*=\s*\[\s*"\* \* \* \* \*"\s*\]/u.test(deployExample);
-  const d1StructuralPlaceholder = /database_id\s*=\s*"0{8}-0{4}-0{4}-0{4}-0{12}"/u.test(publicConfig);
-  const r2StructuralPlaceholder = /bucket_name\s*=\s*"flaremail-bucket"/u.test(publicConfig);
-  const unsafeSecret = hasAny(`${publicConfig}\n${deployExample}`, [
-    /(?:api[_-]?key|webhook[_-]?secret|cloudflare[_-]?api[_-]?token)\s*=\s*"(?!")/iu,
-    /(?:sk|whsec)_[A-Za-z0-9._-]{8,}/u
-  ]);
+  const publicConfig = await readText(root, 'cloudflare.local.json');
+  const deployExample = await readText(root, 'cloudflare.deploy.json.example');
+  const publicEnv = targetValue(publicConfig, 'APP_ENV');
+  const publicProvider = targetValue(publicConfig, 'OUTBOUND_PROVIDER');
+  const deployEnv = targetValue(deployExample, 'APP_ENV');
+  const deployProvider = targetValue(deployExample, 'OUTBOUND_PROVIDER');
+  const compatibilityDate = targetValue(publicConfig, 'compatibility_date');
+  const deployCompatibilityDate = targetValue(deployExample, 'compatibility_date');
+  const legacyAppOrigin = targetValue(deployExample, 'APP_ORIGIN');
+  const resendBaseUrl = targetValue(deployExample, 'RESEND_API_BASE_URL');
+  const publicTelegramEnabled = targetValue(publicConfig, 'TELEGRAM_ENABLED');
+  const deployTelegramEnabled = targetValue(deployExample, 'TELEGRAM_ENABLED');
+  const publicTelegramUsername = targetValue(publicConfig, 'TELEGRAM_BOT_USERNAME');
+  const deployTelegramUsername = targetValue(deployExample, 'TELEGRAM_BOT_USERNAME');
+  const publicCron = parseCloudflareTarget(publicConfig).cron.includes('* * * * *');
+  const deployCron = parseCloudflareTarget(deployExample).cron.includes('* * * * *');
+  const d1StructuralPlaceholder = parseCloudflareTarget(publicConfig).databaseId === localDatabaseId;
+  const r2StructuralPlaceholder = parseCloudflareTarget(publicConfig).bucket === 'flaremail-bucket';
+  const unsafeSecret = [publicConfig, deployExample].some((source) =>
+    Object.entries(parseCloudflareTarget(source).vars).some(([name, value]) =>
+      /(?:KEY|TOKEN|SECRET)$/iu.test(name) && value.trim() !== ''
+    ) || /(?:sk|whsec)_[A-Za-z0-9._-]{8,}/u.test(source)
+  );
   const valid = publicEnv === 'development' && /^(demo|fake)$/u.test(publicProvider ?? '') &&
     deployEnv === 'production' && deployProvider === 'resend' &&
     /^\d{4}-\d{2}-\d{2}$/u.test(compatibilityDate ?? '') && compatibilityDate === deployCompatibilityDate &&
@@ -260,13 +260,14 @@ async function checkConfig(root: string): Promise<PreflightCheck> {
 }
 
 async function checkBindings(root: string): Promise<PreflightCheck> {
-  const source = await readText(root, 'wrangler.toml');
+  const source = await readText(root, 'cloudflare.local.json');
   const required = ['ASSETS', 'DB', 'BUCKET'];
-  const missing = required.filter((binding) => !hasBinding(source, binding));
-  const hasPlaceholderD1 = /database_id\s*=\s*"0{8}-0{4}-0{4}-0{4}-0{12}"/u.test(source);
-  const hasPlaceholderR2 = /bucket_name\s*=\s*"flaremail-bucket"/u.test(source);
+  const target = parseCloudflareTarget(source);
+  const missing = required.filter((binding) => binding === 'DB' ? !target.databaseId : binding === 'BUCKET' ? !target.bucket : false);
+  const hasPlaceholderD1 = target.databaseId === localDatabaseId;
+  const hasPlaceholderR2 = target.bucket === 'flaremail-bucket';
   if (missing.length > 0 || !hasPlaceholderD1 || !hasPlaceholderR2) {
-    return fail('bindings', 'Local Wrangler bindings are incomplete or not placeholder-only.', { missing, d1Placeholder: hasPlaceholderD1, r2Placeholder: hasPlaceholderR2 });
+    return fail('bindings', 'Local cf bindings are incomplete or not placeholder-only.', { missing, d1Placeholder: hasPlaceholderD1, r2Placeholder: hasPlaceholderR2 });
   }
   return pass('bindings', 'Local D1/R2/assets bindings are present with a non-production placeholder D1 ID.', {
     bindings: required,
@@ -424,7 +425,7 @@ function parsedJson(output: string | undefined): unknown {
   if (!output) return null;
   const lines = output.trim().split('\n').map((line) => line.trim()).filter(Boolean);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try { return JSON.parse(lines[index]!); } catch { /* Ignore Wrangler progress lines. */ }
+    try { return JSON.parse(lines[index]!); } catch { /* Ignore cf progress lines. */ }
   }
   return null;
 }

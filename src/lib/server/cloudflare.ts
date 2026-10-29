@@ -1,10 +1,10 @@
 /**
- * Wrangler's generated binding/runtime contract is authoritative. These
+ * cf's generated binding/runtime contract is authoritative. These
  * optional fields are deployment-only vars/secrets intentionally absent from
- * the public local wrangler.toml template and are kept as a narrow extension.
+ * the public local cloudflare.local.json target and are kept as a narrow extension.
  */
 declare global {
-  interface CloudflareEnv {
+  interface CloudflareEnv extends Pick<Cloudflare.Env, 'DB' | 'BUCKET' | 'ASSETS'> {
     APP_VERSION?: string;
     AUTH_MODE?: string;
     ACCESS_ISSUER?: string;
@@ -33,7 +33,7 @@ declare global {
   }
 }
 
-type GeneratedCloudflareEnv = globalThis.CloudflareEnv;
+type GeneratedCloudflareEnv = Cloudflare.Env & globalThis.CloudflareEnv;
 type FlexibleGeneratedCloudflareEnv = {
   [Key in keyof GeneratedCloudflareEnv]?: GeneratedCloudflareEnv[Key] extends string
     ? string

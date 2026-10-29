@@ -1,11 +1,6 @@
 {
-  "extends": "./.svelte-kit/tsconfig.json",
+  "extends": "$app/tsconfig",
   "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "$lib/*": ["src/lib/*"],
-      "$lib": ["src/lib/index.ts"]
-    },
     "allowJs": true,
     "checkJs": false,
     "esModuleInterop": true,
@@ -15,6 +10,32 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "strict": true,
-    "types": ["bun"]
-  }
+    "types": [
+      "$app/types",
+      "bun"
+    ],
+    "paths": {
+      "$lib": [
+        "./src/lib"
+      ],
+      "$lib/*": [
+        "./src/lib/*"
+      ]
+    }
+  },
+  "include": [
+    "src",
+    "scripts",
+    "worker",
+    "*.ts",
+    "*.js",
+    "*.mjs"
+  ],
+  "exclude": [
+    "node_modules",
+    "build",
+    "worker/dist",
+    "worker/.cloudflare",
+    ".cloudflare"
+  ]
 }

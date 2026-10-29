@@ -24,7 +24,7 @@ bun run audit:dependencies
 bun run db:migrate:local
 ```
 
-The checked-in `wrangler.toml` uses local D1/R2, `AUTH_MODE=local`, and the demo outbound provider with `ALLOW_FAKE_SERVICES=true`. Optional local overrides belong in the ignored `.dev.vars`; see `.dev.vars.example`. Keep real credentials out of Git.
+The checked-in `cloudflare.local.json` uses local D1/R2, `AUTH_MODE=local`, and the demo outbound provider with `ALLOW_FAKE_SERVICES=true`. Local bindings and variables live in `cloudflare.local.json`; use an ignored private target with `FLAREMAIL_CF_CONFIG` for local secret overrides. Native cf does not infer bindings from the former `.dev.vars` file. Keep real credentials out of Git.
 
 The workflow is a dedicated worktree and branch, local implementation and
 verification, a committed change, and authorized remote PRE (Preview) acceptance
@@ -295,7 +295,7 @@ Browser tests create isolated D1/R2 state in the operating system's temporary di
 
 `bun run deploy:dry-run` builds a temporary configuration from the public development config without reading the private production config or publishing a Worker. Local checks do not establish production deployment, remote migration, or real mail/Telegram delivery.
 
-Release preflight disables Wrangler's `.env` loading for its child commands so private deployment secret names do not alter the checked-in binding types. It retains the type generation check against the public Worker configuration.
+Release preflight disables cf's `.env` loading for its child commands so private deployment secret names do not alter the checked-in binding types. It retains the type generation check against the public Worker configuration.
 
 Publish the verified commit to remote Preview only when deployment is requested
 or already authorized, following [PREVIEW.md](./PREVIEW.md). Record the SHA, URL,
@@ -344,9 +344,9 @@ the local dependency audit required before a production deployment.
 | `migrations/` | Ordered D1 migrations; apply these to initialize or upgrade a database |
 | `schema.sql` | Latest schema snapshot |
 
-`build/`, `.svelte-kit/`, and `.wrangler/` are generated output. The repository supports tests from a clean checkout without requiring an earlier build.
+`build/`, `.svelte-kit/`, and `.cloudflare/` are generated output. The repository supports tests from a clean checkout without requiring an earlier build.
 
-Wrangler-generated `worker-configuration.d.ts` is the binding type authority. When changing the runtime version, keep `wrangler.toml`, `wrangler.build.toml`, and `wrangler.deploy.toml.example` aligned and regenerate types with `bun run cf:typegen`.
+cf generates `worker-configuration.d.ts` through `bun run cf:typegen`. Keep the compatibility date/flags in all JSON targets aligned. The script normalizes generated import paths for the checked-in location; do not edit the generated types manually. The official Svelte adapter still uses a generated, ignored compatibility config internally; project commands and native Worker Build Output use global cf.
 
 For API contracts, design rules, and operational procedures, use the [documentation index](./README.md).
 
@@ -368,3 +368,13 @@ must not write read state. Reopening a reader should issue a flags PATCH only
 for unread received mail. See the [spec](./specs/mailbox-navigation-and-read-state.md)
 for concurrency, cache invalidation and acceptance cases. Production latency,
 real mail and remote schema readiness require separate authorized verification.
+
+## Global cf and Worker packaging
+
+Install Node.js >= 22.18 and `bun add --global cf`. Verify `command -v cf` and `cf --version`; no local cf executable should shadow the global installation. `cf` is executed by Node, even when Bun launches a project script.
+
+`bun run build:app` builds SvelteKit 3. `bun run build` also invokes global `cf build` in the `worker` workspace, using the Cloudflare Vite plugin. `worker/index.ts` retains fetch/email/scheduled. Only filtered client assets are copied to `.cloudflare/assets`; `_worker.js` and source maps are excluded. The native Build Output is in `worker/.cloudflare/output`.
+
+Use `bun run preview` for the complete local Worker. Set `FLAREMAIL_DEV_HOST` (default `::`) and `FLAREMAIL_DEV_PORT` (default `8787`); cf does not forward arbitrary Vite host/port arguments. Local D1/R2 and the runtime share `.cloudflare/state`; override `FLAREMAIL_STATE_DIR` per worktree/test. The previous `.wrangler` state is not implicitly reused or migrated. For user access, verify IPv4/IPv6 using `ss -lntp` and provide `http://oc-de-fra-1.knowsky.uk:<port>`.
+
+`bun run dev` remains the Svelte HMR server; its adapter proxy mirrors the public local target and shares the same isolated state directory. Use `bun run preview` for acceptance of the complete fetch/email/scheduled wrapper. SvelteKit 3 keeps the existing `$lib` imports through its documented compatibility alias. TypeScript 6 is intentional: TypeScript 7 no longer provides the compiler API used by SvelteKit.

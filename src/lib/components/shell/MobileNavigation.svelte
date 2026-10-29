@@ -125,16 +125,16 @@
 
 <Drawer id="mobile-navigation-drawer" {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
     <nav class="mobile-nav-list" aria-label={t('shell.mobileNavigation')}>
-      <button class:active={activeSection === 'inbox'} type="button" aria-label={t('shell.inbox')} aria-describedby={countId('inbox')} onclick={() => select('inbox')}>
+      <button class:active={activeSection === 'inbox'} type="button" aria-label={counts.inbox ? `${t('shell.inbox')} ${formatNavigationCount(i18n.locale, counts.inbox!)}` : t('shell.inbox')} aria-describedby={countId('inbox')} onclick={() => select('inbox')}>
         <Inbox size={19} aria-hidden="true" /><span>{t('shell.inbox')}</span>{@render badge('inbox')}
       </button>
       <button class:active={activeSection === 'starred'} type="button" onclick={() => select('starred')}>
         <Star size={19} aria-hidden="true" /><span>{t('shell.starred')}</span>
       </button>
-      <button class:active={activeSection === 'drafts'} type="button" aria-label={t('shell.drafts')} aria-describedby={countId('drafts')} onclick={() => select('drafts')}>
+      <button class:active={activeSection === 'drafts'} type="button" aria-label={counts.drafts ? `${t('shell.drafts')} ${formatNavigationCount(i18n.locale, counts.drafts!)}` : t('shell.drafts')} aria-describedby={countId('drafts')} onclick={() => select('drafts')}>
         <FileText size={19} aria-hidden="true" /><span>{t('shell.drafts')}</span>{@render badge('drafts')}
       </button>
-      <button class:active={activeSection === 'sent'} type="button" aria-label={t('shell.sent')} aria-describedby={countId('sent')} onclick={() => select('sent')}>
+      <button class:active={activeSection === 'sent'} type="button" aria-label={counts.sent ? `${t('shell.sent')} ${formatNavigationCount(i18n.locale, counts.sent!)}` : t('shell.sent')} aria-describedby={countId('sent')} onclick={() => select('sent')}>
         <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>{@render badge('sent')}
       </button>
       <button class:active={activeSection === 'archive'} type="button" onclick={() => select('archive')}>

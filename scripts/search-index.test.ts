@@ -12,10 +12,10 @@ import {
 
 describe('search index operations', () => {
   test('defaults to read-only local verification and gates mutations', () => {
-    expect(parseSearchIndexArgs([])).toMatchObject({ mode: 'verify', remote: false, apply: false, config: 'wrangler.toml' });
+    expect(parseSearchIndexArgs([])).toMatchObject({ mode: 'verify', remote: false, apply: false, config: 'cloudflare.local.json' });
     expect(() => parseSearchIndexArgs(['--mode', 'rebuild'])).toThrow('requires explicit --apply');
     expect(parseSearchIndexArgs(['--mode', 'rebuild', '--remote', '--apply'])).toMatchObject({
-      mode: 'rebuild', remote: true, apply: true, config: 'wrangler.deploy.toml'
+      mode: 'rebuild', remote: true, apply: true, config: 'cloudflare.deploy.json'
     });
     expect(parseSearchIndexArgs(['--mode', 'verify', '--persist-to', '/tmp/local-copy']))
       .toMatchObject({ mode: 'verify', remote: false, persistTo: '/tmp/local-copy' });

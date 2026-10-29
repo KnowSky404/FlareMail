@@ -28,7 +28,7 @@ test('shows icon guidance on pointer and keyboard focus', async ({ page, console
   test.skip(testInfo.project.name !== 'desktop', 'Desktop toolbar exposes the icon-first refresh control.');
   await login(page);
   const refresh = page.getByRole('button', { name: '刷新邮件列表' });
-  await expect(refresh).toHaveAttribute('aria-label', '刷新邮件列表');
+  await expect(refresh).toHaveAccessibleName('刷新邮件列表');
   const tooltipIds = await page.locator('[role="tooltip"]').evaluateAll((elements) => elements.map((element) => element.id));
   expect(new Set(tooltipIds).size).toBe(tooltipIds.length);
   await refresh.hover();
@@ -281,7 +281,7 @@ test('creates, applies, navigates, renames and deletes a persistent label', asyn
   if (await backToList.isVisible()) await backToList.click();
   // A serial retry can retain other labels, so the new label may be in +N.
   await expect(inboxItem.getByTitle(/(?:^|, )E2E Follow Up(?:,|$)/u)).toBeVisible();
-  await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /标签: (?:[^,]+, )*E2E Follow Up(?:,|$)/u);
+  await expect(inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAccessibleName(/标签: (?:[^,]+, )*E2E Follow Up(?:,|$)/u);
   await page.screenshot({ path: join(tmpdir(), `flaremail-label-chip-${testInfo.project.name}.png`), fullPage: false });
   const search = page.getByLabel('搜索邮件');
   await search.fill('label:"E2E Follow Up"');
@@ -465,14 +465,14 @@ test('mutates selected inbox and sent mail in a label view without touching sele
   await expect(toolbar.getByRole('button', { name: '移入垃圾箱' })).toBeVisible();
   await toolbar.getByRole('button', { name: '更多邮件操作' }).click();
   await page.getByRole('menuitem', { name: '标为未读' }).click();
-  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAttribute('aria-label', /未读/u);
-  await expect(sent.getByRole('button', { name: /E2E Seeded Sent/u })).toHaveAttribute('aria-label', /未读/u);
+  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveAccessibleName(/未读/u);
+  await expect(sent.getByRole('button', { name: /E2E Seeded Sent/u })).toHaveAccessibleName(/未读/u);
   await inbox.getByRole('checkbox').check();
   await sent.getByRole('checkbox').check();
   await toolbar.getByRole('button', { name: '标为已读' }).click();
   await expect(page.locator('.toast-region .toast')).toHaveCount(1);
-  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).not.toHaveAttribute('aria-label', /未读/u);
-  await expect(sent.getByRole('button', { name: /E2E Seeded Sent/u })).not.toHaveAttribute('aria-label', /未读/u);
+  await expect(inbox.getByRole('button', { name: /E2E Inbox Welcome/u })).not.toHaveAccessibleName(/未读/u);
+  await expect(sent.getByRole('button', { name: /E2E Seeded Sent/u })).not.toHaveAccessibleName(/未读/u);
   await inbox.getByRole('checkbox').check();
   await sent.getByRole('checkbox').check();
   await page.screenshot({ path: join(tmpdir(), `flaremail-mixed-bulk-selected-${testInfo.project.name}.png`), fullPage: false });
@@ -894,7 +894,7 @@ test('keeps settings tabs reachable and the save action visible', async ({ page,
     await page.screenshot({ path: `/tmp/flaremail-settings-diagnostics-dark-${testInfo.project.name}.png`, fullPage: false });
   }
   if (testInfo.project.name === 'desktop') {
-    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '收件箱', exact: true }).click();
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: /^收件箱(?:\s|$)/u }).click();
   } else {
     await page.getByRole('button', { name: '打开导航' }).click();
     await page.getByRole('navigation', { name: '移动端导航' }).getByRole('button', { name: /^收件箱(?: \d+)?$/u }).click();
@@ -1002,22 +1002,24 @@ test('preserves an unsaved profile edit across another tab identity refresh', as
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('hydrates global metrics and pagination on fresh login, then purges state on logout', async ({ page, consoleErrors }, testInfo) => {
+test('hydrates global metrics and paged navigation on fresh login, then purges state on logout', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
   await login(page);
   const navigation = page.getByRole('navigation', { name: '主导航' });
   const { data } = await (await page.request.get('/api/workspace/mailbox/metrics')).json();
-  await expect(navigation.getByRole('button', { name: '收件箱', exact: true }).locator('.count')).toHaveText(String(data.metrics.unreadCount));
-  await expect(navigation.getByRole('button', { name: '已发送', exact: true }).locator('.count')).toHaveCount(0);
-  await expect(navigation.getByRole('button', { name: '草稿箱', exact: true }).getByText('5', { exact: true })).toBeVisible();
+  await expect(navigation.getByRole('button', { name: /^收件箱(?:\s|$)/u }).locator('.count')).toHaveText(String(data.metrics.unreadCount));
+  await expect(navigation.getByRole('button', { name: /^已发送(?:\s|$)/u }).locator('.count')).toHaveCount(0);
+  await expect(navigation.getByRole('button', { name: /^草稿箱(?:\s|$)/u }).getByText('5', { exact: true })).toBeVisible();
 
   const selected = page.getByLabel('选择E2E Inbox Welcome');
   await selected.check();
   await expect(page.getByLabel('批量邮件操作')).toContainText('已选 1 封');
-  await expect(page.getByRole('button', { name: '加载更多' })).toBeVisible();
-  await page.getByRole('button', { name: '加载更多' }).click();
+  await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
   await expect(page.getByText('E2E Bulk 45', { exact: true })).toBeVisible();
-  await expect(selected).toBeChecked();
+  await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
+  await page.getByRole('button', { name: '上一页', exact: true }).click();
+  await expect(selected).toBeVisible();
 
   await openFolder(page, '归档');
   await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
@@ -1043,7 +1045,7 @@ test('hydrates global metrics and pagination on fresh login, then purges state o
   await expect(page.getByLabel('搜索邮件')).toHaveValue('');
   await expect(page.getByRole('button', { name: '全部', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByLabel('批量邮件操作')).not.toContainText('已选');
-  await expect(page.getByRole('button', { name: '加载更多' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeEnabled();
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -1104,7 +1106,7 @@ test('keeps readable optional split columns, persists the layout, and opens one 
   const sidebar = page.locator('#fm-main-sidebar');
   const collapse = sidebar.getByRole('button', { name: '折叠侧边栏' });
   await collapse.click();
-  await expect(sidebar).toHaveAttribute('aria-label', '邮箱导航');
+  await expect(sidebar).toHaveAccessibleName('邮箱导航');
   await expect(collapse).toHaveCount(0);
   await expect(sidebar.getByRole('button', { name: '展开侧边栏' })).toBeVisible();
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -1336,7 +1338,7 @@ test('logs in, reads the seeded message, and persists a star', async ({ page, co
   await itemButton.click();
   await expect(page.getByRole('article', { name: '邮件正文详情' })).toContainText('This message is seeded');
   if (testInfo.project.name === 'desktop') {
-    await expect(itemButton).not.toHaveAttribute('aria-label', /未读/);
+    await expect(itemButton).not.toHaveAccessibleName(/未读/);
   }
 
   const detail = page.getByRole('region', { name: '邮件详情' });
@@ -1391,13 +1393,13 @@ test('announces list selection, star, attachment and delivery states', async ({ 
   const inboxItem = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   const inboxButton = inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u }).first();
   await expect(inboxItem.getByText('E2E Sender', { exact: true })).toBeVisible();
-  await expect(inboxButton).toHaveAttribute('aria-label', /E2E Sender <sender@flaremail\.test>.*E2E Inbox Welcome/u);
-  await expect(inboxButton).toHaveAttribute('aria-label', /未读.*E2E Inbox Welcome/u);
+  await expect(inboxButton).toHaveAccessibleName(/E2E Sender.*E2E Inbox Welcome.*sender@flaremail\.test/u);
+  await expect(inboxButton).toHaveAccessibleName(/未读.*E2E Inbox Welcome/u);
   await inboxItem.getByRole('button', { name: '加星', exact: true }).click();
-  await expect(inboxButton).toHaveAttribute('aria-label', /已加星标.*E2E Inbox Welcome/u);
+  await expect(inboxButton).toHaveAccessibleName(/已加星标.*E2E Inbox Welcome/u);
   await inboxButton.click();
   if (testInfo.project.name === 'desktop') {
-    await expect(inboxButton).toHaveAttribute('aria-label', /^当前邮件, .*E2E Inbox Welcome/u);
+    await expect(inboxButton).toHaveAccessibleName(/^当前邮件, .*E2E Inbox Welcome/u);
     await page.mouse.move(1, 1);
     const selectedColor = await inboxItem.evaluate((item) => getComputedStyle(item).backgroundColor);
     const unselectedColor = await page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
@@ -1412,15 +1414,15 @@ test('announces list selection, star, attachment and delivery states', async ({ 
   await openFolder(page, '已发送');
   const sentButton = page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })
     .getByRole('button', { name: /E2E Seeded Sent/u }).first();
-  await expect(sentButton).toHaveAttribute('aria-label', /E2E Seeded Sent.*投递: 已发送/u);
+  await expect(sentButton).toHaveAccessibleName(/E2E Seeded Sent.*投递: 已发送/u);
 
   await openFolder(page, '收件箱');
   const attachmentButton = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
     .getByRole('button', { name: /E2E HTML Safety/u }).first();
-  await expect(attachmentButton).toHaveAttribute('aria-label', /E2E HTML Safety.*含附件/u);
+  await expect(attachmentButton).toHaveAccessibleName(/E2E HTML Safety.*含附件/u);
   if (testInfo.project.name === 'desktop') {
     await attachmentButton.click();
-    await expect(attachmentButton).toHaveAttribute('aria-label', /E2E HTML Safety.*含附件/u);
+    await expect(attachmentButton).toHaveAccessibleName(/E2E HTML Safety.*含附件/u);
     await page.setViewportSize({ width: 1505, height: 1045 });
     await page.screenshot({ path: join(tmpdir(), 'flaremail-accessible-list-desktop.png'), fullPage: false });
   }
@@ -1558,7 +1560,7 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   expect(JSON.stringify(report)).not.toContain('This message is seeded');
   expect(JSON.stringify(report)).not.toContain('sender@flaremail.test');
   await expect(page.getByRole('status').filter({ hasText: '显示问题报告已下载' })).toBeVisible();
-  // Wrangler's local explorer injects a debug script into text/html responses.
+  // The local Cloudflare explorer injects a debug script into text/html responses.
   // The production build does not; the iframe sandbox intentionally blocks it.
   await assertNoConsoleErrors(consoleErrors.filter((message) => !(
     message.startsWith('Blocked script execution in ') &&
@@ -1785,7 +1787,7 @@ test('moves, resizes, minimizes, and maximizes the desktop compose window', asyn
   const restoreBounds = await restoreGuidance.boundingBox();
   expect(restoreBounds!.y).toBeGreaterThanOrEqual(0);
   expect(restoreBounds!.y + restoreBounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
-  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '草稿箱', exact: true }).click();
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: /^草稿箱(?:\s|$)/u }).click();
   await restore.click();
   await expect(composeDialog.getByRole('textbox', { name: '主题', exact: true })).toHaveValue('E2E floating compose');
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
