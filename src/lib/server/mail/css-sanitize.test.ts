@@ -48,6 +48,18 @@ describe('email presentation CSS', () => {
     expect(css).toContain('.fm-email-content fm-email-body{color:red}');
   });
 
+  test('keeps background fallback colors while blocking resource-bearing layers', () => {
+    expect(sanitizeEmailInlineCss('color:#fff;background:#000 url(https://tracker.example/bg.png) center/cover no-repeat!important'))
+      .toBe('color:#fff;background-color:#000!important');
+    expect(sanitizeEmailStylesheet('.card{color:white;background:url(https://tracker.example/bg.png) rgb(0,0,0)}'))
+      .toBe('.fm-email-content .fm-user-card{color:white;background-color:rgb(0,0,0)}');
+    expect(sanitizeEmailInlineCss('background:linear-gradient(#000,#111);color:white')).toContain('background:linear-gradient(#000,#111)');
+    const modernColor = sanitizeEmailInlineCss('color:white;background:oklch(20% 0 0) url(https://tracker.example/bg.png)');
+    expect(modernColor).toContain('background-color:oklch(');
+    expect(modernColor).not.toContain('tracker.example');
+    expect(sanitizeEmailInlineCss('background:linear-gradient(red,url(https://tracker.example/bg.png))')).toBe('');
+  });
+
   test('keeps buttons free of injected labels and risk notices outside sender CSS', () => {
     const result = sanitizeHtml('<style>span{display:none!important}</style><p><a href="https://example.com">Open account</a></p><a href="https://other.example">https://example.com</a>', { preserveStyles: true });
     expect(result.html).not.toContain('fm-link-target');

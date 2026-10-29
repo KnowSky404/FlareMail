@@ -15,7 +15,9 @@ const properties = new Set(`
   border-collapse border-spacing table-layout caption-side empty-cells display
   list-style-type list-style-position
 `.trim().split(/\s+/u));
-const functions = new Set(['rgb', 'rgba', 'hsl', 'hsla', 'calc', 'min', 'max', 'clamp']);
+const functions = new Set(['rgb', 'rgba', 'hsl', 'hsla', 'lab', 'lch', 'oklab', 'oklch', 'color', 'color-mix', 'light-dark', 'calc', 'min', 'max', 'clamp',
+  'linear-gradient', 'radial-gradient', 'conic-gradient',
+  'repeating-linear-gradient', 'repeating-radial-gradient', 'repeating-conic-gradient']);
 const simpleIdentifier = /^[a-zA-Z_][a-zA-Z0-9_-]*$/u;
 
 export function emailCssIdentifier(value: string): string | null {
@@ -42,7 +44,7 @@ function declarations(children: List<CssNode>): string {
     if (node.type !== 'Declaration') return;
     const property = node.property.toLowerCase();
     if (!properties.has(property) || node.value.type !== 'Value') return;
-    // Only permit literal tokens and a small set of numeric/color functions.
+    // Only permit literal tokens and known numeric, color and gradient functions.
     const safeValue = (value: CssNode, depth = 0): boolean => {
       if (depth > 16) return false;
       if (value.type === 'Function') {
@@ -51,7 +53,18 @@ function declarations(children: List<CssNode>): string {
       if (value.type === 'Value') return !value.children.some((child) => !safeValue(child, depth + 1));
       return ['Identifier', 'Number', 'Dimension', 'Percentage', 'Hash', 'String', 'Operator', 'WhiteSpace'].includes(value.type);
     };
-    if (!safeValue(node.value) || !lexer.matchProperty(property, node.value).matched) return;
+    if (!safeValue(node.value)) {
+      // A blocked background image must not discard the sender's explicit
+      // fallback color and leave retained light text unreadable. Only extract
+      // a top-level color from a syntactically valid background shorthand.
+      if (property === 'background' && lexer.matchProperty(property, node.value).matched) {
+        const colors = node.value.children.toArray().filter((part) =>
+          safeValue(part) && lexer.matchProperty('background-color', generate(part)).matched);
+        if (colors.length === 1) output.push(`background-color:${generate(colors[0])}${node.important ? '!important' : ''}`);
+      }
+      return;
+    }
+    if (!lexer.matchProperty(property, node.value).matched) return;
     output.push(`${property}:${generate(node.value)}${node.important ? '!important' : ''}`);
   });
   return output.join(';');
