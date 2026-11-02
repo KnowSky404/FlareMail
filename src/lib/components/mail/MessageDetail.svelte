@@ -1,12 +1,12 @@
 <script lang="ts">
-  import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
+  import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage, MessageBodyView } from '$lib/domain/mail';
   import { Avatar, Button, EmptyState } from '$lib/components/ui';
   import { Forward, Reply, ReplyAll } from '@lucide/svelte';
   import AttachmentList from './AttachmentList.svelte';
   import DeliveryTimeline from './DeliveryTimeline.svelte';
   import MessageBody from './MessageBody.svelte';
   import MessageHeader from './MessageHeader.svelte';
-  import MessageMetadata from './MessageMetadata.svelte';
+  import MessageViewControls from './MessageViewControls.svelte';
   import { formatNumber } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -50,9 +50,7 @@
     trashMode = false,
     readerMode = false,
     bodyView = 'text',
-    allowRemoteImages = false,
-    onBodyViewChange,
-    onRemoteImagesChange
+    onBodyViewChange
   }: {
     message?: MailMessage | null;
     threadMessages?: MailMessage[];
@@ -92,14 +90,21 @@
     sectionTitle?: string;
     trashMode?: boolean;
     readerMode?: boolean;
-    bodyView?: 'text' | 'html';
-    allowRemoteImages?: boolean;
-    onBodyViewChange?: (view: 'text' | 'html') => void;
-    onRemoteImagesChange?: (allowed: boolean) => void;
+    bodyView?: MessageBodyView;
+    onBodyViewChange?: (view: MessageBodyView) => void;
   } = $props();
 
   const i18n = useLocale();
   const { t } = i18n;
+
+  let localBodyView = $state<MessageBodyView>('text');
+  const localMessageId = $derived(message?.id);
+  $effect(() => {
+    localMessageId;
+    localBodyView = 'text';
+  });
+  const activeBodyView = $derived(onBodyViewChange ? bodyView : localBodyView);
+  const changeBodyView = (view: MessageBodyView) => onBodyViewChange ? onBodyViewChange(view) : (localBodyView = view);
 
   const visibleBody = $derived(
     message
@@ -125,6 +130,7 @@
   <MessageHeader
     {message}
     {deliveryDetail}
+    {inboundDetail}
     {rawDownloadHref}
     {pending}
     {inboundDetailPending}
@@ -150,7 +156,13 @@
     {onOpenReader}
     {onCloseReader}
     {standaloneHref}
-  />
+  >
+    {#snippet bodyControls()}
+      {#if message && hasHtml}
+        <MessageViewControls messageId={message.id} view={activeBodyView} onViewChange={changeBodyView} onReportIssue={() => message && onReportHtmlIssue?.(message)} />
+      {/if}
+    {/snippet}
+  </MessageHeader>
 
   {#if message}
     <div class="fm-detail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -169,15 +181,11 @@
             loading={(isInbound && inboundDetailPending && !inboundDetail) || (!isInbound && workspaceBodyPending && workspaceBody === null)}
             hasHtml={hasHtml}
             messageId={message.id}
-            view={bodyView}
-            allowRemoteImages={allowRemoteImages}
-            onViewChange={onBodyViewChange}
-            onRemoteImagesChange={onRemoteImagesChange}
-            onReportIssue={() => onReportHtmlIssue?.(message)}
+            view={activeBodyView}
           />
         {/key}
 
-        {#if isInbound}
+        {#if isInbound && (inboundDetailPending || inboundDetailError || (inboundDetail?.attachments.length ?? 0) > 0)}
           <div class="mt-6">
             <AttachmentList attachments={inboundDetail?.attachments ?? []} loading={inboundDetailPending} error={inboundDetailError} />
           </div>
@@ -219,7 +227,6 @@
           </nav>
         {/if}
       </article>
-      <MessageMetadata {message} {inboundDetail} />
     </div>
   {:else}
     <div class="min-h-0 flex-1 overflow-y-auto">
@@ -234,10 +241,10 @@
     .message-reply-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 32px; }
   }
   @media (min-width: 901px) {
-    .message-content { padding: 24px 32px 32px 72px; }
+    .message-content { padding: 24px 24px 32px; }
   }
   .fm-reader-body :global(.message-html-frame) {
-    min-height: clamp(18rem, 68dvh, 56rem);
+    min-height: clamp(22rem, 72dvh, 64rem);
   }
 
   .fm-detail-scroll {

@@ -537,3 +537,6 @@ export interface MailboxCategoryMutationResult {
   summaries: Array<{ id: string; inboxCategory: MailInboxCategory; inboxCategoryOverride: MailInboxCategory | null }>;
   scope: MailboxCategoryMutationScope;
 }
+
+/** HTML modes stay sandboxed; unsafe explicitly enables remote HTTPS images. */
+export type MessageBodyView = 'text' | 'html' | 'unsafe';

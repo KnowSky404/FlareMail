@@ -490,19 +490,27 @@ message display goes through the server sanitizer and the sandboxed HTML route:
   imports, web fonts, active functions, and positioning are removed even when
   HTTPS images are enabled. The isolated mail canvas stays light and does not add
   borders or padding to layout-table cells. Solid fallback colors are retained
-  when a background image URL is removed; safe local gradients remain supported. Risky link notices are placed outside
-  sender styling; ordinary links keep their layout and show the URL on hover.
+  when a background image URL is removed; safe local gradients remain supported.
+  Reader links keep their layout and show the URL on hover; mode explanations
+  appear in the reader toolbar's information control rather than in the message.
   Already allowlisted reader HTML is normalized with parse5 in a div context
   so malformed tables cannot escape the content wrapper. The normalized HTML,
-  CSS and trusted notices share the output byte limit. Repaired DOM depth and
+  CSS share the output byte limit. Repaired DOM depth and
   node count are checked iteratively before recursive serialization; element
   creation is also capped during parsing. Logical html/body roots are synthesized
   when omitted and retain type-selector specificity without matching div/span
   rules. Legacy presentation hints retain their lower cascade priority, and
   bgcolor/text/font colors follow HTML legacy-color parsing rather than CSS
   syntax alone (including hex colors without a leading #). Compose sanitization is unchanged;
-- links receive safe target/rel handling and remote images are blocked by
-  default, with an explicit per-viewer consent path;
+- links receive safe target/rel handling. `GET /api/workspace/messages/:id/html`
+  defaults to Safe HTML and always blocks remote images, including when the
+  legacy `remote=1` parameter is supplied. Only explicit `mode=unsafe` selects
+  Unsafe HTML and permits HTTPS image sources. Both modes retain the shared
+  structural/CSS sanitizer, ownership checks, no-referrer policy and sandbox/CSP;
+  scripts, forms, frames, CSS resource requests and HTTP images stay blocked.
+  Unsafe HTML names its remote tracking/privacy risk rather than enabling script
+  execution. The selection is scoped to the message reader and resets when the
+  reader changes messages;
 - inline CID images are resolved only through an ownership-checked attachment
   route; attachment bytes and raw MIME are never embedded in JSON;
 - the text view remains the safe fallback, and raw `.eml` download is an

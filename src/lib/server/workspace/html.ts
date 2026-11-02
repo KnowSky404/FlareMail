@@ -22,12 +22,7 @@ function normalizeContentId(value: string | null | undefined): string | null {
   return normalized && !/[\u0000-\u001f\u007f]/u.test(normalized) ? normalized : null;
 }
 
-function safeHtmlDocument(result: SafeHtmlResult): string {
-  const imageNotice = result.allowedRemoteImages
-    ? `<p class="fm-privacy-note">已按你的选择加载 ${result.allowedRemoteImages} 个远程图片。图片服务器可能记录你的 IP 地址和打开时间。</p>`
-    : result.blockedImages
-      ? `<p class="fm-privacy-note">已阻止 ${result.blockedImages} 个未授权或不安全的图片。内联 CID 图片仅在当前邮件归属校验通过时显示。</p>`
-      : '';
+function safeHtmlDocument(result: SafeHtmlResult, mode: 'safe' | 'unsafe'): string {
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -35,7 +30,7 @@ function safeHtmlDocument(result: SafeHtmlResult): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <meta name="referrer" content="no-referrer">
-  <title>安全 HTML 邮件视图</title>
+  <title>${mode === 'unsafe' ? '不安全' : '安全'} HTML 邮件视图</title>
   <style>
     :root { color-scheme: light; font-family: Arial, Helvetica, sans-serif; }
     body { margin: 0; padding: 16px; color: #222; background: #fff; font-size: 14px; line-height: 1.5; }
@@ -44,15 +39,12 @@ function safeHtmlDocument(result: SafeHtmlResult): string {
     .fm-email-content img { max-width: 100%; height: auto; }
     .fm-email-content pre { overflow: auto; }
     a { color: #1558b0; }
-    .fm-privacy-note { margin: 0 0 16px; padding: 10px 12px; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 8px; font-size: 12px; }
-    .fm-link-target { font-size: .78em; color: GrayText; white-space: nowrap; }
-    .fm-link-warning { font-size: .78em; color: #b45309; font-weight: 600; }
     @media (max-width: 480px) { body { padding: 8px; } }
-    @media print { body { padding: 0; } .fm-privacy-note { display: none; } a { color: inherit; } }
+    @media print { body { padding: 0; } a { color: inherit; } }
   </style>
   <style>${result.styles}</style>
 </head>
-<body>${imageNotice}${result.linkNotices ? `<aside class="fm-link-notices" aria-label="链接目标及风险">${result.linkNotices}</aside>` : ''}<div class="fm-email-content">${result.html || '<p>这封邮件没有可显示的 HTML 正文。</p>'}</div></body>
+<body><div class="fm-email-content">${result.html || '<p>这封邮件没有可显示的 HTML 正文。</p>'}</div></body>
 </html>`;
 }
 
@@ -60,7 +52,7 @@ export async function renderOwnedSafeHtml(
   env: CloudflareEnv | undefined,
   session: WorkspaceContext,
   routeMessageId: string,
-  options: { allowRemoteImages?: boolean } = {}
+  options: { mode?: 'safe' | 'unsafe' } = {}
 ) {
   if (!isInboundMessageId(routeMessageId)) {
     throw new ApiError(404, 'HTML_BODY_NOT_FOUND', '当前邮件没有可读取的 HTML 正文。');
@@ -107,7 +99,8 @@ export async function renderOwnedSafeHtml(
   try {
     sanitized = sanitizeHtml(html, {
       preserveStyles: true,
-      allowRemoteImages: options.allowRemoteImages === true,
+      allowRemoteImages: options.mode === 'unsafe',
+      decorateLinks: false,
       resolveCidImage: (cid) => cidUrls.get(normalizeContentId(cid) ?? '') ?? null
     });
   } catch (error) {
@@ -116,5 +109,5 @@ export async function renderOwnedSafeHtml(
     }
     throw error;
   }
-  return { document: safeHtmlDocument(sanitized), sanitized };
+  return { document: safeHtmlDocument(sanitized, options.mode === 'unsafe' ? 'unsafe' : 'safe'), sanitized };
 }

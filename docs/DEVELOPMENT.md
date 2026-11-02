@@ -369,6 +369,23 @@ for unread received mail. See the [spec](./specs/mailbox-navigation-and-read-sta
 for concurrency, cache invalidation and acceptance cases. Production latency,
 real mail and remote schema readiness require separate authorized verification.
 
+## Verify message reading modes
+
+Use isolated local HTML/CID fixtures to exercise Plain text, Safe HTML and Unsafe
+HTML on desktop, mobile and narrow viewports. Safe HTML must make no remote image
+requests, including when the legacy `remote=1` API parameter is supplied. Only
+`mode=unsafe` permits HTTPS images; scripts, forms, frames, CSS resource URLs and
+HTTP images remain blocked in both HTML modes. Switching messages must reset the
+unsafe selection. Inspect the information control with hover, keyboard focus and
+touch, and confirm there are no injected safety banners in the body.
+
+Open the header's message-details control and verify sender/recipient information,
+labels, attachment summary and technical headers remain accessible without growing
+the fixed header or clipping the body. Cover Escape, outside-click dismissal and
+focus return, as well as the normal pane, focused reader and standalone message
+page. See the [API contract](./API.md#html-safety-boundary) and the
+[Preview guide](./PREVIEW.md) for authorized remote acceptance.
+
 ## Global cf and Worker packaging
 
 Install Node.js >= 22.18 and `bun add --global cf`. Verify `command -v cf` and `cf --version`; no local cf executable should shadow the global installation. `cf` is executed by Node, even when Bun launches a project script.

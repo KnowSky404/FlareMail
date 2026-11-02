@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
+  import MessageMetadata from './MessageMetadata.svelte';
   import {
     Archive,
     Inbox,
@@ -18,6 +20,7 @@
   } from '@lucide/svelte';
   import {
     parseAddressList,
+    type InboundMessageDetail,
     type DeliveryDetail,
     type MailMessage
   } from '$lib/domain/mail';
@@ -28,6 +31,8 @@
   let {
     message = null,
     deliveryDetail = null,
+    inboundDetail = null,
+    bodyControls,
     rawDownloadHref = null,
     pending = false,
     inboundDetailPending = false,
@@ -56,6 +61,8 @@
   }: {
     message?: MailMessage | null;
     deliveryDetail?: DeliveryDetail | null;
+    inboundDetail?: InboundMessageDetail | null;
+    bodyControls?: Snippet;
     rawDownloadHref?: string | null;
     pending?: boolean;
     inboundDetailPending?: boolean;
@@ -203,6 +210,7 @@
         </IconButton>
       {/if}
       {#if showBack}<span class="mobile-folder-label">{folderTitle}</span>{/if}
+      <div class="message-view-tools min-w-0">{@render bodyControls?.()}</div>
       <div class="header-spacer min-w-0 flex-1"></div>
       <div class="message-header-tools flex shrink-0 items-center gap-0.5">
         {#if !trashMode && onOpenReader}
@@ -307,7 +315,10 @@
             <p class="message-outbound-identity mt-1 min-w-0 text-xs leading-5 text-[var(--fm-text-secondary)]"><span class="font-medium">{t('mail.from')}:</span> <span class="break-all">{message.fromEmail}</span></p>
           {/if}
         </div>
-        <time class="shrink-0 text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatCompactDate(message.sentAt)}</time>
+        <div class="flex shrink-0 items-center gap-1">
+          <time class="text-right text-xs text-[var(--fm-text-muted)]" datetime={message.sentAt} title={formatDate(message.sentAt)}>{formatCompactDate(message.sentAt)}</time>
+          {#key message.id}<MessageMetadata {message} {inboundDetail} />{/key}
+        </div>
       </div>
 
       {#if message.folder === 'sent' && deliveryStatus}
@@ -338,6 +349,7 @@
 {/if}
 
 <style>
+  .message-header-row { flex-wrap: wrap; }
   .fm-mobile-action-label { display: none; }
   .mobile-folder-label { display: none; }
   .message-primary-actions-mobile { display: none; }
@@ -350,7 +362,7 @@
     line-clamp: 2;
   }
 
-  .message-subject { padding: 24px 32px 12px 72px; }
+  .message-subject { padding: 20px 24px 4px; }
   .message-subject h1 {
     font-size: 22px;
     font-weight: 400;
@@ -410,6 +422,8 @@
   @media (max-width: 639px) {
     .message-detail-header { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; }
     .message-header-row { display: contents; }
+    .message-view-tools { grid-column: 1 / -1; grid-row: 4; padding: 0 var(--space-4) var(--space-2); }
+    .message-view-tools:empty { display: none; }
     .header-spacer { display: none; }
     :global(.fm-detail-back) { grid-column: 1; grid-row: 1; align-self: center; justify-self: start; margin-left: var(--space-2); }
     .mobile-folder-label { display: block; grid-column: 2; grid-row: 1; align-self: center; min-width: 0; overflow: hidden; font-size: 0.875rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -418,13 +432,13 @@
     .message-subject h1 { font-size: 1.25rem; line-height: 1.35; }
     .message-sender { grid-column: 1 / -1; grid-row: 3; padding: var(--space-2) var(--space-4) var(--space-4); }
     .message-sender-identity { flex-direction: column; align-items: flex-start; }
-    .message-primary-actions { grid-column: 1 / -1; grid-row: 4; display: flex; width: 100%; gap: 0; border-top: 1px solid var(--fm-border); padding: var(--space-1) var(--space-4); }
+    .message-primary-actions { grid-column: 1 / -1; grid-row: 5; display: flex; width: 100%; gap: 0; border-top: 1px solid var(--fm-border); padding: var(--space-1) var(--space-4); }
     .message-primary-actions-desktop { display: none; }
     :global(.message-primary-actions > span) { display: flex; flex: 1 1 0; min-width: 0; }
     :global(.message-primary-actions > span + span) { border-left: 1px solid var(--fm-border); }
-    :global(.message-primary-actions > span > button) { display: flex; width: 100%; min-height: 60px; flex-direction: column; gap: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fm-primary); aspect-ratio: auto; }
+    :global(.message-primary-actions > span > button) { display: flex; width: 100%; min-height: 44px; flex-direction: row; gap: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--fm-primary); aspect-ratio: auto; }
     :global(.message-primary-actions > span > button:hover) { background: var(--fm-primary-soft); }
-    .fm-mobile-action-label { display: block; font-size: 0.75rem; line-height: 1rem; white-space: nowrap; }
+    .fm-mobile-action-label { display: none; font-size: 0.75rem; line-height: 1rem; white-space: nowrap; }
     :global(.message-primary-actions svg) { width: 20px; height: 20px; }
   }
 </style>

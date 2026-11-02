@@ -127,7 +127,7 @@ afterEach(() => {
   while (databases.length) databases.pop()?.close();
 });
 
-describe('safe HTML workspace routes', () => {
+describe('HTML reader workspace routes', () => {
   test('returns an isolated document with owned CID images and remote images blocked by default', async () => {
     const { env } = fixture();
     const response = await GET_HTML(event(
@@ -151,18 +151,18 @@ describe('safe HTML workspace routes', () => {
     expect(html).toContain('/api/workspace/messages/email%3Amail-1/attachments/att-png?inline=1&amp;cid_session=session-user-1');
     expect(html).toContain('&amp;cid_signature=');
     expect(html).not.toContain('/attachments/att-svg');
-    expect(html).toContain('[example.com]');
-    expect(html).toContain('显示文本与目标不一致');
-    expect(html).toContain('已阻止 3 个未授权或不安全的图片');
+    expect(html).toContain('title="https://example.com/login"');
+    expect(html).not.toContain('fm-link-notices');
+    expect(html).not.toContain('fm-privacy-note');
   });
 
-  test('preserves presentation without permitting CSS resource requests after image consent', async () => {
+  test('preserves presentation without permitting CSS resource requests in Unsafe HTML', async () => {
     const { database, env } = fixture();
     database.query('UPDATE email_messages SET html_body = ? WHERE id = ?').run(
       '<style>.card{background:url(https://tracker.example/css);color:#123456}@import "https://tracker.example/import";</style><table class="card" cellpadding="0" cellspacing="0"><tr><td style="padding:24px;background-color:#eee">Newsletter</td></tr></table>',
       'mail-1'
     );
-    const response = await GET_HTML(event('/api/workspace/messages/email:mail-1/html?remote=1', env, { id: 'email:mail-1' }));
+    const response = await GET_HTML(event('/api/workspace/messages/email:mail-1/html?mode=unsafe', env, { id: 'email:mail-1' }));
     const html = await response.text();
     expect(response.status).toBe(200);
     expect(html).toContain('.fm-email-content .fm-user-card{color:#123456}');
@@ -187,10 +187,10 @@ describe('safe HTML workspace routes', () => {
     expect(html).not.toContain('evil');
   });
 
-  test('loads only HTTPS remote images after exact per-message consent', async () => {
+  test('loads only HTTPS remote images in explicitly selected Unsafe HTML', async () => {
     const { env } = fixture();
     const response = await GET_HTML(event(
-      '/api/workspace/messages/email:mail-1/html?remote=1',
+      '/api/workspace/messages/email:mail-1/html?mode=unsafe',
       env,
       { id: 'email:mail-1' }
     ));
@@ -201,13 +201,72 @@ describe('safe HTML workspace routes', () => {
     expect(response.headers.get('content-security-policy')).not.toContain('http:');
     expect(html).toContain('https://tracker.example/pixel');
     expect(html).not.toContain('http://insecure.example/pixel');
-    expect(html).toContain('已按你的选择加载 1 个远程图片');
+    expect(html).toContain('<title>不安全 HTML 邮件视图</title>');
+    expect(html).not.toContain('fm-privacy-note');
+    expect(html).not.toContain('fm-link-notices');
+    expect(html).not.toContain('onclick=');
+    expect(html).not.toContain('alert(1)');
+    expect(response.headers.get('content-security-policy')).toContain("script-src 'none'");
+    expect(response.headers.get('content-security-policy')).toContain("form-action 'none'");
+    expect(response.headers.get('content-security-policy')).toContain("frame-src 'none'");
+    expect(response.headers.get('content-security-policy')).toContain("connect-src 'none'");
+    expect(response.headers.get('content-security-policy')).not.toContain('allow-scripts');
+    expect(response.headers.get('content-security-policy')).not.toContain('allow-same-origin');
   });
 
-  test('does not reveal another owner\'s HTML or attachment records', async () => {
+  test.each(['?remote=1', '?mode=safe&remote=1', '?mode=UNSAFE', '?mode=unknown'])('never enables remote images through %s', async (query) => {
+    const { env } = fixture();
+    const response = await GET_HTML(event(
+      `/api/workspace/messages/email:mail-1/html${query}`,
+      env,
+      { id: 'email:mail-1' }
+    ));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('<title>安全 HTML 邮件视图</title>');
+    expect(html).not.toContain('tracker.example');
+    expect(response.headers.get('content-security-policy')).toContain("img-src 'self' https://flaremail.test;");
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+  });
+
+  test.each(['safe', 'unsafe'])('blocks active content and unsafe URLs in %s mode', async (mode) => {
+    const { database, env } = fixture();
+    database.query('UPDATE email_messages SET html_body = ? WHERE id = ?').run(
+      '<p onmouseover="alert(1)">Readable</p><form action="https://tracker.example/post"><input name="secret"></form><iframe src="https://tracker.example/frame"></iframe><svg onload="alert(1)"></svg><a href="javascript:alert(1)">Bad link</a><img src="data:image/svg+xml,bad">',
+      'mail-1'
+    );
+    const response = await GET_HTML(event(
+      `/api/workspace/messages/email:mail-1/html?mode=${mode}`,
+      env,
+      { id: 'email:mail-1' }
+    ));
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('Readable');
+    expect(html).not.toMatch(/onmouseover|alert\(1\)|<form|<input|<iframe|<svg|javascript:|data:image|tracker\.example/u);
+  });
+
+  test.each(['safe', 'unsafe'])('requires authentication for %s mode', async (mode) => {
+    const { env } = fixture();
+    const response = await GET_HTML(event(
+      `/api/workspace/messages/email:mail-1/html?mode=${mode}`,
+      env,
+      { id: 'email:mail-1' },
+      null
+    ));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(response.headers.get('content-security-policy')).toContain("img-src 'self' https://flaremail.test;");
+    expect(await response.text()).not.toContain('Safe fallback');
+  });
+
+  test.each(['safe', 'unsafe'])('does not reveal another owner\'s HTML or attachment records in %s mode', async (mode) => {
     const { env } = fixture();
     const html = await GET_HTML(event(
-      '/api/workspace/messages/email:mail-1/html',
+      `/api/workspace/messages/email:mail-1/html?mode=${mode}`,
       env,
       { id: 'email:mail-1' },
       'user-2'

@@ -56,9 +56,15 @@ version 3 or (at your option) any later version (`AGPL-3.0-or-later`).
 
 ## HTML message rendering
 
-The Safe HTML reader preserves common email typography, colors, table layouts and
-responsive width rules on an isolated light canvas. Remote images require consent;
-CSS resource loads remain blocked. See the [HTML safety boundary](docs/API.md#html-safety-boundary).
+The reader offers Plain text, Safe HTML and Unsafe HTML in a compact toolbar.
+Safe HTML preserves common email typography, colors, table layouts and responsive
+width rules on an isolated light canvas while blocking remote images. Selecting
+Unsafe HTML allows HTTPS images for the current message; switching messages resets
+the selection. Both HTML modes sanitize content and block scripts, forms, frames
+and CSS resource loads. Mode explanations live behind the toolbar's information
+icon, with hover, keyboard and touch access. Sender, delivery and technical details
+open from a compact control in the message header, leaving more room for the body.
+See the [HTML safety boundary](docs/API.md#html-safety-boundary).
 
 The approach follows the presentation/CSS separation in
 [Roundcube](https://github.com/roundcube/roundcubemail/blob/master/program/lib/Roundcube/rcube_washtml.php)
