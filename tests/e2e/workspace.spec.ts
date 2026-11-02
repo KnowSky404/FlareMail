@@ -1469,7 +1469,7 @@ test('runs advanced owner-scoped FTS search with highlighted persisted results',
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('reads sanitized HTML with reversible remote-image consent and a private display report', async ({ page, consoleErrors }, testInfo) => {
+test('reads three email views with explicit unsafe HTML and a private display report', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name === 'narrow', 'Desktop and mobile cover the safe HTML reader interaction.');
   const remoteRequests: string[] = [];
   await page.route('https://tracker.example/**', async (route) => {
@@ -1488,18 +1488,20 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   const detail = page.getByRole('region', { name: '邮件详情' });
   const attachmentList = detail.getByRole('list', { name: '邮件附件列表' });
   await expect(attachmentList.getByRole('listitem')).toHaveCount(1);
-  await expect(detail.getByText('1 个附件 · 68 B', { exact: true })).toBeVisible();
   const attachmentWidths = await attachmentList.evaluate((list) => ({
     list: list.getBoundingClientRect().width,
     row: list.querySelector('li')?.getBoundingClientRect().width ?? 0
   }));
   expect(attachmentWidths.row).toBeGreaterThanOrEqual(attachmentWidths.list - 1);
   await page.screenshot({ path: join(tmpdir(), `flaremail-attachment-${testInfo.project.name}.png`), fullPage: false });
+  await detail.getByRole('button', { name: '邮件信息', exact: true }).click();
+  await expect(detail.getByText('1 个附件 · 68 B', { exact: true })).toBeVisible();
   await detail.getByText('技术详情', { exact: true }).click();
   await expect(detail).toContainText('Support <support@flaremail.test>');
   await expect(detail).toContainText('Observer <observer@flaremail.test>');
   await expect(detail).toContainText('spf=pass');
   await expect(detail).toContainText('FlareMail 未独立执行 SPF、DKIM 或 DMARC 验证');
+  await page.keyboard.press('Escape');
   await detail.getByRole('button', { name: '回复全部', exact: true }).click();
   const replyAllDialog = page.getByRole('dialog', { name: '回复邮件' });
   await expect(replyAllDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
@@ -1512,9 +1514,9 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   await expect(detail.getByRole('button', { name: '纯文本' })).toHaveAttribute('aria-pressed', 'true');
   await expect(detail.getByTitle('安全 HTML 邮件正文')).toHaveCount(0);
 
-  await detail.getByRole('button', { name: '安全 HTML' }).click();
+  await detail.getByRole('button', { name: '安全 HTML', exact: true }).click();
   if (testInfo.project.name === 'mobile') {
-    await expect(detail.getByRole('button', { name: '安全 HTML' })).toBeInViewport();
+    await expect(detail.getByRole('button', { name: '安全 HTML', exact: true })).toBeInViewport();
     const readingScroll = await detail.evaluate((element) => ({
       headerBottom: element.querySelector('header')?.getBoundingClientRect().bottom ?? 0,
       scrollTopEdge: element.querySelector<HTMLElement>('.fm-detail-scroll')?.getBoundingClientRect().top ?? 0,
@@ -1527,8 +1529,8 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   }
   const frame = page.frameLocator('iframe[title="安全 HTML 邮件正文"]');
   await expect(frame.getByText('Safe HTML fixture')).toBeVisible();
-  await expect(frame.getByText('[example.com]')).toBeVisible();
-  await expect(frame.getByText(/显示文本与目标不一致/u)).toBeVisible();
+  await expect(frame.locator('a')).toHaveAttribute('href', 'https://example.com/login');
+  await expect(frame.getByText(/显示文本与目标不一致/u)).toHaveCount(0);
   await expect(frame.locator('script, form, iframe, object, embed, svg')).toHaveCount(0);
   const cidImage = frame.locator('img[alt="inline logo"]');
   await expect(cidImage).toHaveCount(1);
@@ -1551,18 +1553,19 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   expect(bodyMetrics.iframeHeight).toBeGreaterThanOrEqual(352);
   expect(bodyMetrics.iframeHeight).toBeLessThanOrEqual(896);
 
-  const consent = detail.getByRole('button', { name: '加载本邮件 HTTPS 图片' });
-  await consent.click();
-  await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
+  await expect(detail.getByRole('button', { name: /加载本邮件 HTTPS 图片|撤销远程图片权限/u })).toHaveCount(0);
+  await detail.getByRole('button', { name: '不安全 HTML', exact: true }).click();
+  const unsafeFrame = page.frameLocator('iframe[title="不安全 HTML 邮件正文"]');
+  await expect(unsafeFrame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
   await expect.poll(() => remoteRequests.length).toBe(1);
-  await expect(frame.locator('img[src^="http://insecure.example/"]')).toHaveCount(0);
-  await page.screenshot({ path: join(tmpdir(), `flaremail-safe-html-${testInfo.project.name}.png`), fullPage: false });
+  await expect(unsafeFrame.locator('img[src^="http://insecure.example/"]')).toHaveCount(0);
+  await page.screenshot({ path: join(tmpdir(), `flaremail-unsafe-html-${testInfo.project.name}.png`), fullPage: false });
 
-  await detail.getByRole('button', { name: '撤销远程图片权限' }).click();
+  await detail.getByRole('button', { name: '安全 HTML', exact: true }).click();
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent('download');
-  await detail.getByRole('region', { name: '邮件正文' }).getByRole('button', { name: '更多邮件操作' }).click();
+  await detail.getByRole('button', { name: '显示选项', exact: true }).click();
   await detail.getByRole('menuitem', { name: '下载显示问题报告', exact: true }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^flaremail-html-display-email_e2e-html-inbox-message\.json$/u);
@@ -1577,7 +1580,7 @@ test('reads sanitized HTML with reversible remote-image consent and a private di
   // The production build does not; the iframe sandbox intentionally blocks it.
   await assertNoConsoleErrors(consoleErrors.filter((message) => !(
     message.startsWith('Blocked script execution in ') &&
-    message.includes('/api/workspace/messages/email%3Ae2e-html-inbox-message/html?remote=') &&
+    message.includes('/api/workspace/messages/email%3Ae2e-html-inbox-message/html?mode=') &&
     message.includes("'allow-scripts' permission is not set")
   )));
 });
@@ -1619,13 +1622,15 @@ test('keeps reading space when a message has many labels', async ({ page, consol
     const item = page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' });
     await item.getByRole('button', { name: /E2E HTML Safety/u }).first().click();
     const detail = page.getByRole('region', { name: '邮件详情' });
-    await expect(detail.locator('.message-header-labels').getByText(/^E2E Header Stress /u)).toHaveCount(36);
     await expect(detail.getByRole('button', { name: '纯文本' })).toBeInViewport();
+    await detail.getByRole('button', { name: '邮件信息', exact: true }).click();
+    await expect(detail.locator('.message-header-labels').getByText(/^E2E Header Stress /u)).toHaveCount(36);
     const moreLabels = detail.locator('summary').filter({ hasText: /另外 \d+ 个标签/u });
     await expect(moreLabels).toBeVisible();
     await moreLabels.click();
     await expect(detail.getByText('E2E Header Stress 35', { exact: true })).toBeVisible();
     await moreLabels.click();
+    await page.keyboard.press('Escape');
     await page.screenshot({ path: join(tmpdir(), `flaremail-many-labels-${testInfo.project.name}.png`), fullPage: false });
     const reading = await detail.evaluate((element) => ({
       scrollHeight: element.querySelector<HTMLElement>('.fm-detail-scroll')?.clientHeight ?? 0,
@@ -3121,6 +3126,7 @@ test('renders a representative multi-domain message with two attachments for vis
     await attachments.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(tmpdir(), 'flaremail-rich-detail-attachments-mobile.png'), fullPage: false });
   }
+  await detail.getByRole('button', { name: '邮件信息', exact: true }).click();
   await detail.getByText('收件人详情', { exact: true }).click();
   const recipients = detail.locator('dl').filter({ hasText: 'second@flaremail.test' });
   await expect(recipients).toContainText('copy@flaremail.test');

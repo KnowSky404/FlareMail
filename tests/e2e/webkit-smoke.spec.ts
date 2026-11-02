@@ -294,7 +294,7 @@ test('logs in, navigates, searches, opens a message, and returns', async ({ page
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('keeps plain text safe while exercising HTML, CID, remote consent, and report download', async ({ page, consoleErrors }) => {
+test('keeps plain text safe while exercising HTML, CID, unsafe opt-in, and report download', async ({ page, consoleErrors }) => {
   const remoteRequests: string[] = [];
   await page.route('https://tracker.example/**', async (route) => {
     remoteRequests.push(route.request().url());
@@ -307,9 +307,11 @@ test('keeps plain text safe while exercising HTML, CID, remote consent, and repo
   await expect(messageButton).toBeVisible();
   await pressHeadlessControl(messageButton);
   const detail = page.getByRole('region', { name: '邮件详情' });
+  await clickHeadlessControl(detail.getByRole('button', { name: '邮件信息', exact: true }));
   const technicalDetails = detail.getByText('技术详情', { exact: true });
   await expect(technicalDetails).toBeVisible();
   await technicalDetails.click({ force: true });
+  await page.keyboard.press('Escape');
   const replyAllDialog = page.getByRole('dialog', { name: '回复邮件' });
   await clickHeadlessControl(detail.getByRole('button', { name: '回复全部', exact: true }));
   await expect(replyAllDialog.getByRole('button', { name: '移除收件人 html-sender@flaremail.test' })).toBeVisible();
@@ -331,19 +333,21 @@ test('keeps plain text safe while exercising HTML, CID, remote consent, and repo
   await expect(frame.locator('img[src*="attachments/"]')).toHaveCount(1);
   expect(remoteRequests).toEqual([]);
 
-  const remoteImagesButton = detail.locator('[role="note"] button');
-  await pressHeadlessControl(remoteImagesButton);
-  await expect(remoteImagesButton).toHaveAttribute('aria-pressed', 'true');
-  await expect(htmlFrame).toHaveAttribute('src', /remote=1/u);
-  await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
+  await expect(detail.getByRole('button', { name: /加载本邮件 HTTPS 图片|撤销远程图片权限/u })).toHaveCount(0);
+  const unsafeToggle = detail.getByRole('button', { name: '不安全 HTML', exact: true });
+  await pressHeadlessControl(unsafeToggle);
+  await expect(unsafeToggle).toHaveAttribute('aria-pressed', 'true');
+  const unsafeHtmlFrame = page.locator('iframe[title="不安全 HTML 邮件正文"]');
+  await expect(unsafeHtmlFrame).toHaveAttribute('src', /mode=unsafe/u);
+  const unsafeFrame = page.frameLocator('iframe[title="不安全 HTML 邮件正文"]');
+  await expect(unsafeFrame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
   await expect.poll(() => remoteRequests.length).toBe(1);
-  await pressHeadlessControl(remoteImagesButton);
-  await expect(remoteImagesButton).toHaveAttribute('aria-pressed', 'false');
-  await expect(htmlFrame).toHaveAttribute('src', /remote=0/u);
+  await pressHeadlessControl(detail.getByRole('button', { name: '安全 HTML', exact: true }));
+  await expect(htmlFrame).toHaveAttribute('src', /mode=safe/u);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent('download');
-  await clickHeadlessControl(detail.getByRole('region', { name: '邮件正文' }).getByRole('button', { name: '更多邮件操作' }));
+  await clickHeadlessControl(detail.getByRole('button', { name: '显示选项', exact: true }));
   await pressHeadlessControl(detail.getByRole('menuitem', { name: '下载显示问题报告', exact: true }));
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/^flaremail-html-display-email_e2e-html-inbox-message\.json$/u);

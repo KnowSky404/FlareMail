@@ -268,7 +268,7 @@
   let density = $state<DisplayDensity>('comfortable');
   let readingLayout = $state<ReadingLayout>('list');
   let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
-  let remoteImagesMessageId = $state<string | null>(null);
+  let unsafeHtmlMessageId = $state<string | null>(null);
   let shortcutHelpOpen = $state(false);
   let composeOpen = $state(false);
   type ComposeModalComponent = (typeof import('$lib/components/mail/ComposeModal.svelte'))['default'];
@@ -805,8 +805,16 @@
       ? workspaceBodyErrors[selectedMessage.id] ?? ''
       : ''
   );
-  const selectedBodyView = $derived(selectedMessage ? bodyViewByMessage[selectedMessage.id] ?? 'text' : 'text');
-  const selectedRemoteImagesAllowed = $derived(Boolean(selectedMessage && remoteImagesMessageId === selectedMessage.id));
+  const selectedBodyView = $derived(selectedMessage && unsafeHtmlMessageId === selectedMessage.id
+    ? 'unsafe' : selectedMessage ? bodyViewByMessage[selectedMessage.id] ?? 'text' : 'text');
+  $effect(() => {
+    if (unsafeHtmlMessageId && unsafeHtmlMessageId !== selectedMessage?.id) unsafeHtmlMessageId = null;
+  });
+  function changeSelectedBodyView(view: 'text' | 'html' | 'unsafe') {
+    if (!selectedMessage) return;
+    unsafeHtmlMessageId = view === 'unsafe' ? selectedMessage.id : null;
+    bodyViewByMessage[selectedMessage.id] = view === 'unsafe' ? 'text' : view;
+  }
 
   $effect(() => {
     const action = currentWorkspaceUrl.searchParams.get('compose');
@@ -3360,9 +3368,7 @@
                     onOpenReader={openReader}
                     standaloneHref={selectedMessage ? standaloneMessageHref(selectedMessage) : null}
                     bodyView={selectedBodyView}
-                    allowRemoteImages={selectedRemoteImagesAllowed}
-                    onBodyViewChange={(view) => { if (selectedMessage) bodyViewByMessage[selectedMessage.id] = view; }}
-                    onRemoteImagesChange={(allowed) => { remoteImagesMessageId = allowed && selectedMessage ? selectedMessage.id : null; }}
+                    onBodyViewChange={changeSelectedBodyView}
                     />
                   {:else}
                     <div class="grid h-full place-items-center p-6 text-center text-sm text-[var(--fm-text-muted)]">{t('mail.readerOpen')}</div>
@@ -3412,10 +3418,8 @@
           onManageLabels={(message) => (labelTargetMessage = message)}
           onCloseReader={() => void closeReader()}
           bodyView={selectedBodyView}
-          allowRemoteImages={selectedRemoteImagesAllowed}
           readerMode
-          onBodyViewChange={(view) => { if (selectedMessage) bodyViewByMessage[selectedMessage.id] = view; }}
-          onRemoteImagesChange={(allowed) => { remoteImagesMessageId = allowed ? selectedMessage.id : null; }}
+          onBodyViewChange={changeSelectedBodyView}
         />
       </ReaderDialog>
     {/if}

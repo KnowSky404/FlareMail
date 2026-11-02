@@ -23,10 +23,11 @@ function responseHeaders(requestId: string, allowRemoteImages: boolean, requestO
 
 export const GET: RequestHandler = async (event) => {
   const requestId = getRequestId(event);
-  const allowRemoteImages = event.url.searchParams.get('remote') === '1';
+  const mode = event.url.searchParams.get('mode') === 'unsafe' ? 'unsafe' : 'safe';
+  const allowRemoteImages = mode === 'unsafe';
   try {
     const session = requireWorkspaceSession(event);
-    const rendered = await renderOwnedSafeHtml(getRequestEnv(event), session, event.params.id, { allowRemoteImages });
+    const rendered = await renderOwnedSafeHtml(getRequestEnv(event), session, event.params.id, { mode });
     return new Response(rendered.document, {
       headers: {
         ...responseHeaders(requestId, allowRemoteImages, event.url.origin),

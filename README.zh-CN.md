@@ -56,8 +56,12 @@ FlareMail 采用 [GNU Affero General Public License](./LICENSE) 第 3 版，
 
 ## HTML 邮件阅读
 
-安全 HTML 阅读器在隔离的浅色画布中保留常用字体、配色、表格布局和按宽度响应的样式。
-远程图片仍需手动授权，CSS 资源请求始终阻止，写信清洗策略保持不变。
+阅读器通过紧凑工具栏切换纯文本、安全 HTML 和不安全 HTML。安全 HTML 在隔离的浅色画布中
+保留常用字体、配色、表格布局和按宽度响应的样式，始终阻止远程图片；选择不安全 HTML
+则允许当前邮件加载 HTTPS 图片，切换邮件后恢复默认选择。两种 HTML 模式均经过内容清洗，
+继续阻止脚本、表单、框架和 CSS 资源请求。模式说明收纳在工具栏的信息图标中，支持悬停、
+键盘和触屏查看；发件人、投递及技术详情通过邮件顶部的紧凑入口展开，为正文留出更多空间。
+写信清洗策略保持不变。
 详见 [HTML 安全边界](docs/API.md#html-safety-boundary)。
 
 实现参考 [Roundcube](https://github.com/roundcube/roundcubemail/blob/master/program/lib/Roundcube/rcube_washtml.php)

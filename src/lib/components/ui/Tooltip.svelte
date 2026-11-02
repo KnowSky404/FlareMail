@@ -11,6 +11,7 @@
     side = 'top',
     floating = false,
     disabled = false,
+    containEscape = false,
     class: className = ''
   }: {
     content: string;
@@ -23,6 +24,8 @@
     /** Escape an ancestor's scroll clipping without moving the trigger. */
     floating?: boolean;
     disabled?: boolean;
+    /** Keep Escape within an explanatory control instead of closing its reader. */
+    containEscape?: boolean;
     class?: string;
   } = $props();
 
@@ -137,6 +140,7 @@
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape' && visible) {
       event.preventDefault();
+      if (containEscape) event.stopPropagation();
       hide();
     }
   }

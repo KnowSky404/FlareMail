@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { DropdownMenu } from '$lib/components/ui';
   import { ChevronDown } from '@lucide/svelte';
   import { parseAddressList, serializeAddressList, type InboundMessageDetail, type MailMessage } from '$lib/domain/mail';
   import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let { message, inboundDetail = null }: { message: MailMessage; inboundDetail?: InboundMessageDetail | null } = $props();
+  let open = $state(false);
+  const runtimeId = $props.id();
   const i18n = useLocale();
   const { t } = i18n;
 
@@ -32,7 +35,11 @@
   };
 </script>
 
-<div class="border-t border-[var(--fm-border)] px-4 py-2 text-xs text-[var(--fm-text-muted)] sm:px-6 lg:px-8">
+<DropdownMenu id={`message-info-${runtimeId}`} {open} onOpenChange={(value) => (open = value)} align="end" contentRole="dialog" initialFocusSelector="summary" triggerAriaLabel={t('mail.messageInfo')} triggerTitle={t('mail.messageInfo')} showChevron={false} class="message-info-menu">
+  {#snippet trigger()}<ChevronDown class="size-3.5" aria-hidden="true" />{/snippet}
+  {#snippet children()}
+  <div class="message-info-panel p-3 text-xs text-[var(--fm-text-muted)]">
+  <p class="mb-3 text-sm font-semibold text-[var(--fm-text)]">{t('mail.messageInfo')}</p>
   {#if labels.length || inboundDetail?.attachments.length}
     <div class="message-header-labels flex flex-wrap items-center gap-2 pb-2">
       {#each visibleLabels as label (label.id)}
@@ -118,4 +125,14 @@
       </div>
     </details>
   {/if}
-</div>
+  </div>
+  {/snippet}
+</DropdownMenu>
+
+<style>
+  :global(.message-info-menu .fm-menu-trigger) { width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--fm-text-muted); }
+  :global(.message-info-menu .fm-menu-trigger:hover) { background: var(--fm-surface-hover); color: var(--fm-text); }
+  :global(.message-info-menu [role='dialog']) { width: min(26rem, calc(100vw - 2rem)); }
+  .message-info-panel { overflow-wrap: anywhere; }
+  @media (max-width: 900px) { :global(.message-info-menu .fm-menu-trigger) { width: 44px; height: 44px; } }
+</style>
