@@ -16,6 +16,7 @@
     triggerTitle,
     triggerClass = '',
     initialFocusSelector,
+    viewportAware = false,
     restoreFocusOnClose = true,
     showChevron = true,
     class: className = ''
@@ -31,6 +32,8 @@
     triggerTitle?: string;
     triggerClass?: string;
     initialFocusSelector?: string;
+    /** Keep this popover inside the viewport, including in clipped readers. */
+    viewportAware?: boolean;
     /** Set false when selecting an item immediately opens another overlay. */
     restoreFocusOnClose?: boolean;
     showChevron?: boolean;
@@ -119,10 +122,43 @@
     if ((event.target as HTMLElement).closest('[role="menuitem"]')) closeMenu();
   }
 
+  function positionInViewport() {
+    if (!menuElement || !triggerElement) return;
+    const viewport = window.visualViewport;
+    const margin = 8;
+    const gap = 6;
+    const viewportTop = (viewport?.offsetTop ?? 0) + margin;
+    const viewportLeft = (viewport?.offsetLeft ?? 0) + margin;
+    const viewportWidth = viewport?.width ?? window.innerWidth;
+    const viewportHeight = viewport?.height ?? window.innerHeight;
+    const viewportRight = viewportLeft + viewportWidth - margin * 2;
+    const viewportBottom = viewportTop + viewportHeight - margin * 2;
+    const trigger = triggerElement.getBoundingClientRect();
+    const below = Math.max(0, viewportBottom - Math.max(viewportTop, trigger.bottom + gap));
+    const above = Math.max(0, Math.min(viewportBottom, trigger.top - gap) - viewportTop);
+    const naturalHeight = menuElement.scrollHeight + menuElement.offsetHeight - menuElement.clientHeight;
+    const preferredHeight = Math.min(naturalHeight, viewportHeight * 0.7, 28 * parseFloat(getComputedStyle(document.documentElement).fontSize));
+    const openAbove = below < preferredHeight && above > below;
+    const availableHeight = openAbove ? above : below;
+
+    menuElement.style.right = 'auto';
+    menuElement.style.maxWidth = `${Math.max(0, viewportWidth - margin * 2)}px`;
+    menuElement.style.maxHeight = `min(70dvh, 28rem, ${availableHeight}px)`;
+    const menu = menuElement.getBoundingClientRect();
+    const preferredLeft = align === 'end' ? trigger.right - menu.width : trigger.left;
+    const preferredTop = openAbove ? trigger.top - gap - menu.height : trigger.bottom + gap;
+    menuElement.style.left = `${Math.max(viewportLeft, Math.min(viewportRight - menu.width, preferredLeft))}px`;
+    menuElement.style.top = `${Math.max(viewportTop, Math.min(viewportBottom - menu.height, preferredTop))}px`;
+    // Visibility transitions can leave WebKit descendants temporarily unfocusable.
+    menuElement.style.opacity = '1';
+    menuElement.style.pointerEvents = 'auto';
+  }
+
   $effect(() => {
     if (!isOpen || typeof document === 'undefined' || !menuElement) return;
 
     const frame = requestAnimationFrame(() => {
+      if (viewportAware) positionInViewport();
       if (contentRole === 'menu') focusItem(0);
       else {
         const preferred = initialFocusSelector ? menuElement?.querySelector<HTMLElement>(initialFocusSelector) : null;
@@ -138,6 +174,35 @@
     return () => {
       cancelAnimationFrame(frame);
       document.removeEventListener('pointerdown', handleOutsidePointerDown);
+    };
+  });
+
+  $effect(() => {
+    if (!isOpen || !viewportAware || !menuElement || !triggerElement) return;
+    const menu = menuElement;
+    const viewport = window.visualViewport;
+    let frame = 0;
+    const reposition = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(positionInViewport);
+    };
+    const observer = new ResizeObserver(reposition);
+    observer.observe(menu);
+    observer.observe(triggerElement);
+    menu.addEventListener('toggle', reposition, true);
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    viewport?.addEventListener('resize', reposition);
+    viewport?.addEventListener('scroll', reposition);
+    reposition();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      menu.removeEventListener('toggle', reposition, true);
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+      viewport?.removeEventListener('resize', reposition);
+      viewport?.removeEventListener('scroll', reposition);
     };
   });
 </script>
@@ -169,6 +234,9 @@
       bind:this={menuElement}
       id={contentId}
       class={cn('absolute top-[calc(100%+0.375rem)] z-40 max-h-[min(70dvh,28rem)] min-w-44 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-[var(--radius-lg)] border border-[var(--fm-border)] bg-[var(--fm-surface)] p-1 shadow-[var(--fm-shadow-overlay)]', align === 'end' ? 'right-0' : 'left-0')}
+      style:position={viewportAware ? 'fixed' : undefined}
+      style:opacity={viewportAware ? 0 : undefined}
+      style:pointer-events={viewportAware ? 'none' : undefined}
       role={contentRole}
       aria-label={contentRole === 'dialog' ? triggerAriaLabel : undefined}
       tabindex="-1"

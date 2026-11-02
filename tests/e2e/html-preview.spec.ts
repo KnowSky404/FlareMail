@@ -236,3 +236,66 @@ test('keeps compact HTML controls accessible in narrow desktop split panes', asy
   }
   await assertNoConsoleErrors(consoleErrors);
 });
+
+test('keeps expanded mail information accessible in short viewports and after resizing', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  await page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
+    .getByRole('button', { name: /E2E HTML Safety/u }).first().click();
+  await page.setViewportSize({ width: 1280, height: 500 });
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const metadataTrigger = detail.getByRole('button', { name: '邮件信息', exact: true });
+  await metadataTrigger.press('Enter');
+  const panel = detail.getByRole('dialog', { name: '邮件信息', exact: true });
+  await expect(panel).toBeVisible();
+
+  const contact = panel.locator('summary').filter({ hasText: /^发件人详情$/u });
+  await expect(contact).toBeFocused();
+  await contact.press('Enter');
+  await expect(contact.locator('..')).toHaveAttribute('open', '');
+  const technical = panel.locator('summary').filter({ hasText: /^技术详情$/u });
+  await technical.press('Enter');
+  await expect(technical.locator('..')).toHaveAttribute('open', '');
+  const rawHeaders = panel.locator('summary').filter({ hasText: /^安全筛选后的原始头/u });
+  await rawHeaders.press('Enter');
+  await expect(rawHeaders.locator('..')).toHaveAttribute('open', '');
+  const lastField = panel.locator('details details dl dd').last();
+  await expect(lastField).toContainText('mx.flaremail.test; spf=pass; dkim=pass; dmarc=pass');
+
+  // Keep this same expanded panel open across both resize boundaries. The
+  // dropdown must recompute placement and leave its own scrollbar usable.
+  for (const viewport of [{ width: 1280, height: 500 }, { width: 844, height: 390 }, { width: 390, height: 500 }]) {
+    await page.setViewportSize(viewport);
+    await expect(panel).toBeVisible();
+    await expect.poll(async () => panel.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        horizontal: bounds.left >= 0 && bounds.right <= innerWidth + 1,
+        vertical: bounds.top >= 0 && bounds.bottom <= innerHeight + 1
+      };
+    })).toEqual({ horizontal: true, vertical: true });
+    const scrollable = await panel.evaluate((element) => {
+      element.scrollTop = 0;
+      return element.scrollHeight > element.clientHeight;
+    });
+    expect(scrollable, `expanded metadata needs an internal scrollbar at ${viewport.width}x${viewport.height}`).toBe(true);
+    await lastField.scrollIntoViewIfNeeded();
+    await expect(lastField).toBeInViewport();
+    const reached = await panel.evaluate((element) => {
+      const last = element.querySelector('details details dl dd:last-child')!;
+      const panelBounds = element.getBoundingClientRect();
+      const lastBounds = last.getBoundingClientRect();
+      return {
+        scrolled: element.scrollTop > 0,
+        insidePanel: lastBounds.top >= panelBounds.top - 1 && lastBounds.bottom <= panelBounds.bottom + 1,
+        pageScrollY: window.scrollY
+      };
+    });
+    expect(reached).toEqual({ scrolled: true, insidePanel: true, pageScrollY: 0 });
+    await assertNoHorizontalOverflow(page);
+    await page.screenshot({ path: join(tmpdir(), `flaremail-reader-metadata-short-${testInfo.project.name}-${viewport.width}x${viewport.height}.png`) });
+  }
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await expect(metadataTrigger).toBeFocused();
+  await assertNoConsoleErrors(consoleErrors);
+});

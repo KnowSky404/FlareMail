@@ -35,7 +35,7 @@
   };
 </script>
 
-<DropdownMenu id={`message-info-${runtimeId}`} {open} onOpenChange={(value) => (open = value)} align="end" contentRole="dialog" initialFocusSelector="summary" triggerAriaLabel={t('mail.messageInfo')} triggerTitle={t('mail.messageInfo')} showChevron={false} class="message-info-menu">
+<DropdownMenu id={`message-info-${runtimeId}`} {open} onOpenChange={(value) => (open = value)} align="end" contentRole="dialog" initialFocusSelector="summary" viewportAware triggerAriaLabel={t('mail.messageInfo')} triggerTitle={t('mail.messageInfo')} showChevron={false} class="message-info-menu">
   {#snippet trigger()}<ChevronDown class="size-3.5" aria-hidden="true" />{/snippet}
   {#snippet children()}
   <div class="message-info-panel p-3 text-xs text-[var(--fm-text-muted)]">
