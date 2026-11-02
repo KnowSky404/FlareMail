@@ -46,7 +46,7 @@
       <button type="button" class="view-info" aria-label={t('mail.viewHelp')} aria-describedby={tooltipId} onclick={(event) => event.currentTarget.focus()}><Info class="size-3.5" aria-hidden="true" /></button>
     {/snippet}
   </Tooltip>
-  <DropdownMenu id={`display-actions-${runtimeId}`} open={displayActionsOpen} align="start" showChevron={false} triggerAriaLabel={t('mail.displayOptions')} triggerTitle={t('mail.displayOptions')} class="message-display-actions" onOpenChange={(open) => (displayActionsOpen = open)}>
+  <DropdownMenu id={`display-actions-${runtimeId}`} open={displayActionsOpen} align="end" viewportAware showChevron={false} triggerAriaLabel={t('mail.displayOptions')} triggerTitle={t('mail.displayOptions')} class="message-display-actions" onOpenChange={(open) => (displayActionsOpen = open)}>
     {#snippet trigger()}<MoreHorizontal class="size-4" aria-hidden="true" />{/snippet}
     {#snippet children()}
       <a class="display-action" role="menuitem" href={`${htmlUrl}&print=1`} target="_blank" rel="noopener noreferrer"><ExternalLink class="size-4" aria-hidden="true" />{t('mail.printView')}</a>
