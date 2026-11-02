@@ -299,3 +299,31 @@ test('keeps expanded mail information accessible in short viewports and after re
   await expect(metadataTrigger).toBeFocused();
   await assertNoConsoleErrors(consoleErrors);
 });
+
+test('keeps display options inside narrow and short reader viewports', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
+    .getByRole('button', { name: /E2E HTML Safety/u }).first().click();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const trigger = detail.getByRole('button', { name: '显示选项', exact: true });
+  const menu = detail.getByRole('menu');
+  for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 500 }, { width: 844, height: 390 }]) {
+    await page.setViewportSize(viewport);
+    await trigger.press('Enter');
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitem').first()).toBeFocused();
+    await expect.poll(() => menu.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= innerWidth + 1 && bounds.top >= 0 && bounds.bottom <= innerHeight + 1;
+    })).toBe(true);
+    await expect(menu.getByRole('menuitem', { name: '打印视图', exact: true })).toBeInViewport();
+    await expect(menu.getByRole('menuitem', { name: '下载显示问题报告', exact: true })).toBeInViewport();
+    await page.keyboard.press('ArrowDown');
+    await expect(menu.getByRole('menuitem').last()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    await expect(trigger).toBeFocused();
+    await assertNoHorizontalOverflow(page);
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
