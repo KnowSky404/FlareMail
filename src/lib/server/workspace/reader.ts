@@ -49,7 +49,7 @@ export function buildWorkspaceBackHref(url: URL, message: MailMessage): string {
   const fallbackFolder: WorkspaceReturnFolder = message.archivedAt
     ? 'archive'
     : message.folder;
-  const requested = safeFolder(url.searchParams.get('folder'), fallbackFolder);
+  const requested = message.quarantinedAt ? 'settings' : safeFolder(url.searchParams.get('folder'), fallbackFolder);
   const label = url.searchParams.get('label');
   const validLabel = label !== null && /^[A-Za-z0-9:._-]{1,128}$/u.test(label);
   const folder = requested === 'label' && !validLabel ? fallbackFolder : requested;
@@ -63,5 +63,15 @@ export function buildWorkspaceBackHref(url: URL, message: MailMessage): string {
   const identity = url.searchParams.get('identity');
   if (identity && /^(domain|address):[A-Za-z0-9:._-]{1,128}$/u.test(identity)) params.set('identity', identity);
   if (folder === 'label' && validLabel) params.set('label', label);
+  if (folder === 'settings' && (message.quarantinedAt || url.searchParams.get('tab') === 'blocked')) {
+    params.set('tab', 'blocked');
+    const cursor = url.searchParams.get('quarantineCursor');
+    const page = Number(url.searchParams.get('quarantinePage'));
+    if (cursor && /^[A-Za-z0-9_-]{1,4096}$/u.test(cursor) && Number.isSafeInteger(page) && page >= 2 && page <= 1_000_000) {
+      params.set('quarantineCursor', cursor);
+      params.set('quarantinePage', String(page));
+      if (url.searchParams.get('quarantineDirection') === 'previous') params.set('quarantineDirection', 'previous');
+    }
+  }
   return `/?${params.toString()}`;
 }

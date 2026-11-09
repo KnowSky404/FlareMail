@@ -2,6 +2,7 @@ import type { CloudflareEnv } from './cloudflare';
 import { MAX_RECIPIENTS, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
 import { insertBodyObject } from '$lib/server/db/body';
+import { isBlockedSender } from '$lib/server/db/blocked-senders';
 import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
 import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 import { hasTelegramTables, insertTelegramDeliveryIfEligible } from '$lib/server/db/telegram';
@@ -221,6 +222,13 @@ export async function handleInboundEmail(
     return;
   }
 
+  let quarantined = false;
+  try {
+    quarantined = Boolean(recipientRoute.ownerUserId && await isBlockedSender(env.DB, recipientRoute.ownerUserId, parsed.hasFromHeader ? (parsed.from?.address ?? '') : message.from));
+  } catch {
+    safeLog('inbound_blocklist_unavailable', { correlationId, code: 'INBOUND_BLOCKLIST_UNAVAILABLE' });
+  }
+
   const date = toIsoTimestamp(parsed.date ?? message.headers.get('date'));
   const claim = await claimInboundIngest(env.DB, dedupeKey, (storageId) => `inbound/${date.slice(0, 10)}/${storageId}/message.eml`);
   if (!claim) {
@@ -251,7 +259,7 @@ export async function handleInboundEmail(
   const ownerUserId = recipientRoute.ownerUserId;
   let telegramOwnerUserId: string | null = null;
   const telegramConfig = resolveTelegramConfig(env);
-  if (telegramConfig.ready) {
+  if (telegramConfig.ready && !quarantined) {
     try {
       if (await hasTelegramTables(env.DB)) telegramOwnerUserId = recipientRoute.ownerUserId;
     } catch {
@@ -305,7 +313,7 @@ export async function handleInboundEmail(
     })));
     safeLog('inbound_phase', { correlationId, phase: 'r2_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - r2StartedAt });
 
-    const from = addressLabel(parsed.from, message.from);
+    const from = addressLabel(parsed.from, parsed.hasFromHeader ? '' : message.from);
     const subject = parsed.subject.trim() || message.headers.get('subject')?.trim() || '(no subject)';
     const toAddresses = canonicalAddresses(parsed.to);
     const ccAddresses = canonicalAddresses(parsed.cc);
@@ -334,7 +342,7 @@ export async function handleInboundEmail(
       htmlBody: projected.htmlBody,
       inReplyTo: parsed.inReplyTo,
       references: parsed.references,
-      threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from }),
+      threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from: from || `message:email:${storageId}` }),
       dedupeKey,
       rawKey,
       rawSize: raw.byteLength,
@@ -343,7 +351,10 @@ export async function handleInboundEmail(
       mailAddressId: recipientRoute.mailAddressId,
       recipientStatus: recipientRoute.recipientStatus,
       bodyObjectId: bodyObject?.id ?? null
-    }), ...(bodyObject ? [insertBodyObject(env.DB, {
+    }), ...(quarantined && ownerUserId ? [env.DB.prepare(`
+      INSERT INTO workspace_email_states (id, user_id, email_message_id, quarantined_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(crypto.randomUUID(), ownerUserId, storageId, new Date().toISOString(), new Date().toISOString(), new Date().toISOString())] : []), ...(bodyObject ? [insertBodyObject(env.DB, {
       id: bodyObject.id, owner_user_id: ownerUserId, entity_type: 'email_message', entity_id: storageId,
       r2_key: bodyObject.key, size_bytes: bodyObject.sizeBytes, sha256: bodyObject.sha256,
       text_bytes: bodyObject.textBytes, html_bytes: bodyObject.htmlBytes, createdAt: date
@@ -398,7 +409,7 @@ export async function handleInboundEmail(
     throw error;
   }
 
-  const followUpTasks = [
+  const followUpTasks = quarantined ? [] : [
     (async () => {
       // The owner is resolved from the addressed recipient and is checked
       // again before dispatch. An unowned message never inherits another

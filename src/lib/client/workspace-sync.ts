@@ -4,6 +4,7 @@ export const WORKSPACE_SYNC_STORAGE_KEY = 'flaremail-workspace-sync-v1';
 export type WorkspaceSyncEvent =
   | { type: 'message-updated'; id: string }
   | { type: 'mailbox-refresh'; id?: string }
+  | { type: 'blocked-senders-changed' }
   | { type: 'mail-identity-options-changed' }
   | { type: 'session-ended' };
 
@@ -25,6 +26,7 @@ export function parseWorkspaceSyncEvent(value: unknown): WorkspaceSyncEvent | nu
       : { type: 'mailbox-refresh' };
   }
   if (input.type === 'mail-identity-options-changed') return { type: 'mail-identity-options-changed' };
+  if (input.type === 'blocked-senders-changed') return { type: 'blocked-senders-changed' };
   return null;
 }
 

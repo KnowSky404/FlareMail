@@ -52,6 +52,8 @@
   let activeController: AbortController | null = null;
   let mounted = $state(false);
   let flagRevision = 0;
+  let refreshRevision = 0;
+  let refreshPending = false;
   const readActivation = new ReadActivationController();
   let authRecoveryPromise: Promise<boolean> | null = null;
   let pending = $derived(authExpired || inboundDetailPending || workspaceBodyPending || deliveryDetailPending || mutationPending);
@@ -67,7 +69,13 @@
     onPatch: (_id, patch) => { flagRevision++; messageOverride = { ...message, ...patch }; },
     onConfirmed: (result) => sync?.publish({ type: 'message-updated', id: result.message.id }),
     onError: (error) => { mutationError = errorMessage(error, t('mail.flagUpdateError')); },
-    onSettled: () => { mutationPending = flagController.busy; }
+    onSettled: () => {
+      mutationPending = flagController.busy;
+      if (!flagController.busy && refreshPending && mounted && !authExpired) {
+        refreshPending = false;
+        void refreshMessageFromWorkspace();
+      }
+    }
   });
 
   async function updateFlags(patch: { read?: boolean; starred?: boolean }) {
@@ -84,11 +92,17 @@
   let sync: ReturnType<typeof createWorkspaceSync> | null = null;
 
   async function refreshMessageFromWorkspace() {
+    const current = ++refreshRevision;
+    if (flagController.busy) { refreshPending = true; return; }
     try {
       const revision = flagRevision;
-      const result = await fetchWorkspaceMessage(message.id);
-      if (mounted && !authExpired && revision === flagRevision && !flagController.busy) messageOverride = result.message;
+      const result = await fetchWorkspaceMessage(message.id, activeController?.signal);
+      if (!mounted || authExpired || current !== refreshRevision) return;
+      if (flagController.busy) { refreshPending = true; return; }
+      if (revision !== flagRevision) { void refreshMessageFromWorkspace(); return; }
+      messageOverride = result.message;
     } catch (error) {
+      if (!mounted || authExpired || current !== refreshRevision) return;
       if (error instanceof ClientApiError && error.code === 'AUTH_SESSION_EXPIRED') return;
       if (error instanceof ClientApiError && [401, 403, 404].includes(error.status)) {
         window.location.assign(data.backHref);
@@ -99,6 +113,8 @@
   function enterAuthExpired(source: AuthExpirySource) {
     if (authExpired) return;
     authExpired = true;
+    refreshRevision++;
+    refreshPending = false;
     flagController.reset();
     readActivation.reset();
     mutationPending = false;
@@ -189,7 +205,16 @@
 
   function returnToWorkspace(action?: 'reply' | 'forward') {
     const target = new URL(data.backHref, window.location.origin);
-    if (action) target.searchParams.set('compose', action);
+    if (action) {
+      if (target.searchParams.get('folder') === 'settings' && target.searchParams.get('tab') === 'blocked') {
+        target.searchParams.set('folder', 'inbox');
+        target.searchParams.delete('tab');
+        target.searchParams.delete('quarantineCursor');
+        target.searchParams.delete('quarantinePage');
+        target.searchParams.delete('quarantineDirection');
+      }
+      target.searchParams.set('compose', action);
+    }
     window.location.assign(`${target.pathname}${target.search}`);
   }
 
@@ -214,7 +239,7 @@
         window.location.assign(data.backHref);
         return;
       }
-      if (event.type === 'mail-identity-options-changed') return;
+      if (event.type === 'mail-identity-options-changed' || event.type === 'blocked-senders-changed') return;
       if (event.id === message.id && !authExpired) void refreshMessageFromWorkspace();
     });
 

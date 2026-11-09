@@ -13,7 +13,11 @@ export const GET: RequestHandler = async (event) => {
   const result = await env.DB.prepare(`
     SELECT id, message_id, "from", "to", subject, "timestamp", snippet, raw_size, created_at
     FROM email_messages
-    WHERE owner_user_id = ?
+    WHERE owner_user_id = ? AND NOT EXISTS (
+      SELECT 1 FROM workspace_email_states AS state
+      WHERE state.user_id = email_messages.owner_user_id AND state.email_message_id = email_messages.id
+        AND state.quarantined_at IS NOT NULL
+    )
     ORDER BY "timestamp" DESC, id DESC
     LIMIT ?
   `).bind(session.userId, limit).all();

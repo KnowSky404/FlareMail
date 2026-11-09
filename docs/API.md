@@ -121,6 +121,15 @@ Authenticated requests on these paths expose available phase durations and
 See the [navigation and read-state spec](./specs/mailbox-navigation-and-read-state.md)
 for cache keys, failure behavior, regression cases and verification boundaries.
 
+## Blocked senders and quarantine
+
+Owner-authenticated workspace APIs use the standard JSON envelope and CSRF protections:
+
+- `GET /api/workspace/blocked-senders` returns `senders` with `email` and `createdAt`. `POST` with `{ "email": "sender@example.com" }` adds an exact case-insensitive address idempotently; `DELETE` with the same JSON removes it idempotently.
+- `GET /api/workspace/quarantine?cursor=...&direction=next|previous` returns `items` (id, sender, subject, timestamp, quarantinedAt), `previousCursor`, and `nextCursor`; pages contain up to 20 messages and cursors are Owner-scoped. `direction` defaults to `next`; `previous` requires a cursor. `POST /api/workspace/quarantine/:id` releases one Owner-owned quarantined message. An unavailable or cross-owner message returns 404.
+- Matching uses MIME From, falling back to the envelope sender only when From is absent. Header addresses can be forged. Quarantined mail stays in D1/R2, is excluded from regular mailbox lists/search/counts and the compatibility `GET /api/messages` list, and does not trigger inbound notifications or auto-replies. Removing a rule does not release mail; releasing a message does not remove its rule. Rules apply to future mail only. Owned inbound message details expose `quarantinedAt` so direct readers can require release before reply or forward.
+- The feature requires migration `0029_blocked_senders.sql`. See the [spec](./specs/blocked-senders.md) for failure and deployment boundaries.
+
 ## Managed domains and addresses
 
 `GET /api/workspace/mail-identities` returns only the authenticated Owner's

@@ -32,6 +32,7 @@ export interface ParsedInboundEmail {
   inReplyTo: string | null;
   references: string | null;
   from: ParsedInboundAddress | null;
+  hasFromHeader: boolean;
   replyTo: ParsedInboundAddress[];
   to: ParsedInboundAddress[];
   cc: ParsedInboundAddress[];
@@ -226,6 +227,7 @@ const normalizeParsedEmail = (email: Email, options: ParseInboundMimeOptions): P
     inReplyTo: cleanHeader(email.inReplyTo),
     references: cleanHeader(email.references),
     from: flattenAddress(email.from)[0] ?? null,
+    hasFromHeader: email.headers.some((header) => header.key.trim().toLowerCase() === 'from'),
     replyTo: flattenAddresses(email.replyTo),
     to: flattenAddresses(email.to),
     cc: flattenAddresses(email.cc),

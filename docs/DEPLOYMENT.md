@@ -26,8 +26,8 @@ Telegram setup and the full threat/data boundary are documented in
 [TELEGRAM.md](./TELEGRAM.md). For maintenance, treat these as separate
 checks from the existing Resend and Email Routing checks:
 
-- verify the checkout's current ordered migrations (currently through 0027)
-  and schema metadata before enabling the global switch;
+- verify the checkout's current ordered migrations and schema metadata before
+  enabling the global switch;
 - inspect only safe Bot API metadata with `getMe` and `getWebhookInfo`;
 - confirm the exact HTTPS webhook has no Access/WAF authentication challenge
   and no redirect;
@@ -48,8 +48,8 @@ reviewed secret update, `getMe`, `setWebhook`, and `getWebhookInfo` sequence.
 `bun run mail:identity:dry-run` remains read-only. The separate
 `bun run mail:identity:backfill` workflow creates a bounded plan, applies only
 after `--apply` plus the matching `--confirm <sha256>`, and verifies the same
-plan. It requires an explicit Owner ID, address ID, current schema version 27, and
-local cf persistence directory. Its parser rejects `--remote`; the
+plan. It requires an explicit Owner ID, address ID, the current version in
+`src/lib/server/db/schema-version.ts`, and a local cf persistence directory. Its parser rejects `--remote`; the
 global cf invocation is fixed to `--local`, `cloudflare.local.json`, and
 `flaremail-db`. Do not point it at a shared development store when reviewing a
 production copy.

@@ -26,6 +26,9 @@ export type WorkspaceUrlUpdates = {
   identityFilter?: MailboxIdentityFilter | null;
   messageId?: string | null;
   labelId?: string | null;
+  quarantineCursor?: string | null;
+  quarantinePage?: number;
+  quarantineDirection?: 'next' | 'previous';
 };
 
 const MANAGEMENT_RESOURCE_ID_PATTERN = /^[A-Za-z0-9:._-]{1,128}$/u;
@@ -81,6 +84,25 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
     next.hash = '';
     if (updates.settingsTab === 'profile') next.searchParams.delete('tab');
     else next.searchParams.set('tab', updates.settingsTab);
+  }
+  const targetSettings = readWorkspaceUrl(next);
+  if (targetSettings.section !== 'profile' || targetSettings.managementView !== 'settings' || targetSettings.settingsTab !== 'blocked') {
+    next.searchParams.delete('quarantineCursor');
+    next.searchParams.delete('quarantinePage');
+    next.searchParams.delete('quarantineDirection');
+  } else if (updates.quarantineCursor !== undefined) {
+    const cursor = updates.quarantineCursor;
+    const page = updates.quarantinePage;
+    if (cursor && /^[A-Za-z0-9_-]{1,4096}$/u.test(cursor) && Number.isSafeInteger(page) && page! >= 2 && page! <= 1_000_000) {
+      next.searchParams.set('quarantineCursor', cursor);
+      next.searchParams.set('quarantinePage', String(page));
+      if (updates.quarantineDirection === 'previous') next.searchParams.set('quarantineDirection', 'previous');
+      else next.searchParams.delete('quarantineDirection');
+    } else {
+      next.searchParams.delete('quarantineCursor');
+      next.searchParams.delete('quarantinePage');
+      next.searchParams.delete('quarantineDirection');
+    }
   }
   const currentState = readWorkspaceUrl(url);
   const targetSection = updates.section ?? currentState.section;

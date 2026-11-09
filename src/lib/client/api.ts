@@ -113,6 +113,10 @@ function responseError(response: Response) {
   return new ClientApiError(response.status, code, message, response.headers.get('x-request-id') ?? undefined);
 }
 
+function throwIfAborted(signal: AbortSignal | null | undefined) {
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Request aborted.', 'AbortError');
+}
+
 /** Fetch an application resource with Access AJAX signaling and strict origin scoping. */
 export async function fetchApiResponse(
   url: string,
@@ -131,8 +135,10 @@ export async function fetchApiResponse(
   try {
     response = await fetch(url, { ...init, headers });
   } catch (error) {
+    throwIfAborted(init.signal);
     throw requestNetworkError(error);
   }
+  throwIfAborted(init.signal);
 
   if (target.sameOriginApi) {
     if (response.redirected && isHtmlContentType(response.headers.get('content-type')) && isAccessLoginUrl(response.url)) {
@@ -145,6 +151,7 @@ export async function fetchApiResponse(
     }
     if (response.status === 401 && isJsonContentType(response.headers.get('content-type'))) {
       const payload: unknown = await response.clone().json().catch(() => null);
+      throwIfAborted(init.signal);
       if (['ACCESS_REQUIRED', 'AUTHENTICATION_REQUIRED'].includes(errorCodeFromPayload(payload) ?? '')) {
         markClientAuthExpired('worker-session');
         throw authenticationError(response.status);
@@ -163,6 +170,7 @@ export async function requestJson<T>(url: string, init: RequestInit = {}, policy
   try {
     payload = await response.json() as unknown;
   } catch {
+    throwIfAborted(init.signal);
     throw new ClientApiError(
       response.status,
       'INVALID_RESPONSE',
@@ -171,6 +179,7 @@ export async function requestJson<T>(url: string, init: RequestInit = {}, policy
     );
   }
 
+  throwIfAborted(init.signal);
   if (!isRecord(payload)) throw responseError(response);
   const envelope = payload as ModernEnvelope<T> | (T & LegacyEnvelope);
 

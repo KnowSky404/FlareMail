@@ -170,6 +170,7 @@ describe('inbound MIME parser', () => {
       'date',
       'deliveredTo',
       'from',
+      'hasFromHeader',
       'headers',
       'html',
       'inReplyTo',

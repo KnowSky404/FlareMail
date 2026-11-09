@@ -63,7 +63,8 @@ function getRfcIds(message: MailMessage): string[] {
 }
 
 function getFallbackThreadKey(message: MailMessage): string {
-  return `${normalizeThreadSubject(message.subject)}::${normalizeEmail(getCounterpartyEmail(message))}`;
+  const counterparty = normalizeEmail(getCounterpartyEmail(message));
+  return `${normalizeThreadSubject(message.subject)}::${counterparty || `message:${normalizeEmail(message.id)}`}`;
 }
 
 /**

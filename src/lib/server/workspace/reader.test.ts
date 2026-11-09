@@ -78,6 +78,18 @@ describe('standalone message reader', () => {
     expect(inbound).toMatchObject({ id: 'email:inbound-1', source: 'inbound', subject: 'Inbound subject', body: '' });
   });
 
+  test('reports stored quarantine state even for a direct reader URL', async () => {
+    const value = fixture();
+    value.db.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, quarantined_at)
+      VALUES ('quarantine', 'user-1', 'inbound-1', '2026-11-01T00:00:00.000Z')`).run();
+    const message = await readWorkspaceMessage(value.env, session('user-1'), 'email:inbound-1');
+    expect(message?.quarantinedAt).toBe('2026-11-01T00:00:00.000Z');
+    expect(buildWorkspaceBackHref(new URL('https://flaremail.test/messages/email%3Ainbound-1'), message!))
+      .toBe('/?folder=settings&message=email%3Ainbound-1&tab=blocked');
+    value.db.query("UPDATE workspace_email_states SET quarantined_at = NULL WHERE id = 'quarantine'").run();
+    expect((await readWorkspaceMessage(value.env, session('user-1'), 'email:inbound-1'))?.quarantinedAt).toBeNull();
+  });
+
   test('unifies missing, foreign, and deleted messages as hidden', async () => {
     const value = fixture();
     expect(await readWorkspaceMessage(value.env, session('user-2'), 'workspace-1')).toBeNull();
@@ -113,4 +125,15 @@ test('reader retains validated category, identity, and label return context', ()
     .toBe('/?folder=starred&message=inbox-1');
   expect(buildWorkspaceBackHref(new URL('https://flaremail.test/messages/inbox-1?folder=label&label=../bad&identity=token%3Asecret&category=spam'), message))
     .toBe('/?folder=inbox&message=inbox-1');
+});
+
+test('reader retains only validated quarantine page context', () => {
+  const message = { id: 'email:inbound-1', folder: 'inbox', source: 'inbound', archivedAt: null } as Parameters<typeof buildWorkspaceBackHref>[1];
+  const valid = new URL('https://flaremail.test/messages/email%3Ainbound-1?folder=settings&tab=blocked&quarantineCursor=cursor_2&quarantinePage=3&quarantineDirection=previous');
+  expect(buildWorkspaceBackHref(valid, message)).toBe('/?folder=settings&message=email%3Ainbound-1&tab=blocked&quarantineCursor=cursor_2&quarantinePage=3&quarantineDirection=previous');
+  valid.searchParams.set('quarantineCursor', '../bad');
+  expect(buildWorkspaceBackHref(valid, message)).not.toContain('quarantineCursor');
+  valid.searchParams.set('quarantineCursor', 'cursor_2');
+  valid.searchParams.set('quarantinePage', '-1');
+  expect(buildWorkspaceBackHref(valid, message)).not.toContain('quarantineCursor');
 });

@@ -2,6 +2,7 @@ import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { patchWorkspaceMessage } from './message';
 import { patchInboundFlags } from '$lib/server/db/messages';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
+import { listQuarantinedMail, releaseQuarantinedMail } from '$lib/server/db/blocked-senders';
 import { changeMailboxCategories } from './categories';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
@@ -198,6 +199,63 @@ function insertCrossAddressThread(database: Database) {
       '2026-08-13T12:30:00.000Z', '2026-08-13T12:30:00.000Z');
   `);
 }
+
+describe('quarantined mailbox visibility', () => {
+  test('excludes quarantine from views, metrics, search and thread mutations until release', async () => {
+    const { env, workspace, database } = fixture();
+    const label = await createMailLabel(env.DB, 'user-1', 'Important');
+    database.exec(`
+      UPDATE email_messages SET thread_key = 'shared' WHERE id = 'incoming-1';
+      UPDATE workspace_messages SET thread_key = 'shared' WHERE id = 'inbox-z';
+      INSERT INTO workspace_email_states (id, user_id, email_message_id, is_starred, quarantined_at)
+        VALUES ('quarantine-state', 'user-1', 'incoming-1', 1, '2026-11-01T00:00:00.000Z');
+    `);
+    database.query(`INSERT INTO mail_message_labels (owner_user_id, label_id, message_kind, message_id, created_at)
+      VALUES ('user-1', ?, 'inbound', 'incoming-1', '2026-11-01T00:00:00.000Z')`).run(label.id);
+    const hidden = 'email:incoming-1';
+    expect((await loadMailboxPage(env, workspace, query('inbox'))).messages.map((item) => item.id)).not.toContain(hidden);
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'Inbound alert' }))).messages.map((item) => item.id)).not.toContain(hidden);
+    expect((await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('folder=starred')))).messages.map((item) => item.id)).not.toContain(hidden);
+    expect((await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams({ folder: 'label', label: label.id })))).messages.map((item) => item.id)).not.toContain(hidden);
+    const metrics = await getMailboxMetrics(env.DB, 'user-1');
+    expect(metrics.inboxCount).toBe(2);
+    expect(metrics.unreadCount).toBe(1);
+    expect(metrics.starredCount).toBe(2);
+    await mutateWorkspaceMailbox(env, workspace, { action: 'read', messageIds: ['inbox-z'], threadKeys: ['shared'], scope: mutationScope('inbox', null, 'owner') });
+    expect(database.query("SELECT is_read FROM workspace_email_states WHERE id = 'quarantine-state'").get()).toEqual({ is_read: 0 });
+    await releaseQuarantinedMail(env.DB, 'user-1', 'incoming-1');
+    expect((await loadMailboxPage(env, workspace, query('inbox'))).messages.map((item) => item.id)).toContain(hidden);
+    expect((await getMailboxMetrics(env.DB, 'user-1')).inboxCount).toBe(3);
+  });
+
+  test('paginates quarantine without crossing owner scope', async () => {
+    const { env, database } = fixture();
+    for (let i = 0; i < 81; i++) {
+      const id = `quarantined-${String(i).padStart(2, '0')}`;
+      database.query(`INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key)
+        VALUES (?, 'user-1', 'sender@example.test', 'ada@example.test', ?, '2026-11-01T00:00:00.000Z', ?)`)
+        .run(id, id, `raw/${id}`);
+      database.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, quarantined_at)
+        VALUES (?, 'user-1', ?, '2026-11-01T00:00:00.000Z')`).run(`state-${id}`, id);
+    }
+    const pages = [await listQuarantinedMail(env.DB, 'user-1', null)];
+    for (let i = 1; i < 5; i++) pages.push(await listQuarantinedMail(env.DB, 'user-1', pages[i - 1].nextCursor));
+    expect(pages.map((page) => page.items.length)).toEqual([20, 20, 20, 20, 1]);
+    expect(new Set(pages.flatMap((page) => page.items.map((item) => item.id))).size).toBe(81);
+    const sql = (env.DB as unknown as TestD1).queries.at(-1)!;
+    const plan = database.query(`EXPLAIN QUERY PLAN ${sql}`).all('user-1', 'user-1', '2026-11-01T00:00:00.000Z', 'quarantined-10', 21) as Array<{ detail: string }>;
+    expect(plan.map((step) => step.detail).join(' ')).toMatch(/idx_workspace_email_states_quarantine.*\(quarantined_at,email_message_id\)</u);
+    expect(plan.some((step) => step.detail.includes('TEMP B-TREE'))).toBe(false);
+    let current = pages[4];
+    for (let i = 3; i >= 0; i--) {
+      current = await listQuarantinedMail(env.DB, 'user-1', current.previousCursor, 'previous');
+      expect(current.items.map((item) => item.id)).toEqual(pages[i].items.map((item) => item.id));
+    }
+    expect(current.previousCursor).toBeNull();
+    await expect(listQuarantinedMail(env.DB, 'user-2', pages[0].nextCursor)).rejects.toMatchObject({ status: 400 });
+    await expect(listQuarantinedMail(env.DB, 'user-1', null, 'previous')).rejects.toMatchObject({ status: 400 });
+  });
+});
 
 describe('D1 mailbox pages', () => {
   test('reports indexed attachment presence for inbound, workspace, sent and draft rows', async () => {

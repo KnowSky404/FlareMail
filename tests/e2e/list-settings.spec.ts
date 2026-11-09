@@ -52,7 +52,7 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   await page.goto('/?folder=settings#settings-notifications');
   await expect(page).toHaveURL(/tab=notifications/u);
   const tabs = page.getByRole('tablist', { name: '设置分区' });
-  await expect(tabs.getByRole('tab')).toHaveText(['个人资料', '通知', '诊断', 'Telegram 通知']);
+  await expect(tabs.getByRole('tab')).toHaveText(['个人资料', '通知', '诊断', 'Telegram 通知', '黑名单']);
   await expect(page.getByRole('tabpanel')).toHaveCount(1);
   await tabs.getByRole('tab', { name: '个人资料', exact: true }).click();
   const original = await (await page.request.get('/api/workspace/profile')).json();
@@ -294,4 +294,313 @@ test('domain and address tables paginate complete collections and reset paginati
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-resource-pages-${testInfo.project.name}.png`), fullPage: false });
   await assertNoConsoleErrors(consoleErrors);
+});
+
+test('blocked sender quarantine keeps mail until an explicit release', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const tabs = page.getByRole('tablist', { name: '设置分区' });
+  await expect(tabs.getByRole('tab', { name: '黑名单' })).toHaveAttribute('aria-selected', 'true');
+  await tabs.getByRole('tab', { name: '个人资料' }).focus();
+  await page.keyboard.press('End');
+  await expect(tabs.getByRole('tab', { name: '黑名单' })).toBeFocused();
+  const sender = `blocked-${testInfo.project.name}@sender.test`;
+  const subject = `Quarantine regression ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '发件人已加入黑名单' })).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <quarantine-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  const delivery = await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  });
+  expect(delivery.ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const message = page.getByRole('link', { name: subject });
+  await expect(message).toBeVisible();
+  const inboxBefore = await (await page.request.get(`/api/workspace/mailbox?folder=inbox&q=${encodeURIComponent(subject)}`)).json();
+  expect(inboxBefore.data.page.messages.some((item: { subject: string }) => item.subject === subject)).toBe(false);
+  const readerPath = new URL((await message.getAttribute('href'))!, page.url()).pathname;
+  await page.goto(readerPath);
+  await expect(page).toHaveURL(/\/messages\//u);
+  await expect(page.getByText('Local fake message.')).toBeVisible();
+  await expect(page.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '回复', exact: true })).toHaveCount(0);
+  await page.getByRole('link', { name: /返回工作台/u }).click();
+  await expect(page.getByRole('button', { name: `释放到收件箱 ${subject}` })).toBeVisible();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-blocked-${testInfo.project.name}.png`), fullPage: false });
+  expect((await new AxeBuilder({ page }).include('main').analyze()).violations).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  const inboxAfter = await (await page.request.get(`/api/workspace/mailbox?folder=inbox&q=${encodeURIComponent(subject)}`)).json();
+  expect(inboxAfter.data.page.messages.some((item: { subject: string }) => item.subject === subject)).toBe(true);
+  await expect(page.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+  await page.getByRole('button', { name: `移除 ${sender}` }).click();
+  await expect(page.getByText('规则已移除；隔离邮件仍保留。')).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('blocked sender controls wait for the initial lists', async ({ page }) => {
+  await login(page);
+  let resume!: () => void;
+  const ready = new Promise<void>((resolve) => { resume = resolve; });
+  await page.route('**/api/workspace/blocked-senders', async (route) => {
+    if (route.request().method() === 'GET') await ready;
+    await route.continue();
+  });
+  await page.goto('/?folder=settings&tab=blocked');
+  await expect(page.getByLabel('发件人邮箱地址')).toBeDisabled();
+  resume();
+  await expect(page.getByLabel('发件人邮箱地址')).toBeEnabled();
+});
+
+test('quarantine retries the requested page and returns to it from the reader', async ({ page }) => {
+  await page.addInitScript(() => { Reflect.deleteProperty(URLSearchParams.prototype, 'size'); });
+  await login(page);
+  let failNext = true;
+  let pageOneSubject = '';
+  const requests: Array<string | null> = [];
+  await page.route('**/api/workspace/quarantine**', async (route) => {
+    const url = new URL(route.request().url());
+    const cursor = url.searchParams.get('cursor');
+    const direction = url.searchParams.get('direction');
+    requests.push(cursor);
+    if (cursor === 'page_two' && failNext) {
+      failNext = false;
+      return route.fulfill({ status: 503, json: { ok: false, error: { code: 'OFFLINE', message: 'Offline' } } });
+    }
+    const number = cursor === 'page_four' ? 4 : cursor === 'page_three' || (cursor === 'back_four' && direction === 'previous') ? 3 : cursor ? 2 : 1;
+    return route.fulfill({ json: { ok: true, data: {
+      items: number === 1 && !pageOneSubject ? [] : [{ id: 'e2e-deep-inbound-message', sender: 'test@example.test', subject: number === 1 ? pageOneSubject : `Quarantine page ${number}`, timestamp: '2026-08-01T08:00:00.000Z' }],
+      previousCursor: number === 1 ? null : `back_${number === 4 ? 'four' : number === 3 ? 'three' : 'two'}`,
+      nextCursor: number === 4 ? null : number === 3 ? 'page_four' : number === 2 ? 'page_three' : 'page_two'
+    } } });
+  });
+  await page.goto('/?folder=settings&tab=blocked');
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect(page.getByRole('alert')).toContainText('无法读取');
+  await page.getByRole('button', { name: '重试' }).click();
+  await expect(page.getByRole('link', { name: 'Quarantine page 2' })).toBeVisible();
+  expect(requests.filter((cursor) => cursor === 'page_two')).toHaveLength(2);
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect(page.getByRole('link', { name: 'Quarantine page 3' })).toBeVisible();
+  await page.getByRole('button', { name: '下一页' }).click();
+  await page.getByRole('link', { name: 'Quarantine page 4' }).click();
+  await expect(page).toHaveURL(/\/messages\//u);
+  await page.getByRole('link', { name: /返回工作台/u }).click();
+  await expect(page).toHaveURL(/quarantineCursor=page_four/u);
+  await expect(page.getByRole('link', { name: 'Quarantine page 4' })).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await page.getByRole('button', { name: '上一页' }).click();
+  await expect(page.getByRole('link', { name: 'Quarantine page 3' })).toBeVisible();
+  await page.getByRole('button', { name: '上一页' }).click();
+  await expect(page.getByRole('link', { name: 'Quarantine page 2' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '上一页' })).toBeEnabled();
+
+  const tabs = page.getByRole('tablist', { name: '设置分区' });
+  await tabs.getByRole('tab', { name: '个人资料' }).click();
+  pageOneSubject = 'New quarantine arrival';
+  await tabs.getByRole('tab', { name: '黑名单' }).click();
+  await expect(page.getByRole('link', { name: pageOneSubject })).toBeVisible();
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect(page.getByRole('link', { name: 'Quarantine page 2' })).toBeVisible();
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect(page.getByRole('link', { name: 'Quarantine page 3' })).toBeVisible();
+  await page.goBack();
+  await expect(tabs.getByRole('tab', { name: '个人资料' })).toHaveAttribute('aria-selected', 'true');
+  await page.goBack();
+  await expect(page.getByRole('link', { name: 'Quarantine page 2' })).toBeVisible();
+});
+
+test('reader reconciles a release after an in-flight read update', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `blocked-race-${testInfo.project.name}@sender.test`;
+  const subject = `Quarantine release race ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <quarantine-race-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const message = page.getByRole('link', { name: subject });
+  await expect(message).toBeVisible();
+  const reader = await context.newPage();
+  let resume!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => { resume = resolve; });
+  const intercepted = new Promise<void>((resolve) => { started = resolve; });
+  await reader.route('**/api/workspace/messages/*/flags', async (route) => {
+    started();
+    await gate;
+    await route.continue();
+  });
+  await reader.goto((await message.getAttribute('href'))!, { waitUntil: 'domcontentloaded' });
+  await intercepted;
+  await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  await reader.evaluate(() => {
+    sessionStorage.removeItem('test-quarantine-refresh');
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.onmessage = (event) => {
+      if (event.data.type === 'mailbox-refresh') {
+        sessionStorage.setItem('test-quarantine-refresh', 'received');
+        channel.close();
+      }
+    };
+  });
+  await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  await reader.waitForFunction(() => sessionStorage.getItem('test-quarantine-refresh') === 'received');
+  resume();
+  await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  await expect(reader.getByRole('button', { name: '回复', exact: true })).toBeVisible();
+  await reader.close();
+});
+
+test('an emptied quarantine page returns to the first page', async ({ page }) => {
+  await login(page);
+  let firstPageHasMessage = true;
+  let lastPageHasMessage = true;
+  await page.route('**/api/workspace/quarantine**', async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === 'POST') {
+      if (url.pathname.endsWith('/first')) firstPageHasMessage = false;
+      else lastPageHasMessage = false;
+      return route.fulfill({ json: { ok: true, data: {} } });
+    }
+    const second = url.searchParams.has('cursor');
+    const item = (id: string, subject: string) => ({ id, subject, sender: 'test@example.test', timestamp: '2026-11-01T00:00:00.000Z' });
+    return route.fulfill({ json: { ok: true, data: {
+      items: second ? (lastPageHasMessage ? [item('last', 'Last message')] : [])
+        : firstPageHasMessage ? [item('first', 'Earlier message')] : lastPageHasMessage ? [item('last', 'Last message')] : [],
+      previousCursor: second && lastPageHasMessage ? 'page_one' : null,
+      nextCursor: !second && firstPageHasMessage && lastPageHasMessage ? 'page_two' : null
+    } } });
+  });
+  await page.goto('/?folder=settings&tab=blocked');
+  await expect(page.getByRole('link', { name: 'Earlier message' })).toBeVisible();
+  await page.getByRole('button', { name: '下一页' }).click();
+  await page.getByRole('button', { name: '释放到收件箱 Last message' }).click();
+  await expect(page.getByRole('link', { name: 'Earlier message' })).toBeVisible();
+  await expect(page).not.toHaveURL(/quarantineCursor/u);
+  await page.goto('/?folder=settings&tab=blocked&quarantineCursor=page_two&quarantinePage=2');
+  await expect(page.getByRole('link', { name: 'Earlier message' })).toBeVisible();
+  await expect(page).not.toHaveURL(/quarantineCursor/u);
+  lastPageHasMessage = true;
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  await page.getByRole('button', { name: '释放到收件箱 Earlier message' }).click();
+  await expect(page.getByRole('link', { name: 'Last message' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '下一页' })).toBeDisabled();
+});
+
+test('blocked sender rules and quarantine releases sync between tabs', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const other = await context.newPage();
+  await other.goto('/?folder=settings&tab=blocked');
+  await expect(other.getByLabel('发件人邮箱地址')).toBeEnabled();
+  const sender = `blocked-tabs-${testInfo.project.name}@sender.test`;
+  const subject = `Cross-tab quarantine ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(other.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+  await other.getByRole('button', { name: `移除 ${sender}` }).click();
+  await expect(page.getByRole('button', { name: `移除 ${sender}` })).toHaveCount(0);
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(other.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+  const raw = [
+    `From: ${sender}`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <quarantine-tabs-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  await other.getByRole('button', { name: '刷新隔离区' }).click();
+  await expect(other.getByRole('button', { name: `释放到收件箱 ${subject}` })).toBeVisible();
+  await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+  await expect(other.getByRole('button', { name: `释放到收件箱 ${subject}` })).toHaveCount(0);
+  await expect(other.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+  await other.close();
+});
+
+test('blocked sender requests cannot update the next authentication session', async ({ page }) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  await expect(page.getByLabel('发件人邮箱地址')).toBeEnabled();
+  let resume!: () => void;
+  let started!: () => void;
+  const waiting = new Promise<void>((resolve) => { resume = resolve; });
+  const posted = new Promise<void>((resolve) => { started = resolve; });
+  await page.route('**/api/workspace/blocked-senders', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    started();
+    await waiting;
+    await route.fulfill({ json: { ok: true, data: { email: 'stale@example.test' } } }).catch(() => undefined);
+  });
+  await page.getByLabel('发件人邮箱地址').fill('draft@example.test');
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await posted;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('flaremail:auth-expired', { detail: { source: 'worker-session' } })));
+  resume();
+  await expect(page.getByLabel('发件人邮箱地址')).toHaveValue('draft@example.test');
+  await expect(page.getByText('stale@example.test')).toHaveCount(0);
+  await expect(page.getByLabel('发件人邮箱地址')).toBeDisabled();
+  await expect(page.getByRole('button', { name: '刷新隔离区' })).toBeDisabled();
+  await page.getByRole('button', { name: '检查登录状态' }).click();
+  await expect(page.getByLabel('发件人邮箱地址')).toBeEnabled();
+  await expect(page.getByLabel('发件人邮箱地址')).toHaveValue('draft@example.test');
+  await expect(page.getByText('stale@example.test')).toHaveCount(0);
+});
+
+
+test('failed block keeps its error and input until the owner retries the action', async ({ page }) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  await expect(page.getByLabel('发件人邮箱地址')).toBeEnabled();
+  let failNext = true;
+  let resume!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => { resume = resolve; });
+  const intercepted = new Promise<void>((resolve) => { started = resolve; });
+  await page.route('**/api/workspace/blocked-senders', async (route) => {
+    if (route.request().method() === 'POST' && failNext) {
+      failNext = false;
+      started();
+      await gate;
+      return route.fulfill({ status: 503, json: { ok: false, error: { code: 'OFFLINE', message: 'Offline' } } });
+    }
+    return route.continue();
+  });
+  await page.getByLabel('发件人邮箱地址').fill('retry@example.test');
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await intercepted;
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'blocked-senders-changed' });
+    channel.close();
+  });
+  await page.getByRole('tab', { name: '个人资料' }).click();
+  const failed = page.waitForResponse((response) => response.url().endsWith('/api/workspace/blocked-senders') && response.status() === 503);
+  resume();
+  await failed;
+  await page.getByRole('tab', { name: '黑名单' }).click();
+  await expect(page.getByRole('alert')).toContainText('无法保存');
+  await expect(page.getByRole('button', { name: '重试', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('发件人邮箱地址')).toHaveValue('retry@example.test');
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  await page.getByRole('button', { name: '移除 retry@example.test' }).click();
 });

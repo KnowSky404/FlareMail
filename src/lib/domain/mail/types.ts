@@ -199,6 +199,8 @@ export interface MailMessage extends MailRfcHeaders {
   inboxCategoryOverride?: MailInboxCategory | null;
   /** Non-null only when an inbox message is in the archive section. */
   archivedAt?: string | null;
+  /** Non-null while an inbound message is quarantined. */
+  quarantinedAt?: string | null;
   /** Safe plain text with private-use highlight delimiters from FTS5. */
   searchSnippet?: string;
   searchHitFields?: MailSearchHitField[];
