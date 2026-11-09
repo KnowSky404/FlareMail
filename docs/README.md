@@ -24,6 +24,7 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 | --- | --- | --- |
 | [List pagination and settings tabs spec](./specs/list-pagination-and-settings-tabs.md) | 中文 | Implemented pagination APIs, independent settings saves, tab navigation, and local acceptance |
 | [Account menu and About spec](./specs/account-menu-and-about.md) | 中文 | Menu actions, project metadata, centered dialog, focus behavior and acceptance |
+| [Blocked senders spec](./specs/blocked-senders.md) | 中文 | Owner rules, recoverable quarantine, notification boundaries and release constraints |
 | [Inbound reliability spec](./specs/inbound-delivery-reliability.md) | 中文 | Ingest conflicts, plus-address identity mapping, routing scope and verification limits |
 | [Sidebar attention-count spec](./specs/sidebar-attention-counts.md) | 中文 | Attention badges, sending/exception states, identity scope and acceptance |
 | [Navigation and read-state spec](./specs/mailbox-navigation-and-read-state.md) | 中文 | Cache behavior, unread counters, partial state writes and acceptance |

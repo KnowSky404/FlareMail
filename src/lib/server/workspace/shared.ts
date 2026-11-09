@@ -181,6 +181,7 @@ export interface WorkspaceInboundRow {
   text_body?: string;
   body_object_id?: string | null;
   archived_at?: string | null;
+  quarantined_at?: string | null;
   deleted_at?: string | null;
   search_snippet?: string | null;
   search_total?: number;
@@ -380,6 +381,7 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, se
     references: row.references,
     threadKey: row.thread_key,
     archivedAt: row.archived_at ?? null,
+    ...(row.quarantined_at === undefined ? {} : { quarantinedAt: row.quarantined_at }),
     searchSnippet: row.search_snippet ?? undefined,
     searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined
   };

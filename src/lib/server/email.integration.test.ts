@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createInboundDedupeKey, handleInboundEmail } from './email';
 import { FLAREMAIL_SCHEMA_VERSION } from './db/schema-version';
+import { addBlockedSender, listBlockedSenders, listQuarantinedMail, releaseQuarantinedMail, removeBlockedSender } from './db/blocked-senders';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -232,6 +233,100 @@ const captureTelegram = async <T>(action: () => Promise<T>) => {
     globalThis.fetch = previousFetch;
   }
 };
+
+describe('blocked senders', () => {
+  test('matches the visible From, stores attachments, suppresses notifications and keeps a released duplicate released', async () => {
+    const test = notificationEnvironment();
+    test.database.query("UPDATE workspace_users SET forwarding_enabled = 1 WHERE id = 'user-1'").run();
+    test.env.AUTO_REPLY_ENABLED = 'true';
+    await addBlockedSender(test.env.DB, 'user-1', ' FILES@EXAMPLE.COM ');
+    await addBlockedSender(test.env.DB, 'user-1', 'files@example.com');
+    expect(await listBlockedSenders(test.env.DB, 'user-1')).toHaveLength(1);
+    const requests = await captureResend(async () => handleInboundEmail(message().value, test.env));
+    expect(requests.requests).toHaveLength(0);
+    expect(test.database.query('SELECT COUNT(*) AS n FROM email_messages').get()).toEqual({ n: 1 });
+    expect(test.database.query('SELECT COUNT(*) AS n FROM workspace_attachments').get()).toEqual({ n: 1 });
+    expect(test.BUCKET.objects.size).toBe(2);
+    const page = await listQuarantinedMail(test.env.DB, 'user-1', null);
+    expect(page.items).toHaveLength(1);
+    expect((await listQuarantinedMail(test.env.DB, 'user-2', null)).items).toHaveLength(0);
+    await expect(releaseQuarantinedMail(test.env.DB, 'user-2', page.items[0].id)).rejects.toMatchObject({ status: 404 });
+    await removeBlockedSender(test.env.DB, 'user-1', 'files@example.com');
+    expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(1);
+    await addBlockedSender(test.env.DB, 'user-1', 'files@example.com');
+    await releaseQuarantinedMail(test.env.DB, 'user-1', page.items[0].id);
+    await handleInboundEmail(message().value, test.env);
+    expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(0);
+    expect(await listBlockedSenders(test.env.DB, 'user-1')).toHaveLength(1);
+    await removeBlockedSender(test.env.DB, 'user-1', 'FILES@example.com');
+    expect(await listBlockedSenders(test.env.DB, 'user-1')).toHaveLength(0);
+  });
+
+  test('validates rules, scopes them to the owner, and falls back safely if lookup is unavailable', async () => {
+    const test = environment();
+    await expect(addBlockedSender(test.env.DB, 'user-1', '*@*.example.com')).rejects.toMatchObject({ status: 400 });
+    await addBlockedSender(test.env.DB, 'other-owner', 'files@example.com');
+    await addBlockedSender(test.env.DB, 'user-1', 'alice@example.com');
+    await handleInboundEmail(message().value, test.env);
+    expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(0);
+
+    const unavailable = environment();
+    unavailable.database.exec('DROP TABLE blocked_senders');
+    await handleInboundEmail(message().value, unavailable.env);
+    expect(unavailable.database.query('SELECT COUNT(*) AS n FROM email_messages').get()).toEqual({ n: 1 });
+    expect(unavailable.database.query('SELECT COUNT(*) AS n FROM workspace_email_states').get()).toEqual({ n: 0 });
+  });
+
+  test('does not retain a partial quarantine when the mail transaction fails', async () => {
+    const test = environment(true);
+    await addBlockedSender(test.env.DB, 'user-1', 'files@example.com');
+    await expect(handleInboundEmail(message().value, test.env)).rejects.toThrow();
+    expect(test.database.query('SELECT COUNT(*) AS n FROM email_messages').get()).toEqual({ n: 0 });
+    expect(test.database.query('SELECT COUNT(*) AS n FROM workspace_email_states').get()).toEqual({ n: 0 });
+    expect(test.BUCKET.objects.size).toBe(0);
+  });
+
+  test('does not enqueue Telegram for quarantined mail', async () => {
+    const test = telegramEnvironment();
+    await addBlockedSender(test.env.DB, 'user-1', 'files@example.com');
+    await captureTelegram(() => handleInboundEmail(message().value, test.env));
+    expect(test.database.query('SELECT COUNT(*) AS n FROM workspace_telegram_deliveries').get()).toEqual({ n: 0 });
+    expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(1);
+  });
+
+  test('does not match the envelope when a From header is present but invalid', async () => {
+    for (const header of ['From: not-an-address', 'From:']) {
+      const test = environment();
+      await addBlockedSender(test.env.DB, 'user-1', 'alice@example.com');
+      const raw = new TextEncoder().encode(`${header}\r\nTo: owner@example.test\r\nSubject: Invalid From\r\n\r\nhello`);
+      await handleInboundEmail(message(raw).value, test.env);
+      expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(0);
+      expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender: '' });
+    }
+  });
+
+  test('uses the envelope sender only when From is missing', async () => {
+    const test = environment();
+    await addBlockedSender(test.env.DB, 'user-1', 'alice@example.com');
+    const raw = new TextEncoder().encode('To: owner@example.test\r\nSubject: No From\r\n\r\nhello');
+    await handleInboundEmail(message(raw).value, test.env);
+    expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(1);
+    expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender: 'alice@example.com' });
+  });
+
+  test('keeps unrelated unknown senders in separate fallback threads', async () => {
+    const test = environment();
+    for (const sender of ['alice@example.com', 'bob@example.com']) {
+      const raw = new TextEncoder().encode(`From:\r\nTo: owner@example.test\r\nSubject: Same subject\r\n\r\n${sender}`);
+      const inbound = message(raw).value;
+      Object.defineProperty(inbound, 'from', { value: sender });
+      await handleInboundEmail(inbound, test.env);
+    }
+    const rows = test.database.query('SELECT id, "from" AS sender, thread_key FROM email_messages').all() as Array<{ id: string; sender: string; thread_key: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.sender === '' && row.thread_key === `same subject::message:email:${row.id}`)).toBe(true);
+  });
+});
 
 describe('inbound email persistence', () => {
   test('stores large UTF-8 text/html in a canonical R2 body and bounded D1 projections', async () => {

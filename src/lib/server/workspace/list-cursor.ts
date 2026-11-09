@@ -1,6 +1,6 @@
 import { ApiError } from '$lib/server/http/api';
 
-type ListCursor = { version: 1; scope: 'trash' | 'telegram'; owner: string; timestamp: string; id: string; kind?: 'workspace' | 'draft' | 'inbound' };
+type ListCursor = { version: 1; scope: 'trash' | 'telegram' | 'quarantine'; owner: string; timestamp: string; id: string; kind?: 'workspace' | 'draft' | 'inbound' };
 
 export function encodeListCursor(cursor: Omit<ListCursor, 'version'>) {
   const bytes = new TextEncoder().encode(JSON.stringify({ version: 1, ...cursor }));

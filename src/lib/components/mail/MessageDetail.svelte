@@ -139,9 +139,9 @@
     {sectionTitle}
     {onBack}
     {onEditDraft}
-    {onForward}
-    {onReply}
-    {onReplyAll}
+    onForward={message?.quarantinedAt ? undefined : onForward}
+    onReply={message?.quarantinedAt ? undefined : onReply}
+    onReplyAll={message?.quarantinedAt ? undefined : onReplyAll}
     {onToggleStar}
     {onManageLabels}
     {onToggleRead}
@@ -163,6 +163,7 @@
       {/if}
     {/snippet}
   </MessageHeader>
+  {#if message?.quarantinedAt}<p class="mx-4 mt-3 text-xs text-[var(--fm-text-muted)]">{t('blocked.releaseToReply')}</p>{/if}
 
   {#if message}
     <div class="fm-detail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -219,7 +220,7 @@
             </ol>
           </section>
         {/if}
-        {#if !trashMode && message.folder !== 'drafts' && (onReply || onReplyAll || onForward)}
+        {#if !trashMode && !message.quarantinedAt && message.folder !== 'drafts' && (onReply || onReplyAll || onForward)}
           <nav class="message-reply-actions" aria-label={t('mail.actions')}>
             {#if onReply}<Button variant="outline" class="rounded-full px-5" disabled={pending} onclick={() => message && onReply?.(message)}><Reply class="size-4" aria-hidden="true" />{t('mail.reply')}</Button>{/if}
             {#if onReplyAll}<Button variant="outline" class="rounded-full px-5" disabled={pending} onclick={() => message && onReplyAll?.(message)}><ReplyAll class="size-4" aria-hidden="true" />{t('mail.replyAll')}</Button>{/if}

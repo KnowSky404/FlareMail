@@ -160,7 +160,7 @@ export async function moveWorkspaceMessageToTrash(env: CloudflareEnv | undefined
     await db.prepare(`
       INSERT INTO workspace_email_states (id, user_id, email_message_id, is_read, is_starred, archived_at, deleted_at, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id, email_message_id) DO UPDATE SET deleted_at = excluded.deleted_at, updated_at = excluded.updated_at
+      ON CONFLICT(user_id, email_message_id) DO UPDATE SET deleted_at = excluded.deleted_at, quarantined_at = NULL, updated_at = excluded.updated_at
     `).bind(crypto.randomUUID(), session.userId, id.slice(6), current.message.read ? 1 : 0, current.message.starred ? 1 : 0, current.message.archivedAt ?? null, timestamp, timestamp, timestamp).run();
   } else {
     const table = current.kind === 'draft' ? 'workspace_drafts' : 'workspace_messages';

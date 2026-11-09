@@ -27,6 +27,14 @@ describe('settings tabs', () => {
     expect(readSettingsTab(new URL('https://flaremail.test/?tab=notifications#settings-telegram'))).toBe('notifications');
     expect(readSettingsTab(new URL('https://flaremail.test/?tab=invalid'))).toBe('profile');
   });
+  test('keeps quarantine paging only while viewing blocked senders', () => {
+    const page = updateWorkspaceUrl(new URL('https://flaremail.test/?folder=settings&tab=blocked'), { quarantineCursor: 'page_two', quarantinePage: 2 });
+    expect(page.searchParams.get('quarantineCursor')).toBe('page_two');
+    expect(page.searchParams.get('quarantinePage')).toBe('2');
+    expect(updateWorkspaceUrl(page, { section: 'inbox' }).searchParams.has('quarantineCursor')).toBe(false);
+    expect(updateWorkspaceUrl(page, { settingsTab: 'profile' }).searchParams.has('quarantineCursor')).toBe(false);
+    expect(updateWorkspaceUrl(page, { quarantineCursor: null, quarantinePage: 1 }).searchParams.has('quarantineCursor')).toBe(false);
+  });
   test('falls back to profile for removed appearance links and normalizes the URL', () => {
     for (const suffix of ['&tab=appearance', '#settings-appearance']) {
       const old = new URL(`https://flaremail.test/?folder=settings${suffix}`);

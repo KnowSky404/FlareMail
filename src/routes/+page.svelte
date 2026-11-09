@@ -1217,6 +1217,9 @@
       identityFilter?: MailboxIdentityFilter | null;
       messageId?: string | null;
       labelId?: string | null;
+      quarantineCursor?: string | null;
+      quarantinePage?: number;
+      quarantineDirection?: 'next' | 'previous';
     },
     replaceHistory = false
   ) {
@@ -1668,6 +1671,7 @@
   }
 
   function handleWorkspaceSync(event: import('$lib/client/workspace-sync').WorkspaceSyncEvent) {
+    if (event.type === 'blocked-senders-changed') return;
     if (event.type === 'session-ended') {
       if (!authenticated) return;
       resetWorkspace();
@@ -2700,6 +2704,7 @@
   }
 
   async function handleReplyMessage(message: MailMessage) {
+    if (message.quarantinedAt) { notify(t('blocked.releaseToReply'), 'error'); return; }
     if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
       if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
         notify(t('notify.bodyRequiredReply'), 'error');
@@ -2722,6 +2727,7 @@
   }
 
   async function handleReplyAllMessage(message: MailMessage) {
+    if (message.quarantinedAt) { notify(t('blocked.releaseToReply'), 'error'); return; }
     if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
       if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
         notify(t('notify.bodyRequiredReply'), 'error');
@@ -2746,6 +2752,7 @@
   }
 
   async function handleForwardMessage(message: MailMessage) {
+    if (message.quarantinedAt) { notify(t('blocked.releaseToReply'), 'error'); return; }
     if (isInboundMessageId(message.id) && !inboundDetails[message.id]) {
       if (!(await loadInboundDetail(message)) || !inboundDetails[message.id]) {
         notify(t('notify.bodyRequiredForward'), 'error');
@@ -3065,6 +3072,7 @@
                     {pending}
                     {profile}
                     {serviceDegraded}
+                    {authExpired}
                     diagnostics={data.runtimeDiagnostics ? {
                       ...data.runtimeDiagnostics,
                       senderConfigured: mailIdentityOptions.addresses.some((address) => address.sendReady)
@@ -3074,6 +3082,8 @@
                     onSave={saveProfile}
                     onOpenDomains={() => setManagementView('domains')}
                     onOpenAddresses={() => setManagementView('addresses')}
+                    onQuarantineRelease={(id) => { void refreshWorkspace(false); workspaceSync?.publish({ type: 'mailbox-refresh', id: `email:${id}` }); }}
+                    onQuarantinePageChange={(cursor, number, direction) => { void updateWorkspaceUrl({ quarantineCursor: cursor, quarantinePage: number, quarantineDirection: direction }, true); }}
                   />
                 {:else if managementView !== 'settings' && MailIdentityManager}
                   <MailIdentityManager

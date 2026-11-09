@@ -515,6 +515,7 @@ async function listInboundMessageSummaryPage(
   const wantsArchive = input.search?.filters.is.includes('archived') ?? false;
   const conditions = [
     'e.owner_user_id = ?',
+    's.quarantined_at IS NULL',
     wantsTrash ? 's.deleted_at IS NOT NULL' : 's.deleted_at IS NULL',
     wantsArchive ? 's.archived_at IS NOT NULL' :
       wantsTrash ? '1 = 1' :

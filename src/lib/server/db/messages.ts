@@ -119,7 +119,7 @@ export async function listOwnedMailboxMutationRows(
       FROM email_messages AS e
       LEFT JOIN workspace_email_states AS s
         ON s.user_id = ? AND s.email_message_id = e.id
-      WHERE e.owner_user_id = ? AND s.deleted_at IS NULL${scopeClause.sql}
+      WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL${scopeClause.sql}
         AND e.id IN (${placeholders(inboundIds)})
     `).bind(userId, userId, ...scopeClause.bindings, ...inboundIds).all<OwnedMailboxMutationRow>();
     rows.push(...(result.results ?? []));
@@ -150,7 +150,7 @@ export async function resolveOwnedMailboxThreadMessageIds(
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE e.owner_user_id = ? AND s.deleted_at IS NULL
+    WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL
       AND e.thread_key IN (${threadPlaceholders})
     LIMIT ?
   `).bind(userId, userId, ...threadKeys, maxResolved + 1).all<{ id: string }>();
@@ -186,7 +186,7 @@ function inboundMutationStatement(
     FROM email_messages AS e
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE e.owner_user_id = ? AND e.id = ? AND s.deleted_at IS NULL${scopeClause.sql}
+    WHERE e.owner_user_id = ? AND e.id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL${scopeClause.sql}
     ON CONFLICT(user_id, email_message_id) DO UPDATE SET
       is_read = excluded.is_read,
       is_starred = excluded.is_starred,
@@ -250,7 +250,7 @@ export async function listInboundMessages(db: D1Database, userId: string, _login
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred
     FROM email_messages AS e LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
-    WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.archived_at IS NULL
+    WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL AND s.archived_at IS NULL
     ORDER BY e."timestamp" DESC, e.id DESC
   `).bind(userId, userId).all<WorkspaceInboundRow>();
 }

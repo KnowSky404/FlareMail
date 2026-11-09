@@ -6,6 +6,7 @@
   import Switch from '$lib/components/ui/Switch.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
+  import BlockedSendersPanel from '$lib/components/mail/BlockedSendersPanel.svelte';
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
   import { settingsTabs, profileSubmission, acceptProfileSave, type SettingsTab, type EditableSettingsTab } from '$lib/client/settings-tabs';
@@ -41,7 +42,10 @@
     pending = false,
     onSave,
     onOpenDomains,
-    onOpenAddresses
+    onOpenAddresses,
+    onQuarantineRelease,
+    onQuarantinePageChange,
+    authExpired = false
   }: {
     profile: UserProfile;
     tab?: SettingsTab;
@@ -55,6 +59,9 @@
     onSave: (next: UserProfile) => Promise<UserProfile | null>;
     onOpenDomains?: () => void;
     onOpenAddresses?: () => void;
+    onQuarantineRelease?: (id: string) => void;
+    onQuarantinePageChange?: (cursor: string | null, page: number, direction: 'next' | 'previous') => void;
+    authExpired?: boolean;
   } = $props();
 
   let nextProfile = $state<UserProfile>(
@@ -72,17 +79,19 @@
   const i18n = useLocale();
   const { t } = i18n;
   let telegramVisited = $state(false);
+  let blockedVisited = $state(false);
   let focusedTab = $state<SettingsTab>('profile');
   let feedback = $state<Partial<Record<EditableSettingsTab, { message: string; error: boolean }>>>({});
   $effect(() => {
     const current = tab;
     focusedTab = current;
     if (current === 'telegram') telegramVisited = true;
+    if (current === 'blocked') blockedVisited = true;
     void tick().then(() => {
       if (tab === current) document.getElementById(`settings-tab-${current}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   });
-  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title') });
+  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title'), blocked: t('blocked.title') });
 
   function moveTab(event: KeyboardEvent, index: number) {
     const next = event.key === 'ArrowRight' ? (index + 1) % settingsTabs.length : event.key === 'ArrowLeft' ? (index - 1 + settingsTabs.length) % settingsTabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? settingsTabs.length - 1 : null;
@@ -136,7 +145,7 @@
     {/each}
   </div>
 
-  <div id={tab === 'telegram' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram'}>
+  <div id={tab === 'telegram' || tab === 'blocked' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram' || tab === 'blocked'}>
   <form onsubmit={submit}>
     {#if tab === 'profile'}
     <Panel id="settings-profile" class="scroll-mt-[5.25rem]" title={t('settings.profile')} description={t('settings.profileDescription')}>
@@ -263,6 +272,9 @@
     {/if}
   </form>
   </div>
+  {#if blockedVisited}
+    <div id="settings-panel-blocked" role="tabpanel" aria-labelledby="settings-tab-blocked" hidden={tab !== 'blocked'}><BlockedSendersPanel active={tab === 'blocked' && !authExpired} onRelease={onQuarantineRelease} onPageChange={onQuarantinePageChange} /></div>
+  {/if}
   {#if telegramVisited}
     <div id="settings-panel-telegram" role="tabpanel" aria-labelledby="settings-tab-telegram" hidden={tab !== 'telegram'}><TelegramNotificationPanel active={tab === 'telegram'} /></div>
   {/if}

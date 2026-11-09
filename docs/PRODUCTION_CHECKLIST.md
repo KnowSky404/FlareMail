@@ -158,9 +158,8 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   copy. The current backfill tool rejects `--remote`; no production writes are
   implied by local plan/apply/verify evidence.
 
-- [ ] The checkout's latest migration filename and schema version are recorded
-  (currently migrations `0001` through `0028` and schema version `28`); the
-  repository's `schema-version.ts` and preflight output were checked rather
+- [ ] The checkout's latest migration filename and schema version are recorded;
+  the repository's `schema-version.ts` and preflight output were checked rather
   than relying on an old number.
 - [ ] Every unapplied migration is approved and applied in numeric order:
 

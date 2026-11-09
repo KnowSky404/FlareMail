@@ -52,6 +52,19 @@ function fixture() {
 afterEach(() => { while (databases.length) databases.pop()?.close(); });
 
 describe('workspace trash', () => {
+  test('an explicitly trashed quarantined message leaves quarantine and can be restored normally', async () => {
+    const { db, DB, bucket } = fixture();
+    const env = { DB, BUCKET: bucket } as never;
+    db.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, quarantined_at)
+      VALUES ('quarantine', 'owner-1', 'in-1', '2026-11-01T00:00:00.000Z')`).run();
+    await moveWorkspaceMessageToTrash(env, session, 'email:in-1');
+    expect(db.query("SELECT quarantined_at FROM workspace_email_states WHERE id = 'quarantine'").get()).toEqual({ quarantined_at: null });
+    expect((await listWorkspaceTrash(env, session)).items.map((item) => item.id)).toContain('email:in-1');
+    await restoreWorkspaceTrash(env, session, 'email:in-1');
+    expect(db.query("SELECT deleted_at, quarantined_at FROM workspace_email_states WHERE id = 'quarantine'").get())
+      .toEqual({ deleted_at: null, quarantined_at: null });
+  });
+
   test('moves workspace, draft and inbound rows without exposing them in the mailbox', async () => {
     const { db, DB, bucket } = fixture();
     const env = { DB, BUCKET: bucket } as never;

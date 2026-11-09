@@ -21,6 +21,7 @@ const REQUIRED_TABLES = [
   'mail_labels',
   'mail_message_labels',
   'workspace_email_states',
+  'blocked_senders',
   'workspace_settings',
   'workspace_outbound_statuses',
   'workspace_attachments',

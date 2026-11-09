@@ -157,6 +157,35 @@ describe('application API response classification', () => {
     expect(isClientAuthExpired()).toBe(false);
   });
 
+  test('ignores a canceled old session response after recovery', async () => {
+    const controller = new AbortController();
+    let respond!: (response: Response) => void;
+    setFetch(() => new Promise((resolve) => { respond = resolve; }));
+    const pending = requestJson('/api/workspace/blocked-senders', { signal: controller.signal });
+    controller.abort();
+    clearClientAuthExpired();
+    respond(jsonResponse({ ok: false, error: { code: 'AUTHENTICATION_REQUIRED', message: 'expired' } }, 401));
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(isClientAuthExpired()).toBe(false);
+  });
+
+  test('ignores a canceled 401 whose JSON body finishes after recovery', async () => {
+    const controller = new AbortController();
+    let finishBody!: (value: unknown) => void;
+    let reading!: () => void;
+    const started = new Promise<void>((resolve) => { reading = resolve; });
+    const response = jsonResponse({}, 401);
+    Object.defineProperty(response, 'clone', { value: () => ({ json: () => { reading(); return new Promise((resolve) => { finishBody = resolve; }); } }) });
+    setFetch(async () => response);
+    const pending = requestJson('/api/workspace/blocked-senders', { signal: controller.signal });
+    await started;
+    controller.abort();
+    clearClientAuthExpired();
+    finishBody({ error: { code: 'AUTHENTICATION_REQUIRED' } });
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(isClientAuthExpired()).toBe(false);
+  });
+
   test('blocks ordinary requests after expiry but allows the explicit session GET', async () => {
     let calls = 0;
     setFetch(async () => {

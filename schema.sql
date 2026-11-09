@@ -367,6 +367,17 @@ CREATE TABLE IF NOT EXISTS mail_body_objects (
 CREATE INDEX IF NOT EXISTS idx_mail_body_cleanup ON mail_body_objects(state, delete_after);
 CREATE INDEX IF NOT EXISTS idx_mail_body_owner ON mail_body_objects(owner_user_id, entity_type, entity_id);
 
+CREATE TABLE blocked_senders (
+  owner_user_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (owner_user_id, email)
+);
+
+CREATE TRIGGER blocked_senders_owner_delete AFTER DELETE ON workspace_users BEGIN
+  DELETE FROM blocked_senders WHERE owner_user_id = old.id;
+END;
+
 CREATE TABLE IF NOT EXISTS workspace_email_states (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -375,6 +386,7 @@ CREATE TABLE IF NOT EXISTS workspace_email_states (
   is_starred INTEGER NOT NULL DEFAULT 0,
   deleted_at TEXT,
   archived_at TEXT,
+  quarantined_at TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   UNIQUE(user_id, email_message_id)
@@ -386,6 +398,10 @@ CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_archived
   ON workspace_email_states(user_id, archived_at, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_workspace_email_states_user_trash
   ON workspace_email_states(user_id, deleted_at, updated_at DESC, email_message_id);
+
+CREATE INDEX idx_workspace_email_states_quarantine
+  ON workspace_email_states(user_id, quarantined_at DESC, email_message_id DESC)
+  WHERE quarantined_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS workspace_settings (
   user_id TEXT PRIMARY KEY,
