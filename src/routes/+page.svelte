@@ -3140,11 +3140,11 @@
                     onOpenDomains={() => setManagementView('domains')}
                     onOpenAddresses={() => setManagementView('addresses')}
                     onQuarantineRelease={(id) => {
+                      if (!workspaceSync) return;
                       const messageId = `email:${id}`;
                       if (deepLinkedMessage?.id === messageId) deepLinkedMessage = null;
                       if (deepLinkedRefreshError === messageId) deepLinkedRefreshError = null;
                       void refreshWorkspace(false);
-                      workspaceSync?.publish({ type: 'mailbox-refresh', id: messageId });
                     }}
                     onQuarantinePageChange={(cursor, number, direction) => updateWorkspaceUrl({ quarantineCursor: cursor, quarantinePage: number, quarantineDirection: direction }, true)}
                   />
