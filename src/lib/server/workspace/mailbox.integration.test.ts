@@ -194,10 +194,10 @@ function insertCrossAddressThread(database: Database) {
       'incoming body', 'inbound', '<shared-rfc@example.test>', 'shared-rfc', 'domain-b', 'address-b');
     INSERT INTO workspace_messages (
       id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview,
-      body, sent_at, labels_json, is_read, is_starred, thread_key, recipient_address_id
+      body, sent_at, labels_json, is_read, is_starred, message_id, thread_key, recipient_address_id
     ) VALUES ('inbox-b', 'user-1', 'inbox', 'Carol', 'carol@example.test', 'Ada',
       'ada@beta.example', 'Inbound alert', 'incoming preview', 'body',
-      '2026-08-13T13:00:00.000Z', '[]', 0, 0, 'shared-rfc', 'address-b');
+      '2026-08-13T13:00:00.000Z', '[]', 0, 0, '<shared-rfc@example.test>', 'shared-rfc', 'address-b');
     INSERT INTO email_messages (
       id, owner_user_id, "from", "to", subject, "timestamp", snippet, raw_key,
       text_body, direction, message_id, thread_key, mail_domain_id, mail_address_id
@@ -800,6 +800,33 @@ describe('D1 mailbox pages', () => {
     expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('canonical-a', 'canonical-b') AND archived_at IS NOT NULL").get()).toEqual({ count: 2 });
   });
 
+  test.each(['owner', 'filtered'] as const)('rejects %s expansion into a different displayed fallback thread', async (threadScope) => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
+        ('collision-selected', 'user-1', 'alice@example.com', 'owner@example.test', 'Same', '2026-08-13T14:00:00.000Z', 'raw/selected', 'collision'),
+        ('collision-sender', 'user-1', 'bob@example.com', 'owner@example.test', 'Same', '2026-08-13T14:01:00.000Z', 'raw/sender', 'collision'),
+        ('collision-subject', 'user-1', 'alice@example.com', 'owner@example.test', 'Other', '2026-08-13T14:02:00.000Z', 'raw/subject', 'collision');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:collision-'));
+    expect(buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox')).toHaveLength(3);
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:collision-selected'], threadKeys: ['collision'], scope: mutationScope('inbox', null, threadScope)
+    })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id LIKE 'collision-%' AND archived_at IS NOT NULL").get()).toEqual({ count: 0 });
+  });
+
+  test('rejects expansion into an unrelated RFC thread sharing a stored key', async () => {
+    const { env, workspace } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
+        ('rfc-collision-a', 'user-1', 'alice@example.com', 'owner@example.test', 'Same', '2026-08-13T14:00:00.000Z', 'raw/a', '<one@example.test>', 'collision'),
+        ('rfc-collision-b', 'user-1', 'alice@example.com', 'owner@example.test', 'Same', '2026-08-13T14:01:00.000Z', 'raw/b', '<two@example.test>', 'collision');
+    `));
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:rfc-collision-a'], threadKeys: ['collision'], scope: mutationScope('inbox', null, 'owner')
+    })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
+  });
+
   test('keeps RFC-prefixed fallback subjects eligible for thread actions', async () => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
@@ -818,7 +845,7 @@ describe('D1 mailbox pages', () => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
         ('quoted-thread', 'user-1', 'Alice "Ace" Smith <alice@example.test>', 'owner@example.test', 'Quoted thread', '2026-08-13T14:00:00Z', 'raw/quoted', 'quoted-thread-key'),
-        ('known-thread', 'user-1', 'known@example.test', 'owner@example.test', 'Quoted thread', '2026-08-13T14:01:00Z', 'raw/known', 'quoted-thread-key');
+        ('known-thread', 'user-1', 'alice@example.test', 'owner@example.test', 'Quoted thread', '2026-08-13T14:01:00Z', 'raw/known', 'quoted-thread-key');
     `));
     const page = await loadMailboxPage(env, workspace, query('inbox'));
     expect(page.messages.find(({ id }) => id === 'email:quoted-thread')).toMatchObject({ fromName: 'Alice "Ace" Smith', fromEmail: 'alice@example.test', threadKey: 'quoted-thread-key' });
@@ -1250,9 +1277,9 @@ describe('D1 mailbox pages', () => {
 describe('inbox category pages and manual overrides', () => {
   function categoryFixture() {
     const value = fixture();
-    value.database.query(`UPDATE workspace_messages SET subject = 'Special offer', thread_key = 'shared-topic' WHERE id = 'inbox-z'`).run();
-    value.database.query(`UPDATE workspace_messages SET thread_key = 'shared-topic' WHERE id = 'inbox-a'`).run();
-    value.database.query(`UPDATE email_messages SET subject = 'Special offer', thread_key = 'shared-topic' WHERE id = 'incoming-1'`).run();
+    value.database.query(`UPDATE workspace_messages SET subject = 'Special offer', message_id = '<category-thread@example.test>', thread_key = 'shared-topic' WHERE id = 'inbox-z'`).run();
+    value.database.query(`UPDATE workspace_messages SET message_id = '<category-thread@example.test>', thread_key = 'shared-topic' WHERE id = 'inbox-a'`).run();
+    value.database.query(`UPDATE email_messages SET subject = 'Special offer', message_id = '<category-thread@example.test>', thread_key = 'shared-topic' WHERE id = 'incoming-1'`).run();
     return value;
   }
 

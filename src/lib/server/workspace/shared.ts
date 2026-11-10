@@ -280,7 +280,7 @@ export function hasReliableThreadContext(counterparty: string, row: {
   return Boolean(rfcId && (row.thread_key === `rfc:${rfcId}` || row.thread_key?.toLowerCase() === `rfc:<${rfcId}>`));
 }
 
-function mappedThreadKey(counterparty: string, row: Parameters<typeof hasReliableThreadContext>[1]) {
+export function mappedThreadKey(counterparty: string, row: Parameters<typeof hasReliableThreadContext>[1]) {
   if (row.thread_key == null && [row.references, row.in_reply_to, row.message_id].some((value) => parseMessageIds(value).length > 0)) return undefined;
   return hasReliableThreadContext(counterparty, row) ? row.thread_key ?? null : null;
 }
