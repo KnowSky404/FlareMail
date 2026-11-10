@@ -248,6 +248,7 @@
     : managementView === 'domains' ? t('shell.domains') : t('shell.addresses'));
   let selectedMessageId = $state<string | null>(null);
   let deepLinkedMessage = $state<MailMessage | null>(null);
+  let deepLinkedFlagRevision = 0;
   let selectedMessageIds = $state<string[]>([]);
   let bulkThreadScope = $state<'selected' | 'filtered' | 'owner'>('selected');
   let bulkSelectInput = $state<HTMLInputElement>();
@@ -362,6 +363,7 @@
   const toastController = new ToastController((messages) => (toastMessages = messages));
   const workspaceSnapshotController = new WorkspaceSnapshotController();
   const targetMessageRequest = new LatestRequest();
+  const syncMessageRequest = new LatestRequest();
   const draftOpenRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
     onResult: (result, pageNumber) => {
@@ -433,6 +435,7 @@
     deleteLabelConfirmOpen = false;
     trashController.reset();
     targetMessageRequest.cancel();
+    syncMessageRequest.cancel();
     draftOpenRequest.cancel();
     inboundDetailCache.cancel();
     deliveryDetailCache.cancel();
@@ -1102,6 +1105,7 @@
   }
 
   function resetWorkspace() {
+    syncMessageRequest.cancel();
     draftOpenRequest.cancel();
     const initial = createEmptyWorkspaceViewState();
     mailboxController.reset();
@@ -1700,6 +1704,21 @@
     metricsCache.clear();
     if (event.id) invalidateMessageCaches(event.id);
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
+    if (current && deepLinkedMessage?.id === current.id) {
+      const section = activeSection;
+      const flagRevision = deepLinkedFlagRevision;
+      const request = syncMessageRequest.begin();
+      void fetchWorkspaceMessage(current.id, request.signal).then((result) => {
+        if (!request.isCurrent() || !authenticated || authExpired || activeSection !== section ||
+            selectedMessageId !== current.id || deepLinkedMessage?.id !== current.id) return;
+        const refreshed = flagController.overlay(result.message);
+        deepLinkedMessage = flagRevision === deepLinkedFlagRevision ? refreshed : {
+          ...refreshed, read: deepLinkedMessage.read, starred: deepLinkedMessage.starred
+        };
+      }).catch((error) => {
+        if (request.isCurrent() && !request.signal.aborted && !authExpired) notifyError(error, t('notify.targetMessageFailed'));
+      });
+    }
     if (current) {
       if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
       else void loadWorkspaceBody(current, true);
@@ -2314,6 +2333,7 @@
 
   function applyFlagPatch(id: string, patch: MessagePatch) {
     if (patch.read === undefined && patch.starred === undefined) return;
+    deepLinkedFlagRevision++;
     metricsRequest.cancel();
     metricsCache.clear();
     flagsInterruptedPageRequest = mailboxController.patchFlags(id, patch) || flagsInterruptedPageRequest;
@@ -2958,6 +2978,7 @@
       document.body.classList.remove('fm-is-resizing');
       clearMailboxRefreshTimer();
       mailboxController.cancel();
+      syncMessageRequest.cancel();
       draftOpenRequest.cancel();
       labelRequest.cancel();
       cancelLabelActions();

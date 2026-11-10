@@ -145,7 +145,7 @@
     {onToggleStar}
     {onManageLabels}
     {onToggleRead}
-    {onArchive}
+    onArchive={message?.quarantinedAt ? undefined : onArchive}
     {onRemove}
     {onRestore}
     {onPermanentDelete}
