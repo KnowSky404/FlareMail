@@ -343,7 +343,7 @@ export async function handleInboundEmail(
       htmlBody: projected.htmlBody,
       inReplyTo: parsed.inReplyTo,
       references: parsed.references,
-      threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from: isValidMailboxEmail(senderAddress) ? from : `message:email:${storageId}` }),
+      threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from: isValidMailboxEmail(senderAddress) ? senderAddress : `message:email:${storageId}` }),
       dedupeKey,
       rawKey,
       rawSize: raw.byteLength,

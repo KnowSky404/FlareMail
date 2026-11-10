@@ -129,11 +129,7 @@ function compareOldestFirst(left: MailMessage, right: MailMessage): number {
   return left.sentAt.localeCompare(right.sentAt) || left.id.localeCompare(right.id);
 }
 
-/**
- * Build inbox/sent threads. RFC IDs are connected as a graph, allowing a
- * reply-to-reply chain to remain one thread even when its first parent is not
- * present in the current mailbox. Legacy messages use the old fallback key.
- */
+/** Group persisted messages by the same keys used for thread actions. */
 export function buildMailThreads(
   mailbox: MailboxState,
   section: Exclude<MailFolder, 'drafts'>
@@ -154,7 +150,9 @@ export function buildMailThreads(
   const grouped = new Map<string, MailMessage[]>();
   for (const message of allMessages) {
     const ids = messageIds.get(message.id) ?? [];
-    const key = ids.length ? `rfc:${rfc.find(ids[0])}` : getFallbackThreadKey(message);
+    const key = message.threadKey !== undefined
+      ? (message.threadKey ? `stored:${message.threadKey}` : `message:${message.id}`)
+      : ids.length ? `rfc:${rfc.find(ids[0])}` : getFallbackThreadKey(message);
     const messages = grouped.get(key);
     if (messages) messages.push(message);
     else grouped.set(key, [message]);
