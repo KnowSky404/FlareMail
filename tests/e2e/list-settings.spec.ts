@@ -344,6 +344,77 @@ test('blocked sender quarantine keeps mail until an explicit release', async ({ 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('reconciles an uncertain quarantine release after reconnecting', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `release-retry-${testInfo.project.name}@sender.test`;
+  const subject = `Quarantine retry ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <release-retry-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const message = page.getByRole('link', { name: subject });
+  await expect(message).toBeVisible();
+  const readerPath = (await message.getAttribute('href'))!;
+  const messageId = decodeURIComponent(new URL(readerPath, page.url()).pathname.slice('/messages/'.length));
+  const reader = await context.newPage();
+  await reader.goto(readerPath);
+  await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  let mode: 'forbidden' | 'before' | 'lost' | 'normal' = 'forbidden';
+  let offline = false;
+  await page.route('**/api/workspace/messages/**', (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    if (offline) return route.abort('failed');
+    if (mode === 'forbidden' && decodeURIComponent(new URL(route.request().url()).pathname) === `/api/workspace/messages/${messageId}`) {
+      return route.fulfill({ json: { ok: true, data: { message: { quarantinedAt: null, archivedAt: null } } } });
+    }
+    return route.continue();
+  });
+  await page.route('**/api/workspace/quarantine**', async (route) => {
+    if (route.request().method() === 'GET' && offline) return route.abort('failed');
+    if (route.request().method() !== 'POST' || mode === 'normal') return route.continue();
+    if (mode === 'forbidden') return route.fulfill({ status: 403, json: { ok: false, error: { code: 'FORBIDDEN', message: 'Forbidden' } } });
+    if (mode === 'lost') {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      offline = true;
+    }
+    return route.abort('failed');
+  });
+  const release = page.getByRole('button', { name: `释放到收件箱 ${subject}` });
+  await release.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(message).toBeVisible();
+  await expect(release).toBeEnabled();
+  await expect(release).toBeFocused();
+  mode = 'before';
+  await release.click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(message).toBeVisible();
+  await expect(release).toBeEnabled();
+  mode = 'lost';
+  await release.click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(release).toBeEnabled();
+  offline = false;
+  mode = 'normal';
+  await release.click();
+  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  await expect(message).toHaveCount(0);
+  await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  await expect(reader.getByRole('button', { name: '回复', exact: true })).toBeVisible();
+  await reader.close();
+});
+
 test('blocked sender controls wait for the initial lists', async ({ page }) => {
   await login(page);
   let resume!: () => void;
