@@ -249,6 +249,8 @@ describe('quarantined mailbox visibility', () => {
     const trash = await listWorkspaceTrash(env, workspace);
     expect(trash.items.map(({ id }) => id)).toContain('email:incoming-1');
     expect(trash.metrics.trashCount).toBe(1);
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'Inbound alert is:trash' }))).messages.map(({ id }) => id)).toContain('email:incoming-1');
+    expect((await loadMailboxPage(env, workspace, query('inbox', { query: 'Inbound alert' }))).messages.map(({ id }) => id)).not.toContain('email:incoming-1');
     expect((await listQuarantinedMail(env.DB, 'user-1', null)).items).toHaveLength(0);
   });
 
@@ -746,6 +748,20 @@ describe('D1 mailbox pages', () => {
     `).all() as Array<{ id: string; archived_at: string | null }>;
     expect(states[0]!.archived_at).not.toBeNull();
     expect(states[1]!.archived_at).toBeNull();
+  });
+
+  test('includes a quoted sender in valid thread-scoped actions', async () => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
+        ('quoted-thread', 'user-1', 'Alice "Ace" Smith <alice@example.test>', 'owner@example.test', 'Quoted thread', '2026-08-13T14:00:00Z', 'raw/quoted', 'quoted-thread-key'),
+        ('known-thread', 'user-1', 'known@example.test', 'owner@example.test', 'Quoted thread', '2026-08-13T14:01:00Z', 'raw/known', 'quoted-thread-key');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    expect(page.messages.find(({ id }) => id === 'email:quoted-thread')).toMatchObject({ fromName: 'Alice "Ace" Smith', fromEmail: 'alice@example.test', threadKey: 'quoted-thread-key' });
+    await mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:known-thread'], threadKeys: ['quoted-thread-key'], scope: mutationScope('inbox', null, 'owner')
+    });
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('quoted-thread', 'known-thread') AND archived_at IS NOT NULL").get()).toEqual({ count: 2 });
   });
 
   test('allows a filtered thread action when ambiguous mail is outside the filter', async () => {
