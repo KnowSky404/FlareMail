@@ -637,6 +637,73 @@ test('reader reconciles a release after an in-flight read update', async ({ page
   await reader.close();
 });
 
+test('release invalidates a pending workspace deep-link read', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `pending-deep-link-${testInfo.project.name}@sender.test`;
+  const subject = `Pending deep link ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <pending-deep-link-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const link = page.getByRole('link', { name: subject });
+  await expect(link).toBeVisible();
+  const id = decodeURIComponent(new URL((await link.getAttribute('href'))!, page.url()).pathname.slice('/messages/'.length));
+  const reader = await context.newPage();
+  let resumeOld!: () => void;
+  let oldStarted!: () => void;
+  let latestStarted!: () => void;
+  let resumeMailbox!: () => void;
+  const oldGate = new Promise<void>((resolve) => { resumeOld = resolve; });
+  const oldReady = new Promise<void>((resolve) => { oldStarted = resolve; });
+  const latestReady = new Promise<void>((resolve) => { latestStarted = resolve; });
+  const mailboxGate = new Promise<void>((resolve) => { resumeMailbox = resolve; });
+  let first = true;
+  let released = false;
+  await reader.route('**/api/workspace/messages/**', async (route) => {
+    const path = decodeURIComponent(new URL(route.request().url()).pathname);
+    if (first && route.request().method() === 'GET' && path === `/api/workspace/messages/${id}`) {
+      first = false;
+      const response = await route.fetch();
+      oldStarted();
+      await oldGate;
+      try { await route.fulfill({ response }); } catch { /* Superseded reads may be aborted. */ }
+      return;
+    }
+    if (released && route.request().method() === 'GET' && path === `/api/workspace/messages/${id}`) latestStarted();
+    return route.continue();
+  });
+  await reader.route('**/api/workspace/mailbox?**', async (route) => {
+    if (released) await mailboxGate;
+    return route.continue();
+  });
+  try {
+    const navigation = reader.goto(`/?folder=inbox&message=${encodeURIComponent(id)}`, { waitUntil: 'domcontentloaded' });
+    await oldReady;
+    released = true;
+    await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+    await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+    await latestReady;
+    resumeOld();
+    await navigation;
+    const detail = reader.locator('.fm-detail-shell').filter({ hasText: subject });
+    await expect(detail.getByRole('button', { name: '回复', exact: true }).first()).toBeVisible();
+    await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  } finally {
+    resumeOld();
+    resumeMailbox();
+    await reader.close();
+  }
+});
+
 test('readers can retry a failed cross-tab release status refresh', async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');
