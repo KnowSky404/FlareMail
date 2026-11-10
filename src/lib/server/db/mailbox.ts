@@ -313,7 +313,7 @@ export async function getMailboxMetrics(
         SUM(s.deleted_at IS NULL AND s.is_starred = 1) AS starred_count
       FROM email_messages AS e
       LEFT JOIN workspace_email_states AS s ON s.user_id = (SELECT id FROM owner_scope) AND s.email_message_id = e.id
-      WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND s.quarantined_at IS NULL AND ${inboundIdentityPredicate('e')}
+      WHERE e.owner_user_id = (SELECT id FROM owner_scope) AND (s.quarantined_at IS NULL OR s.deleted_at IS NOT NULL) AND ${inboundIdentityPredicate('e')}
     ), draft_counts AS (
       SELECT SUM(d.deleted_at IS NULL) AS drafts_count, SUM(d.deleted_at IS NOT NULL) AS trash_count,
         SUM(d.deleted_at IS NULL AND d.is_starred = 1) AS starred_count

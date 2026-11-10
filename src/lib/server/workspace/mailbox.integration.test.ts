@@ -2,6 +2,7 @@ import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { patchWorkspaceMessage } from './message';
 import { patchInboundFlags } from '$lib/server/db/messages';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
+import { listWorkspaceTrash } from './trash';
 import { listQuarantinedMail, releaseQuarantinedMail } from '$lib/server/db/blocked-senders';
 import { changeMailboxCategories } from './categories';
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -239,6 +240,16 @@ describe('quarantined mailbox visibility', () => {
     expect((await loadMailboxPage(env, workspace, query('inbox'))).messages.map((item) => item.id)).toContain(hidden);
     expect(database.query("SELECT archived_at FROM workspace_email_states WHERE id = 'quarantine-state'").get()).toEqual({ archived_at: null });
     expect((await getMailboxMetrics(env.DB, 'user-1')).inboxCount).toBe(3);
+  });
+
+  test('counts quarantined mail trashed during bridge rollback', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`INSERT INTO workspace_email_states (id, user_id, email_message_id, deleted_at, quarantined_at)
+      VALUES ('rollback-trash', 'user-1', 'incoming-1', '2026-11-02T00:00:00Z', '2026-11-01T00:00:00Z')`);
+    const trash = await listWorkspaceTrash(env, workspace);
+    expect(trash.items.map(({ id }) => id)).toContain('email:incoming-1');
+    expect(trash.metrics.trashCount).toBe(1);
+    expect((await listQuarantinedMail(env.DB, 'user-1', null)).items).toHaveLength(0);
   });
 
   test('paginates quarantine without crossing owner scope', async () => {
