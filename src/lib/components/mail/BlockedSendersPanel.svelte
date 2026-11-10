@@ -1,5 +1,24 @@
 <script module lang="ts">
   const uncertainReleases = new Set<string>();
+  const uncertainReleaseKey = 'flaremail-uncertain-quarantine-releases';
+
+  function restoreUncertainReleases() {
+    try {
+      const stored: unknown = JSON.parse(sessionStorage.getItem(uncertainReleaseKey) ?? '[]');
+      if (Array.isArray(stored)) {
+        for (const id of stored) if (typeof id === 'string' && id.length > 0 && id.length <= 256) uncertainReleases.add(id);
+      }
+    } catch { /* Session storage may be unavailable. */ }
+  }
+
+  function rememberRelease(id: string, pending: boolean) {
+    if (pending) uncertainReleases.add(id);
+    else uncertainReleases.delete(id);
+    try {
+      if (uncertainReleases.size) sessionStorage.setItem(uncertainReleaseKey, JSON.stringify([...uncertainReleases]));
+      else sessionStorage.removeItem(uncertainReleaseKey);
+    } catch { /* Keep the in-memory retry state when storage is unavailable. */ }
+  }
 </script>
 
 <script lang="ts">
@@ -50,6 +69,7 @@
   }
 
   onMount(() => {
+    restoreUncertainReleases();
     mounted = true;
     sync = createWorkspaceSync((event) => {
       if (event.type === 'blocked-senders-changed' || event.type === 'mailbox-refresh') refreshRequested = true;
@@ -87,18 +107,30 @@
         requestJson<QuarantinePage>(`/api/workspace/quarantine${queryString ? `?${queryString}` : ''}`, { signal })
       ]);
       if (current !== generation || revision !== navigationRevision || !active) return false;
-      for (const id of uncertainReleases) {
-        sync?.publish({ type: 'mailbox-refresh', id: `email:${id}` });
-        onRelease?.(id);
-        uncertainReleases.delete(id);
-      }
       senders = rules.senders;
       page = quarantine;
       loaded = true;
+      void reconcileUncertainReleases(signal, current);
       return true;
     } catch {
       if (current === generation && revision === navigationRevision && active) error = t('blocked.loadFailed');
       return false;
+    }
+  }
+
+  async function reconcileUncertainReleases(signal: AbortSignal, current: number) {
+    for (const id of [...uncertainReleases]) {
+      if (signal.aborted || current !== generation || !active) return;
+      try {
+        const result = await requestJson<{ message: { quarantinedAt?: string | null } }>(
+          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`, { signal }
+        );
+        if (signal.aborted || current !== generation || !active) return;
+        if (result.message?.quarantinedAt !== null) continue;
+        rememberRelease(id, false);
+        sync?.publish({ type: 'mailbox-refresh', id: `email:${id}` });
+        onRelease?.(id);
+      } catch { if (signal.aborted) return; }
     }
   }
 
@@ -158,35 +190,55 @@
     document.getElementById('blocked-operation-status')?.focus();
   }
 
+  function beginSessionWrite() {
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    const channel = createWorkspaceSync((event) => { if (event.type === 'session-ended') cancel(); });
+    window.addEventListener(AUTH_EXPIRED_EVENT, cancel);
+    window.addEventListener(WORKSPACE_SESSION_ENDED_EVENT, cancel);
+    return {
+      signal: controller.signal,
+      channel,
+      close: () => {
+        window.removeEventListener(AUTH_EXPIRED_EVENT, cancel);
+        window.removeEventListener(WORKSPACE_SESSION_ENDED_EVENT, cancel);
+        channel.close();
+      }
+    };
+  }
+
   async function add(event: SubmitEvent) {
     event.preventDefault();
     if (!active || pending || loading || !loaded) return;
     const current = generation;
+    const write = beginSessionWrite();
     pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
-      const result = await requestJson<{ email: string }>('/api/workspace/blocked-senders', { method: 'POST', body: JSON.stringify({ email }), signal: sessionRequests.signal });
+      const result = await requestJson<{ email: string }>('/api/workspace/blocked-senders', { method: 'POST', body: JSON.stringify({ email }), signal: write.signal });
+      write.channel.publish({ type: 'blocked-senders-changed' });
       if (current !== generation) return;
       if (!senders.some((sender) => sender.email === result.email)) senders = [...senders, { email: result.email, createdAt: '' }].sort((a, b) => a.email.localeCompare(b.email));
       email = '';
       status = t('blocked.saved');
-      sync?.publish({ type: 'blocked-senders-changed' });
     } catch { if (current === generation) operationError = t('blocked.saveFailed'); }
-    finally { if (current === generation) pending = false; }
+    finally { write.close(); if (current === generation) pending = false; }
   }
 
   async function remove(address: string, source: EventTarget | null) {
     if (!active || pending || loading) return;
     const hadFocus = document.activeElement === source;
     const current = generation;
+    const write = beginSessionWrite();
     pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
-      await requestJson('/api/workspace/blocked-senders', { method: 'DELETE', body: JSON.stringify({ email: address }), signal: sessionRequests.signal });
+      await requestJson('/api/workspace/blocked-senders', { method: 'DELETE', body: JSON.stringify({ email: address }), signal: write.signal });
+      write.channel.publish({ type: 'blocked-senders-changed' });
       if (current !== generation) return;
       senders = senders.filter((sender) => sender.email !== address);
       status = t('blocked.removed');
-      sync?.publish({ type: 'blocked-senders-changed' });
     } catch { if (current === generation) operationError = t('blocked.removeFailed'); }
     finally {
+      write.close();
       if (current === generation) {
         pending = false;
         await restoreFocus(source, hadFocus, current, 'blocked-sender-email');
@@ -199,32 +251,29 @@
     const hadFocus = document.activeElement === source;
     const current = generation;
     const notifyRelease = onRelease;
-    const releaseController = new AbortController();
-    const cancelRelease = () => releaseController.abort();
-    const releaseSync = createWorkspaceSync((event) => { if (event.type === 'session-ended') cancelRelease(); });
-    window.addEventListener(AUTH_EXPIRED_EVENT, cancelRelease);
-    window.addEventListener(WORKSPACE_SESSION_ENDED_EVENT, cancelRelease);
+    const alreadyUncertain = uncertainReleases.has(id);
+    rememberRelease(id, true);
+    const write = beginSessionWrite();
     pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
       let inInbox = true;
       try {
-        await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST', signal: releaseController.signal });
+        await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST', signal: write.signal });
       } catch (releaseError) {
-        if (!releaseController.signal.aborted && releaseError instanceof ClientApiError && releaseError.status >= 400 && releaseError.status < 500 && releaseError.status !== 404) throw releaseError;
-        uncertainReleases.add(id);
-        if (releaseController.signal.aborted) return;
-        const result = await requestJson<{ message: { quarantinedAt?: string | null; archivedAt?: string | null } }>(
-          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`, { signal: releaseController.signal }
-        );
-        if (result.message?.quarantinedAt !== null) {
-          uncertainReleases.delete(id);
+        if (!write.signal.aborted && releaseError instanceof ClientApiError && releaseError.status >= 400 && releaseError.status < 500 && releaseError.status !== 404) {
+          if (!alreadyUncertain) rememberRelease(id, false);
           throw releaseError;
         }
+        if (write.signal.aborted) return;
+        const result = await requestJson<{ message: { quarantinedAt?: string | null; archivedAt?: string | null } }>(
+          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`, { signal: write.signal }
+        );
+        if (result.message?.quarantinedAt !== null) throw releaseError;
         inInbox = result.message.archivedAt === null;
       }
-      uncertainReleases.delete(id);
-      releaseSync.publish({ type: 'mailbox-refresh', id: `email:${id}` });
-      releaseSync.publish({ type: 'blocked-senders-changed' });
+      rememberRelease(id, false);
+      write.channel.publish({ type: 'mailbox-refresh', id: `email:${id}` });
+      write.channel.publish({ type: 'blocked-senders-changed' });
       notifyRelease?.(id);
       if (current !== generation) return;
       page = { ...page, items: page.items.filter((item) => item.id !== id) };
@@ -233,9 +282,7 @@
       if (!page.items.length) refreshRequested = true;
     } catch { if (current === generation) operationError = t('blocked.releaseFailed'); }
     finally {
-      window.removeEventListener(AUTH_EXPIRED_EVENT, cancelRelease);
-      window.removeEventListener(WORKSPACE_SESSION_ENDED_EVENT, cancelRelease);
-      releaseSync.close();
+      write.close();
       if (current === generation) {
         pending = false;
         await restoreFocus(source, hadFocus, current, 'blocked-quarantine-refresh');
