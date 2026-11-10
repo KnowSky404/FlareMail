@@ -243,6 +243,9 @@
       if (event.id === message.id && !authExpired) void refreshMessageFromWorkspace();
     });
 
+    // A release may have happened after server rendering but before the sync listener was attached.
+    if (!authExpired && message.quarantinedAt) void refreshMessageFromWorkspace();
+
     if (authExpired) {
       // Keep server-rendered metadata visible while the user reauthenticates.
     } else if (message.source === 'inbound') {
