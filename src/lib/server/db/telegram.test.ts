@@ -54,8 +54,8 @@ describe('Telegram D1 state', () => {
   test('fails closed until the exact Telegram schema and current migration metadata are present', async () => {
     const { db, d1 } = database();
     expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(true);
-    db.query(`UPDATE workspace_schema_metadata SET schema_version = 29 WHERE schema_name = 'flaremail'`).run();
-    expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(true);
+    db.query(`UPDATE workspace_schema_metadata SET schema_version = 28 WHERE schema_name = 'flaremail'`).run();
+    expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(false);
     db.query(`UPDATE workspace_schema_metadata SET schema_version = 30 WHERE schema_name = 'flaremail'`).run();
     expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(false);
 

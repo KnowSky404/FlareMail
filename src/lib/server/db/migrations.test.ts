@@ -64,6 +64,11 @@ function createDatabase() {
 }
 
 describe('versioned D1 migrations', () => {
+  test('keeps migration 0029 identical to the reviewed bridge compatibility fixture', () => {
+    expect(readFileSync(join(migrationsDirectory, '0029_blocked_senders.sql'), 'utf8'))
+      .toBe(readFileSync(join(repositoryRoot, 'tests/fixtures/schema-29-bridge.sql'), 'utf8'));
+  });
+
   test('keeps schema.sql aligned with the versioned migration result', () => {
     const migrated = createDatabase();
     const snapshot = createDatabase();
