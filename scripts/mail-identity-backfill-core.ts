@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { FLAREMAIL_SCHEMA_VERSION } from '../src/lib/server/db/schema-version';
+import { FLAREMAIL_SCHEMA_VERSION, isSupportedWorkspaceSchemaVersion } from '../src/lib/server/db/schema-version';
 
 export const MAIL_IDENTITY_BACKFILL_PLAN_VERSION = 1 as const;
 export const MAIL_IDENTITY_BACKFILL_SCHEMA_VERSION = FLAREMAIL_SCHEMA_VERSION;
@@ -53,7 +53,7 @@ export interface MailIdentityBackfillConflictCounts {
 
 interface MailIdentityBackfillPlanContent {
   planVersion: typeof MAIL_IDENTITY_BACKFILL_PLAN_VERSION;
-  schemaVersion: typeof MAIL_IDENTITY_BACKFILL_SCHEMA_VERSION;
+  schemaVersion: number;
   generatedAt: string;
   expiresAt: string;
   executionTarget: MailIdentityBackfillExecutionTarget;
@@ -252,8 +252,8 @@ export async function createMailIdentityBackfillPlan(
   input: { ownerUserId: string; addressId: string; afterId?: string; limit?: number; now?: Date }
 ): Promise<MailIdentityBackfillPlan> {
   const schemaVersion = await store.getSchemaVersion();
-  if (schemaVersion !== MAIL_IDENTITY_BACKFILL_SCHEMA_VERSION) {
-    throw new Error(`History backfill requires local schema version ${MAIL_IDENTITY_BACKFILL_SCHEMA_VERSION}; found ${schemaVersion ?? 'missing'}.`);
+  if (!isSupportedWorkspaceSchemaVersion(schemaVersion)) {
+    throw new Error(`History backfill requires a supported local schema; found ${schemaVersion ?? 'missing'}.`);
   }
   const target = await store.getTarget(input.ownerUserId, input.addressId);
   if (!target || target.ownerUserId !== input.ownerUserId || target.addressId !== input.addressId) {
@@ -273,7 +273,7 @@ export async function createMailIdentityBackfillPlan(
   const generatedAt = now.toISOString();
   const content: MailIdentityBackfillPlanContent = {
     planVersion: MAIL_IDENTITY_BACKFILL_PLAN_VERSION,
-    schemaVersion: MAIL_IDENTITY_BACKFILL_SCHEMA_VERSION,
+    schemaVersion,
     generatedAt,
     expiresAt: new Date(now.getTime() + MAIL_IDENTITY_BACKFILL_TTL_MS).toISOString(),
     executionTarget: store.executionTarget,
@@ -311,7 +311,7 @@ export async function createMailIdentityBackfillPlan(
 export function validateMailIdentityBackfillPlan(value: unknown): MailIdentityBackfillPlan {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Plan file must contain a JSON object.');
   const plan = value as MailIdentityBackfillPlan;
-  if (plan.planVersion !== MAIL_IDENTITY_BACKFILL_PLAN_VERSION || plan.schemaVersion !== MAIL_IDENTITY_BACKFILL_SCHEMA_VERSION) {
+  if (plan.planVersion !== MAIL_IDENTITY_BACKFILL_PLAN_VERSION || !isSupportedWorkspaceSchemaVersion(plan.schemaVersion)) {
     throw new Error('Unsupported history backfill plan or schema version.');
   }
   if (!Array.isArray(plan.records) || plan.records.length > MAIL_IDENTITY_BACKFILL_MAX_BATCH || !plan.selection ||
