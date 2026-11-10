@@ -248,6 +248,7 @@
     : managementView === 'domains' ? t('shell.domains') : t('shell.addresses'));
   let selectedMessageId = $state<string | null>(null);
   let deepLinkedMessage = $state<MailMessage | null>(null);
+  let deepLinkedRefreshError = $state<string | null>(null);
   const deepLinkedFlagRevisions = new Map<string, { read: number; starred: number }>();
   let selectedMessageIds = $state<string[]>([]);
   let bulkThreadScope = $state<'selected' | 'filtered' | 'owner'>('selected');
@@ -436,6 +437,7 @@
     trashController.reset();
     targetMessageRequest.cancel();
     syncMessageRequest.cancel();
+    deepLinkedRefreshError = null;
     draftOpenRequest.cancel();
     inboundDetailCache.cancel();
     deliveryDetailCache.cancel();
@@ -1054,6 +1056,7 @@
     metricsCache.clear();
     if (options?.resetUserScoped) {
       deepLinkedMessage = null;
+      deepLinkedRefreshError = null;
       deepLinkedFlagRevisions.clear();
       cancelLabelActions();
       labelEditorInterrupted = false;
@@ -1119,6 +1122,7 @@
     trashController.reset();
     authenticated = false;
     deepLinkedMessage = null;
+    deepLinkedRefreshError = null;
     deepLinkedFlagRevisions.clear();
     profile = initial.profile;
     mailbox = initial.mailbox;
@@ -1649,6 +1653,8 @@
         void refreshWorkspace(false);
         void reloadMailLabels();
         const current = selectedMessage;
+        if (deepLinkedMessage && current?.id === deepLinkedMessage.id) refreshDeepLinkedMessage(current);
+        else if (deepLinkedMessage) deepLinkedMessage = null;
         if (current) {
           if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
           else void loadWorkspaceBody(current, true);
@@ -1674,6 +1680,33 @@
     inboundDetailCache.invalidate(messageId);
     deliveryDetailCache.invalidate(messageId);
     workspaceBodyCache.invalidate(messageId);
+  }
+
+  function refreshDeepLinkedMessage(current: MailMessage) {
+    if (!authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
+    const section = activeSection;
+    const flagRevision = deepLinkedFlagRevisions.get(current.id) ?? { read: 0, starred: 0 };
+    const request = syncMessageRequest.begin();
+    void fetchWorkspaceMessage(current.id, request.signal).then((result) => {
+      if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
+      if (activeSection !== section || selectedMessageId !== current.id) {
+        deepLinkedMessage = null;
+        if (deepLinkedRefreshError === current.id) deepLinkedRefreshError = null;
+        return;
+      }
+      const refreshed = flagController.overlay(result.message);
+      const latestRevision = deepLinkedFlagRevisions.get(current.id);
+      deepLinkedMessage = {
+        ...refreshed,
+        read: (latestRevision?.read ?? 0) === flagRevision.read ? refreshed.read : deepLinkedMessage.read,
+        starred: (latestRevision?.starred ?? 0) === flagRevision.starred ? refreshed.starred : deepLinkedMessage.starred
+      };
+      if (deepLinkedRefreshError === current.id) deepLinkedRefreshError = null;
+    }).catch(() => {
+      if (request.isCurrent() && !request.signal.aborted && authenticated && !authExpired && deepLinkedMessage?.id === current.id) {
+        deepLinkedRefreshError = current.id;
+      }
+    });
   }
 
   function handleWorkspaceSync(event: import('$lib/client/workspace-sync').WorkspaceSyncEvent) {
@@ -1707,28 +1740,11 @@
     if (event.id) invalidateMessageCaches(event.id);
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
     const cached = event.id && deepLinkedMessage?.id === event.id ? deepLinkedMessage : null;
-    if (cached && !current) deepLinkedMessage = null;
-    if (current && cached) {
-      const section = activeSection;
-      const flagRevision = deepLinkedFlagRevisions.get(current.id) ?? { read: 0, starred: 0 };
-      const request = syncMessageRequest.begin();
-      void fetchWorkspaceMessage(current.id, request.signal).then((result) => {
-        if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
-        if (activeSection !== section || selectedMessageId !== current.id) {
-          deepLinkedMessage = null;
-          return;
-        }
-        const refreshed = flagController.overlay(result.message);
-        const latestRevision = deepLinkedFlagRevisions.get(current.id);
-        deepLinkedMessage = {
-          ...refreshed,
-          read: (latestRevision?.read ?? 0) === flagRevision.read ? refreshed.read : deepLinkedMessage.read,
-          starred: (latestRevision?.starred ?? 0) === flagRevision.starred ? refreshed.starred : deepLinkedMessage.starred
-        };
-      }).catch((error) => {
-        if (request.isCurrent() && !request.signal.aborted && !authExpired) notifyError(error, t('notify.targetMessageFailed'));
-      });
+    if (cached && !current) {
+      deepLinkedMessage = null;
+      if (deepLinkedRefreshError === cached.id) deepLinkedRefreshError = null;
     }
+    if (current && cached) refreshDeepLinkedMessage(current);
     if (current) {
       if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
       else void loadWorkspaceBody(current, true);
@@ -3120,6 +3136,7 @@
                     onQuarantineRelease={(id) => {
                       const messageId = `email:${id}`;
                       if (deepLinkedMessage?.id === messageId) deepLinkedMessage = null;
+                      if (deepLinkedRefreshError === messageId) deepLinkedRefreshError = null;
                       void refreshWorkspace(false);
                       workspaceSync?.publish({ type: 'mailbox-refresh', id: messageId });
                     }}
@@ -3393,6 +3410,8 @@
                     workspaceBodyError={selectedWorkspaceBodyError}
                     workspaceBodyPending={workspaceBodyPendingId === selectedMessage?.id}
                     {pending}
+                    statusRefreshError={deepLinkedRefreshError === selectedMessage?.id}
+                    onReloadStatus={() => { if (selectedMessage) refreshDeepLinkedMessage(selectedMessage); }}
                     rawDownloadHref={selectedInboundDownloadHref}
                     showBack={true}
                     sectionTitle={activeSectionTitle}
@@ -3447,6 +3466,8 @@
           workspaceBodyError={selectedWorkspaceBodyError}
           workspaceBodyPending={workspaceBodyPendingId === selectedMessage.id}
           {pending}
+          statusRefreshError={deepLinkedRefreshError === selectedMessage.id}
+          onReloadStatus={() => { if (selectedMessage) refreshDeepLinkedMessage(selectedMessage); }}
           rawDownloadHref={selectedInboundDownloadHref}
           threadMessages={selectedThreadMessages}
           onEditDraft={handleEditDraft}

@@ -45,6 +45,7 @@
   let deliveryDetailPending = $state(false);
   let mutationPending = $state(false);
   let mutationError = $state('');
+  let statusRefreshError = $state(false);
   let authExpired = $state(false);
   let authRecoveryPending = $state(false);
   let authRecoveryError = $state('');
@@ -101,12 +102,15 @@
       if (flagController.busy) { refreshPending = true; return; }
       if (revision !== flagRevision) { void refreshMessageFromWorkspace(); return; }
       messageOverride = result.message;
+      statusRefreshError = false;
     } catch (error) {
       if (!mounted || authExpired || current !== refreshRevision) return;
       if (error instanceof ClientApiError && error.code === 'AUTH_SESSION_EXPIRED') return;
       if (error instanceof ClientApiError && [401, 403, 404].includes(error.status)) {
         window.location.assign(data.backHref);
+        return;
       }
+      statusRefreshError = true;
     }
   }
 
@@ -115,6 +119,7 @@
     authExpired = true;
     refreshRevision++;
     refreshPending = false;
+    statusRefreshError = false;
     flagController.reset();
     readActivation.reset();
     mutationPending = false;
@@ -128,6 +133,7 @@
     const fresh = await fetchWorkspaceMessage(message.id, signal);
     if (signal.aborted || !mounted) return;
     messageOverride = fresh.message;
+    statusRefreshError = false;
 
     if (fresh.message.source === 'inbound') {
       inboundDetailPending = true;
@@ -349,6 +355,8 @@
         {workspaceBodyError}
         {workspaceBodyPending}
         {pending}
+        {statusRefreshError}
+        onReloadStatus={() => void refreshMessageFromWorkspace()}
         onToggleStar={() => void updateFlags({ starred: !message.starred })}
         onToggleRead={message.folder === 'inbox' ? () => void updateFlags({ read: !message.read }) : undefined}
         onReply={() => returnToWorkspace('reply')}

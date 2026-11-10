@@ -637,6 +637,78 @@ test('reader reconciles a release after an in-flight read update', async ({ page
   await reader.close();
 });
 
+test('readers can retry a failed cross-tab release status refresh', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `status-retry-${testInfo.project.name}@sender.test`;
+  const subject = `Status retry ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <status-retry-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const link = page.getByRole('link', { name: subject });
+  await expect(link).toBeVisible();
+  const href = (await link.getAttribute('href'))!;
+  const id = decodeURIComponent(new URL(href, page.url()).pathname.slice('/messages/'.length));
+  const standalone = await context.newPage();
+  await standalone.goto(href);
+  await expect(standalone.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  await standalone.waitForLoadState('networkidle');
+  const workspace = await context.newPage();
+  await workspace.goto(`/?folder=inbox&message=${encodeURIComponent(id)}`);
+  const detail = workspace.locator('.fm-detail-shell').filter({ hasText: subject });
+  await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  await workspace.waitForLoadState('networkidle');
+  for (const target of [standalone, workspace]) {
+    let fail = true;
+    await target.route('**/api/workspace/messages/**', (route) => {
+      const path = decodeURIComponent(new URL(route.request().url()).pathname);
+      if (fail && route.request().method() === 'GET' && path === `/api/workspace/messages/${id}`) {
+        fail = false;
+        return route.fulfill({ status: 503, json: { ok: false, error: { code: 'TEST_REFRESH_FAILED', message: 'Synthetic refresh failure' } } });
+      }
+      return route.continue();
+    });
+  }
+  await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  const standaloneError = standalone.getByRole('alert').filter({ hasText: '邮件状态更新失败，请重试。' });
+  const workspaceError = detail.getByRole('alert').filter({ hasText: '邮件状态更新失败，请重试。' });
+  await expect(standaloneError).toBeVisible();
+  await expect(workspaceError).toBeVisible();
+  expect((await new AxeBuilder({ page: standalone }).include('main').analyze()).violations).toEqual([]);
+  expect((await new AxeBuilder({ page: workspace }).include('.fm-detail-shell').analyze()).violations).toEqual([]);
+  const standaloneRetry = standaloneError.getByRole('button', { name: '重试' });
+  await standaloneRetry.focus();
+  await standalone.keyboard.press('Enter');
+  const workspaceRetry = workspaceError.getByRole('button', { name: '重试' });
+  await workspaceRetry.focus();
+  await workspace.keyboard.press('Enter');
+  await expect(standaloneError).toHaveCount(0);
+  await expect(workspaceError).toHaveCount(0);
+  await expect(standalone.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  await expect(standalone.getByRole('button', { name: '回复', exact: true })).toBeVisible();
+  await expect(detail.getByRole('button', { name: '回复', exact: true }).first()).toBeVisible();
+  await workspace.evaluate(() => window.dispatchEvent(new CustomEvent('flaremail:auth-expired', { detail: { source: 'other-tab' } })));
+  await expect(workspace.getByRole('button', { name: '检查登录状态' })).toBeVisible();
+  const recovered = workspace.waitForResponse((response) => response.request().method() === 'GET' &&
+    decodeURIComponent(new URL(response.url()).pathname) === `/api/workspace/messages/${id}` && response.ok());
+  await workspace.getByRole('button', { name: '检查登录状态' }).click();
+  await recovered;
+  await expect(workspace.getByRole('button', { name: '检查登录状态' })).toBeHidden();
+  await standalone.close();
+  await workspace.close();
+});
+
 test('reader reconciles a release before its page finishes loading', async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');
