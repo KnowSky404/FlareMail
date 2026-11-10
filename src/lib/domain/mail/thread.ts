@@ -136,7 +136,8 @@ export function getMailThreadGroups(messages: ThreadMember[]): Map<string, strin
   const rfc = new DisjointSet();
   const messageIds = new Map<string, string[]>();
   for (const message of messages) {
-    const ids = getRfcIds(message);
+    const isolated = message.threadKey !== undefined && !message.threadKey?.trim();
+    const ids = isolated ? [] : getRfcIds(message);
     messageIds.set(message.id, ids);
     if (ids.length) {
       ids.forEach((id) => rfc.add(id));
