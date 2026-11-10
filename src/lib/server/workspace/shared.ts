@@ -255,7 +255,7 @@ export function hasReliableThreadContext(counterparty: string, row: {
 }) {
   if (counterparty.trim()) return true;
   const rfcId = parseMessageIds(row.references)[0] ?? parseMessageIds(row.in_reply_to)[0] ?? parseMessageIds(row.message_id)[0];
-  return Boolean(rfcId && row.thread_key === `rfc:${rfcId}`);
+  return Boolean(rfcId && (row.thread_key === `rfc:${rfcId}` || row.thread_key?.toLowerCase() === `rfc:<${rfcId}>`));
 }
 
 export const mapUserRowToProfile = (row: WorkspaceUserRow): UserProfile => ({

@@ -13,7 +13,7 @@
   type QuarantinePage = { items: Quarantined[]; previousCursor: string | null; nextCursor: string | null };
   type PageTarget = { cursor: string | null; direction: 'next' | 'previous'; number: number };
   let { active, onRelease, onPageChange }: {
-    active: boolean; onRelease?: (id: string) => void; onPageChange?: (cursor: string | null, page: number, direction: 'next' | 'previous') => void;
+    active: boolean; onRelease?: (id: string) => void; onPageChange?: (cursor: string | null, page: number, direction: 'next' | 'previous') => void | Promise<void>;
   } = $props();
   const { t } = useLocale();
   let email = $state('');
@@ -70,7 +70,6 @@
   async function load(target: PageTarget) {
     const current = generation;
     const signal = sessionRequests.signal;
-    loading = true;
     error = '';
     try {
       const query = new URLSearchParams();
@@ -89,7 +88,7 @@
     } catch {
       if (current === generation) error = t('blocked.loadFailed');
       return false;
-    } finally { if (current === generation) loading = false; }
+    }
   }
 
   async function navigate(target: PageTarget) {
@@ -98,21 +97,28 @@
     const current = generation;
     const location = window.location.href;
     retryTarget = target;
-    let success = await load(target);
-    if (success && target.cursor && !page.items.length && current === generation && active && window.location.href === location) {
-      target = { cursor: null, direction: 'next', number: 1 };
-      retryTarget = target;
-      success = await load(target);
-    }
-    if (success && current === generation && active && window.location.href === location) {
-      position = target;
-      retryTarget = null;
-      const params = new URL(window.location.href).searchParams;
-      if ((params.get('quarantineCursor') || null) !== target.cursor ||
-        (target.cursor && params.get('quarantinePage') !== String(target.number)) ||
-        (params.get('quarantineDirection') || 'next') !== target.direction) {
-        onPageChange?.(target.cursor, target.number, target.direction);
+    loading = true;
+    try {
+      let success = await load(target);
+      if (success && target.cursor && !page.items.length && current === generation && active && window.location.href === location) {
+        target = { cursor: null, direction: 'next', number: 1 };
+        retryTarget = target;
+        success = await load(target);
       }
+      if (success && current === generation && active && window.location.href === location) {
+        position = target;
+        retryTarget = null;
+        const params = new URL(window.location.href).searchParams;
+        if ((params.get('quarantineCursor') || null) !== target.cursor ||
+          (target.cursor && params.get('quarantinePage') !== String(target.number)) ||
+          (params.get('quarantineDirection') || 'next') !== target.direction) {
+          await onPageChange?.(target.cursor, target.number, target.direction);
+        }
+      }
+    } catch {
+      if (current === generation && active) { retryTarget = target; error = t('blocked.loadFailed'); }
+    } finally {
+      if (current === generation) loading = false;
     }
   }
 

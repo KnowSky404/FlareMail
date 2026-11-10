@@ -358,6 +358,45 @@ test('blocked sender controls wait for the initial lists', async ({ page }) => {
   await expect(page.getByLabel('发件人邮箱地址')).toBeEnabled();
 });
 
+test('refresh during quarantine navigation keeps the committed page', async ({ page }) => {
+  await login(page);
+  let resumeNext!: () => void;
+  let nextStarted!: () => void;
+  let resumeStale!: () => void;
+  const nextGate = new Promise<void>((resolve) => { resumeNext = resolve; });
+  const nextReady = new Promise<void>((resolve) => { nextStarted = resolve; });
+  const staleGate = new Promise<void>((resolve) => { resumeStale = resolve; });
+  let firstRequests = 0;
+  let nextRequests = 0;
+  await page.route('**/api/workspace/quarantine**', async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    if (cursor === 'page_two' && ++nextRequests === 1) { nextStarted(); await nextGate; }
+    if (!cursor && ++firstRequests > 1) await staleGate;
+    await route.fulfill({ json: { ok: true, data: {
+      items: [{ id: cursor ? 'second' : 'first', sender: 'test@example.test', subject: cursor ? 'Race page two' : 'Race page one', timestamp: '2026-08-01T00:00:00Z' }],
+      previousCursor: cursor ? 'previous' : null, nextCursor: cursor ? null : 'page_two'
+    } } });
+  });
+  await page.goto('/?folder=settings&tab=blocked');
+  await expect(page.getByRole('link', { name: 'Race page one' })).toBeVisible();
+  await page.getByRole('button', { name: '下一页' }).click();
+  await nextReady;
+  await page.evaluate(async () => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'blocked-senders-changed' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    channel.close();
+  });
+  resumeNext();
+  await expect(page).toHaveURL(/quarantineCursor=page_two/u);
+  await page.waitForTimeout(250);
+  resumeStale();
+  await expect(page.getByRole('link', { name: 'Race page two' })).toBeVisible();
+  await page.waitForTimeout(300);
+  await expect(page.getByRole('link', { name: 'Race page one' })).toHaveCount(0);
+  expect(firstRequests).toBe(1);
+});
+
 test('quarantine retries the requested page and returns to it from the reader', async ({ page }) => {
   await page.addInitScript(() => { Reflect.deleteProperty(URLSearchParams.prototype, 'size'); });
   await login(page);

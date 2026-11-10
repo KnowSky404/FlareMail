@@ -3083,7 +3083,7 @@
                     onOpenDomains={() => setManagementView('domains')}
                     onOpenAddresses={() => setManagementView('addresses')}
                     onQuarantineRelease={(id) => { void refreshWorkspace(false); workspaceSync?.publish({ type: 'mailbox-refresh', id: `email:${id}` }); }}
-                    onQuarantinePageChange={(cursor, number, direction) => { void updateWorkspaceUrl({ quarantineCursor: cursor, quarantinePage: number, quarantineDirection: direction }, true); }}
+                    onQuarantinePageChange={(cursor, number, direction) => updateWorkspaceUrl({ quarantineCursor: cursor, quarantinePage: number, quarantineDirection: direction }, true)}
                   />
                 {:else if managementView !== 'settings' && MailIdentityManager}
                   <MailIdentityManager

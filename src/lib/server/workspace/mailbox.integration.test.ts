@@ -762,14 +762,14 @@ describe('D1 mailbox pages', () => {
     })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
   });
 
-  test('keeps valid RFC threads expandable when a sender is missing', async () => {
+  test.each(['rfc:root@example.test', 'rfc:<root@example.test>'])('keeps valid RFC threads expandable with key %s', async (threadKey) => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
-        ('legacy-valid-unknown', 'user-1', '', 'owner@example.test', 'Valid thread', '2026-08-13T14:00:00.000Z', 'raw/valid-a', '<root@example.test>', 'rfc:root@example.test'),
-        ('legacy-valid-known', 'user-1', 'known@example.test', 'owner@example.test', 'Valid thread', '2026-08-13T14:01:00.000Z', 'raw/valid-b', '<root@example.test>', 'rfc:root@example.test');
+        ('legacy-valid-unknown', 'user-1', '', 'owner@example.test', 'Valid thread', '2026-08-13T14:00:00.000Z', 'raw/valid-a', '<root@example.test>', '${threadKey}'),
+        ('legacy-valid-known', 'user-1', 'known@example.test', 'owner@example.test', 'Valid thread', '2026-08-13T14:01:00.000Z', 'raw/valid-b', '<root@example.test>', '${threadKey}');
     `));
     await mutateWorkspaceMailbox(env, workspace, {
-      action: 'archive', messageIds: ['email:legacy-valid-known'], threadKeys: ['rfc:root@example.test'],
+      action: 'archive', messageIds: ['email:legacy-valid-known'], threadKeys: [threadKey],
       scope: mutationScope('inbox', null, 'owner')
     });
     expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('legacy-valid-unknown', 'legacy-valid-known') AND archived_at IS NOT NULL`).get()).toEqual({ count: 2 });

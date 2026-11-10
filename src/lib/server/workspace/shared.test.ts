@@ -26,6 +26,7 @@ describe('workspace shared compatibility contracts', () => {
   test('requires a senderless stored key to match its valid RFC thread', () => {
     expect(hasReliableThreadContext('', { message_id: 'bogus', references: '<root@example.test>', thread_key: 'rfc:bogus' })).toBe(false);
     expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);
+    expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:<root@example.test>' })).toBe(true);
     expect(hasReliableThreadContext('', { message_id: 'bogus', thread_key: 'rfc:bogus' })).toBe(false);
   });
 
