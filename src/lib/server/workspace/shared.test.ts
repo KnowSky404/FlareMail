@@ -47,9 +47,10 @@ describe('workspace shared compatibility contracts', () => {
     const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
     const row = { email_id: 'legacy-angle', from: 'Alice < Team <alice@example.com>', to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0 };
     expect(mapInboundRow(row, profile)).toMatchObject({ fromName: 'Alice < Team', fromEmail: 'alice@example.com' });
+    expect(mapInboundRow({ ...row, from: 'Alice <Team" <alice@example.com>' }, profile)).toMatchObject({ fromName: 'Alice <Team"', fromEmail: 'alice@example.com' });
   });
 
-  test('does not mistake an unmatched angle inside a malformed address for its sender', () => {
+  test('does not mistake a nested angle inside a malformed address for its sender', () => {
     const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
     const raw = 'Alice <"a<alice@example.com>';
     const row = { email_id: 'malformed-angle', from: raw, to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0 };
