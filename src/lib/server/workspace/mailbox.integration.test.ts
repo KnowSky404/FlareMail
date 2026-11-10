@@ -800,6 +800,20 @@ describe('D1 mailbox pages', () => {
     expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('canonical-a', 'canonical-b') AND archived_at IS NOT NULL").get()).toEqual({ count: 2 });
   });
 
+  test('keeps RFC-prefixed fallback subjects eligible for thread actions', async () => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
+        ('rfc-subject-a', 'user-1', 'Alice A <alice@example.com>', 'owner@example.test', 'RFC: Production rollout', '2026-08-13T14:00:00Z', 'raw/a', 'rfc: production rollout::alice@example.com'),
+        ('rfc-subject-b', 'user-1', 'Alice B <alice@example.com>', 'owner@example.test', 'RFC: Production rollout', '2026-08-13T14:01:00Z', 'raw/b', 'rfc: production rollout::alice@example.com');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:rfc-subject-'));
+    expect(messages.every(({ threadKey }) => threadKey === 'rfc: production rollout::alice@example.com')).toBe(true);
+    expect(buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['email:rfc-subject-a'], threadKeys: ['rfc: production rollout::alice@example.com'], scope: mutationScope('inbox', null, 'owner') });
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('rfc-subject-a', 'rfc-subject-b') AND archived_at IS NOT NULL").get()).toEqual({ count: 2 });
+  });
+
   test('includes a quoted sender in valid thread-scoped actions', async () => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES

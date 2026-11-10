@@ -104,12 +104,12 @@ export async function listOwnedMailboxMutationRows(
   if (workspaceIds.length) {
     const scopeClause = workspaceScopeSql('m', scope);
     const result = await db.prepare(`
-      SELECT m.id, 'workspace' AS source, m.folder, m.thread_key, m.is_read, m.is_starred, m.archived_at,
+      SELECT m.id, 'workspace' AS source, m.folder, m.thread_key, m.is_read, m.is_starred, m.archived_at, m.subject,
         m.from_email, m.to_email, m.to_json, m.message_id, m.in_reply_to, m."references"
       FROM workspace_messages AS m
       WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL${scopeClause.sql}
         AND m.id IN (${placeholders(workspaceIds)})
-    `).bind(userId, ...scopeClause.bindings, ...workspaceIds).all<OwnedMailboxMutationRow & Pick<WorkspaceMessageRow, 'from_email' | 'to_email' | 'to_json' | 'message_id' | 'in_reply_to' | 'references'>>();
+    `).bind(userId, ...scopeClause.bindings, ...workspaceIds).all<OwnedMailboxMutationRow & Pick<WorkspaceMessageRow, 'from_email' | 'to_email' | 'to_json' | 'message_id' | 'in_reply_to' | 'references' | 'subject'>>();
     rows.push(...(result.results ?? []).map((row) => {
       const counterparty = row.folder === 'inbox' ? row.from_email : (parseAddressJson(row.to_json)[0]?.email || parseAddressList(row.to_email)[0]?.email || row.to_email);
       const reliable = hasReliableThreadContext(counterparty, row);
@@ -121,13 +121,13 @@ export async function listOwnedMailboxMutationRows(
     const result = await db.prepare(`
       SELECT 'email:' || e.id AS id, 'inbound' AS source, 'inbox' AS folder, e.thread_key,
         COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
-        s.archived_at, e."from" AS sender, e.message_id, e.in_reply_to, e."references"
+        s.archived_at, e."from" AS sender, e.subject, e.message_id, e.in_reply_to, e."references"
       FROM email_messages AS e
       LEFT JOIN workspace_email_states AS s
         ON s.user_id = ? AND s.email_message_id = e.id
       WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL${scopeClause.sql}
         AND e.id IN (${placeholders(inboundIds)})
-    `).bind(userId, userId, ...scopeClause.bindings, ...inboundIds).all<OwnedMailboxMutationRow & Pick<WorkspaceInboundRow, 'message_id' | 'in_reply_to' | 'references'> & { sender: string }>();
+    `).bind(userId, userId, ...scopeClause.bindings, ...inboundIds).all<OwnedMailboxMutationRow & Pick<WorkspaceInboundRow, 'message_id' | 'in_reply_to' | 'references' | 'subject'> & { sender: string }>();
     rows.push(...(result.results ?? []).map((row) => {
       const reliable = hasReliableThreadContext(parseAddress(row.sender).email, row);
       return { ...row, thread_key: reliable ? row.thread_key : null, thread_ambiguous: !reliable };
