@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
@@ -29,6 +29,7 @@
   let status = $state('');
   let refreshRequested = $state(true);
   let generation = 0;
+  let navigationRevision = 0;
   let sessionRequests = new AbortController();
   let sync: ReturnType<typeof createWorkspaceSync> | null = null;
 
@@ -67,7 +68,7 @@
     };
   });
 
-  async function load(target: PageTarget) {
+  async function load(target: PageTarget, revision: number) {
     const current = generation;
     const signal = sessionRequests.signal;
     error = '';
@@ -80,13 +81,13 @@
         requestJson<{ senders: Sender[] }>('/api/workspace/blocked-senders', { signal }),
         requestJson<QuarantinePage>(`/api/workspace/quarantine${queryString ? `?${queryString}` : ''}`, { signal })
       ]);
-      if (current !== generation) return false;
+      if (current !== generation || revision !== navigationRevision || !active) return false;
       senders = rules.senders;
       page = quarantine;
       loaded = true;
       return true;
     } catch {
-      if (current === generation) error = t('blocked.loadFailed');
+      if (current === generation && revision === navigationRevision && active) error = t('blocked.loadFailed');
       return false;
     }
   }
@@ -95,17 +96,18 @@
     if (!active || loading || pending) return;
     refreshRequested = false;
     const current = generation;
+    const revision = navigationRevision;
     const location = window.location.href;
     retryTarget = target;
     loading = true;
     try {
-      let success = await load(target);
-      if (success && target.cursor && !page.items.length && current === generation && active && window.location.href === location) {
+      let success = await load(target, revision);
+      if (success && target.cursor && !page.items.length && current === generation && revision === navigationRevision && active && window.location.href === location) {
         target = { cursor: null, direction: 'next', number: 1 };
         retryTarget = target;
-        success = await load(target);
+        success = await load(target, revision);
       }
-      if (success && current === generation && active && window.location.href === location) {
+      if (success && current === generation && revision === navigationRevision && active && window.location.href === location) {
         position = target;
         retryTarget = null;
         const params = new URL(window.location.href).searchParams;
@@ -116,7 +118,7 @@
         }
       }
     } catch {
-      if (current === generation && active) { retryTarget = target; error = t('blocked.loadFailed'); }
+      if (current === generation && revision === navigationRevision && active) { retryTarget = target; error = t('blocked.loadFailed'); }
     } finally {
       if (current === generation) loading = false;
     }
@@ -124,12 +126,27 @@
 
   $effect(() => {
     if (!mounted) return;
-    if (!active) { refreshRequested = true; return; }
+    if (!active) { navigationRevision++; refreshRequested = true; return; }
     if (refreshRequested && !loading && !pending && !error) {
       refreshRequested = false;
       untrack(() => { void navigate(positionFromUrl()); });
     }
   });
+
+  async function restoreFocus(source: EventTarget | null, hadFocus: boolean, current: number, preferredId: string) {
+    if (!hadFocus) return;
+    await tick();
+    if (current !== generation || !active || (document.activeElement !== document.body && document.activeElement !== source)) return;
+    if (source instanceof HTMLButtonElement && source.isConnected && !source.disabled) {
+      source.focus();
+      return;
+    }
+    const preferred = document.getElementById(preferredId);
+    if (preferred instanceof HTMLInputElement || preferred instanceof HTMLButtonElement) {
+      if (!preferred.disabled) { preferred.focus(); return; }
+    }
+    document.getElementById('blocked-operation-status')?.focus();
+  }
 
   async function add(event: SubmitEvent) {
     event.preventDefault();
@@ -147,8 +164,9 @@
     finally { if (current === generation) pending = false; }
   }
 
-  async function remove(address: string) {
+  async function remove(address: string, source: EventTarget | null) {
     if (!active || pending || loading) return;
+    const hadFocus = document.activeElement === source;
     const current = generation;
     pending = true; error = ''; status = ''; retryTarget = null;
     try {
@@ -158,11 +176,17 @@
       status = t('blocked.removed');
       sync?.publish({ type: 'blocked-senders-changed' });
     } catch { if (current === generation) error = t('blocked.removeFailed'); }
-    finally { if (current === generation) pending = false; }
+    finally {
+      if (current === generation) {
+        pending = false;
+        await restoreFocus(source, hadFocus, current, 'blocked-sender-email');
+      }
+    }
   }
 
-  async function release(id: string) {
+  async function release(id: string, source: EventTarget | null) {
     if (!active || pending || loading) return;
+    const hadFocus = document.activeElement === source;
     const current = generation;
     pending = true; error = ''; status = ''; retryTarget = null;
     try {
@@ -174,7 +198,12 @@
       sync?.publish({ type: 'blocked-senders-changed' });
       if (!page.items.length) refreshRequested = true;
     } catch { if (current === generation) error = t('blocked.releaseFailed'); }
-    finally { if (current === generation) pending = false; }
+    finally {
+      if (current === generation) {
+        pending = false;
+        await restoreFocus(source, hadFocus, current, 'blocked-quarantine-refresh');
+      }
+    }
   }
 
   function messageHref(id: string) {
@@ -199,18 +228,18 @@
     {#if loaded && senders.length === 0}<p class="note">{t('blocked.empty')}</p>{/if}
     <ul class="entries">
       {#each senders as sender (sender.email)}
-        <li><span>{sender.email}</span><Button variant="secondary" disabled={!active || pending || loading} ariaLabel={`${t('blocked.remove')} ${sender.email}`} onclick={() => remove(sender.email)}>{t('blocked.remove')}</Button></li>
+        <li><span>{sender.email}</span><Button variant="secondary" disabled={!active || pending || loading} ariaLabel={`${t('blocked.remove')} ${sender.email}`} onclick={(event) => remove(sender.email, event.currentTarget)}>{t('blocked.remove')}</Button></li>
       {/each}
     </ul>
   </Panel>
   <Panel title={t('blocked.quarantine')} description={t('blocked.quarantineDescription')}>
-    <Button variant="secondary" disabled={!active || loading || pending} onclick={() => navigate({ cursor: null, direction: 'next', number: 1 })}>{t('blocked.refresh')}</Button>
+    <Button id="blocked-quarantine-refresh" variant="secondary" disabled={!active || loading || pending} onclick={() => navigate({ cursor: null, direction: 'next', number: 1 })}>{t('blocked.refresh')}</Button>
     {#if loaded && page.items.length === 0}<p class="note">{t('blocked.quarantineEmpty')}</p>{/if}
     <ul class="entries">
       {#each page.items as item (item.id)}
         <li>
           <div class="message"><a href={messageHref(item.id)}>{item.subject || t('blocked.noSubject')}</a><span>{item.sender}</span></div>
-          <Button variant="secondary" disabled={!active || pending || loading} ariaLabel={`${t('blocked.release')} ${item.subject}`} onclick={() => release(item.id)}>{t('blocked.release')}</Button>
+          <Button variant="secondary" disabled={!active || pending || loading} ariaLabel={`${t('blocked.release')} ${item.subject}`} onclick={(event) => release(item.id, event.currentTarget)}>{t('blocked.release')}</Button>
         </li>
       {/each}
     </ul>
@@ -221,7 +250,7 @@
     </div>
   </Panel>
   {#if error}<p role="alert">{error} {#if retryTarget}<button type="button" disabled={!active} onclick={() => retryTarget && navigate(retryTarget)}>{t('blocked.retry')}</button>{/if}</p>{/if}
-  {#if status}<p role="status" aria-live="polite">{status}</p>{/if}
+  {#if status}<p id="blocked-operation-status" role="status" aria-live="polite" tabindex="-1">{status}</p>{/if}
 </div>
 
 <style>

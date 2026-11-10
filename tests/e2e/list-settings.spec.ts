@@ -397,6 +397,65 @@ test('refresh during quarantine navigation keeps the committed page', async ({ p
   expect(firstRequests).toBe(1);
 });
 
+test('leaving the blocked tab invalidates an in-flight page navigation', async ({ page }) => {
+  await login(page);
+  let resume!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => { resume = resolve; });
+  const intercepted = new Promise<void>((resolve) => { started = resolve; });
+  await page.route('**/api/workspace/quarantine**', async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    if (cursor === 'page_two') { started(); await gate; }
+    await route.fulfill({ json: { ok: true, data: {
+      items: [{ id: cursor ? 'second' : 'first', sender: 'test@example.test', subject: cursor ? 'Stale page two' : 'Current page one', timestamp: '2026-08-01T00:00:00Z' }],
+      previousCursor: cursor ? 'previous' : null, nextCursor: cursor ? null : 'page_two'
+    } } });
+  });
+  await page.goto('/?folder=settings&tab=blocked');
+  await expect(page.getByRole('link', { name: 'Current page one' })).toBeVisible();
+  await page.getByRole('button', { name: '下一页' }).click();
+  await intercepted;
+  await page.getByRole('tab', { name: '个人资料' }).click();
+  await page.getByRole('tab', { name: '黑名单' }).click();
+  const staleResponse = page.waitForResponse((response) => new URL(response.url()).searchParams.get('cursor') === 'page_two');
+  resume();
+  await staleResponse;
+  await expect(page.getByRole('button', { name: '下一页' })).toBeEnabled();
+  await expect(page.getByRole('link', { name: 'Current page one' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Stale page two' })).toHaveCount(0);
+  await expect(page).not.toHaveURL(/quarantineCursor/u);
+});
+
+test('keyboard focus survives removing rules and releasing mail', async ({ page }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `focus-${testInfo.project.name}@sender.test`;
+  const subject = `Focus quarantine ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  const remove = page.getByRole('button', { name: `移除 ${sender}` });
+  await remove.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('规则已移除；隔离邮件仍保留。')).toBeVisible();
+  await expect(page.getByLabel('发件人邮箱地址')).toBeFocused();
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <focus-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const release = page.getByRole('button', { name: `释放到收件箱 ${subject}` });
+  await release.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toMatch(/^(blocked-quarantine-refresh|blocked-operation-status)$/u);
+});
+
 test('quarantine retries the requested page and returns to it from the reader', async ({ page }) => {
   await page.addInitScript(() => { Reflect.deleteProperty(URLSearchParams.prototype, 'size'); });
   await login(page);
