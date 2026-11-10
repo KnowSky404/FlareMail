@@ -234,7 +234,6 @@ describe('local historical mail identity backfill', () => {
 
   test('records schema 29 and rejects applying a plan after the schema changes', async () => {
     const db = createDatabase();
-    db.exec(readFileSync(join(repositoryRoot, 'tests/fixtures/schema-29-bridge.sql'), 'utf8'));
     addInbound(db, { id: 'bridge-legacy' });
     const store = sqliteStore(db);
     const plan = await createMailIdentityBackfillPlan(store, {
