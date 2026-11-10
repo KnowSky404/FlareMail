@@ -129,7 +129,7 @@ function compareOldestFirst(left: MailMessage, right: MailMessage): number {
   return left.sentAt.localeCompare(right.sentAt) || left.id.localeCompare(right.id);
 }
 
-/** Group persisted messages by the same keys used for thread actions. */
+/** Connect RFC reply chains while keeping unkeyed stored messages separate. */
 export function buildMailThreads(
   mailbox: MailboxState,
   section: Exclude<MailFolder, 'drafts'>
@@ -150,9 +150,10 @@ export function buildMailThreads(
   const grouped = new Map<string, MailMessage[]>();
   for (const message of allMessages) {
     const ids = messageIds.get(message.id) ?? [];
-    const key = message.threadKey !== undefined
-      ? (message.threadKey ? `stored:${message.threadKey}` : `message:${message.id}`)
-      : ids.length ? `rfc:${rfc.find(ids[0])}` : getFallbackThreadKey(message);
+    const key = message.threadKey === null
+      ? `message:${message.id}`
+      : ids.length ? `rfc:${rfc.find(ids[0])}`
+        : message.threadKey !== undefined ? `stored:${message.threadKey}` : getFallbackThreadKey(message);
     const messages = grouped.get(key);
     if (messages) messages.push(message);
     else grouped.set(key, [message]);
