@@ -1706,13 +1706,18 @@
     metricsCache.clear();
     if (event.id) invalidateMessageCaches(event.id);
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
-    if (current && deepLinkedMessage?.id === current.id) {
+    const cached = event.id && deepLinkedMessage?.id === event.id ? deepLinkedMessage : null;
+    if (cached && !current) deepLinkedMessage = null;
+    if (current && cached) {
       const section = activeSection;
       const flagRevision = deepLinkedFlagRevisions.get(current.id) ?? { read: 0, starred: 0 };
       const request = syncMessageRequest.begin();
       void fetchWorkspaceMessage(current.id, request.signal).then((result) => {
-        if (!request.isCurrent() || !authenticated || authExpired || activeSection !== section ||
-            selectedMessageId !== current.id || deepLinkedMessage?.id !== current.id) return;
+        if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
+        if (activeSection !== section || selectedMessageId !== current.id) {
+          deepLinkedMessage = null;
+          return;
+        }
         const refreshed = flagController.overlay(result.message);
         const latestRevision = deepLinkedFlagRevisions.get(current.id);
         deepLinkedMessage = {

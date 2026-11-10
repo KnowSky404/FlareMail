@@ -784,6 +784,49 @@ test('same-tab release clears a cached deep-linked quarantine state', async ({ p
   await expect(detail.getByRole('button', { name: '归档', exact: true })).toHaveCount(1);
 });
 
+test('cross-tab release refreshes an unselected cached deep link', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `unselected-release-${testInfo.project.name}@sender.test`;
+  const subject = `Unselected release ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <unselected-release-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const link = page.getByRole('link', { name: subject });
+  await expect(link).toBeVisible();
+  const id = decodeURIComponent(new URL((await link.getAttribute('href'))!, page.url()).pathname.slice('/messages/'.length));
+  await page.goto(`/?folder=inbox&message=${encodeURIComponent(id)}`);
+  const detail = page.locator('.fm-detail-shell').filter({ hasText: subject });
+  await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  const back = page.getByRole('button', { name: '返回邮件列表' });
+  if (await back.isVisible().catch(() => false)) await back.click();
+  const otherRow = page.getByRole('listitem').filter({ hasText: 'E2E Bulk 02' });
+  await otherRow.getByRole('button').first().click();
+  if (await back.isVisible().catch(() => false)) await back.click();
+  await selectSettings(page);
+  await page.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: '黑名单' }).click();
+  await expect(page.getByRole('link', { name: subject })).toBeVisible();
+  const other = await context.newPage();
+  await other.goto('/?folder=settings&tab=blocked');
+  await other.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+  await expect(other.getByText('邮件已释放到收件箱。')).toBeVisible();
+  await expect(page.getByRole('link', { name: subject })).toHaveCount(0);
+  await openFolder(page, '收件箱');
+  await page.getByRole('listitem').filter({ hasText: subject }).getByRole('button').first().click();
+  await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: '回复', exact: true }).first()).toBeVisible();
+  await other.close();
+});
+
 test('workspace deep link reconciles release and hides archive while quarantined', async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');
