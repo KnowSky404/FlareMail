@@ -1,3 +1,4 @@
+export const WORKSPACE_SESSION_ENDED_EVENT = 'flaremail:workspace-session-ended';
 export const WORKSPACE_SYNC_CHANNEL = 'flaremail-workspace-v1';
 export const WORKSPACE_SYNC_STORAGE_KEY = 'flaremail-workspace-sync-v1';
 
