@@ -36,6 +36,13 @@ describe('workspace shared compatibility contracts', () => {
     expect(mapInboundRow({ ...row, from: 'José <josé@example.com>' }, profile)).toMatchObject({ fromName: 'José', fromEmail: 'josé@example.com', threadKey: null });
   });
 
+  test('preserves angle brackets inside a quoted sender local part', () => {
+    const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const row = { email_id: 'quoted-angle', from: 'Alice <"a<b"@example.com>', to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0 };
+    expect(mapInboundRow(row, profile)).toMatchObject({ fromName: 'Alice', fromEmail: '"a<b"@example.com' });
+    expect(mapInboundRow({ ...row, from: 'Alice <"a>b"@example.com>' }, profile)).toMatchObject({ fromName: 'Alice', fromEmail: '"a>b"@example.com' });
+  });
+
   test('requires a senderless stored key to match its valid RFC thread', () => {
     expect(hasReliableThreadContext('', { message_id: 'bogus', references: '<root@example.test>', thread_key: 'rfc:bogus' })).toBe(false);
     expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);

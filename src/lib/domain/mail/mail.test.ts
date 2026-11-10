@@ -62,6 +62,14 @@ describe('mail thread domain', () => {
     expect(buildMailThreads({ inbox: [first, second, differentCase], sent: [], drafts: [] }, 'inbox')).toHaveLength(3);
   });
 
+  test.each(['foo..bar@example.com', '"a@b"@example.com', 'josé@example.com'])('does not merge unsupported fallback sender %s', (sender) => {
+    const first = message({ id: 'email:first', fromEmail: sender, subject: 'Same subject' });
+    const second = message({ id: 'email:second', fromEmail: sender, subject: 'Same subject' });
+    expect(getMailThreadKey(first)).toBe('same subject::message:email:first');
+    expect(buildMailThreads({ inbox: [first, second], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
+    expect(buildMailThreads({ inbox: [{ ...first, messageId: '<root@example.com>' }, { ...second, references: '<root@example.com>' }], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
+  });
+
   test('keeps a compact sender label and the full address for accessible list names', () => {
     const thread = buildMailThreads({
       inbox: [message({ id: 'inbox', fromName: ' Ada Lovelace ', fromEmail: 'ada@example.com' })],
