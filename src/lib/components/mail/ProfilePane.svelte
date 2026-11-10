@@ -60,7 +60,7 @@
     onOpenDomains?: () => void;
     onOpenAddresses?: () => void;
     onQuarantineRelease?: (id: string) => void;
-    onQuarantinePageChange?: (cursor: string | null, page: number, direction: 'next' | 'previous') => void;
+    onQuarantinePageChange?: (cursor: string | null, page: number, direction: 'next' | 'previous') => void | Promise<void>;
     authExpired?: boolean;
   } = $props();
 

@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { hasReliableThreadContext } from '$lib/server/workspace/shared';
 
 const repositoryRoot = resolve(import.meta.dir, '../../../..');
 const migrationsDirectory = join(repositoryRoot, 'migrations');
@@ -344,6 +345,19 @@ describe('versioned D1 migrations', () => {
       `INSERT INTO email_messages (id, "from", "to", "timestamp", raw_key, dedupe_key)
        VALUES ('e2', 'a@example.test', 'b@example.test', '2026-08-13T00:00:00Z', 'raw/e2', 'dedupe-1')`
     ).run()).toThrow();
+  });
+
+  test('retains valid senderless RFC keys created by the legacy migration', () => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0001_baseline.sql');
+    db.exec(`INSERT INTO email_messages (id, message_id, "from", "to", subject, "timestamp", raw_key) VALUES
+      ('legacy-rfc-a', '<root@example.test>', '', 'owner@example.test', 'First', '2026-08-13T00:00:00Z', 'raw/a'),
+      ('legacy-rfc-b', '<root@example.test>', '', 'owner@example.test', 'Second', '2026-08-13T00:01:00Z', 'raw/b');`);
+    applyMigrations(db);
+    const rows = db.query(`SELECT message_id, in_reply_to, "references", thread_key FROM email_messages ORDER BY id`).all() as Array<{ message_id: string; in_reply_to: string | null; references: string | null; thread_key: string }>;
+    expect(rows.map(({ thread_key }) => thread_key)).toEqual(['rfc:<root@example.test>', 'rfc:<root@example.test>']);
+    expect(rows.every((row) => hasReliableThreadContext('', row))).toBe(true);
+    db.close();
   });
 
   test('quarantines unverifiable legacy cleanup rows during migration', () => {
