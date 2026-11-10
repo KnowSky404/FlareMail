@@ -23,7 +23,7 @@ import {
   type WorkspacePayload
 } from '$lib/domain/mail';
 import { fromInboundMessageId, isInboundMessageId, toInboundMessageId } from '$lib/domain/mail';
-import { isValidMailboxEmail, parseAddressJson, parseAddressList, parseMessageIds, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
+import { isValidMailboxEmail, normalizeMessageId, parseAddressJson, parseAddressList, parseMessageIds, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { OutboundDeliveryState } from '$lib/server/outbound';
 
@@ -265,7 +265,7 @@ export function parseAddress(value: string) {
           else if (!nameQuoted && character === '<') openAngles++;
           else if (!nameQuoted && character === '>' && openAngles) openAngles--;
         }
-        if (openAngles) break;
+        if (openAngles && nameQuoted) break;
         const name = rawName.startsWith('"') && rawName.endsWith('"')
           ? rawName.slice(1, -1).replace(/\\([\\"])/gu, '$1') : rawName;
         return { name: name || deriveNameFromEmail(email), email };
@@ -278,6 +278,11 @@ export function parseAddress(value: string) {
 export function hasReliableThreadContext(counterparty: string, row: {
   message_id?: string | null; in_reply_to?: string | null; references?: string | null; thread_key?: string | null;
 }) {
+  if (row.thread_key?.toLowerCase().startsWith('rfc:')) {
+    const storedId = normalizeMessageId(row.thread_key.slice(4));
+    const ids = [...parseMessageIds(row.references), ...parseMessageIds(row.in_reply_to), ...parseMessageIds(row.message_id)];
+    if (!storedId || !ids.includes(storedId)) return false;
+  }
   if (isValidMailboxEmail(counterparty)) return true;
   const rfcId = parseMessageIds(row.references)[0] ?? parseMessageIds(row.in_reply_to)[0] ?? parseMessageIds(row.message_id)[0];
   return Boolean(rfcId && (row.thread_key === `rfc:${rfcId}` || row.thread_key?.toLowerCase() === `rfc:<${rfcId}>`));
