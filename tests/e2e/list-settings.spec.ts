@@ -506,6 +506,48 @@ test('reader reconciles a release after an in-flight read update', async ({ page
   await reader.close();
 });
 
+test('reader reconciles a release before its page finishes loading', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `blocked-load-${testInfo.project.name}@sender.test`;
+  const subject = `Quarantine load race ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <quarantine-load-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const message = page.getByRole('link', { name: subject });
+  await expect(message).toBeVisible();
+  const reader = await context.newPage();
+  let resume!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => { resume = resolve; });
+  const intercepted = new Promise<void>((resolve) => { started = resolve; });
+  await reader.route('**/messages/**', async (route) => {
+    if (route.request().resourceType() !== 'document') return route.continue();
+    const response = await route.fetch();
+    started();
+    await gate;
+    await route.fulfill({ response });
+  });
+  const navigation = reader.goto((await message.getAttribute('href'))!, { waitUntil: 'load' });
+  await intercepted;
+  await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  resume();
+  await navigation;
+  await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  await expect(reader.getByRole('button', { name: '回复', exact: true })).toBeVisible();
+  await reader.close();
+});
+
 test('an emptied quarantine page returns to the first page', async ({ page }) => {
   await login(page);
   let firstPageHasMessage = true;
