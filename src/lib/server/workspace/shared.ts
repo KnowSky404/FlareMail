@@ -238,7 +238,7 @@ export const sortMessages = (messages: MailMessage[]) =>
   [...messages].sort((left, right) => right.sentAt.localeCompare(left.sentAt) || right.id.localeCompare(left.id));
 
 export const deriveNameFromEmail = (email: string) =>
-  email.split('@')[0].replace(/[._-]/g, ' ').trim() || email.trim();
+  email.slice(0, email.lastIndexOf('@') > 0 ? email.lastIndexOf('@') : email.length).replace(/[._-]/g, ' ').trim() || email.trim();
 
 export function parseAddress(value: string) {
   const trimmed = value.trim();
@@ -364,8 +364,7 @@ export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile, search
 };
 
 export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, searchHitFields: MailMessage['searchHitFields'] = []): MailMessage {
-  const parsedSender = parseAddress(row.from);
-  const sender = isValidMailboxEmail(parsedSender.email) ? parsedSender : { name: '', email: '' };
+  const sender = parseAddress(row.from);
   const recipient = parseAddress(row.to || profile.email);
   const snippet = row.snippet.trim() || '原始邮件已写入 R2，后续可以补充正文解析与预览。';
   return {

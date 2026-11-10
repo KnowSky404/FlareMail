@@ -295,13 +295,24 @@ describe('blocked senders', () => {
   });
 
   test('does not match the envelope when a From header is present but invalid', async () => {
-    for (const header of ['From: not-an-address', 'From:', 'From: Bad <foo..bar@example.com>']) {
+    for (const [header, sender] of [['From: not-an-address', ''], ['From:', ''], ['From: Bad <foo..bar@example.com>', 'Bad <foo..bar@example.com>']]) {
       const test = environment();
       await addBlockedSender(test.env.DB, 'user-1', 'alice@example.com');
       const raw = new TextEncoder().encode(`${header}\r\nTo: owner@example.test\r\nSubject: Invalid From\r\n\r\nhello`);
       await handleInboundEmail(message(raw).value, test.env);
       expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(0);
-      expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender: '' });
+      expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender });
+    }
+  });
+
+  test('preserves valid MIME senders outside the blocklist address syntax', async () => {
+    for (const [header, sender] of [['From: "a@b"@example.com', '"a@b"@example.com'], ['From: José <josé@example.com>', 'José <josé@example.com>']]) {
+      const test = environment();
+      await addBlockedSender(test.env.DB, 'user-1', 'alice@example.com');
+      const raw = new TextEncoder().encode(`${header}\r\nTo: owner@example.test\r\nSubject: Special sender\r\n\r\nhello`);
+      await handleInboundEmail(message(raw).value, test.env);
+      expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender });
+      expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(0);
     }
   });
 
@@ -314,7 +325,7 @@ describe('blocked senders', () => {
     expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender: 'alice@example.com' });
   });
 
-  test('keeps unrelated unknown senders in separate fallback threads', async () => {
+  test('keeps unreliable senders in separate fallback threads', async () => {
     const test = environment();
     for (const sender of ['alice@example.com', 'bob@example.com']) {
       const raw = new TextEncoder().encode(`From: Bad <foo..bar@example.com>\r\nTo: owner@example.test\r\nSubject: Same subject\r\n\r\n${sender}`);
@@ -324,7 +335,7 @@ describe('blocked senders', () => {
     }
     const rows = test.database.query('SELECT id, "from" AS sender, thread_key FROM email_messages').all() as Array<{ id: string; sender: string; thread_key: string }>;
     expect(rows).toHaveLength(2);
-    expect(rows.every((row) => row.sender === '' && row.thread_key === `same subject::message:email:${row.id}`)).toBe(true);
+    expect(rows.every((row) => row.sender === 'Bad <foo..bar@example.com>' && row.thread_key === `same subject::message:email:${row.id}`)).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 import { inboxCategorySql } from './inbox-categories';
 import type { InboxCategoryFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
-import { fromInboundMessageId, isInboundMessageId, parseAddressJson } from '$lib/domain/mail';
+import { fromInboundMessageId, isInboundMessageId, parseAddressJson, parseAddressList } from '$lib/domain/mail';
 import { hasReliableThreadContext, parseAddress, type WorkspaceCapabilities, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 
 export interface OwnedMailboxMutationRow {
@@ -111,7 +111,7 @@ export async function listOwnedMailboxMutationRows(
         AND m.id IN (${placeholders(workspaceIds)})
     `).bind(userId, ...scopeClause.bindings, ...workspaceIds).all<OwnedMailboxMutationRow & Pick<WorkspaceMessageRow, 'from_email' | 'to_email' | 'to_json' | 'message_id' | 'in_reply_to' | 'references'>>();
     rows.push(...(result.results ?? []).map((row) => {
-      const counterparty = row.folder === 'inbox' ? row.from_email : (parseAddressJson(row.to_json)[0]?.email || row.to_email);
+      const counterparty = row.folder === 'inbox' ? row.from_email : (parseAddressJson(row.to_json)[0]?.email || parseAddressList(row.to_email)[0]?.email || row.to_email);
       const reliable = hasReliableThreadContext(counterparty, row);
       return { ...row, thread_key: reliable ? row.thread_key : null, thread_ambiguous: !reliable };
     }));
