@@ -57,8 +57,9 @@ describe('mail thread domain', () => {
   test('does not group unrelated messages when the sender is unknown', () => {
     const first = message({ id: 'email:first', fromName: '', fromEmail: '', subject: 'Same subject' });
     const second = message({ id: 'email:second', fromName: '', fromEmail: '', subject: 'Same subject' });
+    const differentCase = message({ id: 'email:First', fromName: '', fromEmail: '', subject: 'Same subject' });
     expect(getMailThreadKey(first)).toBe('same subject::message:email:first');
-    expect(buildMailThreads({ inbox: [first, second], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
+    expect(buildMailThreads({ inbox: [first, second, differentCase], sent: [], drafts: [] }, 'inbox')).toHaveLength(3);
   });
 
   test('keeps a compact sender label and the full address for accessible list names', () => {

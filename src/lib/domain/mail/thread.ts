@@ -64,7 +64,9 @@ function getRfcIds(message: MailMessage): string[] {
 
 function getFallbackThreadKey(message: MailMessage): string {
   const counterparty = normalizeEmail(getCounterpartyEmail(message));
-  return `${normalizeThreadSubject(message.subject)}::${counterparty || `message:${normalizeEmail(message.id)}`}`;
+  // Bulk operations expand the persisted key for legacy messages.
+  if (!counterparty && message.threadKey?.trim()) return message.threadKey.trim();
+  return `${normalizeThreadSubject(message.subject)}::${counterparty || `message:${message.id}`}`;
 }
 
 /**

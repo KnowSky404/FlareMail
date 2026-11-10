@@ -6,13 +6,13 @@ import { listQuarantinedMail, releaseQuarantinedMail } from '$lib/server/db/bloc
 import { changeMailboxCategories } from './categories';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { SQLQueryBindings } from 'bun:sqlite';
 import { loadMailboxPage, loadWorkspaceSnapshot, mutateWorkspaceMailbox } from './mailbox';
 import { parseMailboxQuery } from './mailbox-query';
 import type { WorkspaceContext } from './shared';
-import { parseMailSearchQuery } from '$lib/domain/mail';
+import { buildMailThreads, parseMailSearchQuery } from '$lib/domain/mail';
 import { createMailLabel, deleteMailLabel, listMailLabels, renameMailLabel, setMailMessageLabel, setManyMailMessageLabels } from '$lib/server/db/labels';
 
 class TestStatement {
@@ -65,10 +65,20 @@ afterEach(() => {
   while (databases.length) databases.pop()?.close();
 });
 
-function fixture() {
+function fixture(beforeBlocklistMigration?: (database: Database) => void) {
   const database = new Database(':memory:');
   databases.push(database);
-  database.exec(readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8'));
+  if (beforeBlocklistMigration) {
+    const directory = resolve(import.meta.dir, '../../../../migrations');
+    for (const file of readdirSync(directory).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort()) {
+      if (file.startsWith('0029_')) break;
+      database.exec(readFileSync(resolve(directory, file), 'utf8'));
+    }
+    beforeBlocklistMigration(database);
+    database.exec(readFileSync(resolve(directory, '0029_blocked_senders.sql'), 'utf8'));
+  } else {
+    database.exec(readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8'));
+  }
   const insertWorkspace = database.query(`
     INSERT INTO workspace_messages (
       id, user_id, folder, from_name, from_email, to_name, to_email,
@@ -690,6 +700,34 @@ describe('D1 mailbox pages', () => {
     expect(db.queries.filter((sql) => sql.includes('SELECT e.id AS email_id'))).toHaveLength(0);
     expect(db.queries.filter((sql) => sql.includes('SELECT d.id'))).toHaveLength(0);
     expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(2);
+  });
+
+  test.each(['owner', 'filtered'] as const)('keeps migrated unknown-sender threads consistent with %s bulk actions', async (threadScope) => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
+        ('legacy-unknown-a', 'user-1', '', 'owner@example.test', 'Legacy subject', '2026-08-13T14:00:00.000Z', 'raw/legacy-a', 'legacy subject::'),
+        ('legacy-unknown-b', 'user-1', '', 'owner@example.test', 'Legacy subject', '2026-08-13T14:01:00.000Z', 'raw/legacy-b', 'legacy subject::'),
+        ('legacy-unknown-c', 'user-1', '', 'owner@example.test', 'Legacy subject', '2026-08-13T14:02:00.000Z', 'raw/legacy-c', 'legacy:legacy-unknown-c');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:legacy-unknown-'));
+    const threads = buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox');
+    expect(threads.map(({ messageCount }) => messageCount).sort()).toEqual([1, 2]);
+    const shared = threads.find(({ messageCount }) => messageCount === 2)!;
+    expect(shared.messages.map(({ id }) => id).sort()).toEqual(['email:legacy-unknown-a', 'email:legacy-unknown-b']);
+
+    await mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:legacy-unknown-a'], threadKeys: ['legacy subject::'],
+      scope: mutationScope('inbox', null, threadScope)
+    });
+    const states = database.query(`
+      SELECT e.id, s.archived_at FROM email_messages AS e LEFT JOIN workspace_email_states AS s
+      ON s.email_message_id = e.id AND s.user_id = 'user-1'
+      WHERE e.id LIKE 'legacy-unknown-%' ORDER BY e.id
+    `).all() as Array<{ id: string; archived_at: string | null }>;
+    expect(states[0]!.archived_at).not.toBeNull();
+    expect(states[1]!.archived_at).not.toBeNull();
+    expect(states[2]!.archived_at).toBeNull();
   });
 
   test('archives and restores mixed inbound/workspace selections atomically', async () => {
