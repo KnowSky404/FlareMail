@@ -637,6 +637,66 @@ test('reader reconciles a release after an in-flight read update', async ({ page
   await reader.close();
 });
 
+test('release still syncs after leaving settings during its response', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `release-leave-${testInfo.project.name}@sender.test`;
+  const subject = `Release while leaving ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: ${sender}`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <release-leave-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const link = page.getByRole('link', { name: subject });
+  await expect(link).toBeVisible();
+  const reader = await context.newPage();
+  await reader.goto((await link.getAttribute('href'))!);
+  await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  await reader.waitForLoadState('networkidle');
+  await reader.evaluate(() => {
+    sessionStorage.removeItem('release-after-leaving');
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.onmessage = (event) => {
+      if (event.data.type === 'mailbox-refresh') {
+        sessionStorage.setItem('release-after-leaving', 'received');
+        channel.close();
+      }
+    };
+  });
+  let resume!: () => void;
+  let committed!: () => void;
+  const gate = new Promise<void>((resolve) => { resume = resolve; });
+  const committedOnServer = new Promise<void>((resolve) => { committed = resolve; });
+  await page.route('**/api/workspace/quarantine/*', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    committed();
+    await gate;
+    try { await route.fulfill({ response }); } catch { /* An aborted request cannot receive its response. */ }
+  });
+  try {
+    await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+    await committedOnServer;
+    await openFolder(page, '收件箱');
+    expect(await reader.evaluate(() => sessionStorage.getItem('release-after-leaving'))).toBeNull();
+    resume();
+    await reader.waitForFunction(() => sessionStorage.getItem('release-after-leaving') === 'received');
+    await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+    await expect(reader.getByRole('button', { name: '回复', exact: true })).toBeVisible();
+    await expect(page.getByText(subject).first()).toBeVisible();
+  } finally {
+    resume();
+    await reader.close();
+  }
+});
+
 test('release invalidates a pending workspace deep-link read', async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');

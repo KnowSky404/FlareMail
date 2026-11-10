@@ -189,29 +189,32 @@
     if (!active || pending || loading) return;
     const hadFocus = document.activeElement === source;
     const current = generation;
+    const notifyRelease = onRelease;
+    const releaseSync = createWorkspaceSync(() => {});
     pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
       let inInbox = true;
       try {
-        await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST', signal: sessionRequests.signal });
+        await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST' });
       } catch (releaseError) {
-        if (current !== generation) return;
         if (releaseError instanceof ClientApiError && releaseError.status >= 400 && releaseError.status < 500 && releaseError.status !== 404) throw releaseError;
         const result = await requestJson<{ message: { quarantinedAt?: string | null; archivedAt?: string | null } }>(
-          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`, { signal: sessionRequests.signal }
+          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`
         );
         if (result.message?.quarantinedAt !== null) throw releaseError;
         inInbox = result.message.archivedAt === null;
       }
+      releaseSync.publish({ type: 'mailbox-refresh', id: `email:${id}` });
+      releaseSync.publish({ type: 'blocked-senders-changed' });
+      notifyRelease?.(id);
       if (current !== generation) return;
       page = { ...page, items: page.items.filter((item) => item.id !== id) };
-      onRelease?.(id);
       if (inInbox) status = t('blocked.released');
       else operationError = t('blocked.releaseFailed');
-      sync?.publish({ type: 'blocked-senders-changed' });
       if (!page.items.length) refreshRequested = true;
     } catch { if (current === generation) operationError = t('blocked.releaseFailed'); }
     finally {
+      releaseSync.close();
       if (current === generation) {
         pending = false;
         await restoreFocus(source, hadFocus, current, 'blocked-quarantine-refresh');
