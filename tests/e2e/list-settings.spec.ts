@@ -683,6 +683,7 @@ test('workspace deep link reconciles release and hides archive while quarantined
   const subject = `Quarantine deep link ${testInfo.project.name}`;
   await page.getByLabel('发件人邮箱地址').fill(sender);
   await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
   const raw = [
     `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
     `Message-ID: <deep-link-${testInfo.project.name}@sender.test>`,
@@ -748,6 +749,63 @@ test('cross-tab updates refresh the lists without erasing a failed operation', a
   await expect(page.getByRole('alert')).toContainText('无法保存');
   await expect(page.getByLabel('发件人邮箱地址')).toHaveValue(unsaved);
   await other.close();
+});
+
+test('cross-tab changes retry a failed quarantine page', async ({ page, context }) => {
+  await login(page);
+  let failNext = true;
+  await page.route('**/api/workspace/quarantine**', (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    if (cursor === 'page_two' && failNext) {
+      failNext = false;
+      return route.fulfill({ status: 503, json: { ok: false, error: { code: 'OFFLINE', message: 'Offline' } } });
+    }
+    return route.fulfill({ json: { ok: true, data: {
+      items: cursor ? [{ id: 'next', sender: 'test@example.test', subject: 'Retried page', timestamp: '2026-08-01T08:00:00Z' }] : [],
+      previousCursor: cursor ? 'back' : null, nextCursor: cursor ? null : 'page_two'
+    } } });
+  });
+  await page.goto('/?folder=settings&tab=blocked');
+  await page.getByRole('button', { name: '下一页' }).click();
+  await expect(page.getByRole('alert')).toContainText('无法读取');
+  const other = await context.newPage();
+  await other.goto('/');
+  await other.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'blocked-senders-changed' });
+    channel.close();
+  });
+  await expect(page.getByRole('link', { name: 'Retried page' })).toBeVisible();
+  await expect(page).toHaveURL(/quarantineCursor=page_two/u);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await other.close();
+});
+
+test('moving a quarantined deep link to trash refreshes another tab', async ({ page, context }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `trash-sync-${testInfo.project.name}@sender.test`;
+  const subject = `Quarantine trash ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+  const raw = [`From: ${sender}`, 'To: e2e-admin@flaremail.test', `Message-ID: <trash-sync-${testInfo.project.name}@sender.test>`, `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'].join('\r\n');
+  const accepted = await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  });
+  expect(accepted.status()).toBe(200);
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const link = page.getByRole('link', { name: subject });
+  await expect(link).toBeVisible();
+  const path = new URL((await link.getAttribute('href'))!, page.url()).pathname;
+  const id = decodeURIComponent(path.slice('/messages/'.length));
+  const reader = await context.newPage();
+  await reader.goto(`/?folder=inbox&message=${encodeURIComponent(id)}`);
+  const detail = reader.locator('.fm-detail-shell').filter({ hasText: subject });
+  await detail.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+  await reader.getByRole('dialog', { name: '移入垃圾箱？' }).getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+  await expect(page.getByRole('button', { name: `释放到收件箱 ${subject}` })).toHaveCount(0);
+  await reader.close();
 });
 
 test('blocked sender requests cannot update the next authentication session', async ({ page }) => {

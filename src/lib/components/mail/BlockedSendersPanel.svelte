@@ -48,9 +48,9 @@
   onMount(() => {
     mounted = true;
     sync = createWorkspaceSync((event) => {
-      if (event.type === 'blocked-senders-changed') refreshRequested = true;
+      if (event.type === 'blocked-senders-changed' || event.type === 'mailbox-refresh') refreshRequested = true;
     });
-    const restorePosition = () => { refreshRequested = true; };
+    const restorePosition = () => { retryTarget = null; error = ''; refreshRequested = true; };
     const expire = () => {
       generation++;
       sessionRequests.abort();
@@ -128,9 +128,9 @@
   $effect(() => {
     if (!mounted) return;
     if (!active) { navigationRevision++; refreshRequested = true; return; }
-    if (refreshRequested && !loading && !pending && !error) {
+    if (refreshRequested && !loading && !pending) {
       refreshRequested = false;
-      untrack(() => { void navigate(positionFromUrl()); });
+      untrack(() => { void navigate(error && retryTarget ? retryTarget : positionFromUrl()); });
     }
   });
 
