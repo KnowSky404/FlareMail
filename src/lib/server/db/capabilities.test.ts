@@ -27,11 +27,16 @@ describe('workspace schema capabilities', () => {
     expect(await hasWorkspaceCoreTables(envFor(stale))).toBe(false);
   });
 
-  test('enables capabilities only for the exact application schema', async () => {
+  test('accepts schema 28 and the additive schema 29 only', async () => {
     const current = new Database(':memory:');
     current.exec('CREATE TABLE workspace_schema_metadata (schema_name TEXT PRIMARY KEY, schema_version INTEGER NOT NULL)');
     current.query('INSERT INTO workspace_schema_metadata VALUES (?, ?)').run('flaremail', FLAREMAIL_SCHEMA_VERSION);
     expect(await hasWorkspaceCoreTables(envFor(current))).toBe(true);
+    current.query('UPDATE workspace_schema_metadata SET schema_version = 29').run();
+    expect(await hasWorkspaceCoreTables(envFor(current))).toBe(true);
+    current.query('UPDATE workspace_schema_metadata SET schema_version = 30').run();
+    expect(await hasWorkspaceCoreTables(envFor(current))).toBe(false);
+    current.query('UPDATE workspace_schema_metadata SET schema_version = 29').run();
     expect(await getWorkspaceCapabilities(envFor(current))).toEqual({
       drafts: true,
       inboundStates: true,
