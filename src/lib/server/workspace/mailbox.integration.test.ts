@@ -759,6 +759,32 @@ describe('D1 mailbox pages', () => {
     expect(page.messages.find(({ id }) => id === 'email:special-sender')).toMatchObject({ fromName: 'José', fromEmail: 'josé@example.com' });
   });
 
+  test('shows differing legacy thread keys separately before applying a thread action', async () => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
+        ('legacy-name-a', 'user-1', 'Alice "A" <alice@example.com>', 'owner@example.test', 'Same subject', '2026-08-13T14:00:00Z', 'raw/a', 'same subject::alice "a" <alice@example.com>'),
+        ('legacy-name-b', 'user-1', 'Alice "B" <alice@example.com>', 'owner@example.test', 'Same subject', '2026-08-13T14:01:00Z', 'raw/b', 'same subject::alice "b" <alice@example.com>');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:legacy-name-'));
+    expect(buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['email:legacy-name-a'], threadKeys: ['same subject::alice "a" <alice@example.com>'], scope: mutationScope('inbox', null, 'owner') });
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('legacy-name-a', 'legacy-name-b') AND archived_at IS NOT NULL").get()).toEqual({ count: 1 });
+  });
+
+  test.each(['owner', 'filtered'] as const)('applies %s thread actions to messages with the same canonical sender key', async (threadScope) => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
+        ('canonical-a', 'user-1', 'Alice A <alice@example.com>', 'owner@example.test', 'Same subject', '2026-08-13T14:00:00Z', 'raw/a', 'same subject::alice@example.com'),
+        ('canonical-b', 'user-1', 'Alice B <alice@example.com>', 'owner@example.test', 'Same subject', '2026-08-13T14:01:00Z', 'raw/b', 'same subject::alice@example.com');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:canonical-'));
+    expect(buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['email:canonical-a'], threadKeys: ['same subject::alice@example.com'], scope: mutationScope('inbox', null, threadScope) });
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('canonical-a', 'canonical-b') AND archived_at IS NOT NULL").get()).toEqual({ count: 2 });
+  });
+
   test('includes a quoted sender in valid thread-scoped actions', async () => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES

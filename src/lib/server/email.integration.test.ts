@@ -325,6 +325,17 @@ describe('blocked senders', () => {
     expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender: 'alice@example.com' });
   });
 
+  test('uses the sender address rather than its display name for new fallback thread keys', async () => {
+    const test = environment();
+    for (const name of ['Alice A', 'Alice B']) {
+      const raw = new TextEncoder().encode(`From: ${name} <alice@example.com>\r\nTo: owner@example.test\r\nSubject: Same subject\r\n\r\n${name}`);
+      await handleInboundEmail(message(raw).value, test.env);
+    }
+    const rows = test.database.query('SELECT thread_key FROM email_messages ORDER BY id').all() as Array<{ thread_key: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows.every(({ thread_key }) => thread_key === 'same subject::alice@example.com')).toBe(true);
+  });
+
   test('keeps unreliable senders in separate fallback threads', async () => {
     const test = environment();
     for (const sender of ['alice@example.com', 'bob@example.com']) {
