@@ -364,6 +364,7 @@
   const toastController = new ToastController((messages) => (toastMessages = messages));
   const workspaceSnapshotController = new WorkspaceSnapshotController();
   const targetMessageRequest = new LatestRequest();
+  let targetMessageRevision = $state(0);
   const syncMessageRequest = new LatestRequest();
   const draftOpenRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
@@ -616,6 +617,7 @@
   });
 
   $effect(() => {
+    void targetMessageRevision;
     const targetId = urlMessageId;
     const section = activeSection;
     if (
@@ -1740,6 +1742,10 @@
     if (event.id) invalidateMessageCaches(event.id);
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
     const cached = event.id && deepLinkedMessage?.id === event.id ? deepLinkedMessage : null;
+    if (event.id && event.id === urlMessageId && !cached) {
+      targetMessageRequest.cancel();
+      targetMessageRevision++;
+    }
     if (cached && !current) {
       deepLinkedMessage = null;
       if (deepLinkedRefreshError === cached.id) deepLinkedRefreshError = null;
