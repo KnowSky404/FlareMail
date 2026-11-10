@@ -77,6 +77,8 @@ describe('workspace shared compatibility contracts', () => {
     expect(hasReliableThreadContext('alice@example.com', { message_id: 'bogus', thread_key: 'rfc:bogus' })).toBe(false);
     expect(hasReliableThreadContext('alice@example.com', { message_id: '<other@example.test>', thread_key: 'rfc:root@example.test' })).toBe(false);
     expect(hasReliableThreadContext('alice@example.com', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);
+    expect(hasReliableThreadContext('alice@example.com', { subject: 'RFC: Production rollout', thread_key: 'rfc: production rollout::alice@example.com' })).toBe(true);
+    expect(hasReliableThreadContext('alice@example.com', { subject: 'Other subject', thread_key: 'rfc: production rollout::alice@example.com' })).toBe(false);
   });
 
   test('serializes a workspace session through the public payload shape', () => {
