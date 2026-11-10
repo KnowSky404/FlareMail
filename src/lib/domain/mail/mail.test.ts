@@ -89,6 +89,13 @@ describe('mail thread domain', () => {
     expect(buildMailThreads({ inbox: [root, firstReply, secondReply], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
   });
 
+  test('does not connect other RFC threads through an isolated legacy message', () => {
+    const first = message({ id: 'first', messageId: '<first@example.test>', threadKey: 'rfc:first@example.test' });
+    const second = message({ id: 'second', messageId: '<second@example.test>', threadKey: 'rfc:second@example.test' });
+    const isolated = message({ id: 'isolated', references: '<first@example.test> <second@example.test>', threadKey: null });
+    expect(buildMailThreads({ inbox: [first, second, isolated], sent: [], drafts: [] }, 'inbox')).toHaveLength(3);
+  });
+
   test('keeps a compact sender label and the full address for accessible list names', () => {
     const thread = buildMailThreads({
       inbox: [message({ id: 'inbox', fromName: ' Ada Lovelace ', fromEmail: 'ada@example.com' })],
