@@ -345,7 +345,7 @@ test('blocked sender quarantine keeps mail until an explicit release', async ({ 
   await assertNoConsoleErrors(consoleErrors);
 });
 
-for (const recovery of ['retry', 'refresh'] as const) {
+for (const recovery of ['retry', 'refresh', 'reload', 'late'] as const) {
   test(`reconciles an uncertain quarantine release after reconnecting with ${recovery}`, async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');
@@ -414,15 +414,23 @@ for (const recovery of ['retry', 'refresh'] as const) {
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(message).toBeVisible();
   await expect(release).toBeEnabled();
-  mode = 'lost';
-  await release.click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  await expect(release).toBeEnabled();
+  if (recovery === 'late') {
+    const result = await page.request.post(`/api/workspace/quarantine/${encodeURIComponent(messageId.slice('email:'.length))}`, { headers: { origin: new URL(page.url()).origin } });
+    expect(result.ok()).toBeTruthy();
+  } else {
+    mode = 'lost';
+    await release.click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(release).toBeEnabled();
+  }
+  expect(await page.evaluate(() => sessionStorage.getItem('flaremail-uncertain-quarantine-releases'))).toContain(messageId.slice('email:'.length));
   offline = false;
   mode = 'normal';
   if (recovery === 'retry') {
     await release.click();
     await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  } else if (recovery === 'reload') {
+    await page.reload({ waitUntil: 'domcontentloaded' });
   } else {
     await page.getByRole('button', { name: '刷新隔离区' }).click();
   }
@@ -654,6 +662,53 @@ test('reader reconciles a release after an in-flight read update', async ({ page
   await expect(reader.getByRole('button', { name: '回复', exact: true })).toBeVisible();
   await reader.close();
 });
+
+for (const action of ['add', 'remove'] as const) {
+  test(`sender rule ${action} still syncs after leaving settings`, async ({ page, context }, testInfo) => {
+    await login(page);
+    await page.goto('/?folder=settings&tab=blocked');
+    const sender = `rule-${action}-${testInfo.project.name}@sender.test`;
+    if (action === 'remove') {
+      await page.getByLabel('发件人邮箱地址').fill(sender);
+      await page.getByRole('button', { name: '加入黑名单' }).click();
+      await expect(page.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+    }
+    const other = await context.newPage();
+    await other.goto('/?folder=settings&tab=blocked');
+    const otherRule = other.getByRole('button', { name: `移除 ${sender}` });
+    if (action === 'remove') await expect(otherRule).toBeVisible();
+    else await expect(other.getByLabel('发件人邮箱地址')).toBeEnabled();
+    let resume!: () => void;
+    let committed!: () => void;
+    const gate = new Promise<void>((resolve) => { resume = resolve; });
+    const serverCommitted = new Promise<void>((resolve) => { committed = resolve; });
+    await page.route('**/api/workspace/blocked-senders', async (route) => {
+      if (route.request().method() !== (action === 'add' ? 'POST' : 'DELETE')) return route.continue();
+      const response = await route.fetch();
+      committed();
+      await gate;
+      try { await route.fulfill({ response }); } catch { /* An aborted request cannot receive its response. */ }
+    });
+    try {
+      if (action === 'add') {
+        await page.getByLabel('发件人邮箱地址').fill(sender);
+        await page.getByRole('button', { name: '加入黑名单' }).click();
+      } else {
+        await page.getByRole('button', { name: `移除 ${sender}` }).click();
+      }
+      await serverCommitted;
+      await openFolder(page, '收件箱');
+      if (action === 'add') await expect(otherRule).toHaveCount(0);
+      else await expect(otherRule).toBeVisible();
+      resume();
+      if (action === 'add') await expect(otherRule).toBeVisible();
+      else await expect(otherRule).toHaveCount(0);
+    } finally {
+      resume();
+      await other.close();
+    }
+  });
+}
 
 test('release still syncs after leaving settings during its response', async ({ page, context }, testInfo) => {
   await login(page);
