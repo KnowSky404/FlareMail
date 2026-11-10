@@ -70,13 +70,20 @@ describe('mail thread domain', () => {
     expect(buildMailThreads({ inbox: [{ ...first, messageId: '<root@example.com>' }, { ...second, references: '<root@example.com>' }], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
   });
 
-  test('groups persisted messages only when their stored thread keys agree', () => {
+  test('groups persisted fallback messages by their stored thread keys', () => {
     const first = message({ id: 'email:first', fromEmail: 'alice@example.com', subject: 'Same subject', threadKey: 'same::Alice A <alice@example.com>' });
     const second = message({ id: 'email:second', fromEmail: 'alice@example.com', subject: 'Same subject', threadKey: 'same::Alice B <alice@example.com>' });
     expect(buildMailThreads({ inbox: [first, second], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
     expect(buildMailThreads({ inbox: [first, { ...second, threadKey: first.threadKey }], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
     expect(buildMailThreads({ inbox: [{ ...first, threadKey: null }, { ...second, threadKey: null }], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
-    expect(buildMailThreads({ inbox: [{ ...first, messageId: '<root@example.com>' }, { ...second, references: '<root@example.com>' }], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
+    expect(buildMailThreads({ inbox: [{ ...first, messageId: '<root@example.com>' }, { ...second, references: '<root@example.com>' }], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
+  });
+
+  test('preserves persisted reply chains when each reply stores its immediate parent as its thread key', () => {
+    const root = message({ id: 'email:root', messageId: '<root@example.com>', threadKey: 'rfc:root@example.com' });
+    const firstReply = message({ id: 'email:reply-1', messageId: '<reply-1@example.com>', inReplyTo: '<root@example.com>', threadKey: 'rfc:root@example.com' });
+    const secondReply = message({ id: 'email:reply-2', messageId: '<reply-2@example.com>', inReplyTo: '<reply-1@example.com>', threadKey: 'rfc:reply-1@example.com' });
+    expect(buildMailThreads({ inbox: [root, firstReply, secondReply], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
   });
 
   test('keeps a compact sender label and the full address for accessible list names', () => {
