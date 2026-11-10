@@ -1,5 +1,5 @@
 import type { CloudflareEnv } from './cloudflare';
-import { MAX_RECIPIENTS, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
+import { MAX_RECIPIENTS, isValidMailboxEmail, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import { insertAttachment } from '$lib/server/db/attachments';
 import { insertBodyObject } from '$lib/server/db/body';
 import { isBlockedSender } from '$lib/server/db/blocked-senders';
@@ -313,7 +313,8 @@ export async function handleInboundEmail(
     })));
     safeLog('inbound_phase', { correlationId, phase: 'r2_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - r2StartedAt });
 
-    const from = addressLabel(parsed.from, parsed.hasFromHeader ? '' : message.from);
+    const senderAddress = parsed.hasFromHeader ? (parsed.from?.address ?? '') : message.from;
+    const from = isValidMailboxEmail(senderAddress) ? addressLabel(parsed.from, parsed.hasFromHeader ? '' : message.from) : '';
     const subject = parsed.subject.trim() || message.headers.get('subject')?.trim() || '(no subject)';
     const toAddresses = canonicalAddresses(parsed.to);
     const ccAddresses = canonicalAddresses(parsed.cc);
