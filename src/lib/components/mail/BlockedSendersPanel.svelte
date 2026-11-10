@@ -3,7 +3,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
-  import { requestJson } from '$lib/client/api';
+  import { ClientApiError, requestJson } from '$lib/client/api';
   import { AUTH_EXPIRED_EVENT } from '$lib/client/auth-session';
   import { createWorkspaceSync } from '$lib/client/workspace-sync';
   import { useLocale } from '$lib/i18n/runtime.svelte';
@@ -191,11 +191,23 @@
     const current = generation;
     pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
-      await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST', signal: sessionRequests.signal });
+      let inInbox = true;
+      try {
+        await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST', signal: sessionRequests.signal });
+      } catch (releaseError) {
+        if (current !== generation) return;
+        if (releaseError instanceof ClientApiError && releaseError.status >= 400 && releaseError.status < 500 && releaseError.status !== 404) throw releaseError;
+        const result = await requestJson<{ message: { quarantinedAt?: string | null; archivedAt?: string | null } }>(
+          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`, { signal: sessionRequests.signal }
+        );
+        if (result.message?.quarantinedAt !== null) throw releaseError;
+        inInbox = result.message.archivedAt === null;
+      }
       if (current !== generation) return;
       page = { ...page, items: page.items.filter((item) => item.id !== id) };
       onRelease?.(id);
-      status = t('blocked.released');
+      if (inInbox) status = t('blocked.released');
+      else operationError = t('blocked.releaseFailed');
       sync?.publish({ type: 'blocked-senders-changed' });
       if (!page.items.length) refreshRequested = true;
     } catch { if (current === generation) operationError = t('blocked.releaseFailed'); }
