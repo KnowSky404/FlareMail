@@ -748,6 +748,59 @@ test('blocked sender rules and quarantine releases sync between tabs', async ({ 
   await other.close();
 });
 
+test('a failed read of quarantined mail does not add an unread badge', async ({ page }, testInfo) => {
+  await login(page);
+  const mailbox = await (await page.request.get('/api/workspace/mailbox?folder=inbox&limit=100')).json();
+  const unread = mailbox.data.page.messages.filter((item: { read: boolean }) => !item.read).map((item: { id: string }) => item.id);
+  const mutate = async (action: 'read' | 'unread') => page.evaluate(async ({ action, ids }) => {
+    const response = await fetch('/api/workspace/mailbox/mutate', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'XMLHttpRequest' },
+      body: JSON.stringify({ action, ids, threadKeys: [], scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' } })
+    });
+    return response.ok;
+  }, { action, ids: unread });
+  if (unread.length) expect(await mutate('read')).toBe(true);
+  try {
+    const metrics = await (await page.request.get('/api/workspace/mailbox/metrics')).json();
+    expect(metrics.data.metrics.unreadCount).toBe(0);
+    await page.goto('/?folder=settings&tab=blocked');
+    const sender = `unread-quarantine-${testInfo.project.name}@sender.test`;
+    const subject = `Unread quarantine ${testInfo.project.name}`;
+    await page.getByLabel('发件人邮箱地址').fill(sender);
+    await page.getByRole('button', { name: '加入黑名单' }).click();
+    await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+    const raw = [
+      `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+      `Message-ID: <unread-quarantine-${testInfo.project.name}@sender.test>`,
+      `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+    ].join('\r\n');
+    expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+      data: raw, headers: { 'content-type': 'message/rfc822' }
+    })).ok()).toBeTruthy();
+    await page.getByRole('button', { name: '刷新隔离区' }).click();
+    const link = page.getByRole('link', { name: subject });
+    await expect(link).toBeVisible();
+    const id = decodeURIComponent(new URL((await link.getAttribute('href'))!, page.url()).pathname.slice('/messages/'.length));
+    await page.route('**/api/workspace/mailbox/metrics**', (route) => route.fulfill({ status: 503, json: { ok: false, error: { code: 'TEST_METRICS_FAILED', message: 'Synthetic metrics failure' } } }));
+    await page.route('**/api/workspace/mailbox?**', async (route) => {
+      const response = await route.fetch();
+      const payload = await response.json();
+      if (payload.data?.page) delete payload.data.page.metrics;
+      await route.fulfill({ response, json: payload });
+    });
+    await page.route('**/api/workspace/messages/*/flags**', (route) => route.request().method() === 'PATCH'
+      ? route.fulfill({ status: 503, json: { ok: false, error: { code: 'TEST_READ_FAILED', message: 'Synthetic read failure' } } })
+      : route.continue());
+    const failedRead = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes('/flags') && response.status() === 503);
+    await page.goto(`/?folder=inbox&message=${encodeURIComponent(id)}`);
+    await failedRead;
+    await expect(page.getByText('Synthetic read failure')).toBeVisible();
+    await expect(page.locator('#sidebar-inbox-count')).toHaveCount(0);
+  } finally {
+    if (unread.length) expect(await mutate('unread')).toBe(true);
+  }
+});
+
 test('same-tab release clears a cached deep-linked quarantine state', async ({ page }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');

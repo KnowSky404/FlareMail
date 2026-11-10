@@ -2353,7 +2353,7 @@
     flagsInterruptedPageRequest = mailboxController.patchFlags(id, patch) || flagsInterruptedPageRequest;
     const existing = deepLinkedMessage?.id === id ? deepLinkedMessage : [...mailbox.inbox, ...mailbox.sent, ...mailbox.drafts,
       ...Object.values(mailboxPages ?? {}).flatMap((cached) => cached?.messages ?? [])].find((message) => message.id === id);
-    if (existing && patch.read !== undefined && existing.read !== patch.read && existing.folder === 'inbox' && !existing.archivedAt &&
+    if (existing && patch.read !== undefined && existing.read !== patch.read && existing.folder === 'inbox' && !existing.archivedAt && !existing.quarantinedAt &&
       sameIdentityScope(metricsIdentity, mailIdentityFilter) && messageMatchesIdentity(existing)) {
       metrics = { ...metrics, unreadCount: Math.max(0, metrics.unreadCount + (patch.read ? -1 : 1)) };
     }
