@@ -43,6 +43,26 @@ describe('workspace shared compatibility contracts', () => {
     expect(mapInboundRow({ ...row, from: 'Alice <"a>b"@example.com>' }, profile)).toMatchObject({ fromName: 'Alice', fromEmail: '"a>b"@example.com' });
   });
 
+  test('does not mistake an unmatched angle inside a malformed address for its sender', () => {
+    const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const raw = 'Alice <"a<alice@example.com>';
+    const row = { email_id: 'malformed-angle', from: raw, to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0 };
+    expect(mapInboundRow(row, profile)).toMatchObject({ fromEmail: raw, threadKey: null });
+  });
+
+  test.each(['\u2028', '\u2029'])('preserves addresses after Unicode line separator %s in a display name', (separator) => {
+    const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const row = { email_id: 'unicode-name', from: `Alice${separator}Team <alice@example.com>`, to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0 };
+    expect(mapInboundRow(row, profile)).toMatchObject({ fromName: `Alice${separator}Team`, fromEmail: 'alice@example.com' });
+  });
+
+  test('parses a long decoded display name without losing its sender', () => {
+    const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const name = `A${' '.repeat(81000)}B`;
+    const row = { email_id: 'long-name', from: `${name} <alice@example.com>`, to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0 };
+    expect(mapInboundRow(row, profile)).toMatchObject({ fromName: name, fromEmail: 'alice@example.com' });
+  });
+
   test('requires a senderless stored key to match its valid RFC thread', () => {
     expect(hasReliableThreadContext('', { message_id: 'bogus', references: '<root@example.test>', thread_key: 'rfc:bogus' })).toBe(false);
     expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);

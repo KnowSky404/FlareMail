@@ -242,13 +242,25 @@ export const deriveNameFromEmail = (email: string) =>
 
 export function parseAddress(value: string) {
   const trimmed = value.trim();
-  const match = trimmed.match(/^(.*?)\s*<((?:"(?:[^"\\]|\\.)*"|[^<>"])+)>$/u);
-  if (match) {
-    const email = match[2].trim();
-    const rawName = match[1].trim();
-    const name = rawName.startsWith('"') && rawName.endsWith('"')
-      ? rawName.slice(1, -1).replace(/\\([\\"])/gu, '$1') : rawName;
-    return { name: name || deriveNameFromEmail(email), email };
+  if (trimmed.endsWith('>')) {
+    let quoted = false;
+    for (let index = trimmed.length - 2; index >= 0; index--) {
+      const character = trimmed[index];
+      if (character === '"') {
+        let slashes = 0;
+        for (let previous = index - 1; previous >= 0 && trimmed[previous] === '\\'; previous--) slashes++;
+        if (slashes % 2 === 0) quoted = !quoted;
+      } else if (!quoted && character === '>') break;
+      else if (!quoted && character === '<') {
+        const email = trimmed.slice(index + 1, -1).trim();
+        if (!email) break;
+        const rawName = trimmed.slice(0, index).trim();
+        if (rawName.lastIndexOf('<') > rawName.lastIndexOf('>')) break;
+        const name = rawName.startsWith('"') && rawName.endsWith('"')
+          ? rawName.slice(1, -1).replace(/\\([\\"])/gu, '$1') : rawName;
+        return { name: name || deriveNameFromEmail(email), email };
+      }
+    }
   }
   return { name: deriveNameFromEmail(trimmed), email: trimmed };
 }
