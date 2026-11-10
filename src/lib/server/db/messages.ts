@@ -1,7 +1,7 @@
 import { inboxCategorySql } from './inbox-categories';
 import type { InboxCategoryFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
-import { fromInboundMessageId, isInboundMessageId, parseAddressJson, parseAddressList } from '$lib/domain/mail';
-import { hasReliableThreadContext, parseAddress, type WorkspaceCapabilities, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
+import { fromInboundMessageId, getMailThreadGroups, isInboundMessageId, parseAddressJson, parseAddressList } from '$lib/domain/mail';
+import { hasReliableThreadContext, mappedThreadKey, parseAddress, type WorkspaceCapabilities, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 
 export interface OwnedMailboxMutationRow {
   id: string;
@@ -9,6 +9,7 @@ export interface OwnedMailboxMutationRow {
   folder: 'inbox' | 'sent';
   thread_key: string | null;
   thread_ambiguous?: boolean;
+  thread_message: Parameters<typeof getMailThreadGroups>[0][number];
   is_read: number;
   is_starred: number;
   archived_at: string | null;
@@ -113,7 +114,14 @@ export async function listOwnedMailboxMutationRows(
     rows.push(...(result.results ?? []).map((row) => {
       const counterparty = row.folder === 'inbox' ? row.from_email : (parseAddressJson(row.to_json)[0]?.email || parseAddressList(row.to_email)[0]?.email || row.to_email);
       const reliable = hasReliableThreadContext(counterparty, row);
-      return { ...row, thread_key: reliable ? row.thread_key : null, thread_ambiguous: !reliable };
+      return {
+        ...row, thread_key: reliable ? row.thread_key : null, thread_ambiguous: !reliable,
+        thread_message: {
+          id: row.id, folder: row.folder, fromEmail: row.from_email, toEmail: counterparty, subject: row.subject,
+          messageId: row.message_id, inReplyTo: row.in_reply_to, references: row.references,
+          threadKey: mappedThreadKey(counterparty, row)
+        }
+      };
     }));
   }
   if (inboundIds.length && scope?.section !== 'sent') {
@@ -129,8 +137,16 @@ export async function listOwnedMailboxMutationRows(
         AND e.id IN (${placeholders(inboundIds)})
     `).bind(userId, userId, ...scopeClause.bindings, ...inboundIds).all<OwnedMailboxMutationRow & Pick<WorkspaceInboundRow, 'message_id' | 'in_reply_to' | 'references' | 'subject'> & { sender: string }>();
     rows.push(...(result.results ?? []).map((row) => {
-      const reliable = hasReliableThreadContext(parseAddress(row.sender).email, row);
-      return { ...row, thread_key: reliable ? row.thread_key : null, thread_ambiguous: !reliable };
+      const counterparty = parseAddress(row.sender).email;
+      const reliable = hasReliableThreadContext(counterparty, row);
+      return {
+        ...row, thread_key: reliable ? row.thread_key : null, thread_ambiguous: !reliable,
+        thread_message: {
+          id: row.id, folder: row.folder, fromEmail: counterparty, toEmail: '', subject: row.subject || '(no subject)',
+          messageId: row.message_id, inReplyTo: row.in_reply_to, references: row.references,
+          threadKey: mappedThreadKey(counterparty, row)
+        }
+      };
     }));
   }
   return rows;

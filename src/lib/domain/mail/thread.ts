@@ -46,7 +46,9 @@ export function normalizeThreadSubject(value: string): string {
   );
 }
 
-function getCounterpartyEmail(message: MailMessage): string {
+type ThreadMember = Pick<MailMessage, 'id' | 'folder' | 'subject' | 'fromEmail' | 'toEmail' | 'messageId' | 'inReplyTo' | 'references' | 'threadKey'>;
+
+function getCounterpartyEmail(message: ThreadMember): string {
   return message.folder === 'inbox' ? message.fromEmail : message.toEmail;
 }
 
@@ -55,7 +57,7 @@ function getCounterpartyLabel(message: MailMessage): string {
   return name.trim() || getCounterpartyEmail(message).trim();
 }
 
-function getRfcIds(message: MailMessage): string[] {
+function getRfcIds(message: ThreadMember): string[] {
   return [
     ...parseMessageIds(message.messageId),
     ...parseMessageIds(message.inReplyTo),
@@ -63,7 +65,7 @@ function getRfcIds(message: MailMessage): string[] {
   ].filter((id, index, ids) => ids.indexOf(id) === index);
 }
 
-function getFallbackThreadKey(message: MailMessage): string {
+function getFallbackThreadKey(message: ThreadMember): string {
   const counterparty = normalizeEmail(getCounterpartyEmail(message));
   return `${normalizeThreadSubject(message.subject)}::${isValidMailboxEmail(counterparty) ? counterparty : `message:${message.id}`}`;
 }
@@ -129,16 +131,11 @@ function compareOldestFirst(left: MailMessage, right: MailMessage): number {
   return left.sentAt.localeCompare(right.sentAt) || left.id.localeCompare(right.id);
 }
 
-/** Connect RFC reply chains while keeping unkeyed stored messages separate. */
-export function buildMailThreads(
-  mailbox: MailboxState,
-  section: Exclude<MailFolder, 'drafts'>
-): MailThread[] {
-  const allMessages = [...mailbox.inbox, ...mailbox.sent].map(cloneMessage).sort(compareNewestFirst);
+/** Match the same RFC and fallback groups in list rendering and thread actions. */
+export function getMailThreadGroups(messages: ThreadMember[]): Map<string, string> {
   const rfc = new DisjointSet();
   const messageIds = new Map<string, string[]>();
-
-  for (const message of allMessages) {
+  for (const message of messages) {
     const ids = getRfcIds(message);
     messageIds.set(message.id, ids);
     if (ids.length) {
@@ -146,14 +143,26 @@ export function buildMailThreads(
       ids.slice(1).forEach((id) => rfc.union(ids[0], id));
     }
   }
-
-  const grouped = new Map<string, MailMessage[]>();
-  for (const message of allMessages) {
+  return new Map(messages.map((message) => {
     const ids = messageIds.get(message.id) ?? [];
     const key = message.threadKey !== undefined && !message.threadKey?.trim()
       ? `message:${message.id}`
       : ids.length ? `rfc:${rfc.find(ids[0])}`
         : message.threadKey !== undefined ? `stored:${JSON.stringify([message.threadKey, getFallbackThreadKey(message)])}` : getFallbackThreadKey(message);
+    return [message.id, key];
+  }));
+}
+
+/** Connect RFC reply chains while keeping unkeyed stored messages separate. */
+export function buildMailThreads(
+  mailbox: MailboxState,
+  section: Exclude<MailFolder, 'drafts'>
+): MailThread[] {
+  const allMessages = [...mailbox.inbox, ...mailbox.sent].map(cloneMessage).sort(compareNewestFirst);
+  const threadGroups = getMailThreadGroups(allMessages);
+  const grouped = new Map<string, MailMessage[]>();
+  for (const message of allMessages) {
+    const key = threadGroups.get(message.id)!;
     const messages = grouped.get(key);
     if (messages) messages.push(message);
     else grouped.set(key, [message]);

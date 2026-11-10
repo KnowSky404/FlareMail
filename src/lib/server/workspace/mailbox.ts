@@ -47,7 +47,7 @@ import type {
   WorkspaceMetrics,
   WorkspaceSnapshot
 } from '$lib/domain/mail';
-import { isInboxCategoryFilter, parseMailSearchQuery } from '$lib/domain/mail';
+import { getMailThreadGroups, isInboxCategoryFilter, parseMailSearchQuery } from '$lib/domain/mail';
 
 export function parseArchiveMailboxQuery(params: URLSearchParams): MailboxQuery {
   const normalized = new URLSearchParams(params);
@@ -227,8 +227,13 @@ export async function mutateWorkspaceMailbox(
   if (rows.length !== messageIds.length || messageIds.some((id) => !owned.has(id))) {
     throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
   }
-  if (threadKeys.length && rows.some((row) => row.thread_ambiguous && !directIds.includes(row.id))) {
-    throw new ApiError(409, 'AMBIGUOUS_MAILBOX_THREAD', '该线程包含无法可靠归组的邮件，请仅操作所选邮件。');
+  if (threadKeys.length) {
+    const members = [...new Map([...directRows, ...rows].map((row) => [row.id, row.thread_message])).values()];
+    const groups = getMailThreadGroups(members);
+    const selectedGroups = new Set(directRows.map((row) => groups.get(row.id)));
+    if (rows.some((row) => !directIds.includes(row.id) && (row.thread_ambiguous || !selectedGroups.has(groups.get(row.id))))) {
+      throw new ApiError(409, 'AMBIGUOUS_MAILBOX_THREAD', '该线程包含无法可靠归组的邮件，请仅操作所选邮件。');
+    }
   }
   if ((input.action === 'archive' || input.action === 'unarchive') && rows.some((row) => row.folder !== 'inbox')) {
     throw new ApiError(400, 'MAILBOX_ACTION_INVALID', '只有收件箱邮件支持归档操作。');
