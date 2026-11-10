@@ -50,8 +50,10 @@
   let pending = $state(false);
   let error = $state('');
   let operationError = $state('');
+  let failedReleaseId = $state<string | null>(null);
   let status = $state('');
   let refreshRequested = $state(true);
+  let announceRulesOnLoad = true;
   let generation = 0;
   let navigationRevision = 0;
   let sessionRequests = new AbortController();
@@ -80,7 +82,7 @@
       sessionRequests.abort();
       sessionRequests = new AbortController();
       senders = []; page = { items: [], previousCursor: null, nextCursor: null }; position = { cursor: null, direction: 'next', number: 1 };
-      retryTarget = null; loaded = false; loading = false; pending = false; error = ''; operationError = ''; status = '';
+      retryTarget = null; loaded = false; loading = false; pending = false; error = ''; operationError = ''; failedReleaseId = null; status = '';
       onPageChange?.(null, 1, 'next');
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, expire);
@@ -110,6 +112,10 @@
       senders = rules.senders;
       page = quarantine;
       loaded = true;
+      if (announceRulesOnLoad) {
+        announceRulesOnLoad = false;
+        sync?.publish({ type: 'blocked-senders-changed' });
+      }
       void reconcileUncertainReleases(signal, current);
       return true;
     } catch {
@@ -122,12 +128,21 @@
     for (const id of [...uncertainReleases]) {
       if (signal.aborted || current !== generation || !active) return;
       try {
-        const result = await requestJson<{ message: { quarantinedAt?: string | null } }>(
+        const result = await requestJson<{ message: { quarantinedAt?: string | null; archivedAt?: string | null } }>(
           `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`, { signal }
         );
         if (signal.aborted || current !== generation || !active) return;
         if (result.message?.quarantinedAt !== null) continue;
         rememberRelease(id, false);
+        if (page.items.some((item) => item.id === id)) {
+          page = { ...page, items: page.items.filter((item) => item.id !== id) };
+          if (!page.items.length) refreshRequested = true;
+        }
+        if (failedReleaseId === id) {
+          failedReleaseId = null;
+          operationError = '';
+          if (result.message.archivedAt === null) status = t('blocked.released');
+        }
         sync?.publish({ type: 'mailbox-refresh', id: `email:${id}` });
         onRelease?.(id);
       } catch { if (signal.aborted) return; }
@@ -168,7 +183,7 @@
 
   $effect(() => {
     if (!mounted) return;
-    if (!active) { navigationRevision++; refreshRequested = true; return; }
+    if (!active) { navigationRevision++; refreshRequested = true; announceRulesOnLoad = true; return; }
     if (refreshRequested && !loading && !pending) {
       refreshRequested = false;
       untrack(() => { void navigate(error && retryTarget ? retryTarget : positionFromUrl()); });
@@ -212,7 +227,7 @@
     if (!active || pending || loading || !loaded) return;
     const current = generation;
     const write = beginSessionWrite();
-    pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
+    pending = true; error = ''; operationError = ''; failedReleaseId = null; status = ''; retryTarget = null;
     try {
       const result = await requestJson<{ email: string }>('/api/workspace/blocked-senders', { method: 'POST', body: JSON.stringify({ email }), signal: write.signal });
       write.channel.publish({ type: 'blocked-senders-changed' });
@@ -220,8 +235,10 @@
       if (!senders.some((sender) => sender.email === result.email)) senders = [...senders, { email: result.email, createdAt: '' }].sort((a, b) => a.email.localeCompare(b.email));
       email = '';
       status = t('blocked.saved');
-    } catch { if (current === generation) operationError = t('blocked.saveFailed'); }
-    finally { write.close(); if (current === generation) pending = false; }
+    } catch (error) {
+      if (!write.signal.aborted && (!(error instanceof ClientApiError) || error.status < 400 || error.status >= 500)) write.channel.publish({ type: 'blocked-senders-changed' });
+      if (current === generation) operationError = t('blocked.saveFailed');
+    } finally { write.close(); if (current === generation) pending = false; }
   }
 
   async function remove(address: string, source: EventTarget | null) {
@@ -229,15 +246,17 @@
     const hadFocus = document.activeElement === source;
     const current = generation;
     const write = beginSessionWrite();
-    pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
+    pending = true; error = ''; operationError = ''; failedReleaseId = null; status = ''; retryTarget = null;
     try {
       await requestJson('/api/workspace/blocked-senders', { method: 'DELETE', body: JSON.stringify({ email: address }), signal: write.signal });
       write.channel.publish({ type: 'blocked-senders-changed' });
       if (current !== generation) return;
       senders = senders.filter((sender) => sender.email !== address);
       status = t('blocked.removed');
-    } catch { if (current === generation) operationError = t('blocked.removeFailed'); }
-    finally {
+    } catch (error) {
+      if (!write.signal.aborted && (!(error instanceof ClientApiError) || error.status < 400 || error.status >= 500)) write.channel.publish({ type: 'blocked-senders-changed' });
+      if (current === generation) operationError = t('blocked.removeFailed');
+    } finally {
       write.close();
       if (current === generation) {
         pending = false;
@@ -254,7 +273,7 @@
     const alreadyUncertain = uncertainReleases.has(id);
     rememberRelease(id, true);
     const write = beginSessionWrite();
-    pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
+    pending = true; error = ''; operationError = ''; failedReleaseId = null; status = ''; retryTarget = null;
     try {
       let inInbox = true;
       try {
@@ -278,9 +297,11 @@
       if (current !== generation) return;
       page = { ...page, items: page.items.filter((item) => item.id !== id) };
       if (inInbox) status = t('blocked.released');
-      else operationError = t('blocked.releaseFailed');
+      else { operationError = t('blocked.releaseFailed'); failedReleaseId = id; }
       if (!page.items.length) refreshRequested = true;
-    } catch { if (current === generation) operationError = t('blocked.releaseFailed'); }
+    } catch {
+      if (current === generation) { operationError = t('blocked.releaseFailed'); failedReleaseId = id; }
+    }
     finally {
       write.close();
       if (current === generation) {
@@ -317,7 +338,7 @@
     </ul>
   </Panel>
   <Panel title={t('blocked.quarantine')} description={t('blocked.quarantineDescription')}>
-    <Button id="blocked-quarantine-refresh" variant="secondary" disabled={!active || loading || pending} onclick={() => navigate({ cursor: null, direction: 'next', number: 1 })}>{t('blocked.refresh')}</Button>
+    <Button id="blocked-quarantine-refresh" variant="secondary" disabled={!active || loading || pending} onclick={() => { announceRulesOnLoad = true; void navigate({ cursor: null, direction: 'next', number: 1 }); }}>{t('blocked.refresh')}</Button>
     {#if loaded && page.items.length === 0}<p class="note">{t('blocked.quarantineEmpty')}</p>{/if}
     <ul class="entries">
       {#each page.items as item (item.id)}

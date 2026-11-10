@@ -345,7 +345,7 @@ test('blocked sender quarantine keeps mail until an explicit release', async ({ 
   await assertNoConsoleErrors(consoleErrors);
 });
 
-for (const recovery of ['retry', 'refresh', 'reload', 'late'] as const) {
+for (const recovery of ['retry', 'refresh', 'reload', 'late', 'late-other'] as const) {
   test(`reconciles an uncertain quarantine release after reconnecting with ${recovery}`, async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');
@@ -414,10 +414,7 @@ for (const recovery of ['retry', 'refresh', 'reload', 'late'] as const) {
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(message).toBeVisible();
   await expect(release).toBeEnabled();
-  if (recovery === 'late') {
-    const result = await page.request.post(`/api/workspace/quarantine/${encodeURIComponent(messageId.slice('email:'.length))}`, { headers: { origin: new URL(page.url()).origin } });
-    expect(result.ok()).toBeTruthy();
-  } else {
+  if (!recovery.startsWith('late')) {
     mode = 'lost';
     await release.click();
     await expect(page.getByRole('alert')).toBeVisible();
@@ -426,15 +423,47 @@ for (const recovery of ['retry', 'refresh', 'reload', 'late'] as const) {
   expect(await page.evaluate(() => sessionStorage.getItem('flaremail-uncertain-quarantine-releases'))).toContain(messageId.slice('email:'.length));
   offline = false;
   mode = 'normal';
+  if (recovery === 'late-other') {
+    await page.route('**/api/workspace/blocked-senders', (route) => route.request().method() === 'POST'
+      ? route.fulfill({ status: 403, json: { ok: false, error: { code: 'FORBIDDEN', message: 'Forbidden' } } })
+      : route.continue());
+    await page.getByLabel('发件人邮箱地址').fill('unrelated@example.test');
+    await page.getByRole('button', { name: '加入黑名单' }).click();
+    await expect(page.getByRole('alert')).toContainText('无法保存');
+  }
   if (recovery === 'retry') {
     await release.click();
     await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
   } else if (recovery === 'reload') {
     await page.reload({ waitUntil: 'domcontentloaded' });
+  } else if (recovery.startsWith('late')) {
+    let resumeSnapshot!: () => void;
+    let snapshotReady!: () => void;
+    const snapshotGate = new Promise<void>((resolve) => { resumeSnapshot = resolve; });
+    const snapshotFetched = new Promise<void>((resolve) => { snapshotReady = resolve; });
+    let first = true;
+    await page.route('**/api/workspace/quarantine', async (route) => {
+      if (!first || route.request().method() !== 'GET') return route.continue();
+      first = false;
+      const response = await route.fetch();
+      snapshotReady();
+      await snapshotGate;
+      await route.fulfill({ response });
+    });
+    try {
+      await page.getByRole('button', { name: '刷新隔离区' }).click();
+      await snapshotFetched;
+      const result = await page.request.post(`/api/workspace/quarantine/${encodeURIComponent(messageId.slice('email:'.length))}`, { headers: { origin: new URL(page.url()).origin } });
+      expect(result.ok()).toBeTruthy();
+    } finally {
+      resumeSnapshot();
+    }
   } else {
     await page.getByRole('button', { name: '刷新隔离区' }).click();
   }
   await expect(message).toHaveCount(0);
+  if (recovery === 'late-other') await expect(page.getByRole('alert')).toContainText('无法保存');
+  else await expect(page.getByRole('alert')).toHaveCount(0);
   await reader.waitForFunction(() => sessionStorage.getItem('uncertain-release-refresh') === 'received');
   await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
   await expect(reader.getByRole('button', { name: '回复', exact: true })).toBeVisible();
@@ -1448,3 +1477,39 @@ test('failed block keeps its error and input until the owner retries the action'
   await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
   await page.getByRole('button', { name: '移除 retry@example.test' }).click();
 });
+
+for (const recovery of ['refresh', 'reload', 'late'] as const) {
+  test(`a lost sender rule write is reconciled after ${recovery}`, async ({ page, context }, testInfo) => {
+    await login(page);
+    await page.goto('/?folder=settings&tab=blocked');
+    const other = await context.newPage();
+    await other.goto('/?folder=settings&tab=blocked');
+    await expect(other.getByLabel('发件人邮箱地址')).toBeEnabled();
+    const sender = `rule-lost-${recovery}-${testInfo.project.name}@sender.test`;
+    await page.route('**/api/workspace/blocked-senders', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      if (recovery !== 'late') {
+        const response = await route.fetch();
+        expect(response.ok()).toBeTruthy();
+      }
+      await route.abort('failed');
+    });
+    try {
+      await page.getByLabel('发件人邮箱地址').fill(sender);
+      await page.getByRole('button', { name: '加入黑名单' }).click();
+      await expect(page.getByRole('alert')).toBeVisible();
+      if (recovery === 'late') {
+        const response = await page.request.post('/api/workspace/blocked-senders', {
+          headers: { origin: new URL(page.url()).origin }, data: { email: sender }
+        });
+        expect(response.ok()).toBeTruthy();
+      }
+      if (recovery === 'reload') await page.reload({ waitUntil: 'domcontentloaded' });
+      else await page.getByRole('button', { name: '刷新隔离区' }).click();
+      await expect(page.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+      await expect(other.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
+    } finally {
+      await other.close();
+    }
+  });
+}
