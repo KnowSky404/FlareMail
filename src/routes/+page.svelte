@@ -98,7 +98,7 @@
   import { TrashController } from '$lib/client/trash-controller';
   import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl, type WorkspaceUrlState } from '$lib/client/workspace-url-controller';
   import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
-  import { createWorkspaceSync, type WorkspaceSyncController } from '$lib/client/workspace-sync';
+  import { createWorkspaceSync, WORKSPACE_SESSION_ENDED_EVENT, type WorkspaceSyncController } from '$lib/client/workspace-sync';
   import { LOCALE_CHANGE_EVENT } from '$lib/client/locale-preferences';
   import { useLocale } from '$lib/i18n/runtime.svelte';
   import { formatNumber, translateCount } from '$lib/i18n';
@@ -1111,6 +1111,7 @@
   }
 
   function resetWorkspace() {
+    window.dispatchEvent(new Event(WORKSPACE_SESSION_ENDED_EVENT));
     syncMessageRequest.cancel();
     draftOpenRequest.cancel();
     const initial = createEmptyWorkspaceViewState();
@@ -3141,10 +3142,7 @@
                     onOpenAddresses={() => setManagementView('addresses')}
                     onQuarantineRelease={(id) => {
                       if (!workspaceSync) return;
-                      const messageId = `email:${id}`;
-                      if (deepLinkedMessage?.id === messageId) deepLinkedMessage = null;
-                      if (deepLinkedRefreshError === messageId) deepLinkedRefreshError = null;
-                      void refreshWorkspace(false);
+                      handleWorkspaceSync({ type: 'mailbox-refresh', id: `email:${id}` });
                     }}
                     onQuarantinePageChange={(cursor, number, direction) => updateWorkspaceUrl({ quarantineCursor: cursor, quarantinePage: number, quarantineDirection: direction }, true)}
                   />

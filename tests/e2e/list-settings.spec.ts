@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { test, expect, login, openFolder, selectSettings, assertNoConsoleErrors, assertNoHorizontalOverflow } from './fixtures';
+import { test, expect, login, openFolder, selectSettings, assertNoConsoleErrors, assertNoHorizontalOverflow, E2E_USERNAME, E2E_PASSWORD } from './fixtures';
 
 test('trash replaces record pages, retains a failed page, and returns to the first page', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
@@ -345,17 +345,18 @@ test('blocked sender quarantine keeps mail until an explicit release', async ({ 
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('reconciles an uncertain quarantine release after reconnecting', async ({ page, context }, testInfo) => {
+for (const recovery of ['retry', 'refresh'] as const) {
+  test(`reconciles an uncertain quarantine release after reconnecting with ${recovery}`, async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');
-  const sender = `release-retry-${testInfo.project.name}@sender.test`;
-  const subject = `Quarantine retry ${testInfo.project.name}`;
+  const sender = `release-${recovery}-${testInfo.project.name}@sender.test`;
+  const subject = `Quarantine ${recovery} ${testInfo.project.name}`;
   await page.getByLabel('发件人邮箱地址').fill(sender);
   await page.getByRole('button', { name: '加入黑名单' }).click();
   await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
   const raw = [
     `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
-    `Message-ID: <release-retry-${testInfo.project.name}@sender.test>`,
+    `Message-ID: <release-${recovery}-${testInfo.project.name}@sender.test>`,
     `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
   ].join('\r\n');
   expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
@@ -369,6 +370,17 @@ test('reconciles an uncertain quarantine release after reconnecting', async ({ p
   const reader = await context.newPage();
   await reader.goto(readerPath);
   await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  await reader.waitForLoadState('networkidle');
+  await reader.evaluate(() => {
+    sessionStorage.removeItem('uncertain-release-refresh');
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.onmessage = (event) => {
+      if (event.data.type === 'mailbox-refresh') {
+        sessionStorage.setItem('uncertain-release-refresh', 'received');
+        channel.close();
+      }
+    };
+  });
   let mode: 'forbidden' | 'before' | 'lost' | 'normal' = 'forbidden';
   let offline = false;
   await page.route('**/api/workspace/messages/**', (route) => {
@@ -408,13 +420,19 @@ test('reconciles an uncertain quarantine release after reconnecting', async ({ p
   await expect(release).toBeEnabled();
   offline = false;
   mode = 'normal';
-  await release.click();
-  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  if (recovery === 'retry') {
+    await release.click();
+    await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  } else {
+    await page.getByRole('button', { name: '刷新隔离区' }).click();
+  }
   await expect(message).toHaveCount(0);
+  await reader.waitForFunction(() => sessionStorage.getItem('uncertain-release-refresh') === 'received');
   await expect(reader.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
   await expect(reader.getByRole('button', { name: '回复', exact: true })).toBeVisible();
   await reader.close();
-});
+  });
+}
 
 test('blocked sender controls wait for the initial lists', async ({ page }) => {
   await login(page);
@@ -696,6 +714,60 @@ test('release still syncs after leaving settings during its response', async ({ 
     await reader.close();
   }
 });
+
+for (const sessionEnd of ['expiry', 'logout'] as const) {
+  test(`late release response cannot expire a restored session after ${sessionEnd}`, async ({ page }) => {
+  await login(page);
+  await page.route('**/api/workspace/quarantine', (route) => route.fulfill({ json: { ok: true, data: {
+    items: [{ id: 'delayed-release', sender: 'sender@example.test', subject: 'Delayed release', timestamp: '2026-08-01T08:00:00.000Z' }],
+    previousCursor: null, nextCursor: null
+  } } }));
+  await page.goto('/?folder=settings&tab=blocked');
+  if (sessionEnd === 'logout') await page.evaluate(() => Reflect.deleteProperty(window, 'BroadcastChannel'));
+  const release = page.getByRole('button', { name: '释放到收件箱 Delayed release' });
+  await expect(release).toBeVisible();
+  let resume!: () => void;
+  let started!: () => void;
+  let finished!: () => void;
+  const gate = new Promise<void>((resolve) => { resume = resolve; });
+  const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+  const responseFinished = new Promise<void>((resolve) => { finished = resolve; });
+  await page.route('**/api/workspace/quarantine/*', async (route) => {
+    started();
+    await gate;
+    try {
+      await route.fulfill({ status: 401, json: { ok: false, error: { code: 'AUTHENTICATION_REQUIRED', message: 'Expired' } } });
+    } catch { /* The expired session aborts this request. */ }
+    finished();
+  });
+  try {
+    await release.click();
+    await requestStarted;
+    await openFolder(page, '收件箱');
+    const recover = page.getByRole('button', { name: '检查登录状态' });
+    if (sessionEnd === 'expiry') {
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('flaremail:auth-expired', { detail: { source: 'worker-session' } })));
+      await expect(recover).toBeVisible();
+      await recover.click();
+      await expect(recover).toBeHidden();
+    } else {
+      await page.getByRole('button', { name: '账号菜单' }).click();
+      await page.getByRole('menuitem', { name: '退出登录' }).click();
+      await expect(page.getByRole('heading', { name: '登录邮件工作台' })).toBeVisible();
+      await page.getByLabel('管理员用户名').fill(E2E_USERNAME);
+      await page.getByLabel('密码').fill(E2E_PASSWORD);
+      await page.getByRole('button', { name: '登录', exact: true }).click();
+      await expect(page.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+    }
+    resume();
+    await responseFinished;
+    await page.waitForLoadState('networkidle');
+    await expect(recover).toBeHidden();
+  } finally {
+    resume();
+  }
+  });
+}
 
 test('release invalidates a pending workspace deep-link read', async ({ page, context }, testInfo) => {
   await login(page);

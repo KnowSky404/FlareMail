@@ -1,3 +1,7 @@
+<script module lang="ts">
+  const uncertainReleases = new Set<string>();
+</script>
+
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -5,7 +9,7 @@
   import TextField from '$lib/components/ui/TextField.svelte';
   import { ClientApiError, requestJson } from '$lib/client/api';
   import { AUTH_EXPIRED_EVENT } from '$lib/client/auth-session';
-  import { createWorkspaceSync } from '$lib/client/workspace-sync';
+  import { createWorkspaceSync, WORKSPACE_SESSION_ENDED_EVENT } from '$lib/client/workspace-sync';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   type Sender = { email: string; createdAt: string };
@@ -83,6 +87,11 @@
         requestJson<QuarantinePage>(`/api/workspace/quarantine${queryString ? `?${queryString}` : ''}`, { signal })
       ]);
       if (current !== generation || revision !== navigationRevision || !active) return false;
+      for (const id of uncertainReleases) {
+        sync?.publish({ type: 'mailbox-refresh', id: `email:${id}` });
+        onRelease?.(id);
+        uncertainReleases.delete(id);
+      }
       senders = rules.senders;
       page = quarantine;
       loaded = true;
@@ -190,20 +199,30 @@
     const hadFocus = document.activeElement === source;
     const current = generation;
     const notifyRelease = onRelease;
-    const releaseSync = createWorkspaceSync(() => {});
+    const releaseController = new AbortController();
+    const cancelRelease = () => releaseController.abort();
+    const releaseSync = createWorkspaceSync((event) => { if (event.type === 'session-ended') cancelRelease(); });
+    window.addEventListener(AUTH_EXPIRED_EVENT, cancelRelease);
+    window.addEventListener(WORKSPACE_SESSION_ENDED_EVENT, cancelRelease);
     pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
       let inInbox = true;
       try {
-        await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST' });
+        await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST', signal: releaseController.signal });
       } catch (releaseError) {
-        if (releaseError instanceof ClientApiError && releaseError.status >= 400 && releaseError.status < 500 && releaseError.status !== 404) throw releaseError;
+        if (!releaseController.signal.aborted && releaseError instanceof ClientApiError && releaseError.status >= 400 && releaseError.status < 500 && releaseError.status !== 404) throw releaseError;
+        uncertainReleases.add(id);
+        if (releaseController.signal.aborted) return;
         const result = await requestJson<{ message: { quarantinedAt?: string | null; archivedAt?: string | null } }>(
-          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`
+          `/api/workspace/messages/${encodeURIComponent(`email:${id}`)}`, { signal: releaseController.signal }
         );
-        if (result.message?.quarantinedAt !== null) throw releaseError;
+        if (result.message?.quarantinedAt !== null) {
+          uncertainReleases.delete(id);
+          throw releaseError;
+        }
         inInbox = result.message.archivedAt === null;
       }
+      uncertainReleases.delete(id);
       releaseSync.publish({ type: 'mailbox-refresh', id: `email:${id}` });
       releaseSync.publish({ type: 'blocked-senders-changed' });
       notifyRelease?.(id);
@@ -214,6 +233,8 @@
       if (!page.items.length) refreshRequested = true;
     } catch { if (current === generation) operationError = t('blocked.releaseFailed'); }
     finally {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, cancelRelease);
+      window.removeEventListener(WORKSPACE_SESSION_ENDED_EVENT, cancelRelease);
       releaseSync.close();
       if (current === generation) {
         pending = false;
