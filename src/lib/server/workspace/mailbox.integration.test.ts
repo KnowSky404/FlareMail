@@ -702,32 +702,77 @@ describe('D1 mailbox pages', () => {
     expect(db.queries.filter((sql) => sql.includes('FROM workspace_messages AS m'))).toHaveLength(2);
   });
 
-  test.each(['owner', 'filtered'] as const)('keeps migrated unknown-sender threads consistent with %s bulk actions', async (threadScope) => {
+  test.each(['owner', 'filtered'] as const)('prevents %s bulk actions from expanding malformed legacy threads', async (threadScope) => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
-      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, thread_key) VALUES
-        ('legacy-unknown-a', 'user-1', '', 'owner@example.test', 'Legacy subject', '2026-08-13T14:00:00.000Z', 'raw/legacy-a', 'legacy subject::'),
-        ('legacy-unknown-b', 'user-1', '', 'owner@example.test', 'Legacy subject', '2026-08-13T14:01:00.000Z', 'raw/legacy-b', 'legacy subject::'),
-        ('legacy-unknown-c', 'user-1', '', 'owner@example.test', 'Legacy subject', '2026-08-13T14:02:00.000Z', 'raw/legacy-c', 'legacy:legacy-unknown-c');
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
+        ('legacy-unknown-a', 'user-1', '', 'owner@example.test', 'Legacy A', '2026-08-13T14:00:00.000Z', 'raw/legacy-a', 'bogus', 'rfc:bogus'),
+        ('legacy-unknown-b', 'user-1', '', 'owner@example.test', 'Legacy B', '2026-08-13T14:01:00.000Z', 'raw/legacy-b', 'bogus', 'rfc:bogus'),
+        ('legacy-known', 'user-1', 'known@example.test', 'owner@example.test', 'Legacy C', '2026-08-13T14:02:00.000Z', 'raw/legacy-c', 'bogus', 'rfc:bogus');
     `));
     const page = await loadMailboxPage(env, workspace, query('inbox'));
-    const messages = page.messages.filter(({ id }) => id.startsWith('email:legacy-unknown-'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:legacy-'));
     const threads = buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox');
-    expect(threads.map(({ messageCount }) => messageCount).sort()).toEqual([1, 2]);
-    const shared = threads.find(({ messageCount }) => messageCount === 2)!;
-    expect(shared.messages.map(({ id }) => id).sort()).toEqual(['email:legacy-unknown-a', 'email:legacy-unknown-b']);
+    expect(threads).toHaveLength(3);
+    expect(messages.filter(({ id }) => id.startsWith('email:legacy-unknown-')).every(({ threadKey }) => threadKey === null)).toBe(true);
 
-    await mutateWorkspaceMailbox(env, workspace, {
-      action: 'archive', messageIds: ['email:legacy-unknown-a'], threadKeys: ['legacy subject::'],
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:legacy-known'], threadKeys: ['rfc:bogus'],
       scope: mutationScope('inbox', null, threadScope)
-    });
+    })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:legacy-unknown-a'], threadKeys: ['rfc:bogus'],
+      scope: mutationScope('inbox', null, threadScope)
+    })).rejects.toMatchObject({ code: 'INVALID_MAILBOX_THREAD_SELECTION' });
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['email:legacy-unknown-a'], scope: mutationScope() });
     const states = database.query(`
       SELECT e.id, s.archived_at FROM email_messages AS e LEFT JOIN workspace_email_states AS s
       ON s.email_message_id = e.id AND s.user_id = 'user-1'
-      WHERE e.id LIKE 'legacy-unknown-%' ORDER BY e.id
+      WHERE e.id IN ('legacy-unknown-a', 'legacy-unknown-b') ORDER BY e.id
     `).all() as Array<{ id: string; archived_at: string | null }>;
     expect(states[0]!.archived_at).not.toBeNull();
-    expect(states[1]!.archived_at).not.toBeNull();
-    expect(states[2]!.archived_at).toBeNull();
+    expect(states[1]!.archived_at).toBeNull();
+  });
+
+  test('allows a filtered thread action when ambiguous mail is outside the filter', async () => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
+        ('legacy-read-unknown', 'user-1', '', 'owner@example.test', 'First', '2026-08-13T14:00:00.000Z', 'raw/read-unknown', 'bogus', 'rfc:filter-bogus'),
+        ('legacy-unread-known', 'user-1', 'known@example.test', 'owner@example.test', 'Second', '2026-08-13T14:01:00.000Z', 'raw/unread-known', 'bogus', 'rfc:filter-bogus');
+      INSERT INTO workspace_email_states (id, user_id, email_message_id, is_read) VALUES ('legacy-read-state', 'user-1', 'legacy-read-unknown', 1);
+    `));
+    await mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:legacy-unread-known'], threadKeys: ['rfc:filter-bogus'],
+      scope: mutationScope('inbox', null, 'filtered', '', 'unread')
+    });
+    expect(database.query(`SELECT archived_at FROM workspace_email_states WHERE email_message_id = 'legacy-read-unknown'`).get()).toEqual({ archived_at: null });
+    expect((database.query(`SELECT archived_at FROM workspace_email_states WHERE email_message_id = 'legacy-unread-known'`).get() as { archived_at: string | null }).archived_at).not.toBeNull();
+  });
+
+  test('does not expand a malformed legacy workspace thread into senderless mail', async () => {
+    const { env, workspace } = fixture((legacy) => legacy.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, sent_at, message_id, thread_key) VALUES
+        ('legacy-workspace-unknown', 'user-1', 'inbox', '', '', '', '', 'First', '2026-08-13T14:00:00.000Z', 'bogus', 'rfc:workspace-bogus'),
+        ('legacy-workspace-known', 'user-1', 'inbox', 'Known', 'known@example.test', '', '', 'Second', '2026-08-13T14:01:00.000Z', 'bogus', 'rfc:workspace-bogus');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    expect(page.messages.find(({ id }) => id === 'legacy-workspace-unknown')?.threadKey).toBeNull();
+    await expect(mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['legacy-workspace-known'], threadKeys: ['rfc:workspace-bogus'],
+      scope: mutationScope('inbox', null, 'owner')
+    })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
+  });
+
+  test('keeps valid RFC threads expandable when a sender is missing', async () => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
+        ('legacy-valid-unknown', 'user-1', '', 'owner@example.test', 'Valid thread', '2026-08-13T14:00:00.000Z', 'raw/valid-a', '<root@example.test>', 'rfc:root@example.test'),
+        ('legacy-valid-known', 'user-1', 'known@example.test', 'owner@example.test', 'Valid thread', '2026-08-13T14:01:00.000Z', 'raw/valid-b', '<root@example.test>', 'rfc:root@example.test');
+    `));
+    await mutateWorkspaceMailbox(env, workspace, {
+      action: 'archive', messageIds: ['email:legacy-valid-known'], threadKeys: ['rfc:root@example.test'],
+      scope: mutationScope('inbox', null, 'owner')
+    });
+    expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('legacy-valid-unknown', 'legacy-valid-known') AND archived_at IS NOT NULL`).get()).toEqual({ count: 2 });
   });
 
   test('archives and restores mixed inbound/workspace selections atomically', async () => {

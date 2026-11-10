@@ -23,7 +23,7 @@ import {
   type WorkspacePayload
 } from '$lib/domain/mail';
 import { fromInboundMessageId, isInboundMessageId, toInboundMessageId } from '$lib/domain/mail';
-import { parseAddressJson, parseAddressList, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
+import { parseAddressJson, parseAddressList, parseMessageIds, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { OutboundDeliveryState } from '$lib/server/outbound';
 
@@ -250,6 +250,14 @@ export function parseAddress(value: string) {
   return { name: deriveNameFromEmail(trimmed), email: trimmed };
 }
 
+export function hasReliableThreadContext(counterparty: string, row: {
+  message_id?: string | null; in_reply_to?: string | null; references?: string | null; thread_key?: string | null;
+}) {
+  if (counterparty.trim()) return true;
+  const rfcId = parseMessageIds(row.references)[0] ?? parseMessageIds(row.in_reply_to)[0] ?? parseMessageIds(row.message_id)[0];
+  return Boolean(rfcId && row.thread_key === `rfc:${rfcId}`);
+}
+
 export const mapUserRowToProfile = (row: WorkspaceUserRow): UserProfile => ({
   name: row.name,
   role: row.role,
@@ -310,7 +318,7 @@ export const mapWorkspaceMessageRow = (
   messageId: row.message_id ?? null,
   inReplyTo: row.in_reply_to ?? null,
   references: row.references ?? null,
-  threadKey: row.thread_key ?? null,
+  threadKey: hasReliableThreadContext(row.folder === 'inbox' ? row.from_email : (toAddresses[0]?.email || row.to_email), row) ? row.thread_key ?? null : null,
   archivedAt: row.archived_at ?? null,
   searchSnippet: row.search_snippet ?? undefined,
   searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined,
@@ -379,7 +387,7 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, se
     messageId: row.message_id,
     inReplyTo: row.in_reply_to,
     references: row.references,
-    threadKey: row.thread_key,
+    threadKey: hasReliableThreadContext(sender.email, row) ? row.thread_key ?? null : null,
     archivedAt: row.archived_at ?? null,
     ...(row.quarantined_at === undefined ? {} : { quarantinedAt: row.quarantined_at }),
     searchSnippet: row.search_snippet ?? undefined,

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   mapDraftRow,
   mapInboundRow,
+  hasReliableThreadContext,
   parseLabels,
   rowsToMailbox,
   serializeWorkspace
@@ -20,6 +21,12 @@ describe('workspace shared compatibility contracts', () => {
     expect(mailbox.inbox[0]?.source).toBe('inbound');
     expect(mapInboundRow({ email_id: 'in-2', from: 'bob@example.com', to: '', subject: '', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 1, is_starred: 0 }, profile).subject).toBe('(no subject)');
     expect(mapInboundRow({ email_id: 'in-2', from: 'bob@example.com', to: '', subject: '', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 1, is_starred: 0 }, profile).hasAttachments).toBeUndefined();
+  });
+
+  test('requires a senderless stored key to match its valid RFC thread', () => {
+    expect(hasReliableThreadContext('', { message_id: 'bogus', references: '<root@example.test>', thread_key: 'rfc:bogus' })).toBe(false);
+    expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);
+    expect(hasReliableThreadContext('', { message_id: 'bogus', thread_key: 'rfc:bogus' })).toBe(false);
   });
 
   test('serializes a workspace session through the public payload shape', () => {
