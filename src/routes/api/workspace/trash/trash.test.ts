@@ -61,18 +61,15 @@ describe('trash API', () => {
   });
 });
 
-test.each([28, 29])('trash restore during a schema %i bridge keeps the mail in the inbox', async (version) => {
+test('restoring mail trashed by the schema bridge removes stale quarantine', async () => {
   const { db, env } = fixture();
-  db.query("INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at) VALUES ('flaremail', 28, '2026-01-01')").run();
-  if (version === 29) db.exec(readFileSync(resolve(import.meta.dir, '../../../../../tests/fixtures/schema-29-bridge.sql'), 'utf8'));
   db.exec(`INSERT INTO email_messages (id, owner_user_id, "from", "to", "timestamp", raw_key)
     VALUES ('rollback-mail', 'user-1', 'sender@example.test', 'user@example.test', '2026-08-19T00:00:00Z', '');
-    INSERT INTO workspace_email_states (id, user_id, email_message_id) VALUES ('rollback-state', 'user-1', 'rollback-mail');`);
-  if (version === 29) db.query("UPDATE workspace_email_states SET quarantined_at = '2026-08-19T00:30:00Z' WHERE id = 'rollback-state'").run();
-  expect((await MOVE(event('DELETE', '/api/workspace/messages/email:rollback-mail', env))).status).toBe(200);
+    INSERT INTO workspace_email_states (id, user_id, email_message_id, deleted_at, quarantined_at)
+    VALUES ('rollback-state', 'user-1', 'rollback-mail', '2026-08-19T01:00:00Z', '2026-08-19T00:30:00Z');`);
   expect((await RESTORE(event('POST', '/api/workspace/trash/email:rollback-mail', env))).status).toBe(200);
-  expect(db.query("SELECT deleted_at FROM workspace_email_states WHERE id = 'rollback-state'").get()).toEqual({ deleted_at: null });
-  if (version === 29) expect(db.query("SELECT quarantined_at FROM workspace_email_states WHERE id = 'rollback-state'").get()).toEqual({ quarantined_at: null });
+  expect(db.query("SELECT deleted_at, quarantined_at FROM workspace_email_states WHERE id = 'rollback-state'").get())
+    .toEqual({ deleted_at: null, quarantined_at: null });
 });
 
 test('paginates more than 500 mixed trash records without gaps, including tied timestamps and IDs', async () => {

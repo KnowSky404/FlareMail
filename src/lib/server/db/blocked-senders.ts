@@ -61,7 +61,7 @@ export async function listQuarantinedMail(db: D1Database, userId: string, cursor
 
 export async function releaseQuarantinedMail(db: D1Database, userId: string, id: string) {
   const result = await db.prepare(`
-    UPDATE workspace_email_states SET quarantined_at = NULL, updated_at = ?
+    UPDATE workspace_email_states SET quarantined_at = NULL, archived_at = NULL, updated_at = ?
     WHERE user_id = ? AND email_message_id = ? AND quarantined_at IS NOT NULL AND deleted_at IS NULL
       AND EXISTS (SELECT 1 FROM email_messages WHERE id = ? AND owner_user_id = ?)
   `).bind(new Date().toISOString(), userId, id, id, userId).run();
