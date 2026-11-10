@@ -75,7 +75,10 @@ describe('mail thread domain', () => {
     const second = message({ id: 'email:second', fromEmail: 'alice@example.com', subject: 'Same subject', threadKey: 'same::Alice B <alice@example.com>' });
     expect(buildMailThreads({ inbox: [first, second], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
     expect(buildMailThreads({ inbox: [first, { ...second, threadKey: first.threadKey }], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
+    expect(buildMailThreads({ inbox: [first, { ...second, fromEmail: 'bob@example.com', threadKey: first.threadKey }], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
+    expect(buildMailThreads({ inbox: [first, { ...second, subject: 'Different subject', threadKey: first.threadKey }], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
     expect(buildMailThreads({ inbox: [{ ...first, threadKey: null }, { ...second, threadKey: null }], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
+    expect(buildMailThreads({ inbox: [{ ...first, threadKey: '' }, { ...second, threadKey: '  ' }], sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
     expect(buildMailThreads({ inbox: [{ ...first, messageId: '<root@example.com>' }, { ...second, references: '<root@example.com>' }], sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
   });
 

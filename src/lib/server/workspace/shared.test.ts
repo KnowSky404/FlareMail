@@ -43,6 +43,12 @@ describe('workspace shared compatibility contracts', () => {
     expect(mapInboundRow({ ...row, from: 'Alice <"a>b"@example.com>' }, profile)).toMatchObject({ fromName: 'Alice', fromEmail: '"a>b"@example.com' });
   });
 
+  test('preserves a legacy decoded display name containing an unquoted angle', () => {
+    const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const row = { email_id: 'legacy-angle', from: 'Alice < Team <alice@example.com>', to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0 };
+    expect(mapInboundRow(row, profile)).toMatchObject({ fromName: 'Alice < Team', fromEmail: 'alice@example.com' });
+  });
+
   test('does not mistake an unmatched angle inside a malformed address for its sender', () => {
     const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
     const raw = 'Alice <"a<alice@example.com>';
@@ -68,6 +74,9 @@ describe('workspace shared compatibility contracts', () => {
     expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);
     expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:<root@example.test>' })).toBe(true);
     expect(hasReliableThreadContext('', { message_id: 'bogus', thread_key: 'rfc:bogus' })).toBe(false);
+    expect(hasReliableThreadContext('alice@example.com', { message_id: 'bogus', thread_key: 'rfc:bogus' })).toBe(false);
+    expect(hasReliableThreadContext('alice@example.com', { message_id: '<other@example.test>', thread_key: 'rfc:root@example.test' })).toBe(false);
+    expect(hasReliableThreadContext('alice@example.com', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);
   });
 
   test('serializes a workspace session through the public payload shape', () => {

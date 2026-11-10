@@ -150,10 +150,10 @@ export function buildMailThreads(
   const grouped = new Map<string, MailMessage[]>();
   for (const message of allMessages) {
     const ids = messageIds.get(message.id) ?? [];
-    const key = message.threadKey === null
+    const key = message.threadKey !== undefined && !message.threadKey?.trim()
       ? `message:${message.id}`
       : ids.length ? `rfc:${rfc.find(ids[0])}`
-        : message.threadKey !== undefined ? `stored:${message.threadKey}` : getFallbackThreadKey(message);
+        : message.threadKey !== undefined ? `stored:${JSON.stringify([message.threadKey, getFallbackThreadKey(message)])}` : getFallbackThreadKey(message);
     const messages = grouped.get(key);
     if (messages) messages.push(message);
     else grouped.set(key, [message]);

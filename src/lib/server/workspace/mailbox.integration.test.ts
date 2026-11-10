@@ -721,9 +721,9 @@ describe('D1 mailbox pages', () => {
   test.each(['owner', 'filtered'] as const)('prevents %s bulk actions from expanding malformed legacy threads', async (threadScope) => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
-        ('legacy-unknown-a', 'user-1', 'Bad <foo..bar@example.com>', 'owner@example.test', 'Legacy A', '2026-08-13T14:00:00.000Z', 'raw/legacy-a', 'bogus', 'rfc:bogus'),
-        ('legacy-unknown-b', 'user-1', '', 'owner@example.test', 'Legacy B', '2026-08-13T14:01:00.000Z', 'raw/legacy-b', 'bogus', 'rfc:bogus'),
-        ('legacy-known', 'user-1', 'known@example.test', 'owner@example.test', 'Legacy C', '2026-08-13T14:02:00.000Z', 'raw/legacy-c', 'bogus', 'rfc:bogus');
+        ('legacy-unknown-a', 'user-1', 'Bad <foo..bar@example.com>', 'owner@example.test', 'Legacy A', '2026-08-13T14:00:00.000Z', 'raw/legacy-a', 'bogus', 'rfc:legacy@example.test'),
+        ('legacy-unknown-b', 'user-1', '', 'owner@example.test', 'Legacy B', '2026-08-13T14:01:00.000Z', 'raw/legacy-b', 'bogus', 'rfc:legacy@example.test'),
+        ('legacy-known', 'user-1', 'known@example.test', 'owner@example.test', 'Legacy C', '2026-08-13T14:02:00.000Z', 'raw/legacy-c', '<legacy@example.test>', 'rfc:legacy@example.test');
     `));
     const page = await loadMailboxPage(env, workspace, query('inbox'));
     const messages = page.messages.filter(({ id }) => id.startsWith('email:legacy-'));
@@ -733,11 +733,11 @@ describe('D1 mailbox pages', () => {
     expect(messages.find(({ id }) => id === 'email:legacy-unknown-a')).toMatchObject({ fromName: 'Bad', fromEmail: 'foo..bar@example.com', threadKey: null });
 
     await expect(mutateWorkspaceMailbox(env, workspace, {
-      action: 'archive', messageIds: ['email:legacy-known'], threadKeys: ['rfc:bogus'],
+      action: 'archive', messageIds: ['email:legacy-known'], threadKeys: ['rfc:legacy@example.test'],
       scope: mutationScope('inbox', null, threadScope)
     })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
     await expect(mutateWorkspaceMailbox(env, workspace, {
-      action: 'archive', messageIds: ['email:legacy-unknown-a'], threadKeys: ['rfc:bogus'],
+      action: 'archive', messageIds: ['email:legacy-unknown-a'], threadKeys: ['rfc:legacy@example.test'],
       scope: mutationScope('inbox', null, threadScope)
     })).rejects.toMatchObject({ code: 'INVALID_MAILBOX_THREAD_SELECTION' });
     await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['email:legacy-unknown-a'], scope: mutationScope() });
@@ -757,6 +757,21 @@ describe('D1 mailbox pages', () => {
     `));
     const page = await loadMailboxPage(env, workspace, query('inbox', { query: 'from:josé@example.com' }));
     expect(page.messages.find(({ id }) => id === 'email:special-sender')).toMatchObject({ fromName: 'José', fromEmail: 'josé@example.com' });
+  });
+
+  test('keeps unrelated messages with a malformed legacy RFC key separate and prevents expansion', async () => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
+        ('bad-rfc-a', 'user-1', 'alice@example.com', 'owner@example.test', 'Invoice', '2026-08-13T14:00:00Z', 'raw/a', 'unknown', 'rfc:unknown'),
+        ('bad-rfc-b', 'user-1', 'bob@example.com', 'owner@example.test', 'Job offer', '2026-08-13T14:01:00Z', 'raw/b', 'unknown', 'rfc:unknown');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:bad-rfc-'));
+    expect(messages.every(({ threadKey }) => threadKey === null)).toBe(true);
+    expect(buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox')).toHaveLength(2);
+    await expect(mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['email:bad-rfc-a'], threadKeys: ['rfc:unknown'], scope: mutationScope('inbox', null, 'owner') })).rejects.toMatchObject({ code: 'INVALID_MAILBOX_THREAD_SELECTION' });
+    await mutateWorkspaceMailbox(env, workspace, { action: 'archive', messageIds: ['email:bad-rfc-a'], scope: mutationScope() });
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id IN ('bad-rfc-a', 'bad-rfc-b') AND archived_at IS NOT NULL").get()).toEqual({ count: 1 });
   });
 
   test('shows differing legacy thread keys separately before applying a thread action', async () => {
@@ -802,12 +817,12 @@ describe('D1 mailbox pages', () => {
   test('allows a filtered thread action when ambiguous mail is outside the filter', async () => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
-        ('legacy-read-unknown', 'user-1', '', 'owner@example.test', 'First', '2026-08-13T14:00:00.000Z', 'raw/read-unknown', 'bogus', 'rfc:filter-bogus'),
-        ('legacy-unread-known', 'user-1', 'known@example.test', 'owner@example.test', 'Second', '2026-08-13T14:01:00.000Z', 'raw/unread-known', 'bogus', 'rfc:filter-bogus');
+        ('legacy-read-unknown', 'user-1', '', 'owner@example.test', 'First', '2026-08-13T14:00:00.000Z', 'raw/read-unknown', 'bogus', 'rfc:filter@example.test'),
+        ('legacy-unread-known', 'user-1', 'known@example.test', 'owner@example.test', 'Second', '2026-08-13T14:01:00.000Z', 'raw/unread-known', '<filter@example.test>', 'rfc:filter@example.test');
       INSERT INTO workspace_email_states (id, user_id, email_message_id, is_read) VALUES ('legacy-read-state', 'user-1', 'legacy-read-unknown', 1);
     `));
     await mutateWorkspaceMailbox(env, workspace, {
-      action: 'archive', messageIds: ['email:legacy-unread-known'], threadKeys: ['rfc:filter-bogus'],
+      action: 'archive', messageIds: ['email:legacy-unread-known'], threadKeys: ['rfc:filter@example.test'],
       scope: mutationScope('inbox', null, 'filtered', '', 'unread')
     });
     expect(database.query(`SELECT archived_at FROM workspace_email_states WHERE email_message_id = 'legacy-read-unknown'`).get()).toEqual({ archived_at: null });
@@ -828,13 +843,13 @@ describe('D1 mailbox pages', () => {
   test('does not expand a malformed legacy workspace thread into senderless mail', async () => {
     const { env, workspace } = fixture((legacy) => legacy.exec(`
       INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, sent_at, message_id, thread_key) VALUES
-        ('legacy-workspace-unknown', 'user-1', 'inbox', '', '', '', '', 'First', '2026-08-13T14:00:00.000Z', 'bogus', 'rfc:workspace-bogus'),
-        ('legacy-workspace-known', 'user-1', 'inbox', 'Known', 'known@example.test', '', '', 'Second', '2026-08-13T14:01:00.000Z', 'bogus', 'rfc:workspace-bogus');
+        ('legacy-workspace-unknown', 'user-1', 'inbox', '', '', '', '', 'First', '2026-08-13T14:00:00.000Z', 'bogus', 'rfc:workspace@example.test'),
+        ('legacy-workspace-known', 'user-1', 'inbox', 'Known', 'known@example.test', '', '', 'Second', '2026-08-13T14:01:00.000Z', '<workspace@example.test>', 'rfc:workspace@example.test');
     `));
     const page = await loadMailboxPage(env, workspace, query('inbox'));
     expect(page.messages.find(({ id }) => id === 'legacy-workspace-unknown')?.threadKey).toBeNull();
     await expect(mutateWorkspaceMailbox(env, workspace, {
-      action: 'archive', messageIds: ['legacy-workspace-known'], threadKeys: ['rfc:workspace-bogus'],
+      action: 'archive', messageIds: ['legacy-workspace-known'], threadKeys: ['rfc:workspace@example.test'],
       scope: mutationScope('inbox', null, 'owner')
     })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
   });
