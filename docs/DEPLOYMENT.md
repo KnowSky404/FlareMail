@@ -48,8 +48,10 @@ reviewed secret update, `getMe`, `setWebhook`, and `getWebhookInfo` sequence.
 `bun run mail:identity:dry-run` remains read-only. The separate
 `bun run mail:identity:backfill` workflow creates a bounded plan, applies only
 after `--apply` plus the matching `--confirm <sha256>`, and verifies the same
-plan. It requires an explicit Owner ID, address ID, the current version in
-`src/lib/server/db/schema-version.ts`, and a local cf persistence directory. Its parser rejects `--remote`; the
+plan. It requires an explicit Owner ID, address ID, a schema version supported by
+the checked-out code, and a local cf persistence directory. The plan records the
+actual schema version and cannot be applied after that version changes. Its parser
+rejects `--remote`; the
 global cf invocation is fixed to `--local`, `cloudflare.local.json`, and
 `flaremail-db`. Do not point it at a shared development store when reviewing a
 production copy.
