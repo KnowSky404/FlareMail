@@ -242,10 +242,13 @@ export const deriveNameFromEmail = (email: string) =>
 
 export function parseAddress(value: string) {
   const trimmed = value.trim();
-  const match = trimmed.match(/^(?:"?([^\"]+)"?\s*)?<([^>]+)>$/);
+  const match = trimmed.match(/^(.*?)\s*<([^<>]+)>$/u);
   if (match) {
     const email = match[2].trim();
-    return { name: match[1]?.trim() || deriveNameFromEmail(email), email };
+    const rawName = match[1].trim();
+    const name = rawName.startsWith('"') && rawName.endsWith('"')
+      ? rawName.slice(1, -1).replace(/\\([\\"])/gu, '$1') : rawName;
+    return { name: name || deriveNameFromEmail(email), email };
   }
   return { name: deriveNameFromEmail(trimmed), email: trimmed };
 }

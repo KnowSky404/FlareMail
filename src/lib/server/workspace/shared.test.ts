@@ -23,6 +23,12 @@ describe('workspace shared compatibility contracts', () => {
     expect(mapInboundRow({ email_id: 'in-2', from: 'bob@example.com', to: '', subject: '', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 1, is_starred: 0 }, profile).hasAttachments).toBeUndefined();
   });
 
+  test('preserves valid inbound addresses with quoted display names', () => {
+    const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const row = { email_id: 'quoted', from: 'Alice "Ace" Smith <alice@example.test>', to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0, thread_key: 'hello::alice@example.test' };
+    expect(mapInboundRow(row, profile)).toMatchObject({ fromName: 'Alice "Ace" Smith', fromEmail: 'alice@example.test', threadKey: row.thread_key });
+  });
+
   test('requires a senderless stored key to match its valid RFC thread', () => {
     expect(hasReliableThreadContext('', { message_id: 'bogus', references: '<root@example.test>', thread_key: 'rfc:bogus' })).toBe(false);
     expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);
