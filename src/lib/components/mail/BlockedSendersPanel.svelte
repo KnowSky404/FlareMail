@@ -26,6 +26,7 @@
   let loading = $state(false);
   let pending = $state(false);
   let error = $state('');
+  let operationError = $state('');
   let status = $state('');
   let refreshRequested = $state(true);
   let generation = 0;
@@ -55,7 +56,7 @@
       sessionRequests.abort();
       sessionRequests = new AbortController();
       senders = []; page = { items: [], previousCursor: null, nextCursor: null }; position = { cursor: null, direction: 'next', number: 1 };
-      retryTarget = null; loaded = false; loading = false; pending = false; error = ''; status = '';
+      retryTarget = null; loaded = false; loading = false; pending = false; error = ''; operationError = ''; status = '';
       onPageChange?.(null, 1, 'next');
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, expire);
@@ -152,7 +153,7 @@
     event.preventDefault();
     if (!active || pending || loading || !loaded) return;
     const current = generation;
-    pending = true; error = ''; status = ''; retryTarget = null;
+    pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
       const result = await requestJson<{ email: string }>('/api/workspace/blocked-senders', { method: 'POST', body: JSON.stringify({ email }), signal: sessionRequests.signal });
       if (current !== generation) return;
@@ -160,7 +161,7 @@
       email = '';
       status = t('blocked.saved');
       sync?.publish({ type: 'blocked-senders-changed' });
-    } catch { if (current === generation) error = t('blocked.saveFailed'); }
+    } catch { if (current === generation) operationError = t('blocked.saveFailed'); }
     finally { if (current === generation) pending = false; }
   }
 
@@ -168,14 +169,14 @@
     if (!active || pending || loading) return;
     const hadFocus = document.activeElement === source;
     const current = generation;
-    pending = true; error = ''; status = ''; retryTarget = null;
+    pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
       await requestJson('/api/workspace/blocked-senders', { method: 'DELETE', body: JSON.stringify({ email: address }), signal: sessionRequests.signal });
       if (current !== generation) return;
       senders = senders.filter((sender) => sender.email !== address);
       status = t('blocked.removed');
       sync?.publish({ type: 'blocked-senders-changed' });
-    } catch { if (current === generation) error = t('blocked.removeFailed'); }
+    } catch { if (current === generation) operationError = t('blocked.removeFailed'); }
     finally {
       if (current === generation) {
         pending = false;
@@ -188,7 +189,7 @@
     if (!active || pending || loading) return;
     const hadFocus = document.activeElement === source;
     const current = generation;
-    pending = true; error = ''; status = ''; retryTarget = null;
+    pending = true; error = ''; operationError = ''; status = ''; retryTarget = null;
     try {
       await requestJson(`/api/workspace/quarantine/${encodeURIComponent(id)}`, { method: 'POST', signal: sessionRequests.signal });
       if (current !== generation) return;
@@ -197,7 +198,7 @@
       status = t('blocked.released');
       sync?.publish({ type: 'blocked-senders-changed' });
       if (!page.items.length) refreshRequested = true;
-    } catch { if (current === generation) error = t('blocked.releaseFailed'); }
+    } catch { if (current === generation) operationError = t('blocked.releaseFailed'); }
     finally {
       if (current === generation) {
         pending = false;
@@ -249,7 +250,7 @@
       <Button variant="secondary" disabled={!active || loading || pending || !page.nextCursor} onclick={() => navigate({ cursor: page.nextCursor, direction: 'next', number: position.number + 1 })}>{t('blocked.next')}</Button>
     </div>
   </Panel>
-  {#if error}<p role="alert">{error} {#if retryTarget}<button type="button" disabled={!active} onclick={() => retryTarget && navigate(retryTarget)}>{t('blocked.retry')}</button>{/if}</p>{/if}
+  {#if error || operationError}<p role="alert">{error || operationError} {#if error && retryTarget}<button type="button" disabled={!active} onclick={() => retryTarget && navigate(retryTarget)}>{t('blocked.retry')}</button>{/if}</p>{/if}
   {#if status}<p id="blocked-operation-status" role="status" aria-live="polite" tabindex="-1">{status}</p>{/if}
 </div>
 
