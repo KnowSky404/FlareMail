@@ -280,6 +280,11 @@ export function hasReliableThreadContext(counterparty: string, row: {
   return Boolean(rfcId && (row.thread_key === `rfc:${rfcId}` || row.thread_key?.toLowerCase() === `rfc:<${rfcId}>`));
 }
 
+function mappedThreadKey(counterparty: string, row: Parameters<typeof hasReliableThreadContext>[1]) {
+  if (row.thread_key == null && [row.references, row.in_reply_to, row.message_id].some((value) => parseMessageIds(value).length > 0)) return undefined;
+  return hasReliableThreadContext(counterparty, row) ? row.thread_key ?? null : null;
+}
+
 export const mapUserRowToProfile = (row: WorkspaceUserRow): UserProfile => ({
   name: row.name,
   role: row.role,
@@ -340,7 +345,7 @@ export const mapWorkspaceMessageRow = (
   messageId: row.message_id ?? null,
   inReplyTo: row.in_reply_to ?? null,
   references: row.references ?? null,
-  threadKey: hasReliableThreadContext(row.folder === 'inbox' ? row.from_email : (toAddresses[0]?.email || row.to_email), row) ? row.thread_key ?? null : null,
+  threadKey: mappedThreadKey(row.folder === 'inbox' ? row.from_email : (toAddresses[0]?.email || row.to_email), row),
   archivedAt: row.archived_at ?? null,
   searchSnippet: row.search_snippet ?? undefined,
   searchHitFields: row.search_snippet !== undefined ? [...searchHitFields] : undefined,
@@ -409,7 +414,7 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, se
     messageId: row.message_id,
     inReplyTo: row.in_reply_to,
     references: row.references,
-    threadKey: hasReliableThreadContext(sender.email, row) ? row.thread_key ?? null : null,
+    threadKey: mappedThreadKey(sender.email, row),
     archivedAt: row.archived_at ?? null,
     ...(row.quarantined_at === undefined ? {} : { quarantinedAt: row.quarantined_at }),
     searchSnippet: row.search_snippet ?? undefined,

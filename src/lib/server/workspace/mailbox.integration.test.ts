@@ -868,6 +868,18 @@ describe('D1 mailbox pages', () => {
     })).rejects.toMatchObject({ code: 'AMBIGUOUS_MAILBOX_THREAD' });
   });
 
+  test('keeps valid RFC replies grouped when a legacy message has no stored key', async () => {
+    const { env, workspace } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, in_reply_to, thread_key) VALUES
+        ('missing-key-root', 'user-1', 'alice@example.com', 'owner@example.test', 'Legacy thread', '2026-08-13T14:00:00Z', 'raw/root', '<missing-root@example.test>', NULL, NULL),
+        ('missing-key-reply', 'user-1', 'alice@example.com', 'owner@example.test', 'Re: Legacy thread', '2026-08-13T14:01:00Z', 'raw/reply', '<missing-reply@example.test>', '<missing-root@example.test>', 'rfc:missing-root@example.test');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox'));
+    const messages = page.messages.filter(({ id }) => id.startsWith('email:missing-key-'));
+    expect(messages.find(({ id }) => id === 'email:missing-key-root')?.threadKey).toBeUndefined();
+    expect(buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox')).toHaveLength(1);
+  });
+
   test.each(['rfc:root@example.test', 'rfc:<root@example.test>'])('keeps valid RFC threads expandable with key %s', async (threadKey) => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
