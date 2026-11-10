@@ -29,6 +29,13 @@ describe('workspace shared compatibility contracts', () => {
     expect(mapInboundRow(row, profile)).toMatchObject({ fromName: 'Alice "Ace" Smith', fromEmail: 'alice@example.test', threadKey: row.thread_key });
   });
 
+  test('preserves parsed sender addresses that cannot be added to the blocklist', () => {
+    const profile = { name: 'Owner', role: 'Owner', email: 'owner@example.test', company: '', location: '', timezone: 'UTC', forwardingEnabled: false, signature: '' };
+    const row = { email_id: 'special', from: '"a@b"@example.com', to: profile.email, subject: 'Hello', timestamp: '2026-08-13T00:00:00.000Z', snippet: '', is_read: 0, is_starred: 0, thread_key: 'legacy:special' };
+    expect(mapInboundRow(row, profile)).toMatchObject({ fromEmail: '"a@b"@example.com', threadKey: null });
+    expect(mapInboundRow({ ...row, from: 'José <josé@example.com>' }, profile)).toMatchObject({ fromName: 'José', fromEmail: 'josé@example.com', threadKey: null });
+  });
+
   test('requires a senderless stored key to match its valid RFC thread', () => {
     expect(hasReliableThreadContext('', { message_id: 'bogus', references: '<root@example.test>', thread_key: 'rfc:bogus' })).toBe(false);
     expect(hasReliableThreadContext('', { message_id: '<root@example.test>', thread_key: 'rfc:root@example.test' })).toBe(true);

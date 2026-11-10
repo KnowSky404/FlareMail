@@ -730,7 +730,7 @@ describe('D1 mailbox pages', () => {
     const threads = buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox');
     expect(threads).toHaveLength(3);
     expect(messages.filter(({ id }) => id.startsWith('email:legacy-unknown-')).every(({ threadKey }) => threadKey === null)).toBe(true);
-    expect(messages.find(({ id }) => id === 'email:legacy-unknown-a')).toMatchObject({ fromName: '', fromEmail: '' });
+    expect(messages.find(({ id }) => id === 'email:legacy-unknown-a')).toMatchObject({ fromName: 'Bad', fromEmail: 'foo..bar@example.com', threadKey: null });
 
     await expect(mutateWorkspaceMailbox(env, workspace, {
       action: 'archive', messageIds: ['email:legacy-known'], threadKeys: ['rfc:bogus'],
@@ -748,6 +748,15 @@ describe('D1 mailbox pages', () => {
     `).all() as Array<{ id: string; archived_at: string | null }>;
     expect(states[0]!.archived_at).not.toBeNull();
     expect(states[1]!.archived_at).toBeNull();
+  });
+
+  test('retains a special-format sender in mailbox search results', async () => {
+    const { env, workspace } = fixture((legacy) => legacy.exec(`
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key)
+      VALUES ('special-sender', 'user-1', 'José <josé@example.com>', 'owner@example.test', 'Special sender', '2026-08-13T14:00:00Z', 'raw/special');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('inbox', { query: 'from:josé@example.com' }));
+    expect(page.messages.find(({ id }) => id === 'email:special-sender')).toMatchObject({ fromName: 'José', fromEmail: 'josé@example.com' });
   });
 
   test('includes a quoted sender in valid thread-scoped actions', async () => {
@@ -777,6 +786,17 @@ describe('D1 mailbox pages', () => {
     });
     expect(database.query(`SELECT archived_at FROM workspace_email_states WHERE email_message_id = 'legacy-read-unknown'`).get()).toEqual({ archived_at: null });
     expect((database.query(`SELECT archived_at FROM workspace_email_states WHERE email_message_id = 'legacy-unread-known'`).get() as { archived_at: string | null }).archived_at).not.toBeNull();
+  });
+
+  test.each(['owner', 'filtered'] as const)('handles a legacy display-form recipient in %s sent thread actions', async (threadScope) => {
+    const { env, workspace, database } = fixture((legacy) => legacy.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, to_json, subject, sent_at, thread_key)
+      VALUES ('legacy-sent-display', 'user-1', 'sent', 'Owner', 'owner@example.test', 'Bob', 'Bob <bob@example.com>', '[]', 'Legacy sent', '2026-08-13T14:00:00Z', 'legacy:sent-display');
+    `));
+    const page = await loadMailboxPage(env, workspace, query('sent'));
+    expect(page.messages.find(({ id }) => id === 'legacy-sent-display')).toMatchObject({ toEmail: 'bob@example.com', threadKey: 'legacy:sent-display' });
+    await mutateWorkspaceMailbox(env, workspace, { action: 'star', messageIds: ['legacy-sent-display'], threadKeys: ['legacy:sent-display'], scope: mutationScope('sent', null, threadScope) });
+    expect(database.query("SELECT is_starred FROM workspace_messages WHERE id = 'legacy-sent-display'").get()).toEqual({ is_starred: 1 });
   });
 
   test('does not expand a malformed legacy workspace thread into senderless mail', async () => {

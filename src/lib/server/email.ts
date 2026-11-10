@@ -314,7 +314,7 @@ export async function handleInboundEmail(
     safeLog('inbound_phase', { correlationId, phase: 'r2_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - r2StartedAt });
 
     const senderAddress = parsed.hasFromHeader ? (parsed.from?.address ?? '') : message.from;
-    const from = isValidMailboxEmail(senderAddress) ? addressLabel(parsed.from, parsed.hasFromHeader ? '' : message.from) : '';
+    const from = addressLabel(parsed.from, parsed.hasFromHeader ? '' : message.from);
     const subject = parsed.subject.trim() || message.headers.get('subject')?.trim() || '(no subject)';
     const toAddresses = canonicalAddresses(parsed.to);
     const ccAddresses = canonicalAddresses(parsed.cc);
@@ -343,7 +343,7 @@ export async function handleInboundEmail(
       htmlBody: projected.htmlBody,
       inReplyTo: parsed.inReplyTo,
       references: parsed.references,
-      threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from: from || `message:email:${storageId}` }),
+      threadKey: inboundThreadKey({ messageId, inReplyTo: parsed.inReplyTo, references: parsed.references, subject, from: isValidMailboxEmail(senderAddress) ? from : `message:email:${storageId}` }),
       dedupeKey,
       rawKey,
       rawSize: raw.byteLength,
