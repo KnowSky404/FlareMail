@@ -25,6 +25,8 @@
     workspaceBodyError = '',
     workspaceBodyPending = false,
     pending = false,
+    statusRefreshError = false,
+    onReloadStatus,
     onEditDraft,
     onReply,
     onReplyAll,
@@ -66,6 +68,8 @@
     workspaceBodyError?: string;
     workspaceBodyPending?: boolean;
     pending?: boolean;
+    statusRefreshError?: boolean;
+    onReloadStatus?: () => void | Promise<void>;
     onEditDraft?: (message: MailMessage) => void | Promise<void>;
     onReply?: (message: MailMessage) => void;
     onReplyAll?: (message: MailMessage) => void;
@@ -164,6 +168,12 @@
     {/snippet}
   </MessageHeader>
   {#if message?.quarantinedAt}<p class="mx-4 mt-3 text-xs text-[var(--fm-text-muted)]">{t('blocked.releaseToReply')}</p>{/if}
+  {#if statusRefreshError}
+    <div class="mx-4 mt-3 flex items-center gap-2 text-xs text-[var(--fm-danger)]" role="alert">
+      <span>{t('mail.statusRefreshFailed')}</span>
+      {#if onReloadStatus}<Button variant="secondary" size="sm" disabled={pending} onclick={() => onReloadStatus?.()}>{t('mail.retry')}</Button>{/if}
+    </div>
+  {/if}
 
   {#if message}
     <div class="fm-detail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">
