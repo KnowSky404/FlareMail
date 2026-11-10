@@ -233,8 +233,11 @@ describe('quarantined mailbox visibility', () => {
     expect(metrics.starredCount).toBe(2);
     await mutateWorkspaceMailbox(env, workspace, { action: 'read', messageIds: ['inbox-z'], threadKeys: ['shared'], scope: mutationScope('inbox', null, 'owner') });
     expect(database.query("SELECT is_read FROM workspace_email_states WHERE id = 'quarantine-state'").get()).toEqual({ is_read: 0 });
+    // The compatibility bridge can archive quarantine while feature code is rolled back.
+    database.query("UPDATE workspace_email_states SET archived_at = '2026-11-02T00:00:00Z' WHERE id = 'quarantine-state'").run();
     await releaseQuarantinedMail(env.DB, 'user-1', 'incoming-1');
     expect((await loadMailboxPage(env, workspace, query('inbox'))).messages.map((item) => item.id)).toContain(hidden);
+    expect(database.query("SELECT archived_at FROM workspace_email_states WHERE id = 'quarantine-state'").get()).toEqual({ archived_at: null });
     expect((await getMailboxMetrics(env.DB, 'user-1')).inboxCount).toBe(3);
   });
 
