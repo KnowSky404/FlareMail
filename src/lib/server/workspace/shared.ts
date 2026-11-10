@@ -23,7 +23,7 @@ import {
   type WorkspacePayload
 } from '$lib/domain/mail';
 import { fromInboundMessageId, isInboundMessageId, toInboundMessageId } from '$lib/domain/mail';
-import { parseAddressJson, parseAddressList, parseMessageIds, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
+import { isValidMailboxEmail, parseAddressJson, parseAddressList, parseMessageIds, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { OutboundDeliveryState } from '$lib/server/outbound';
 
@@ -253,7 +253,7 @@ export function parseAddress(value: string) {
 export function hasReliableThreadContext(counterparty: string, row: {
   message_id?: string | null; in_reply_to?: string | null; references?: string | null; thread_key?: string | null;
 }) {
-  if (counterparty.trim()) return true;
+  if (isValidMailboxEmail(counterparty)) return true;
   const rfcId = parseMessageIds(row.references)[0] ?? parseMessageIds(row.in_reply_to)[0] ?? parseMessageIds(row.message_id)[0];
   return Boolean(rfcId && (row.thread_key === `rfc:${rfcId}` || row.thread_key?.toLowerCase() === `rfc:<${rfcId}>`));
 }
@@ -361,7 +361,8 @@ export const mapDraftRow = (row: WorkspaceDraftRow, profile: UserProfile, search
 };
 
 export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, searchHitFields: MailMessage['searchHitFields'] = []): MailMessage {
-  const sender = parseAddress(row.from);
+  const parsedSender = parseAddress(row.from);
+  const sender = isValidMailboxEmail(parsedSender.email) ? parsedSender : { name: '', email: '' };
   const recipient = parseAddress(row.to || profile.email);
   const snippet = row.snippet.trim() || '原始邮件已写入 R2，后续可以补充正文解析与预览。';
   return {

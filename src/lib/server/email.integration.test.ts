@@ -295,7 +295,7 @@ describe('blocked senders', () => {
   });
 
   test('does not match the envelope when a From header is present but invalid', async () => {
-    for (const header of ['From: not-an-address', 'From:']) {
+    for (const header of ['From: not-an-address', 'From:', 'From: Bad <foo..bar@example.com>']) {
       const test = environment();
       await addBlockedSender(test.env.DB, 'user-1', 'alice@example.com');
       const raw = new TextEncoder().encode(`${header}\r\nTo: owner@example.test\r\nSubject: Invalid From\r\n\r\nhello`);
@@ -317,7 +317,7 @@ describe('blocked senders', () => {
   test('keeps unrelated unknown senders in separate fallback threads', async () => {
     const test = environment();
     for (const sender of ['alice@example.com', 'bob@example.com']) {
-      const raw = new TextEncoder().encode(`From:\r\nTo: owner@example.test\r\nSubject: Same subject\r\n\r\n${sender}`);
+      const raw = new TextEncoder().encode(`From: Bad <foo..bar@example.com>\r\nTo: owner@example.test\r\nSubject: Same subject\r\n\r\n${sender}`);
       const inbound = message(raw).value;
       Object.defineProperty(inbound, 'from', { value: sender });
       await handleInboundEmail(inbound, test.env);

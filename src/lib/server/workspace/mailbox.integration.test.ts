@@ -705,7 +705,7 @@ describe('D1 mailbox pages', () => {
   test.each(['owner', 'filtered'] as const)('prevents %s bulk actions from expanding malformed legacy threads', async (threadScope) => {
     const { env, workspace, database } = fixture((legacy) => legacy.exec(`
       INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, message_id, thread_key) VALUES
-        ('legacy-unknown-a', 'user-1', '', 'owner@example.test', 'Legacy A', '2026-08-13T14:00:00.000Z', 'raw/legacy-a', 'bogus', 'rfc:bogus'),
+        ('legacy-unknown-a', 'user-1', 'Bad <foo..bar@example.com>', 'owner@example.test', 'Legacy A', '2026-08-13T14:00:00.000Z', 'raw/legacy-a', 'bogus', 'rfc:bogus'),
         ('legacy-unknown-b', 'user-1', '', 'owner@example.test', 'Legacy B', '2026-08-13T14:01:00.000Z', 'raw/legacy-b', 'bogus', 'rfc:bogus'),
         ('legacy-known', 'user-1', 'known@example.test', 'owner@example.test', 'Legacy C', '2026-08-13T14:02:00.000Z', 'raw/legacy-c', 'bogus', 'rfc:bogus');
     `));
@@ -714,6 +714,7 @@ describe('D1 mailbox pages', () => {
     const threads = buildMailThreads({ inbox: messages, sent: [], drafts: [] }, 'inbox');
     expect(threads).toHaveLength(3);
     expect(messages.filter(({ id }) => id.startsWith('email:legacy-unknown-')).every(({ threadKey }) => threadKey === null)).toBe(true);
+    expect(messages.find(({ id }) => id === 'email:legacy-unknown-a')).toMatchObject({ fromName: '', fromEmail: '' });
 
     await expect(mutateWorkspaceMailbox(env, workspace, {
       action: 'archive', messageIds: ['email:legacy-known'], threadKeys: ['rfc:bogus'],
