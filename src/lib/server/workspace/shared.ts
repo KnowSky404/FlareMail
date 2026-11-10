@@ -242,7 +242,7 @@ export const deriveNameFromEmail = (email: string) =>
 
 export function parseAddress(value: string) {
   const trimmed = value.trim();
-  const match = trimmed.match(/^(.*?)\s*<([^<>]+)>$/u);
+  const match = trimmed.match(/^(.*?)\s*<((?:"(?:[^"\\]|\\.)*"|[^<>"])+)>$/u);
   if (match) {
     const email = match[2].trim();
     const rawName = match[1].trim();

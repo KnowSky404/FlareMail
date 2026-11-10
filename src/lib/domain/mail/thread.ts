@@ -1,4 +1,5 @@
 import type { MailFolder, MailMessage, MailThread, MailboxState } from './types';
+import { isValidMailboxEmail } from './addresses';
 
 const MESSAGE_ID_RE = /^[^\s<>@]+@[^\s<>@]+$/;
 
@@ -64,7 +65,7 @@ function getRfcIds(message: MailMessage): string[] {
 
 function getFallbackThreadKey(message: MailMessage): string {
   const counterparty = normalizeEmail(getCounterpartyEmail(message));
-  return `${normalizeThreadSubject(message.subject)}::${counterparty || `message:${message.id}`}`;
+  return `${normalizeThreadSubject(message.subject)}::${isValidMailboxEmail(counterparty) ? counterparty : `message:${message.id}`}`;
 }
 
 /**
