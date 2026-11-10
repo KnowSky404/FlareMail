@@ -182,7 +182,13 @@ export async function restoreWorkspaceTrash(env: CloudflareEnv | undefined, sess
       metrics: await getMailboxMetrics(db, session.userId)
     };
   }
-  if (current.kind === 'inbound') await db.prepare('UPDATE workspace_email_states SET deleted_at = NULL, updated_at = ? WHERE user_id = ? AND email_message_id = ? AND deleted_at IS NOT NULL').bind(new Date().toISOString(), session.userId, id.slice(6)).run();
+  if (current.kind === 'inbound') {
+    const metadata = await db.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?')
+      .bind('flaremail').first<{ schema_version: number }>();
+    const quarantine = metadata?.schema_version === 29 ? ', quarantined_at = NULL' : '';
+    await db.prepare(`UPDATE workspace_email_states SET deleted_at = NULL${quarantine}, updated_at = ? WHERE user_id = ? AND email_message_id = ? AND deleted_at IS NOT NULL`)
+      .bind(new Date().toISOString(), session.userId, id.slice(6)).run();
+  }
   else {
     const table = current.kind === 'draft' ? 'workspace_drafts' : 'workspace_messages';
     await db.prepare(`UPDATE ${table} SET deleted_at = NULL, updated_at = ? WHERE user_id = ? AND id = ? AND deleted_at IS NOT NULL`).bind(new Date().toISOString(), session.userId, id).run();
