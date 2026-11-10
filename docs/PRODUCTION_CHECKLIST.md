@@ -298,8 +298,8 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   bookmark are recorded.
 - [ ] Production D1/R2 binding names, Resend webhook endpoint/event set,
   Email Routing rule and secret-present status are recorded without values.
-- [ ] If Telegram is enabled, the checkout's current schema version (currently
-  27) and Telegram migrations 0019-0022 are applied,
+- [ ] If Telegram is enabled, a schema version supported by the checkout and
+  Telegram migrations 0019-0022 are applied,
   including the account-delete cleanup trigger, challenge provenance, and privacy snapshot. `APP_BASE_URL` is a credential-free HTTPS origin, the Bot Token is present only as a secret, any webhook-secret override is also secret-only, and the one-Bot webhook is reviewed with `getMe`/`getWebhookInfo`.
 - [ ] Normal code rollback will deploy the previous Worker while preserving
   append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.
