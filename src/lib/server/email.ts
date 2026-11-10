@@ -53,7 +53,7 @@ const toIsoTimestamp = (value: string | null | undefined) => {
 const addressLabel = (address: { name: string; address: string } | null, fallback: string) => {
   if (!address?.address) return fallback;
   if (!address.name) return address.address;
-  const name = /[<>]/u.test(address.name)
+  const name = /[<>"]/u.test(address.name)
     ? `"${address.name.replace(/[\\"]/gu, (character) => `\\${character}`)}"` : address.name;
   return `${name} <${address.address}>`;
 };

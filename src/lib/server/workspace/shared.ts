@@ -255,17 +255,7 @@ export function parseAddress(value: string) {
         const email = trimmed.slice(index + 1, -1).trim();
         if (!email) break;
         const rawName = trimmed.slice(0, index).trim();
-        let nameQuoted = false;
-        let nameEscaped = false;
-        let openAngles = 0;
-        for (const character of rawName) {
-          if (nameEscaped) { nameEscaped = false; continue; }
-          if (nameQuoted && character === '\\') { nameEscaped = true; continue; }
-          if (character === '"') nameQuoted = !nameQuoted;
-          else if (!nameQuoted && character === '<') openAngles++;
-          else if (!nameQuoted && character === '>' && openAngles) openAngles--;
-        }
-        if (openAngles && nameQuoted) break;
+        if (index > 0 && !/\s/u.test(trimmed[index - 1]) && rawName.includes('<')) break;
         const name = rawName.startsWith('"') && rawName.endsWith('"')
           ? rawName.slice(1, -1).replace(/\\([\\"])/gu, '$1') : rawName;
         return { name: name || deriveNameFromEmail(email), email };

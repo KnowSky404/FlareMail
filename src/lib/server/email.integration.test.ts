@@ -326,9 +326,8 @@ describe('blocked senders', () => {
     expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender: 'alice@example.com' });
   });
 
-  test('preserves encoded sender names containing angle brackets and quotes', async () => {
+  test.each(['Alice "<Team \\ Friends', '"Alice"', '"'])('preserves encoded sender name %s', async (name) => {
     const test = environment();
-    const name = 'Alice "<Team \\ Friends';
     const raw = new TextEncoder().encode(`From: =?UTF-8?B?${btoa(name)}?= <alice@example.com>\r\nTo: owner@example.test\r\nSubject: Hello\r\n\r\nBody`);
     await handleInboundEmail(message(raw).value, test.env);
     const row = test.database.query('SELECT "from" AS sender FROM email_messages').get() as { sender: string };

@@ -306,11 +306,12 @@ test('blocked sender quarantine keeps mail until an explicit release', async ({ 
   await expect(tabs.getByRole('tab', { name: '黑名单' })).toBeFocused();
   const sender = `blocked-${testInfo.project.name}@sender.test`;
   const subject = `Quarantine regression ${testInfo.project.name}`;
+  const senderName = 'Test "<Sender';
   await page.getByLabel('发件人邮箱地址').fill(sender);
   await page.getByRole('button', { name: '加入黑名单' }).click();
   await expect(page.getByRole('status').filter({ hasText: '发件人已加入黑名单' })).toBeVisible();
   const raw = [
-    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `From: =?UTF-8?B?${Buffer.from(senderName).toString('base64')}?= <${sender}>`, 'To: e2e-admin@flaremail.test',
     `Message-ID: <quarantine-${testInfo.project.name}@sender.test>`,
     `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
   ].join('\r\n');
@@ -337,7 +338,7 @@ test('blocked sender quarantine keeps mail until an explicit release', async ({ 
   await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
   await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
   const inboxAfter = await (await page.request.get(`/api/workspace/mailbox?folder=inbox&q=${encodeURIComponent(subject)}`)).json();
-  expect(inboxAfter.data.page.messages.some((item: { subject: string }) => item.subject === subject)).toBe(true);
+  expect(inboxAfter.data.page.messages.find((item: { subject: string }) => item.subject === subject)).toMatchObject({ fromName: senderName, fromEmail: sender });
   await expect(page.getByRole('button', { name: `移除 ${sender}` })).toBeVisible();
   await page.getByRole('button', { name: `移除 ${sender}` }).click();
   await expect(page.getByText('规则已移除；隔离邮件仍保留。')).toBeVisible();
