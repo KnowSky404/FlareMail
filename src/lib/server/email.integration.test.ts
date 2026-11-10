@@ -2,6 +2,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createInboundDedupeKey, handleInboundEmail } from './email';
+import { parseAddress } from './workspace/shared';
 import { FLAREMAIL_SCHEMA_VERSION } from './db/schema-version';
 import { addBlockedSender, listBlockedSenders, listQuarantinedMail, releaseQuarantinedMail, removeBlockedSender } from './db/blocked-senders';
 
@@ -323,6 +324,15 @@ describe('blocked senders', () => {
     await handleInboundEmail(message(raw).value, test.env);
     expect((await listQuarantinedMail(test.env.DB, 'user-1', null)).items).toHaveLength(1);
     expect(test.database.query('SELECT "from" AS sender FROM email_messages').get()).toEqual({ sender: 'alice@example.com' });
+  });
+
+  test('preserves encoded sender names containing angle brackets and quotes', async () => {
+    const test = environment();
+    const name = 'Alice "<Team \\ Friends';
+    const raw = new TextEncoder().encode(`From: =?UTF-8?B?${btoa(name)}?= <alice@example.com>\r\nTo: owner@example.test\r\nSubject: Hello\r\n\r\nBody`);
+    await handleInboundEmail(message(raw).value, test.env);
+    const row = test.database.query('SELECT "from" AS sender FROM email_messages').get() as { sender: string };
+    expect(parseAddress(row.sender)).toEqual({ name, email: 'alice@example.com' });
   });
 
   test('uses the sender address rather than its display name for new fallback thread keys', async () => {

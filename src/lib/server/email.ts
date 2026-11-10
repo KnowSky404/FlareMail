@@ -50,8 +50,13 @@ const toIsoTimestamp = (value: string | null | undefined) => {
   return Number.isNaN(parsed.valueOf()) ? new Date().toISOString() : parsed.toISOString();
 };
 
-const addressLabel = (address: { name: string; address: string } | null, fallback: string) =>
-  address?.address ? (address.name ? `${address.name} <${address.address}>` : address.address) : fallback;
+const addressLabel = (address: { name: string; address: string } | null, fallback: string) => {
+  if (!address?.address) return fallback;
+  if (!address.name) return address.address;
+  const name = /[<>]/u.test(address.name)
+    ? `"${address.name.replace(/[\\"]/gu, (character) => `\\${character}`)}"` : address.name;
+  return `${name} <${address.address}>`;
+};
 
 const addressList = (addresses: Array<{ name: string; address: string }>) =>
   addresses.map((address) => address.name ? `${address.name} <${address.address}>` : address.address).join(', ');
