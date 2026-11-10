@@ -248,7 +248,7 @@
     : managementView === 'domains' ? t('shell.domains') : t('shell.addresses'));
   let selectedMessageId = $state<string | null>(null);
   let deepLinkedMessage = $state<MailMessage | null>(null);
-  let deepLinkedFlagRevision = 0;
+  const deepLinkedFlagRevisions = new Map<string, { read: number; starred: number }>();
   let selectedMessageIds = $state<string[]>([]);
   let bulkThreadScope = $state<'selected' | 'filtered' | 'owner'>('selected');
   let bulkSelectInput = $state<HTMLInputElement>();
@@ -1054,6 +1054,7 @@
     metricsCache.clear();
     if (options?.resetUserScoped) {
       deepLinkedMessage = null;
+      deepLinkedFlagRevisions.clear();
       cancelLabelActions();
       labelEditorInterrupted = false;
       resetComposeState();
@@ -1118,6 +1119,7 @@
     trashController.reset();
     authenticated = false;
     deepLinkedMessage = null;
+    deepLinkedFlagRevisions.clear();
     profile = initial.profile;
     mailbox = initial.mailbox;
     activeSection = initial.activeSection;
@@ -1706,14 +1708,17 @@
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
     if (current && deepLinkedMessage?.id === current.id) {
       const section = activeSection;
-      const flagRevision = deepLinkedFlagRevision;
+      const flagRevision = deepLinkedFlagRevisions.get(current.id) ?? { read: 0, starred: 0 };
       const request = syncMessageRequest.begin();
       void fetchWorkspaceMessage(current.id, request.signal).then((result) => {
         if (!request.isCurrent() || !authenticated || authExpired || activeSection !== section ||
             selectedMessageId !== current.id || deepLinkedMessage?.id !== current.id) return;
         const refreshed = flagController.overlay(result.message);
-        deepLinkedMessage = flagRevision === deepLinkedFlagRevision ? refreshed : {
-          ...refreshed, read: deepLinkedMessage.read, starred: deepLinkedMessage.starred
+        const latestRevision = deepLinkedFlagRevisions.get(current.id);
+        deepLinkedMessage = {
+          ...refreshed,
+          read: (latestRevision?.read ?? 0) === flagRevision.read ? refreshed.read : deepLinkedMessage.read,
+          starred: (latestRevision?.starred ?? 0) === flagRevision.starred ? refreshed.starred : deepLinkedMessage.starred
         };
       }).catch((error) => {
         if (request.isCurrent() && !request.signal.aborted && !authExpired) notifyError(error, t('notify.targetMessageFailed'));
@@ -2333,7 +2338,11 @@
 
   function applyFlagPatch(id: string, patch: MessagePatch) {
     if (patch.read === undefined && patch.starred === undefined) return;
-    deepLinkedFlagRevision++;
+    const revision = deepLinkedFlagRevisions.get(id) ?? { read: 0, starred: 0 };
+    deepLinkedFlagRevisions.set(id, {
+      read: revision.read + (patch.read === undefined ? 0 : 1),
+      starred: revision.starred + (patch.starred === undefined ? 0 : 1)
+    });
     metricsRequest.cancel();
     metricsCache.clear();
     flagsInterruptedPageRequest = mailboxController.patchFlags(id, patch) || flagsInterruptedPageRequest;
@@ -3103,7 +3112,12 @@
                     onSave={saveProfile}
                     onOpenDomains={() => setManagementView('domains')}
                     onOpenAddresses={() => setManagementView('addresses')}
-                    onQuarantineRelease={(id) => { void refreshWorkspace(false); workspaceSync?.publish({ type: 'mailbox-refresh', id: `email:${id}` }); }}
+                    onQuarantineRelease={(id) => {
+                      const messageId = `email:${id}`;
+                      if (deepLinkedMessage?.id === messageId) deepLinkedMessage = null;
+                      void refreshWorkspace(false);
+                      workspaceSync?.publish({ type: 'mailbox-refresh', id: messageId });
+                    }}
                     onQuarantinePageChange={(cursor, number, direction) => updateWorkspaceUrl({ quarantineCursor: cursor, quarantinePage: number, quarantineDirection: direction }, true)}
                   />
                 {:else if managementView !== 'settings' && MailIdentityManager}

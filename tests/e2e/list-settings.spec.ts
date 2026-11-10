@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { test, expect, login, openFolder, assertNoConsoleErrors, assertNoHorizontalOverflow } from './fixtures';
+import { test, expect, login, openFolder, selectSettings, assertNoConsoleErrors, assertNoHorizontalOverflow } from './fixtures';
 
 test('trash replaces record pages, retains a failed page, and returns to the first page', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
@@ -747,6 +747,43 @@ test('blocked sender rules and quarantine releases sync between tabs', async ({ 
   await other.close();
 });
 
+test('same-tab release clears a cached deep-linked quarantine state', async ({ page }, testInfo) => {
+  await login(page);
+  await page.goto('/?folder=settings&tab=blocked');
+  const sender = `same-tab-release-${testInfo.project.name}@sender.test`;
+  const subject = `Same tab release ${testInfo.project.name}`;
+  await page.getByLabel('发件人邮箱地址').fill(sender);
+  await page.getByRole('button', { name: '加入黑名单' }).click();
+  await expect(page.getByText('发件人已加入黑名单。')).toBeVisible();
+  const raw = [
+    `From: Test Sender <${sender}>`, 'To: e2e-admin@flaremail.test',
+    `Message-ID: <same-tab-release-${testInfo.project.name}@sender.test>`,
+    `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '', 'Local fake message.'
+  ].join('\r\n');
+  expect((await page.request.post('/cdn-cgi/local/email?from=bounce%40sender.test&to=e2e-admin%40flaremail.test', {
+    data: raw, headers: { 'content-type': 'message/rfc822' }
+  })).ok()).toBeTruthy();
+  await page.getByRole('button', { name: '刷新隔离区' }).click();
+  const link = page.getByRole('link', { name: subject });
+  await expect(link).toBeVisible();
+  const id = decodeURIComponent(new URL((await link.getAttribute('href'))!, page.url()).pathname.slice('/messages/'.length));
+  await page.goto(`/?folder=inbox&message=${encodeURIComponent(id)}`);
+  const detail = page.locator('.fm-detail-shell').filter({ hasText: subject });
+  await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
+  const back = page.getByRole('button', { name: '返回邮件列表' });
+  if (await back.isVisible().catch(() => false)) await back.click();
+  await selectSettings(page);
+  await page.getByRole('tablist', { name: '设置分区' }).getByRole('tab', { name: '黑名单' }).click();
+  await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
+  await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
+  await openFolder(page, '收件箱');
+  const row = page.getByRole('listitem').filter({ hasText: subject });
+  await row.getByRole('button').first().click();
+  await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
+  await expect(detail.getByRole('button', { name: '回复', exact: true }).first()).toBeVisible();
+  await expect(detail.getByRole('button', { name: '归档', exact: true })).toHaveCount(1);
+});
+
 test('workspace deep link reconciles release and hides archive while quarantined', async ({ page, context }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings&tab=blocked');
@@ -773,6 +810,10 @@ test('workspace deep link reconciles release and hides archive while quarantined
   const detail = reader.locator('.fm-detail-shell').filter({ hasText: subject });
   await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toBeVisible();
   await expect(detail.getByRole('button', { name: '归档', exact: true })).toHaveCount(0);
+  await reader.waitForLoadState('networkidle');
+  const readAction = detail.locator('button[aria-label="标为已读"], button[aria-label="标为未读"]').first();
+  await expect(readAction).toHaveCount(1);
+  const remoteRead = (await readAction.getAttribute('aria-label')) === '标为已读';
   let resumeRefresh!: () => void;
   let refreshStarted!: () => void;
   const refreshGate = new Promise<void>((resolve) => { resumeRefresh = resolve; });
@@ -781,9 +822,11 @@ test('workspace deep link reconciles release and hides archive while quarantined
     const target = new URL(route.request().url());
     if (route.request().method() !== 'GET' || decodeURIComponent(target.pathname) !== `/api/workspace/messages/${id}`) return route.continue();
     const response = await route.fetch();
+    const payload = await response.json();
+    payload.data.message.read = remoteRead;
     refreshStarted();
     await refreshGate;
-    await route.fulfill({ response });
+    await route.fulfill({ response, json: payload });
   });
   await page.getByRole('button', { name: `释放到收件箱 ${subject}` }).click();
   await expect(page.getByText('邮件已释放到收件箱。')).toBeVisible();
@@ -795,8 +838,43 @@ test('workspace deep link reconciles release and hides archive while quarantined
   resumeRefresh();
   await expect(detail.getByText('如需回复或转发，请先返回隔离区并释放邮件。')).toHaveCount(0);
   await expect(detail.getByRole('button', { name: '取消星标', exact: true })).toBeVisible();
+  await expect(readAction).toHaveAttribute('aria-label', remoteRead ? '标为未读' : '标为已读');
   await expect(detail.getByRole('button', { name: '回复', exact: true }).first()).toBeVisible();
   await expect(detail.getByRole('button', { name: '归档', exact: true })).toHaveCount(1);
+
+  await reader.unroute('**/api/workspace/messages/**');
+  let resumeSecond!: () => void;
+  let secondStarted!: () => void;
+  const secondGate = new Promise<void>((resolve) => { resumeSecond = resolve; });
+  const secondReady = new Promise<void>((resolve) => { secondStarted = resolve; });
+  await reader.route('**/api/workspace/messages/**', async (route) => {
+    const target = new URL(route.request().url());
+    if (route.request().method() !== 'GET' || decodeURIComponent(target.pathname) !== `/api/workspace/messages/${id}`) return route.continue();
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.data.message.starred = false;
+    secondStarted();
+    await secondGate;
+    await route.fulfill({ response, json: payload });
+  });
+  await page.evaluate((messageId) => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh', id: messageId });
+    channel.close();
+  }, id);
+  await secondReady;
+  const nextRead = !remoteRead;
+  const readPatched = reader.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes('/flags'));
+  if (await readAction.isVisible()) await readAction.click();
+  else {
+    await detail.getByRole('button', { name: '更多邮件操作' }).click();
+    await reader.getByRole('menuitem', { name: remoteRead ? '标为未读' : '标为已读' }).click();
+  }
+  await readPatched;
+  await expect(readAction).toHaveAttribute('aria-label', nextRead ? '标为未读' : '标为已读');
+  resumeSecond();
+  await expect(detail.getByRole('button', { name: '加星', exact: true })).toBeVisible();
+  await expect(readAction).toHaveAttribute('aria-label', nextRead ? '标为未读' : '标为已读');
   await reader.close();
 });
 
