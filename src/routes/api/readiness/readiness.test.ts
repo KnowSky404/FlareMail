@@ -96,7 +96,14 @@ describe('/api/readiness', () => {
     database.close();
   });
 
-  test.each([FLAREMAIL_SCHEMA_VERSION - 1, FLAREMAIL_SCHEMA_VERSION + 1])(
+  test('accepts the additive schema 29 during the compatibility bridge', async () => {
+    const database = new Database(':memory:');
+    applyMigrations(database);
+    database.query(`UPDATE workspace_schema_metadata SET schema_version = 29 WHERE schema_name = 'flaremail'`).run();
+    expect((await health(database)).status).toBe(200);
+  });
+
+  test.each([FLAREMAIL_SCHEMA_VERSION - 1, 30])(
     'rejects schema version %i',
     async (schemaVersion) => {
       const database = new Database(':memory:');

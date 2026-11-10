@@ -3,7 +3,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { validateEnvironment } from '$lib/server/config/env';
 import { mailHealthState } from '$lib/domain/mail/health';
 import { listManagedMailDomains } from '$lib/server/db/mail-identities';
-import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
+import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
 import { getRequestId, withApiHandler } from '$lib/server/http/api';
 import { requireWorkspaceSession } from '$lib/server/workspace-api';
 import type { RequestHandler } from './$types';
@@ -71,7 +71,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
         WHERE type = 'table' AND name IN (${placeholders})
       `).bind(...REQUIRED_TABLES).all<{ name: string }>();
       const version = await env.DB.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?').bind('flaremail').first<{ schema_version: number }>();
-      schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && version?.schema_version === FLAREMAIL_SCHEMA_VERSION;
+      schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && isSupportedWorkspaceSchemaVersion(version?.schema_version);
       schemaCode = 'SCHEMA_NOT_READY';
       if (schemaReady) {
         const queue = await env.DB.prepare(`
