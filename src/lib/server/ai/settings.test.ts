@@ -51,6 +51,14 @@ describe('encrypted Owner AI settings', () => {
     expect((await resolveWorkspaceMailAiConfiguration(f.env, 'owner')).config).toMatchObject({ apiKey: 'provider-secret', apiFormat: 'responses', model: 'test-model' });
     expect((f.sqlite.query("SELECT theme FROM workspace_settings WHERE user_id='owner'").get() as {theme:string}).theme).toBe('dark');
   });
+  test('full endpoint settings keep their encrypted key binding on reads and later edits', async () => {
+    const f = setup(); const baseUrl = f.input.baseUrl + '/responses';
+    const saved = await f.save({ baseUrl });
+    expect((await readMailAiSettings(f.env, 'owner')).settings.baseUrl).toBe(baseUrl);
+    expect((await resolveWorkspaceMailAiConfiguration(f.env, 'owner')).config).toMatchObject({ baseUrl, apiKey: 'provider-secret' });
+    await f.save({ baseUrl, apiKey: '', model: 'changed-model', revision: saved.revision });
+    expect((await resolveWorkspaceMailAiConfiguration(f.env, 'owner')).config).toMatchObject({ baseUrl, apiKey: 'provider-secret', model: 'changed-model' });
+  });
   test('blank input retains the key; explicit delete clears it without environment fallback', async () => {
     const f = setup(); const view = await f.save();
     const updated = await f.save({ apiKey: '', model: 'changed', revision: view.revision });

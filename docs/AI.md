@@ -32,7 +32,10 @@ AI **默认关闭**。仅按需生成单封邮件摘要和分类建议，不自�
    provider key; the old encrypted value cannot be recovered without it.
 
 The API base is a trusted public HTTPS address, such as
-`https://api.your-provider.com/v1`, excluding `/chat/completions` and `/responses`.
+`https://api.your-provider.com/v1`. Full URLs ending in `/chat/completions` or
+`/responses` are also accepted, with an optional trailing slash. The selected
+API format determines the final endpoint; the method path is appended exactly
+once. Stored URLs remain unchanged so existing encrypted keys remain readable.
 Credentials, queries, fragments, IP literals, local names and nonstandard ports
 are rejected; redirects are never followed. Choose a provider you trust with
 email contents. Hostname validation cannot prevent a trusted hostname's DNS
@@ -42,6 +45,8 @@ from resolving to an inappropriate destination.
 64 位十六进制），后续 Owner 直接在「设置 → AI 设置」修改地址、模型、Key、接口格式、
 超时和正文长度，保存立即生效，无需重新部署，也不会发起模型调用。复用现有设置表，
 Key 经 AES-GCM 加密保存且永不回显；留空保留，填新值替换，更换地址须重新输入。
+地址可填到 `/v1`，也可粘贴完整 `/responses` 或 `/chat/completions` 地址，
+最终调用路径按所选接口格式确定，不会重复追加；已保存 Key 不受此兼容修复影响。
 删除 Key 前先关闭 AI，再勾选删除。并发修改时重新读取配置后保存。加密 Secret 必须跨部署
 保持稳定；丢失或轮换后需重新填写供应商 Key。原生 PRE 的 Secret 与生产环境分别配置。
 

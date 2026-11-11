@@ -754,3 +754,5 @@ return 409 `AI_SETTINGS_CONFLICT`; encryption setup errors return 503
 `AI_SETTINGS_KEY_UNAVAILABLE`. Saving has no provider call and takes effect
 on the next analysis request. Existing encrypted settings override environment
 defaults. No new schema migration is required beyond schema 30.
+
+AI provider URLs accept either an HTTPS base or a full `/responses` or `/chat/completions` URL. The selected API format determines the final method path; it is appended once. Stored URL values are preserved to retain encrypted-key bindings.

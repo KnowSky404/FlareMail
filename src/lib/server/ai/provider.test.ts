@@ -81,6 +81,24 @@ describe('analysis output boundary', () => {
 });
 
 describe('native MaaS adapter', () => {
+  test('accepts base or full endpoint URLs without duplicating paths and honors the selected format', async () => {
+    for (const apiFormat of ['chat-completions', 'responses'] as const) {
+      for (const suffix of ['', '/', '/responses', '/responses/', '/chat/completions', '/chat/completions/']) {
+        let calls = 0;
+        const provider = createMailAiProvider({ ...config, apiFormat, baseUrl: config.baseUrl + suffix }, fakeFetch((url, init) => {
+          calls++;
+          expect(url).toBe(`${config.baseUrl}/${apiFormat === 'responses' ? 'responses' : 'chat/completions'}`);
+          expect(new Headers(init.headers).get('authorization')).toBe('Bearer test-secret');
+          const analysis = fakeMailAiAnalysis(input);
+          return Response.json(apiFormat === 'responses'
+            ? { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(analysis) }] }] }
+            : envelope(analysis));
+        }));
+        expect(await provider.analyze(input)).toEqual(fakeMailAiAnalysis(input));
+        expect(calls).toBe(1);
+      }
+    }
+  });
   test('sends only the bounded email projection, JSON instructions and fixed server credentials', async () => {
     let calls = 0;
     const provider = createMailAiProvider(config, fakeFetch((url, init) => {
