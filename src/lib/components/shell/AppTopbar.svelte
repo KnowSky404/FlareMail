@@ -83,19 +83,13 @@
     syncDesktopSearch();
     layoutMedia.addEventListener('change', syncDesktopSearch);
 
-    const media = matchMedia('(prefers-color-scheme: dark)');
     const syncThemePreference = (event: Event) => {
       const detail = (event as CustomEvent<{ preference?: ThemePreference }>).detail;
       if (detail?.preference) themePreference = detail.preference;
     };
-    const syncSystemTheme = () => {
-      if (themePreference === 'system') applyTheme('system');
-    };
-    media.addEventListener('change', syncSystemTheme);
     window.addEventListener('flaremail:theme-change', syncThemePreference);
     return () => {
       layoutMedia.removeEventListener('change', syncDesktopSearch);
-      media.removeEventListener('change', syncSystemTheme);
       window.removeEventListener('flaremail:theme-change', syncThemePreference);
     };
   });

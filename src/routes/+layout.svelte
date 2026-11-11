@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import '../app.css';
+  import { applyTheme, readThemePreference } from '$lib/theme';
   import { createLocaleContext, provideLocaleContext, type Locale } from '$lib/i18n';
   import type { LayoutData } from './$types';
 
@@ -24,12 +25,20 @@
   });
 
   onMount(() => {
+    const media = matchMedia('(prefers-color-scheme: dark)');
+    const syncSystemTheme = () => {
+      if (readThemePreference() === 'system') applyTheme('system');
+    };
+    media.addEventListener('change', syncSystemTheme);
     const syncLocale = (event: Event) => {
       const next = (event as CustomEvent<{ locale?: Locale }>).detail?.locale;
       if (next) localeContext.setLocale(next);
     };
     window.addEventListener('flaremail:locale-change', syncLocale);
-    return () => window.removeEventListener('flaremail:locale-change', syncLocale);
+    return () => {
+      media.removeEventListener('change', syncSystemTheme);
+      window.removeEventListener('flaremail:locale-change', syncLocale);
+    };
   });
 </script>
 
