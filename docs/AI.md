@@ -66,6 +66,38 @@ and assistant `output_text`; incomplete, refusal or tool output fails safely.
 This is an outbound provider adapter, not a public OpenAI proxy endpoint.
 See the [official Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create).
 
+## OpenAI Platform / 官方平台
+
+For an OpenAI Platform project, use its API key, set the API URL to
+`https://api.openai.com/v1` (a full `/responses` URL also works), keep the model
+ID available to that project, and select **Responses API** in AI settings.
+`platform.openai.com` is the project management site; it is not the API base URL.
+
+Requests to the exact `api.openai.com` origin use the official parameters:
+Responses sends `instructions`, `input`, `max_output_tokens`, and strict JSON
+Schema under `text.format`. Chat Completions uses `messages`,
+`max_completion_tokens` and `response_format.json_schema`. Both use
+`Authorization: Bearer`, `store: false`, and no streaming or tools. Third-party
+compatible endpoints retain the existing request format. Local validation
+still checks lengths, categories, language and verbatim date evidence.
+
+官方平台配置：使用 OpenAI Platform 项目的 API Key，地址填
+`https://api.openai.com/v1`（完整 `/responses` 地址也兼容），模型填写该项目
+可访问的模型 ID，接口选择 Responses API。`platform.openai.com` 是管理站点，
+不是 API 请求地址。官方直连接口使用严格 JSON Schema 输出，并分别按 Responses
+和 Chat Completions 的官方字段发送请求；兼容服务保留原有请求格式。
+
+The 1800 output-token cap includes reasoning for reasoning models. Model
+reasoning defaults are preserved. Truncation/refusal never becomes a cached
+analysis and does not trigger an automatic billable retry or a budget increase.
+Only recognized upstream error codes are classified. Error responses never
+return or log upstream messages, keys, project identifiers or echoed email text.
+
+Reference: [Responses](https://developers.openai.com/api/reference/resources/responses/methods/create),
+[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses),
+[Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create),
+[error codes](https://developers.openai.com/api/docs/guides/error-codes).
+
 ## Use / 使用
 
 Open an owned inbox message (workspace, reader dialog or standalone reader),
@@ -124,8 +156,15 @@ removal of content already submitted.
 - `AI_SETTINGS_KEY_UNAVAILABLE`: initialize the environment encryption Secret;
   if it changed, replace the provider key. No plaintext key is returned.
 - `AI_KEY_REENTRY_REQUIRED`: re-enter the key after changing the base URL.
-- `AI_PROVIDER_AUTH`: verify provider credential access privately; do not paste it
-  into logs or issue reports.
+- `AI_PROVIDER_AUTH` / `AI_PROVIDER_FORBIDDEN`: check API key authentication,
+  project access, IP allowlists and supported regions.
+- `AI_PROVIDER_MODEL_NOT_FOUND`: the model ID is missing or the project cannot
+  access it. `AI_PROVIDER_NOT_FOUND`: check the API URL and selected format.
+- `AI_PROVIDER_BAD_REQUEST`: check model support for the API and structured output.
+- `AI_PROVIDER_QUOTA`: check OpenAI Platform credits and project/organization
+  limits. This is distinct from `AI_RATE_LIMITED` and is never retried automatically.
+- `AI_OUTPUT_LIMIT` / `AI_REFUSED`: no analysis is saved; shorten the input or
+  choose a suitable model instead of automatically resubmitting it.
 - `AI_BUSY` / `processing`: refresh after a minute. Worker interruption cannot
   leave a permanent processing lock.
 - `AI_QUOTA_EXCEEDED` / `AI_RATE_LIMITED`: wait for the application/provider quota.

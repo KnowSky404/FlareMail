@@ -21,6 +21,13 @@
   onDestroy(() => controller.abort());
   const panelId = $derived(`mail-ai-${message.id}`);
   const analysis = $derived(result?.analysis);
+  const errorHints = {
+    AI_PROVIDER_AUTH: 'ai.providerAuth', AI_PROVIDER_FORBIDDEN: 'ai.providerForbidden',
+    AI_PROVIDER_MODEL_NOT_FOUND: 'ai.providerModel', AI_PROVIDER_NOT_FOUND: 'ai.providerEndpoint',
+    AI_PROVIDER_BAD_REQUEST: 'ai.providerRequest', AI_PROVIDER_QUOTA: 'ai.providerQuota',
+    AI_RATE_LIMITED: 'ai.providerRate', AI_PROVIDER_UNAVAILABLE: 'ai.providerUnavailable',
+    AI_TIMEOUT: 'ai.providerTimeout', AI_OUTPUT_LIMIT: 'ai.outputLimit', AI_REFUSED: 'ai.refused'
+  } as const;
   async function load(analyze = false, regenerate = false) {
     if (busy) return;
     busy = true; error = '';
@@ -29,7 +36,11 @@
         signal: controller.signal, ...(analyze ? { method: 'POST', body: JSON.stringify({ language: i18n.locale, regenerate }) } : {})
       });
     } catch (cause) {
-      if (!controller.signal.aborted) error = t('ai.error', { code: cause instanceof ClientApiError ? cause.code : 'NETWORK_FAILURE' });
+      if (!controller.signal.aborted) {
+        const code = cause instanceof ClientApiError ? cause.code : 'NETWORK_FAILURE';
+        const hint = errorHints[code as keyof typeof errorHints];
+        error = t('ai.error', { code }) + (hint ? ` ${t(hint)}` : '');
+      }
     } finally { busy = false; }
   }
   function toggle() { open = !open; if (open && !result) void load(); }
