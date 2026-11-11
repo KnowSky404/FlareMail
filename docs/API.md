@@ -767,3 +767,5 @@ origin with strict structured output: Responses `text.format` and
 a provider error code and `retryable: false`. Provider quota failures return
 429 without an automatic retry. Output-token exhaustion (`AI_OUTPUT_LIMIT`) and
 refusal (`AI_REFUSED`) return 502 without partial analysis or upstream messages.
+
+Provider failures may include a safe `error.details.reason`: `provider_http_<status>` or a fixed network category (`provider_redirect`, `provider_tls_error`, `provider_dns_error`, `provider_header_error`, `provider_network_error`). These diagnostics never include upstream messages, URLs, keys or email content.
