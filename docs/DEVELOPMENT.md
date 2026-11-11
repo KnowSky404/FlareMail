@@ -395,3 +395,7 @@ Install Node.js >= 22.18 and `bun add --global cf`. Verify `command -v cf` and `
 Use `bun run preview` for the complete local Worker. Set `FLAREMAIL_DEV_HOST` (default `::`) and `FLAREMAIL_DEV_PORT` (default `8787`); cf does not forward arbitrary Vite host/port arguments. Local D1/R2 and the runtime share `.cloudflare/state`; override `FLAREMAIL_STATE_DIR` per worktree/test. The previous `.wrangler` state is not implicitly reused or migrated. For user access, verify IPv4/IPv6 using `ss -lntp` and provide `http://oc-de-fra-1.knowsky.uk:<port>`.
 
 `bun run dev` remains the Svelte HMR server; its adapter proxy mirrors the selected local target and shares the same isolated state directory. Use `bun run preview` for acceptance of the complete fetch/email/scheduled wrapper. SvelteKit 3 keeps the existing `$lib` imports through its documented compatibility alias. TypeScript 6 is intentional: TypeScript 7 no longer provides the compiler API used by SvelteKit.
+
+## Optional mail AI
+
+See [AI setup and fake-provider testing](AI.md). AI tests do not need provider credentials. Use isolated local D1/R2; never analyze shared real email as a fixture.

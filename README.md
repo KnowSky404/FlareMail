@@ -71,3 +71,5 @@ The approach follows the presentation/CSS separation in
 and [SnappyMail](https://github.com/the-djmaze/snappymail/blob/master/dev/Common/Html.js),
 using [CSSTree](https://github.com/csstree/csstree) for CSS parsing and validation
 and [parse5](https://github.com/inikulin/parse5) for HTML5 structure normalization.
+
+Optional on-demand AI summaries and inbox category suggestions: [AI setup and privacy guide](docs/AI.md). Disabled by default.

@@ -76,3 +76,7 @@ Worker 收信及执行定时任务，Preview 网页可查看其写入的邮件�
 [自定义域名](https://developers.cloudflare.com/workers/previews/custom-domains/)、
 [资源隔离](https://developers.cloudflare.com/workers/previews/resources/)、
 [Version URLs](https://developers.cloudflare.com/workers/versions-and-deployments/version-urls/)。
+
+## Optional AI acceptance
+
+See [AI setup](AI.md). AI is disabled by default. Preview shares production data, and AI generation sends selected email text to an external service. Publishing Preview does not authorize AI processing or migration 0030; obtain the relevant authorization separately. Fake/local tests are not real-provider acceptance.
