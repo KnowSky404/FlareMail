@@ -138,7 +138,6 @@ describe('native MaaS adapter', () => {
   });
   test('limits response bytes and rejects malformed JSON and incomplete output', async () => {
     for (const response of [new Response('x'.repeat(32769)), new Response('bad json'), Response.json({ choices: [] }),
-      Response.json({ choices: [{ finish_reason: 'length', message: { content: '{}' } }] }),
       Response.json(envelope({ summary: 'only summary' }))]) {
       await expect(createMailAiProvider(config, fakeFetch(() => response)).analyze(input)).rejects.toMatchObject({ code: 'AI_INVALID_RESPONSE' });
     }
@@ -191,12 +190,70 @@ describe('Responses format adapter', () => {
     for (const response of [
       { status: 'incomplete', output: [] }, { status: 'failed', error: { message: 'private-provider-error' }, output: [] },
       { status: 'completed', output: [{ type: 'function_call', arguments: '{}' }] },
-      { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: 'no' }] }] },
       { status: 'completed', output: [], output_text: JSON.stringify(fakeMailAiAnalysis(input)) }
     ]) await expect(createMailAiProvider({ ...config, apiFormat: 'responses' }, fakeFetch(() => Response.json(response))).analyze(input)).rejects.toMatchObject({ code: 'AI_INVALID_RESPONSE' });
   });
   test('keeps the same bounded errors and timeout for Responses', async () => {
     await expect(createMailAiProvider({ ...config, apiFormat: 'responses' }, fakeFetch(() => new Response('x'.repeat(32769)))).analyze(input)).rejects.toMatchObject({ code: 'AI_INVALID_RESPONSE' });
     await expect(createMailAiProvider({ ...config, apiFormat: 'responses' }, fakeFetch(() => new Response('', { status: 401 }))).analyze(input)).rejects.toMatchObject({ code: 'AI_PROVIDER_AUTH' });
+  });
+});
+
+
+describe('OpenAI Platform requests and errors', () => {
+  test.each(['responses', 'chat-completions'] as const)('uses official %s parameters and strict structured output', async (apiFormat) => {
+    const provider = createMailAiProvider({ ...config, apiFormat, model: 'gpt-5.6-luna', baseUrl: 'https://api.openai.com/v1/responses' }, fakeFetch((url, init) => {
+      expect(url).toBe(`https://api.openai.com/v1/${apiFormat === 'responses' ? 'responses' : 'chat/completions'}`);
+      expect(new Headers(init.headers).get('authorization')).toBe('Bearer test-secret');
+      const payload = JSON.parse(String(init.body));
+      expect(payload).toMatchObject({ model: 'gpt-5.6-luna', store: false, stream: false });
+      expect(payload.max_tokens).toBeUndefined();
+      const format = apiFormat === 'responses' ? payload.text.format : payload.response_format;
+      expect(format.type).toBe('json_schema');
+      const schemaConfig = apiFormat === 'responses' ? format : format.json_schema;
+      expect(schemaConfig).toMatchObject({ name: 'mail_analysis', strict: true, schema: { type: 'object', additionalProperties: false } });
+      expect(schemaConfig.schema.required).toEqual(Object.keys(fakeMailAiAnalysis(input)));
+      expect(schemaConfig.schema.properties.suggestion.anyOf[0]).toMatchObject({ additionalProperties: false, required: ['category', 'confidence', 'reason'] });
+      expect(schemaConfig.schema.properties.suggestion.anyOf[1]).toEqual({ type: 'null' });
+      if (apiFormat === 'responses') { expect(payload.max_output_tokens).toBe(1800); expect(payload.response_format).toBeUndefined(); }
+      else { expect(payload.max_completion_tokens).toBe(1800); expect(payload.text).toBeUndefined(); }
+      const analysis = fakeMailAiAnalysis(input);
+      return Response.json(apiFormat === 'responses' ? { status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(analysis) }] }] } : envelope(analysis));
+    }));
+    expect(await provider.analyze(input)).toEqual(fakeMailAiAnalysis(input));
+  });
+  test('preserves the existing compatible-provider request without native-only options', async () => {
+    await createMailAiProvider({ ...config, apiFormat: 'responses' }, fakeFetch((_, init) => {
+      const payload = JSON.parse(String(init.body)); expect(payload.text).toBeUndefined();
+      return Response.json({ status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(fakeMailAiAnalysis(input)) }] }] });
+    })).analyze(input);
+  });
+  test.each(['insufficient_quota', 'credit_balance_exhausted', 'organization_spend_limit_exceeded', 'project_spend_limit_exceeded', 'organization_usage_limit_exceeded'])('reports %s without retrying or exposing provider messages', async (code) => {
+    let calls = 0;
+    const provider = createMailAiProvider(config, fakeFetch(() => { calls++; return Response.json({ error: { code, type: code, message: 'private test-secret' } }, { status: 429, headers: { 'retry-after': '0' } }); }));
+    try { await provider.analyze(input); throw new Error('unexpected success'); }
+    catch (error) {
+      expect(error).toMatchObject({ status: 429, code: 'AI_PROVIDER_QUOTA', retryable: false });
+      expect(String(error)).not.toContain('private'); expect(String(error)).not.toContain('test-secret');
+    }
+    expect(calls).toBe(1);
+  });
+  test.each([[400, '', 'AI_PROVIDER_BAD_REQUEST'], [401, '', 'AI_PROVIDER_AUTH'], [403, '', 'AI_PROVIDER_FORBIDDEN'], [404, '', 'AI_PROVIDER_NOT_FOUND'], [404, 'model_not_found', 'AI_PROVIDER_MODEL_NOT_FOUND']] as const)('maps HTTP %i and code %s to %s without expiring workspace authentication', async (status, code, expected) => {
+    const provider = createMailAiProvider(config, fakeFetch(() => Response.json({ error: { code, message: 'private test-secret' } }, { status })));
+    await expect(provider.analyze(input)).rejects.toMatchObject({ status: 503, code: expected, retryable: false });
+  });
+  test('bounds and redacts malformed error responses and times out stalled error bodies', async () => {
+    await expect(createMailAiProvider(config, fakeFetch(() => new Response('private test-secret'.repeat(3000), { status: 404 }))).analyze(input)).rejects.toMatchObject({ code: 'AI_PROVIDER_NOT_FOUND' });
+    await expect(createMailAiProvider(config, fakeFetch(() => new Response(new ReadableStream({ start() {} }), { status: 429 }))).analyze(input)).rejects.toMatchObject({ code: 'AI_TIMEOUT' });
+  });
+  test('reports token exhaustion and refusals in both documented response shapes', async () => {
+    for (const [apiFormat, body, code] of [
+      ['responses', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] }, 'AI_OUTPUT_LIMIT'],
+      ['responses', { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: 'private text' }] }] }, 'AI_REFUSED'],
+      ['chat-completions', { choices: [{ finish_reason: 'length', message: { content: '{}' } }] }, 'AI_OUTPUT_LIMIT'],
+      ['chat-completions', { choices: [{ finish_reason: 'stop', message: { content: null, refusal: 'private text' } }] }, 'AI_REFUSED']
+    ] as const) {
+      await expect(createMailAiProvider({ ...config, apiFormat }, fakeFetch(() => Response.json(body))).analyze(input)).rejects.toMatchObject({ code, retryable: false });
+    }
   });
 });

@@ -176,3 +176,25 @@ test('explicit theme survives OS changes when browser storage writes fail', asyn
   }
   await assertNoConsoleErrors(consoleErrors);
 });
+
+test('OpenAI quota errors explain Platform billing without exposing provider messages', async ({ page, consoleErrors }) => {
+  let calls = 0;
+  await page.route(`**${path}*`, async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: { ok: true, data: { status: 'empty', analysis: null }, requestId: 'fake-openai-error' } });
+    } else {
+      calls++;
+      await route.fulfill({ status: 429, json: { ok: false, error: { code: 'AI_PROVIDER_QUOTA', message: 'provider-secret-do-not-render' }, requestId: 'fake-openai-error' } });
+    }
+  });
+  await login(page);
+  await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
+  const panel = page.getByRole('region', { name: title });
+  await panel.getByRole('button', { name: title, exact: true }).first().click();
+  await panel.getByRole('button', { name: '同意并生成分析' }).click();
+  await expect(panel.getByRole('alert')).toContainText('AI_PROVIDER_QUOTA');
+  await expect(panel.getByRole('alert')).toContainText('OpenAI Platform');
+  await expect(panel).not.toContainText('provider-secret-do-not-render');
+  expect(calls).toBe(1);
+  await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*429/u.test(text)));
+});

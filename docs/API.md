@@ -756,3 +756,14 @@ on the next analysis request. Existing encrypted settings override environment
 defaults. No new schema migration is required beyond schema 30.
 
 AI provider URLs accept either an HTTPS base or a full `/responses` or `/chat/completions` URL. The selected API format determines the final method path; it is appended once. Stored URL values are preserved to retain encrypted-key bindings.
+
+For direct OpenAI Platform requests, the adapter uses the official `api.openai.com`
+origin with strict structured output: Responses `text.format` and
+`max_output_tokens`, or Chat Completions `response_format.json_schema` and
+`max_completion_tokens`. Common provider failures use `AI_PROVIDER_AUTH`,
+`AI_PROVIDER_FORBIDDEN`, `AI_PROVIDER_MODEL_NOT_FOUND`, `AI_PROVIDER_NOT_FOUND`,
+`AI_PROVIDER_BAD_REQUEST`, `AI_PROVIDER_QUOTA` and `AI_RATE_LIMITED`. Upstream
+401/403 do not expire the workspace session: they return an application 503 with
+a provider error code and `retryable: false`. Provider quota failures return
+429 without an automatic retry. Output-token exhaustion (`AI_OUTPUT_LIMIT`) and
+refusal (`AI_REFUSED`) return 502 without partial analysis or upstream messages.
