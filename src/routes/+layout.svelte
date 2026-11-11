@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import '../app.css';
-  import { applyTheme, readThemePreference } from '$lib/theme';
+  import { applyTheme } from '$lib/theme';
   import { createLocaleContext, provideLocaleContext, type Locale } from '$lib/i18n';
   import type { LayoutData } from './$types';
 
@@ -27,7 +27,7 @@
   onMount(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const syncSystemTheme = () => {
-      if (readThemePreference() === 'system') applyTheme('system');
+      if (document.documentElement.dataset.themePreference === 'system') applyTheme('system');
     };
     media.addEventListener('change', syncSystemTheme);
     const syncLocale = (event: Event) => {

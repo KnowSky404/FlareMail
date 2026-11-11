@@ -139,3 +139,24 @@ test('AI focused reader uses the shared cached analysis without another generati
   await dialog.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
   await expect(dialog).toBeHidden();
 });
+
+
+test('explicit theme survives OS changes when browser storage writes fail', async ({ page, consoleErrors }, info) => {
+  test.skip(info.project.name !== 'desktop', 'Desktop preference controls exercise the shared theme listener.');
+  await login(page);
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.evaluate(() => {
+    localStorage.setItem('flaremail-theme', 'system');
+    Storage.prototype.setItem = () => { throw new DOMException('Storage unavailable', 'SecurityError'); };
+  });
+  await page.getByRole('button', { name: '显示偏好', exact: true }).click();
+  await page.getByRole('radio', { name: '深色', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'dark');
+  for (const colorScheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('html')).toHaveAttribute('data-theme-preference', 'dark');
+  }
+  await assertNoConsoleErrors(consoleErrors);
+});
