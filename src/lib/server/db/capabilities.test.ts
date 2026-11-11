@@ -34,9 +34,9 @@ describe('workspace schema capabilities', () => {
     expect(await hasWorkspaceCoreTables(envFor(current))).toBe(true);
     current.query('UPDATE workspace_schema_metadata SET schema_version = 28').run();
     expect(await hasWorkspaceCoreTables(envFor(current))).toBe(false);
-    current.query('UPDATE workspace_schema_metadata SET schema_version = 30').run();
+    current.query('UPDATE workspace_schema_metadata SET schema_version = ?').run(FLAREMAIL_SCHEMA_VERSION + 1);
     expect(await hasWorkspaceCoreTables(envFor(current))).toBe(false);
-    current.query('UPDATE workspace_schema_metadata SET schema_version = 29').run();
+    current.query('UPDATE workspace_schema_metadata SET schema_version = ?').run(FLAREMAIL_SCHEMA_VERSION);
     expect(await getWorkspaceCapabilities(envFor(current))).toEqual({
       drafts: true,
       inboundStates: true,

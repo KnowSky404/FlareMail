@@ -232,19 +232,19 @@ describe('local historical mail identity backfill', () => {
     db.close();
   });
 
-  test('records schema 29 and rejects applying a plan after the schema changes', async () => {
+  test('records the current schema and rejects applying a plan after the schema changes', async () => {
     const db = createDatabase();
     addInbound(db, { id: 'bridge-legacy' });
     const store = sqliteStore(db);
     const plan = await createMailIdentityBackfillPlan(store, {
       ownerUserId: 'owner-1', addressId: 'address-1', now: new Date('2026-09-21T10:00:00.000Z')
     });
-    expect(plan.schemaVersion).toBe(29);
-    expect(() => validateMailIdentityBackfillPlan({ ...plan, schemaVersion: 30 })).toThrow('Unsupported history backfill plan or schema version');
+    expect(plan.schemaVersion).toBe(FLAREMAIL_SCHEMA_VERSION);
+    expect(() => validateMailIdentityBackfillPlan({ ...plan, schemaVersion: FLAREMAIL_SCHEMA_VERSION + 1 })).toThrow('Unsupported history backfill plan or schema version');
     db.query("UPDATE workspace_schema_metadata SET schema_version = 28 WHERE schema_name = 'flaremail'").run();
     await expect(applyMailIdentityBackfillPlan(store, plan, plan.digest, new Date('2026-09-21T11:00:00.000Z')))
       .rejects.toThrow('The local schema changed after the plan was created');
-    db.query("UPDATE workspace_schema_metadata SET schema_version = 29 WHERE schema_name = 'flaremail'").run();
+    db.query("UPDATE workspace_schema_metadata SET schema_version = ? WHERE schema_name = 'flaremail'").run(FLAREMAIL_SCHEMA_VERSION);
     expect((await applyMailIdentityBackfillPlan(store, plan, plan.digest, new Date('2026-09-21T11:00:00.000Z'))).status).toBe('complete');
     db.close();
   });
