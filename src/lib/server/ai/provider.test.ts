@@ -240,7 +240,21 @@ describe('OpenAI Platform requests and errors', () => {
   });
   test.each([[400, '', 'AI_PROVIDER_BAD_REQUEST'], [401, '', 'AI_PROVIDER_AUTH'], [403, '', 'AI_PROVIDER_FORBIDDEN'], [404, '', 'AI_PROVIDER_NOT_FOUND'], [404, 'model_not_found', 'AI_PROVIDER_MODEL_NOT_FOUND']] as const)('maps HTTP %i and code %s to %s without expiring workspace authentication', async (status, code, expected) => {
     const provider = createMailAiProvider(config, fakeFetch(() => Response.json({ error: { code, message: 'private test-secret' } }, { status })));
-    await expect(provider.analyze(input)).rejects.toMatchObject({ status: 503, code: expected, retryable: false });
+    await expect(provider.analyze(input)).rejects.toMatchObject({ status: 503, code: expected, retryable: false, details: { reason: `provider_http_${status}` } });
+  });
+  test('exposes only fixed network diagnostic reasons without upstream URLs or keys', async () => {
+    for (const [message, reason] of [
+      ['redirect to private test-secret', 'provider_redirect'], ['TLS certificate private test-secret', 'provider_tls_error'],
+      ['DNS ENOTFOUND private test-secret', 'provider_dns_error'], ['ByteString header private test-secret', 'provider_header_error'],
+      ['private test-secret', 'provider_network_error']
+    ]) {
+      const provider = createMailAiProvider(config, fakeFetch(() => { throw new TypeError(message); }));
+      try { await provider.analyze(input); throw new Error('unexpected success'); }
+      catch (error) {
+        expect(error).toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE', details: { reason } });
+        expect(JSON.stringify(error)).not.toContain('test-secret'); expect(String(error)).not.toContain('private');
+      }
+    }
   });
   test('bounds and redacts malformed error responses and times out stalled error bodies', async () => {
     await expect(createMailAiProvider(config, fakeFetch(() => new Response('private test-secret'.repeat(3000), { status: 404 }))).analyze(input)).rejects.toMatchObject({ code: 'AI_PROVIDER_NOT_FOUND' });

@@ -138,7 +138,7 @@ export function createMailAiProvider(config: MailAiConfig, fetcher: typeof fetch
             const code = quota ? 'AI_PROVIDER_QUOTA' : response.status === 401 ? 'AI_PROVIDER_AUTH'
               : response.status === 403 ? 'AI_PROVIDER_FORBIDDEN' : response.status === 404 ? providerError?.code === 'model_not_found' ? 'AI_PROVIDER_MODEL_NOT_FOUND' : 'AI_PROVIDER_NOT_FOUND'
               : [400, 405, 422].includes(response.status) ? 'AI_PROVIDER_BAD_REQUEST' : response.status === 429 ? 'AI_RATE_LIMITED' : 'AI_PROVIDER_UNAVAILABLE';
-            throw new ApiError(response.status === 429 ? 429 : 503, code, 'AI service is unavailable. Check configuration or retry later.', undefined, undefined, code === 'AI_PROVIDER_UNAVAILABLE' || code === 'AI_RATE_LIMITED');
+            throw new ApiError(response.status === 429 ? 429 : 503, code, 'AI service is unavailable. Check configuration or retry later.', undefined, { reason: `provider_http_${response.status}` }, code === 'AI_PROVIDER_UNAVAILABLE' || code === 'AI_RATE_LIMITED');
           }
           const result = await boundedJson(response, controller.signal);
           let content: string;
@@ -179,7 +179,14 @@ export function createMailAiProvider(config: MailAiConfig, fetcher: typeof fetch
       } catch (error) {
         if (controller.signal.aborted) throw new ApiError(504, 'AI_TIMEOUT', 'AI analysis timed out. Please retry.');
         if (error instanceof ApiError) throw error;
-        throw new ApiError(503, 'AI_PROVIDER_UNAVAILABLE', 'AI service is unavailable. Please retry later.');
+        let reason = 'provider_network_error';
+        if (error instanceof Error) {
+          if (/redirect/iu.test(error.message)) reason = 'provider_redirect';
+          else if (/certificate|\btls\b|\bssl\b/iu.test(error.message)) reason = 'provider_tls_error';
+          else if (/\bdns\b|resolve|ENOTFOUND/iu.test(error.message)) reason = 'provider_dns_error';
+          else if (/header|ByteString/iu.test(error.message)) reason = 'provider_header_error';
+        }
+        throw new ApiError(503, 'AI_PROVIDER_UNAVAILABLE', 'AI service is unavailable. Please retry later.', undefined, { reason });
       } finally { clearTimeout(timer); }
     }
   };
