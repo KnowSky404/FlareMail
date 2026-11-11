@@ -56,7 +56,7 @@ describe('Telegram D1 state', () => {
     expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(true);
     db.query(`UPDATE workspace_schema_metadata SET schema_version = 28 WHERE schema_name = 'flaremail'`).run();
     expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(false);
-    db.query(`UPDATE workspace_schema_metadata SET schema_version = 30 WHERE schema_name = 'flaremail'`).run();
+    db.query(`UPDATE workspace_schema_metadata SET schema_version = ? WHERE schema_name = 'flaremail'`).run(FLAREMAIL_SCHEMA_VERSION + 1);
     expect(await hasTelegramTables(d1 as unknown as D1Database)).toBe(false);
 
     db.query(`UPDATE workspace_schema_metadata SET schema_version = 21 WHERE schema_name = 'flaremail'`).run();
