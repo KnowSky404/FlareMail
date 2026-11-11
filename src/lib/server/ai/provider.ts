@@ -120,7 +120,7 @@ export function createMailAiProvider(config: MailAiConfig, fetcher: typeof fetch
         // ambiguous network/timeout/5xx failures that may already have consumed tokens.
         for (let attempt = 0; attempt < 2; attempt++) {
           const response = await fetcher(`${baseUrl}/${responses ? 'responses' : 'chat/completions'}`, {
-            method: 'POST', redirect: 'error', signal: controller.signal,
+            method: 'POST', redirect: 'manual', signal: controller.signal,
             headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` }, body: payload
           });
           if (!response.ok) {

@@ -37,7 +37,9 @@ The API base is a trusted public HTTPS address, such as
 API format determines the final endpoint; the method path is appended exactly
 once. Stored URLs remain unchanged so existing encrypted keys remain readable.
 Credentials, queries, fragments, IP literals, local names and nonstandard ports
-are rejected; redirects are never followed. Choose a provider you trust with
+are rejected; redirects are never followed. Workers uses `redirect: manual`
+and rejects non-2xx responses; the Fetch-standard `error` mode is unsupported
+by workerd and throws before any network request. Choose a provider you trust with
 email contents. Hostname validation cannot prevent a trusted hostname's DNS
 from resolving to an inappropriate destination.
 
