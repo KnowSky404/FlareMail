@@ -1,7 +1,9 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { mailAiApiFormats, type MailAiApiFormat } from '$lib/domain/mail/ai';
 import { parseBoolean } from '$lib/server/config/env';
 
 export interface MailAiConfig {
+  apiFormat: MailAiApiFormat;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -20,7 +22,7 @@ function boundedInteger(value: string | undefined, fallback: number, min: number
   return Number.isSafeInteger(result) && result >= min && result <= max ? result : null;
 }
 
-/** Admin-controlled public HTTPS host only; never accept an endpoint from a request. */
+/** Admin-controlled public HTTPS host only; only the Owner settings endpoint may persist it. */
 export function parseAiBaseUrl(value: string | undefined): string | null {
   if (!value) return null;
   try {
@@ -38,13 +40,14 @@ export function parseAiBaseUrl(value: string | undefined): string | null {
 
 export function resolveMailAiConfiguration(env: Partial<CloudflareEnv> = {}): MailAiConfiguration {
   if (!parseBoolean(env.AI_ENABLED)) return { status: 'disabled', config: null };
+  const apiFormat = env.AI_API_FORMAT ?? 'chat-completions';
   const baseUrl = parseAiBaseUrl(env.AI_BASE_URL);
   const model = env.AI_MODEL?.trim();
   const apiKey = env.AI_API_KEY?.trim();
   const timeoutMs = boundedInteger(env.AI_TIMEOUT_MS, 15000, 100, 30000);
   const maxInputChars = boundedInteger(env.AI_MAX_INPUT_CHARS, 16000, 256, 32000);
-  if ((env.AI_PROVIDER ?? 'openai-compatible') !== 'openai-compatible' || !baseUrl ||
+  if (!(mailAiApiFormats as readonly string[]).includes(apiFormat) || (env.AI_PROVIDER ?? 'openai-compatible') !== 'openai-compatible' || !baseUrl ||
     !model || model.length > 128 || /[\r\n]/u.test(model) || !apiKey || /\s/u.test(apiKey) ||
     !timeoutMs || !maxInputChars) return { status: 'unconfigured', config: null };
-  return { status: 'configured', config: { baseUrl, model, apiKey, timeoutMs, maxInputChars } };
+  return { status: 'configured', config: { baseUrl, model, apiKey, timeoutMs, maxInputChars, apiFormat: apiFormat as MailAiApiFormat } };
 }

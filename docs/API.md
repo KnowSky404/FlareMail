@@ -738,3 +738,19 @@ explicit operator actions.
 The standard envelope contains `{status, analysis, truncated?, updatedAt?}`; status is `disabled`, `unconfigured`, `empty`, `processing` or `ready`. Analysis contains `summary`, `keyPoints`, `actionItems`, verbatim `dates`, `language`, and nullable `suggestion: {category, confidence, reason}`. Only the five existing categories are accepted. AI-confirmed category PATCH requests set `onlyIfAutomatic: true`; the database updates only a null category override, so concurrent manual edits win and the response returns their current summaries. No automatic mailbox mutations occur; user-confirmed application uses the existing category PATCH endpoint.
 
 Only owned inbox messages are supported, including archived inbox sources. Trash, quarantine, blocked messages, sent mail and drafts cannot generate analyses. Claims expire after 60 seconds, with a 30-second cooldown and 30 attempts/hour per Owner. Body/model/endpoint/language/schema changes invalidate caches. Permanent deletion triggers cache cleanup. See [privacy, environment configuration and error codes](AI.md).
+
+### Owner AI settings
+
+`GET /api/workspace/ai/settings` returns `{settings, hasApiKey, canSave, revision, source}`.
+`settings` contains `enabled`, `baseUrl`, `model`, `apiFormat` (`chat-completions` or
+`responses`), `timeoutMs` (100–30000), and `maxInputChars` (256–32000).
+`PATCH` accepts those fields plus the latest `revision`, optional `apiKey` and
+optional `clearApiKey` (JSON, at most 12 KiB). Blank/omitted keys are retained;
+endpoint changes require key re-entry. Delete with `clearApiKey: true` while
+disabled. Unknown fields and invalid public HTTPS endpoints are rejected.
+Only the singleton Owner can read/write these settings; authentication, CSRF
+and no-store apply. Neither API returns plaintext/ciphertext keys. Stale saves
+return 409 `AI_SETTINGS_CONFLICT`; encryption setup errors return 503
+`AI_SETTINGS_KEY_UNAVAILABLE`. Saving has no provider call and takes effect
+on the next analysis request. Existing encrypted settings override environment
+defaults. No new schema migration is required beyond schema 30.

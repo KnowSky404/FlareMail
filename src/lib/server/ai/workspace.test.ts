@@ -74,6 +74,8 @@ describe('mail AI persistence and ownership', () => {
   });
   test('invalidates model, language, content (including truncated tails) and input coverage', async () => {
     const f = setup(); await f.analyze();
+    f.env.AI_API_FORMAT = 'responses'; expect((await f.get()).analysis).toBeNull();
+    f.cooldown(); await f.analyze();
     f.env.AI_MODEL = 'new-model'; expect((await f.get()).analysis).toBeNull();
     f.cooldown(); await f.analyze();
     expect((await workspaceMailAi(f.env, session(), 'email:mail', { language: 'zh-CN' }, f.provider)).analysis).toBeNull();

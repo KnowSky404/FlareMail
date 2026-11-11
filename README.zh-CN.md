@@ -69,4 +69,4 @@ FlareMail 采用 [GNU Affero General Public License](./LICENSE) 第 3 版，
 使用 [CSSTree](https://github.com/csstree/csstree) 解析及验证 CSS，
 并用 [parse5](https://github.com/inikulin/parse5) 规范化 HTML5 结构，避免畸形表格逃出正文容器。
 
-可选的按需 AI 摘要与收件箱分类建议：[启用、隐私及排错指南](docs/AI.md)。默认关闭。
+可选的按需 AI 摘要与收件箱分类建议：[启用、隐私及排错指南](docs/AI.md)。默认关闭；可在「设置 → AI 设置」修改模型和 Key，支持 Chat Completions 与 Responses API。
