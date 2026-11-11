@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
+import { prepareBodyObject } from '$lib/server/body';
+import { insertBodyObject } from '$lib/server/db/body';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { WorkspaceContext } from '$lib/server/workspace/shared';
 import { workspaceMailAi } from '$lib/server/workspace/ai';
@@ -53,6 +55,7 @@ describe('mail AI persistence and ownership', () => {
   });
   test('configuration missing or disabled makes no external request', async () => {
     const f = setup();
+    f.sqlite.exec("UPDATE email_messages SET body_object_id = 'missing-canonical'");
     f.env.AI_ENABLED = 'false'; expect((await f.analyze()).status).toBe('disabled');
     f.env.AI_ENABLED = 'true'; delete f.env.AI_API_KEY; expect((await f.analyze()).status).toBe('unconfigured');
     expect(f.calls()).toBe(0);
@@ -146,4 +149,66 @@ test('AI routes enforce auth, no-store, bounded input and reject caller-supplied
     expect((await POST(event(f.env, payload))).status).toBe(400);
   }
   expect(f.calls()).toBe(0);
+});
+
+test('workspace inbox analyses retain identity, reject sent/drafts, and retain archived cache', async () => {
+  const f = setup();
+  f.sqlite.exec(`INSERT INTO workspace_messages (id,user_id,folder,from_name,from_email,to_name,to_email,subject,preview,body,text_body,sent_at,labels_json,is_read,is_starred,created_at,updated_at)
+    VALUES ('workspace','owner','inbox','Sender','sender@example.test','Owner','owner@example.test','Meeting','','Meet on November 12.','Meet on November 12.','now','[]',0,0,'now','now')`);
+  const analyze = () => workspaceMailAi(f.env, session(), 'workspace', { language: 'en', analyze: true }, f.provider);
+  expect((await analyze()).status).toBe('ready');
+  f.sqlite.exec("UPDATE workspace_messages SET archived_at = 'now'");
+  await analyze(); expect(f.calls()).toBe(1);
+  expect(f.sqlite.query('SELECT from_email, to_email, inbox_category FROM workspace_messages').get()).toEqual({ from_email: 'sender@example.test', to_email: 'owner@example.test', inbox_category: null });
+  f.sqlite.exec("UPDATE workspace_messages SET folder = 'sent', archived_at = NULL");
+  await expect(analyze()).rejects.toMatchObject({ code: 'AI_MESSAGE_UNSUPPORTED' });
+  await expect(workspaceMailAi(f.env, session(), 'missing-draft', { language: 'en', analyze: true }, f.provider)).rejects.toMatchObject({ status: 404 });
+  f.sqlite.exec("DELETE FROM workspace_messages WHERE id = 'workspace'");
+  expect(await readMailAi(f.db, { owner: 'owner', kind: 'workspace', id: 'workspace' })).toBeNull();
+});
+
+test('R2 canonical body verification, full-content cache identity and safe missing/corrupt failures', async () => {
+  const f = setup();
+  async function attach(text: string) {
+    const object = await prepareBodyObject('email_message', 'mail', text, '', { force: true });
+    if (!object) throw new Error('Expected canonical object');
+    await insertBodyObject(f.db, { id: object.id, owner_user_id: 'owner', entity_type: 'email_message', entity_id: 'mail', r2_key: object.key,
+      size_bytes: object.sizeBytes, sha256: object.sha256, text_bytes: object.textBytes, html_bytes: object.htmlBytes, createdAt: new Date().toISOString() }).run();
+    f.sqlite.query('UPDATE email_messages SET body_object_id = ?').run(object.id);
+    f.env.BUCKET = { get: async () => ({ size: object.sizeBytes, arrayBuffer: async () => object.bytes.buffer }) } as unknown as R2Bucket;
+    return object;
+  }
+  await attach('November 12. ' + 'a'.repeat(20000));
+  expect((await f.analyze()).truncated).toBe(true);
+  expect((await f.get()).status).toBe('ready'); expect(f.calls()).toBe(1);
+  await attach('November 12. ' + 'a'.repeat(20000) + 'changed tail');
+  expect((await f.get()).status).toBe('empty');
+  f.cooldown(); await f.analyze(); expect(f.calls()).toBe(2);
+  f.env.BUCKET = { get: async () => null } as unknown as R2Bucket;
+  await expect(f.get()).rejects.toMatchObject({ code: 'AI_BODY_UNAVAILABLE' });
+  f.env.BUCKET = { get: async () => ({ size: 1, arrayBuffer: async () => new Uint8Array([0]).buffer }) } as unknown as R2Bucket;
+  await expect(f.get()).rejects.toMatchObject({ code: 'AI_BODY_UNAVAILABLE' });
+  delete (f.env as Partial<CloudflareEnv>).BUCKET;
+  await expect(f.get()).rejects.toMatchObject({ code: 'AI_BODY_UNAVAILABLE' });
+  expect(f.calls()).toBe(2);
+});
+
+test('body or subject changes during a provider call cannot publish stale results', async () => {
+  for (const change of ["UPDATE email_messages SET text_body = 'New November 12 content'", "UPDATE email_messages SET subject = 'Changed subject'"]) {
+    const f = setup();
+    await expect(workspaceMailAi(f.env, session(), 'email:mail', { language: 'en', analyze: true }, { analyze: async (input) => {
+      f.sqlite.exec(change); return f.provider.analyze(input);
+    } })).rejects.toMatchObject({ code: 'AI_CONTENT_CHANGED' });
+    expect((await readMailAi(f.db, f.key))?.status).toBe('failed');
+  }
+});
+
+test('Owner deletion cleans analyses and generation quotas', async () => {
+  const f = setup();
+  f.sqlite.exec(`INSERT INTO workspace_users (id,login_email,name,role,email,company,location,timezone,forwarding_enabled,signature,incoming_sequence)
+    VALUES ('owner','owner@example.test','Owner','Owner','owner@example.test','','','UTC',0,'',0)`);
+  await f.analyze();
+  f.sqlite.exec("DELETE FROM workspace_users WHERE id = 'owner'");
+  expect(await readMailAi(f.db, f.key)).toBeNull();
+  expect(f.sqlite.query('SELECT COUNT(*) AS n FROM mail_ai_rate_limits').get()).toEqual({ n: 0 });
 });

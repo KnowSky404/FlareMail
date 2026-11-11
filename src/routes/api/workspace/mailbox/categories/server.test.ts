@@ -112,3 +112,29 @@ describe('inbox category API', () => {
     expect((await PATCH(value as never)).status).toBe(401);
   });
 });
+
+test('AI conditional category application preserves concurrent manual edits for either source', async () => {
+  const { db, env } = fixture();
+  db.exec(`INSERT INTO workspace_messages (id,user_id,folder,from_name,from_email,to_name,to_email,subject,preview,body,sent_at,labels_json,is_read,is_starred,created_at,updated_at)
+    VALUES ('workspace','user-1','inbox','Sender','sender@example.test','Owner','owner@example.test','','','body','now','[]',0,0,'now','now')`);
+  const scope = { section: 'inbox', identityFilter: null, category: 'all' };
+  const batch = env.DB.batch.bind(env.DB);
+  env.DB.batch = async (statements) => {
+    db.exec("UPDATE email_messages SET inbox_category = 'social'; UPDATE workspace_messages SET inbox_category = 'forums'");
+    return batch(statements);
+  };
+  const response = await PATCH(event(env, { ids: ['email:inbound-a', 'workspace'], category: 'updates', onlyIfAutomatic: true, scope }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ data: { summaries: expect.arrayContaining([
+    expect.objectContaining({ id: 'email:inbound-a', inboxCategoryOverride: 'social' }),
+    expect.objectContaining({ id: 'workspace', inboxCategoryOverride: 'forums' })
+  ]) } });
+  env.DB.batch = batch;
+  db.exec('UPDATE email_messages SET inbox_category = NULL; UPDATE workspace_messages SET inbox_category = NULL');
+  const applied = await PATCH(event(env, { ids: ['email:inbound-a', 'workspace'], category: 'updates', onlyIfAutomatic: true, scope }));
+  expect(await applied.json()).toMatchObject({ data: { summaries: expect.arrayContaining([
+    expect.objectContaining({ id: 'email:inbound-a', inboxCategoryOverride: 'updates' }),
+    expect.objectContaining({ id: 'workspace', inboxCategoryOverride: 'updates' })
+  ]) } });
+  expect((await PATCH(event(env, { ids: ['workspace'], category: 'updates', onlyIfAutomatic: 'yes', scope }))).status).toBe(400);
+});

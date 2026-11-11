@@ -139,3 +139,11 @@ describe('native MaaS adapter', () => {
     expect(calls).toBe(0);
   });
 });
+
+test('HTML byte budget handles multibyte text and accurately declares truncation', () => {
+  const html = '<p>' + '文'.repeat(50000) + '</p><p>TAIL</p>';
+  const projected = prepareMailAiInput('', '', '', html, 'zh-CN', 100000);
+  expect(projected.truncated).toBe(true);
+  expect(projected.body).not.toContain('TAIL');
+  expect(new TextEncoder().encode(projected.body).byteLength).toBeLessThanOrEqual(128 * 1024);
+});

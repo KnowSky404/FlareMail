@@ -214,7 +214,7 @@
   async function applyAiCategory(current: MailMessage, category: import('$lib/domain/mail').MailInboxCategory) {
     if (pending || current.inboxCategoryOverride || current.archivedAt) throw new Error('Category unavailable');
     const scope = readWorkspaceUrl(new URL(data.backHref, window.location.origin));
-    const changed = await setInboxCategory([current.id], category, { section: 'inbox', identityFilter: scope.identityFilter, category: scope.category });
+    const changed = await setInboxCategory([current.id], category, { section: 'inbox', identityFilter: scope.identityFilter, category: scope.category }, true);
     await refreshMessageFromWorkspace();
     sync?.publish({ type: 'mailbox-refresh', id: current.id });
     if (!changed.summaries.some((item) => item.id === current.id && item.inboxCategoryOverride === category)) throw new Error('Category changed');

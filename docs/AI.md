@@ -61,7 +61,7 @@ endpoint, prompt/schema version and full body changes invalidate the cache.
 The category view shows the current category, explanation and uncalibrated model
 self-assessment. **Confirm and apply category** uses the existing inbox category
 API and the current identity/category scope. Suggestions never apply themselves.
-A visible manual category is preserved; return to automatic classification through
+Manual categories, including changes made concurrently in another tab, are preserved atomically; return to automatic classification through
 the existing inbox controls before applying a suggestion. Archived mail retains
 its cached result; return it to the inbox to apply a category.
 
@@ -69,7 +69,7 @@ its cached result; return it to the inbox to apply a category.
 展开面板只读缓存，摘要和分类视图共用一次分析；刷新页面保留结果。「同意重新生成」
 会请求新的分析。界面语言、模型、服务端地址、Prompt/Schema 或完整正文变化都会使缓存失效。
 分类建议不会自动生效；点击「确认应用此分类」才调用现有分类接口，并保留当前筛选范围。
-已有手动分类时禁止应用建议；可先通过原有收件箱操作恢复自动分类。归档和回收站保留缓存，
+已有手动分类时禁止应用建议；数据库原子条件也会保留另一标签页的并发手动设置。可先通过原有收件箱操作恢复自动分类。归档和回收站保留缓存，
 永久删除邮件会同步清理分析结果。
 
 ## Privacy and limits / 隐私与限制

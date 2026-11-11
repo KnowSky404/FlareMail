@@ -19,6 +19,9 @@ export async function changeMailboxCategories(
   workspace: WorkspaceContext,
   input: MailboxCategoryMutationRequest
 ): Promise<MailboxCategoryMutationResult> {
+  if (input?.onlyIfAutomatic !== undefined && typeof input.onlyIfAutomatic !== 'boolean') {
+    throw new ApiError(400, 'INVALID_INBOX_CATEGORY', 'Invalid category condition.');
+  }
   if (!input || (input.category !== null && !isMailInboxCategory(input.category))) {
     throw new ApiError(400, 'INVALID_INBOX_CATEGORY', '请选择有效的收件箱分类，或恢复自动分类。');
   }
@@ -62,12 +65,12 @@ export async function changeMailboxCategories(
       if (source === 'workspace') {
         const clause = workspaceScopeSql('m', scope);
         statements.push(env.DB.prepare(`UPDATE workspace_messages AS m SET inbox_category = ?, updated_at = ?
-          WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.id IN (${placeholders})${clause.sql}`)
+          WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.id IN (${placeholders})${clause.sql}${input.onlyIfAutomatic ? ' AND m.inbox_category IS NULL' : ''}`)
           .bind(input.category, timestamp, workspace.userId, ...chunk, ...clause.bindings));
       } else {
         const clause = inboundScopeSql('e', 'state', scope);
         statements.push(env.DB.prepare(`UPDATE email_messages SET inbox_category = ?
-          WHERE owner_user_id = ? AND id IN (
+          WHERE owner_user_id = ?${input.onlyIfAutomatic ? ' AND inbox_category IS NULL' : ''} AND id IN (
             SELECT e.id FROM email_messages AS e
             LEFT JOIN workspace_email_states AS state ON state.user_id = e.owner_user_id AND state.email_message_id = e.id
             WHERE e.owner_user_id = ? AND state.deleted_at IS NULL AND e.id IN (${placeholders})${clause.sql}

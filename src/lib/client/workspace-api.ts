@@ -368,8 +368,8 @@ export function emptyTrash() {
   });
 }
 
-export function setInboxCategory(ids: string[], category: import('$lib/domain/mail').MailInboxCategory | null, scope: { section: 'inbox'; identityFilter: import('$lib/domain/mail').MailboxIdentityFilter | null; category: import('$lib/domain/mail').InboxCategoryFilter }) {
+export function setInboxCategory(ids: string[], category: import('$lib/domain/mail').MailInboxCategory | null, scope: { section: 'inbox'; identityFilter: import('$lib/domain/mail').MailboxIdentityFilter | null; category: import('$lib/domain/mail').InboxCategoryFilter }, onlyIfAutomatic = false) {
   return requestJson<{ summaries: Array<Pick<MailMessage, 'id' | 'inboxCategory' | 'inboxCategoryOverride'>> }>('/api/workspace/mailbox/categories', {
-    method: 'PATCH', body: JSON.stringify({ ids, category, scope })
+    method: 'PATCH', body: JSON.stringify({ ids, category, scope, onlyIfAutomatic })
   });
 }
