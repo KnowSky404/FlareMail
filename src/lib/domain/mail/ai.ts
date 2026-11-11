@@ -20,3 +20,10 @@ export interface MailAiAnalysis {
   language: 'zh-CN' | 'en';
   suggestion: { category: MailInboxCategory; confidence: number; reason: string } | null;
 }
+
+export interface MailAiResponse {
+  status: 'disabled' | 'unconfigured' | 'empty' | 'processing' | 'ready';
+  analysis: MailAiAnalysis | null;
+  truncated?: boolean;
+  updatedAt?: number;
+}

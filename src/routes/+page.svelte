@@ -1533,6 +1533,17 @@
     updateWorkspaceUrl({ category, messageId: null });
   }
 
+  async function applyAiCategory(message: MailMessage, category: MailInboxCategory) {
+    if (categoryPending || pending || activeSection !== 'inbox' || message.inboxCategoryOverride) throw new Error('Category unavailable');
+    categoryPending = true;
+    try {
+      const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory });
+      await refreshWorkspace(false);
+      workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
+      if (!changed.summaries.some((item) => item.id === message.id && item.inboxCategoryOverride === category)) throw new Error('Category changed');
+    } finally { categoryPending = false; }
+  }
+
   async function changeSelectedCategory(category: MailInboxCategory | null) {
     if (categoryPending || pending || activeSection !== 'inbox' || !bulkSelectedMessages.length) return;
     categoryPending = true;
@@ -3402,6 +3413,7 @@
                 <section class="mail-detail-panel" aria-label={t('mail.detail')}>
                   {#if !readerOpen}
                     <MessageDetail
+                    onApplyAiCategory={activeSection === 'inbox' ? applyAiCategory : undefined}
                     message={selectedMessage}
                     deliveryDetail={selectedDeliveryDetail}
                     deliveryDetailError={selectedDeliveryDetailError}
@@ -3458,6 +3470,7 @@
     {#if readerOpen && selectedMessage}
       <ReaderDialog id="reader-dialog" open showHeader={false} title={selectedMessage.subject || t('mail.noSubject')} onClose={() => void closeReader()}>
         <MessageDetail
+                    onApplyAiCategory={activeSection === 'inbox' ? applyAiCategory : undefined}
           message={selectedMessage}
           deliveryDetail={selectedDeliveryDetail}
           deliveryDetailError={selectedDeliveryDetailError}
