@@ -104,7 +104,7 @@ describe('native MaaS adapter', () => {
     const provider = createMailAiProvider(config, fakeFetch((url, init) => {
       calls++;
       expect(url).toBe(`${config.baseUrl}/chat/completions`);
-      expect(init.redirect).toBe('error');
+      expect(init.redirect).toBe('manual');
       expect(new Headers(init.headers).get('authorization')).toBe('Bearer test-secret');
       const payload = JSON.parse(String(init.body));
       expect(payload.model).toBe(config.model);
@@ -126,6 +126,17 @@ describe('native MaaS adapter', () => {
       expect(String(error)).not.toContain('test-secret');
       expect(String(error)).toContain('AI service is unavailable');
     }
+    expect(calls).toBe(1);
+  });
+  test.each([301, 302, 303, 307, 308])('uses Workers-supported manual mode and refuses HTTP %i without forwarding the key', async (status) => {
+    let calls = 0;
+    const provider = createMailAiProvider(config, fakeFetch((url, init) => {
+      calls++;
+      expect(init.redirect).toBe('manual');
+      expect(url).toBe(config.baseUrl + '/chat/completions');
+      return new Response(null, { status, headers: { location: 'https://other.vendor.com/collect-key' } });
+    }));
+    await expect(provider.analyze(input)).rejects.toMatchObject({ code: 'AI_PROVIDER_UNAVAILABLE', details: { reason: `provider_http_${status}` } });
     expect(calls).toBe(1);
   });
   test('retries only explicit immediate rate-limit rejection once', async () => {
