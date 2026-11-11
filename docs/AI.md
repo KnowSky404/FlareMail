@@ -13,11 +13,17 @@ AI **默认关闭**。仅按需生成单封邮件摘要和分类建议，不自�
    and deletion triggers; schema version becomes 30. Run all migrations locally
    with `bun run db:migrate:local`. Remote migration and deployment require their
    own authorization; this guide does not execute them.
-2. Once per deployment environment, create a cryptographically random 32-byte
-   encryption key (64 hexadecimal characters) as Worker/Preview Secret
-   **AI_SETTINGS_KEY** and declare its name in the ignored target's `secrets`
-   list. Keep it stable across deployments, separate from D1 and Git. A native
-   Preview needs its own Secret; it does not inherit production secrets.
+2. Create one cryptographically random 32-byte encryption key (64 hexadecimal
+   characters) for each independently stored Owner settings record. All targets
+   sharing that Owner's settings in D1 **must use the identical AI_SETTINGS_KEY
+   value**, configured as a Worker/Preview Secret and declared in each ignored
+   target's `secrets` list. A native Preview needs its own Secret binding; it
+   does not inherit production secrets. Do not generate a different value for
+   a Preview sharing production D1: either target would fail to decrypt the
+   other's saved key. Only an isolated D1/settings store can use an independent
+   encryption key. Keep the value stable across deployments, outside D1 and Git.
+   With shared D1, saving AI settings also changes production settings; follow
+   the existing Preview write-authorization rules.
 3. Sign in as the workspace **Owner**, open **Settings → AI settings**, enter
    the API base URL, model and API key, choose **Chat Completions** or
    **Responses API**, enable AI, and save. Changes apply immediately without
@@ -43,8 +49,11 @@ by workerd and throws before any network request. Choose a provider you trust wi
 email contents. Hostname validation cannot prevent a trusted hostname's DNS
 from resolving to an inappropriate destination.
 
-中文：每个环境仅需管理员初始化一次 **AI_SETTINGS_KEY** 加密 Secret（随机 32 字节，
-64 位十六进制），后续 Owner 直接在「设置 → AI 设置」修改地址、模型、Key、接口格式、
+中文：管理员为独立的 Owner 设置存储初始化一次 **AI_SETTINGS_KEY** 加密 Secret
+（随机 32 字节，64 位十六进制）。共享同一 D1/Owner 设置的生产和 PRE 必须配置
+**相同的密钥值**；只有 D1/设置完全隔离时才能使用独立密钥。原生 PRE 需要单独配置
+Secret 绑定，但不能因此为共享数据重新生成不同的密钥。共享 D1 时保存配置也会影响
+生产，仍须遵循 PRE 写入授权范围。后续 Owner 直接在「设置 → AI 设置」修改地址、模型、Key、接口格式、
 超时和正文长度，保存立即生效，无需重新部署，也不会发起模型调用。复用现有设置表，
 Key 经 AES-GCM 加密保存且永不回显；留空保留，填新值替换，更换地址须重新输入。
 地址可填到 `/v1`，也可粘贴完整 `/responses` 或 `/chat/completions` 地址，
