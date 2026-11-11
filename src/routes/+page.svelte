@@ -1539,6 +1539,7 @@
     try {
       const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory }, true);
       await refreshWorkspace(false);
+      await refreshDeepLinkedMessage(message);
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       if (!changed.summaries.some((item) => item.id === message.id && item.inboxCategoryOverride === category)) throw new Error('Category changed');
     } finally { categoryPending = false; }
@@ -1701,7 +1702,7 @@
     const section = activeSection;
     const flagRevision = deepLinkedFlagRevisions.get(current.id) ?? { read: 0, starred: 0 };
     const request = syncMessageRequest.begin();
-    void fetchWorkspaceMessage(current.id, request.signal).then((result) => {
+    return fetchWorkspaceMessage(current.id, request.signal).then((result) => {
       if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
       if (activeSection !== section || selectedMessageId !== current.id) {
         deepLinkedMessage = null;
