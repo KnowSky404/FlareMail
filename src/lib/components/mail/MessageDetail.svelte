@@ -5,6 +5,7 @@
   import AttachmentList from './AttachmentList.svelte';
   import DeliveryTimeline from './DeliveryTimeline.svelte';
   import MessageBody from './MessageBody.svelte';
+  import MailAiPanel from './MailAiPanel.svelte';
   import MessageHeader from './MessageHeader.svelte';
   import MessageViewControls from './MessageViewControls.svelte';
   import { formatNumber } from '$lib/i18n';
@@ -52,6 +53,7 @@
     trashMode = false,
     readerMode = false,
     bodyView = 'text',
+    onApplyAiCategory,
     onBodyViewChange
   }: {
     message?: MailMessage | null;
@@ -95,6 +97,7 @@
     trashMode?: boolean;
     readerMode?: boolean;
     bodyView?: MessageBodyView;
+    onApplyAiCategory?: (message: MailMessage, category: import('$lib/domain/mail').MailInboxCategory) => Promise<void>;
     onBodyViewChange?: (view: MessageBodyView) => void;
   } = $props();
 
@@ -186,6 +189,9 @@
           </div>
         {/if}
 
+        {#if message.folder === 'inbox' && !message.quarantinedAt && !trashMode}
+          {#key `${message.id}:${i18n.locale}`}<MailAiPanel {message} onApplyCategory={onApplyAiCategory} />{/key}
+        {/if}
         {#key message.id}
           <MessageBody
             body={visibleBody}

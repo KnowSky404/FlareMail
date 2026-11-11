@@ -6,8 +6,10 @@
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
   import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
   import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
+  import { readWorkspaceUrl } from '$lib/client/workspace-url-controller';
   import { ClientApiError } from '$lib/client/api';
   import {
+    setInboxCategory,
     fetchDeliveryDetail,
     fetchInboundDetail,
     fetchMessageBody,
@@ -209,6 +211,15 @@
     }
   }
 
+  async function applyAiCategory(current: MailMessage, category: import('$lib/domain/mail').MailInboxCategory) {
+    if (pending || current.inboxCategoryOverride || current.archivedAt) throw new Error('Category unavailable');
+    const scope = readWorkspaceUrl(new URL(data.backHref, window.location.origin));
+    const changed = await setInboxCategory([current.id], category, { section: 'inbox', identityFilter: scope.identityFilter, category: scope.category });
+    await refreshMessageFromWorkspace();
+    sync?.publish({ type: 'mailbox-refresh', id: current.id });
+    if (!changed.summaries.some((item) => item.id === current.id && item.inboxCategoryOverride === category)) throw new Error('Category changed');
+  }
+
   function returnToWorkspace(action?: 'reply' | 'forward') {
     const target = new URL(data.backHref, window.location.origin);
     if (action) {
@@ -342,6 +353,7 @@
         <p class="mb-3 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">{mutationError}</p>
       {/if}
       <MessageDetail
+        onApplyAiCategory={applyAiCategory}
         {message}
         {inboundDetail}
         {inboundDetailError}

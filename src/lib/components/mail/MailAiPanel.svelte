@@ -1,0 +1,88 @@
+<script lang="ts">
+  import { onDestroy } from 'svelte';
+  import { Sparkles } from '@lucide/svelte';
+  import { Button, IconButton } from '$lib/components/ui';
+  import { ClientApiError, requestJson } from '$lib/client/api';
+  import type { MailMessage, MailInboxCategory } from '$lib/domain/mail';
+  import type { MailAiResponse } from '$lib/domain/mail/ai';
+  import { useLocale } from '$lib/i18n/runtime.svelte';
+  let { message, onApplyCategory }: { message: MailMessage; onApplyCategory?: (message: MailMessage, category: MailInboxCategory) => Promise<void> } = $props();
+  const i18n = useLocale();
+  const { t } = i18n;
+  let open = $state(false);
+  let view = $state<'summary' | 'category'>('summary');
+  let result = $state<MailAiResponse | null>(null);
+  let busy = $state(false);
+  let applying = $state(false);
+  let error = $state('');
+  let applied = $state(false);
+  const controller = new AbortController();
+  onDestroy(() => controller.abort());
+  const panelId = $derived(`mail-ai-${message.id}`);
+  const analysis = $derived(result?.analysis);
+  async function load(analyze = false, regenerate = false) {
+    if (busy) return;
+    busy = true; error = '';
+    try {
+      result = await requestJson<MailAiResponse>(`/api/workspace/messages/${encodeURIComponent(message.id)}/ai${analyze ? '' : `?language=${i18n.locale}`}`, {
+        signal: controller.signal, ...(analyze ? { method: 'POST', body: JSON.stringify({ language: i18n.locale, regenerate }) } : {})
+      });
+    } catch (cause) {
+      if (!controller.signal.aborted) error = t('ai.error', { code: cause instanceof ClientApiError ? cause.code : 'NETWORK_FAILURE' });
+    } finally { busy = false; }
+  }
+  function toggle() { open = !open; if (open && !result) void load(); }
+  async function apply() {
+    if (!analysis?.suggestion || !onApplyCategory || applying || message.inboxCategoryOverride || applied) return;
+    applying = true; error = '';
+    try { await onApplyCategory(message, analysis.suggestion.category); applied = true; }
+    catch { error = t('ai.applyFailed'); }
+    finally { applying = false; }
+  }
+</script>
+
+<section class="mb-4 min-w-0 border-b border-[var(--fm-border)] pb-3" aria-label={t('ai.title')}>
+  <div class="flex items-center gap-1">
+    <IconButton ariaLabel={t('ai.title')} title={t('ai.title')} tooltipSide="right" ariaExpanded={open} ariaControls={panelId} onclick={toggle} size="sm"><Sparkles class="size-4" aria-hidden="true" /></IconButton>
+    <button type="button" class="rounded text-sm font-medium text-[var(--fm-text)] focus-visible:outline-2 focus-visible:outline-offset-4" aria-expanded={open} aria-controls={panelId} onclick={toggle}>{t('ai.title')}</button>
+  </div>
+  {#if open}
+    <div id={panelId} class="mt-2 min-w-0 space-y-3 text-sm [overflow-wrap:anywhere]" aria-busy={busy || applying}>
+      <p class="text-xs text-[var(--fm-text-muted)]">{t('ai.privacy')}</p>
+      {#if error}<p role="alert" class="text-xs text-[var(--fm-danger)]">{error}</p>{/if}
+      {#if busy}<p role="status">{t('ai.loading')}</p>{/if}
+      {#if result?.status === 'disabled' || result?.status === 'unconfigured'}
+        <p role="status">{t(result.status === 'disabled' ? 'ai.disabled' : 'ai.unconfigured')}</p>
+      {:else if result?.status === 'processing'}
+        <p role="status">{t('ai.processing')}</p>
+        <Button variant="secondary" size="sm" disabled={busy} onclick={() => void load()}>{t('ai.refresh')}</Button>
+      {:else if analysis}
+        <div class="flex flex-wrap gap-2" role="group" aria-label={t('ai.views')}>
+          <button type="button" class="rounded border border-[var(--fm-border)] px-3 py-1 focus-visible:outline-2" aria-pressed={view === 'summary'} onclick={() => view = 'summary'}>{t('ai.summary')}</button>
+          <button type="button" class="rounded border border-[var(--fm-border)] px-3 py-1 focus-visible:outline-2" aria-pressed={view === 'category'} onclick={() => view = 'category'}>{t('ai.category')}</button>
+        </div>
+        {#if view === 'summary'}
+          <p class="whitespace-pre-wrap">{analysis.summary}</p>
+          {#each [{ title: 'ai.points' as const, items: analysis.keyPoints }, { title: 'ai.actions' as const, items: analysis.actionItems }, { title: 'ai.dates' as const, items: analysis.dates }] as group}
+            {#if group.items.length}<div><h2 class="mb-1 text-xs font-semibold">{t(group.title)}</h2><ul class="list-disc space-y-1 pl-5">{#each group.items as item}<li>{item}</li>{/each}</ul></div>{/if}
+          {/each}
+        {:else}
+          <p class="text-xs">{t('ai.currentCategory', { category: t(`mail.category.${message.inboxCategory ?? 'primary'}`) })}</p>
+          {#if analysis.suggestion}
+            <p class="font-medium">{t(`mail.category.${analysis.suggestion.category}`)}</p><p>{analysis.suggestion.reason}</p>
+            <p class="text-xs text-[var(--fm-text-muted)]">{t('ai.confidence', { confidence: Math.round(analysis.suggestion.confidence * 100) })}</p>
+            {#if message.inboxCategoryOverride || applied}<p role="status">{t(applied ? 'ai.applied' : 'ai.manual')}</p>
+            {:else if onApplyCategory && !message.archivedAt}<Button size="sm" loading={applying} disabled={busy} onclick={() => void apply()}>{t('ai.apply')}</Button>
+            {:else}<p class="text-xs">{t('ai.inboxOnly')}</p>{/if}
+          {:else}<p>{t('ai.noSuggestion')}</p>{/if}
+        {/if}
+        {#if result?.truncated}<p class="text-xs text-[var(--fm-text-muted)]">{t('ai.truncated')}</p>{/if}
+        <p class="text-xs text-[var(--fm-text-muted)]">{t('ai.caution')}</p>
+        <Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load(true, true)}>{t('ai.regenerate')}</Button>
+      {:else if result?.status === 'empty'}
+        <p>{t('ai.empty')}</p><Button variant="secondary" size="sm" disabled={busy} onclick={() => void load(true)}>{t('ai.generate')}</Button>
+      {/if}
+      {#if error}<Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load()}>{t('ai.refresh')}</Button>{/if}
+    </div>
+  {/if}
+</section>
