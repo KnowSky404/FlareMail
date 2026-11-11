@@ -47,6 +47,9 @@ describe('privacy input projection', () => {
     expect(prepareMailAiInput('Subject', 'Sender', '', html, 'en', 16000).body).toBe('Hello & welcome Meeting');
     expect(prepareMailAiInput('', '', '', '', 'en', 16000).body).toBe('');
   });
+  test('handles deep HTML without recursive stack growth', () => {
+    expect(aiHtmlText('<div>'.repeat(24000) + 'Meeting')).toBe('Meeting');
+  });
   test('fingerprints input, interface language, endpoint, model and schema', async () => {
     const hash = await mailAiFingerprint(input, 'a', config.baseUrl, 1);
     for (const [changed, model, endpoint, version] of [

@@ -115,6 +115,14 @@ describe('mail AI persistence and ownership', () => {
     expect(await readMailAi(f.db, f.key)).toBeNull();
     expect(await claimMailAi(f.db, f.key, 'missing', 'model', true)).toBeNull();
   });
+  test('atomic claims reject newly blocked canonical senders for either source', async () => {
+    const f = setup();
+    f.sqlite.exec(`INSERT INTO workspace_messages (id,user_id,folder,from_name,from_email,to_name,to_email,subject,preview,body,sent_at,labels_json,is_read,is_starred,created_at,updated_at)
+      VALUES ('workspace','owner','inbox','Sender','Sender <sender@example.test>','Owner','owner@example.test','','','body','now','[]',0,0,'now','now')`);
+    f.sqlite.exec("INSERT INTO blocked_senders VALUES ('owner','sender@example.test','now')");
+    expect(await claimMailAi(f.db, f.key, 'hash', 'model', false)).toBeNull();
+    expect(await claimMailAi(f.db, { ...f.key, kind: 'workspace', id: 'workspace' }, 'hash', 'model', false)).toBeNull();
+  });
   test('limits hourly cost independently of mail delivery limits', async () => {
     const f = setup();
     for (let i = 0; i < 30; i++) expect(await consumeMailAiQuota(f.db, 'owner', 10000 + i)).toBe(true);
@@ -134,7 +142,7 @@ test('AI routes enforce auth, no-store, bounded input and reject caller-supplied
   expect((await GET(event(f.env, undefined, false))).status).toBe(401);
   const response = await GET(event(f.env)); expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toContain('no-store');
   expect(JSON.stringify(await response.json())).not.toContain('fake-secret');
-  for (const payload of [{ language: 'en', body: 'other mail' }, { language: 'en', model: 'other' }, { language: 'en', baseUrl: 'https://evil.com' }, { language: 'xx' }, { language: 'en', regenerate: 'yes' }, null]) {
+  for (const payload of [{ language: 'en', body: 'other mail' }, { language: 'en', model: 'other' }, { language: 'en', baseUrl: 'https://evil.com' }, { language: 'xx' }, { language: ['en'] }, { language: { toString: 'en' } }, { language: 'en', regenerate: 'yes' }, null]) {
     expect((await POST(event(f.env, payload))).status).toBe(400);
   }
   expect(f.calls()).toBe(0);

@@ -16,7 +16,7 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   if (!body || typeof body !== 'object' || Array.isArray(body) ||
     Object.keys(body).some((key) => !['language', 'regenerate'].includes(key)) ||
     (body.regenerate !== undefined && typeof body.regenerate !== 'boolean') ||
-    !['zh-CN', 'en'].includes(String(body.language))) throw new ApiError(400, 'AI_INVALID_REQUEST', 'Invalid analysis request.');
+    (typeof body.language !== 'string' || !['zh-CN', 'en'].includes(body.language))) throw new ApiError(400, 'AI_INVALID_REQUEST', 'Invalid analysis request.');
   return apiSuccess(event, await workspaceMailAi(getRequestEnv(event)!, session, requirePathParam(event, 'id'), {
     language: body.language as 'zh-CN' | 'en', analyze: true, regenerate: body.regenerate as boolean | undefined
   }));

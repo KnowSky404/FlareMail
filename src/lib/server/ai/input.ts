@@ -4,16 +4,18 @@ import type { MailAiInput } from '$lib/domain/mail/ai';
 /** parse5 never executes scripts or fetches remote images/styles. */
 export function aiHtmlText(html: string): string {
   const text: string[] = [];
-  function visit(node: DefaultTreeAdapterTypes.Node) {
-    if ('tagName' in node && ['script', 'style', 'template', 'noscript', 'svg', 'math', 'head'].includes(node.tagName)) return;
+  // Iterative traversal also handles deeply nested, untrusted HTML in V8.
+  const stack: Array<DefaultTreeAdapterTypes.Node | null> = [parseFragment(html.slice(0, 128 * 1024))];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node) { text.push(' '); continue; }
+    if ('tagName' in node && ['script', 'style', 'template', 'noscript', 'svg', 'math', 'head'].includes(node.tagName)) continue;
     if (node.nodeName === '#text' && 'value' in node) text.push(node.value);
     if ('childNodes' in node) {
-      for (const child of node.childNodes) visit(child);
-      text.push(' ');
+      stack.push(null);
+      for (let index = node.childNodes.length - 1; index >= 0; index--) stack.push(node.childNodes[index]);
     }
   }
-  // Bound parsing work even when the canonical HTML is very large.
-  visit(parseFragment(html.slice(0, 128 * 1024)));
   return text.join('').replace(/\s+/gu, ' ').trim();
 }
 

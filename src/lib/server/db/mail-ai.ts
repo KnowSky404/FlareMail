@@ -15,11 +15,15 @@ export function readMailAi(db: D1Database, key: MailAiKey) {
 /** Atomic claim plus existence check prevents deletion races and duplicate bills. */
 export async function claimMailAi(db: D1Database, key: MailAiKey, fingerprint: string, model: string, regenerate: boolean, now = Date.now()) {
   const token = crypto.randomUUID();
+  const sender = key.kind === 'inbound' ? 'e."from"' : 'from_email';
+  const address = `lower(trim(CASE WHEN instr(${sender}, '<') > 0 AND instr(${sender}, '>') > instr(${sender}, '<')
+    THEN substr(${sender}, instr(${sender}, '<') + 1, instr(${sender}, '>') - instr(${sender}, '<') - 1) ELSE ${sender} END))`;
   const exists = key.kind === 'inbound'
     ? `SELECT 1 FROM email_messages e LEFT JOIN workspace_email_states s ON s.user_id = e.owner_user_id AND s.email_message_id = e.id
        WHERE e.owner_user_id = ? AND e.id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL
-       AND NOT EXISTS (SELECT 1 FROM blocked_senders b WHERE b.owner_user_id = e.owner_user_id AND b.email = lower(trim(e."from")))`
-    : `SELECT 1 FROM workspace_messages WHERE user_id = ? AND id = ? AND folder = 'inbox' AND deleted_at IS NULL`;
+       AND NOT EXISTS (SELECT 1 FROM blocked_senders b WHERE b.owner_user_id = e.owner_user_id AND b.email = ${address})`
+    : `SELECT 1 FROM workspace_messages WHERE user_id = ? AND id = ? AND folder = 'inbox' AND deleted_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM blocked_senders b WHERE b.owner_user_id = workspace_messages.user_id AND b.email = ${address})`;
   const row = await db.prepare(`INSERT INTO mail_ai_analyses
     (owner_user_id, message_kind, message_id, fingerprint, model, schema_version, status, result_json, claim_token, lease_until, created_at, updated_at)
     SELECT ?, ?, ?, ?, ?, ?, 'processing', NULL, ?, ?, ?, ? WHERE EXISTS (${exists})
