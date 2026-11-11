@@ -1537,7 +1537,7 @@
     if (categoryPending || pending || activeSection !== 'inbox' || message.inboxCategoryOverride) throw new Error('Category unavailable');
     categoryPending = true;
     try {
-      const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory });
+      const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory }, true);
       await refreshWorkspace(false);
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       if (!changed.summaries.some((item) => item.id === message.id && item.inboxCategoryOverride === category)) throw new Error('Category changed');

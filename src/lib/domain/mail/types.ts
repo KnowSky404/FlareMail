@@ -529,6 +529,8 @@ export interface MailboxCategoryMutationScope {
 }
 
 export interface MailboxCategoryMutationRequest {
+  /** Apply an AI suggestion only while no manual category has been stored. */
+  onlyIfAutomatic?: boolean;
   ids: string[];
   /** null restores automatic classification. */
   category: MailInboxCategory | null;

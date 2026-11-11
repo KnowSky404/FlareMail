@@ -12,13 +12,18 @@ import { ApiError } from '$lib/server/http/api';
 import { readWorkspaceMessage } from './reader';
 import type { WorkspaceContext } from './shared';
 
-async function loadInput(env: CloudflareEnv, session: WorkspaceContext, id: string, language: MailAiInput['language'], limit: number) {
+async function readEligibleMessage(env: CloudflareEnv, session: WorkspaceContext, id: string) {
   const message = await readWorkspaceMessage(env, session, id);
   if (!message) throw new ApiError(404, 'MESSAGE_NOT_FOUND', 'Message not found.');
   if (message.folder !== 'inbox' || message.quarantinedAt) throw new ApiError(409, 'AI_MESSAGE_UNSUPPORTED', 'AI is unavailable for this message.');
   const blocked = await env.DB.prepare('SELECT 1 FROM blocked_senders WHERE owner_user_id = ? AND email = ?')
     .bind(session.userId, categorySenderAddress(message.fromEmail)).first();
   if (blocked) throw new ApiError(409, 'AI_MESSAGE_UNSUPPORTED', 'AI is unavailable for blocked messages.');
+  return message;
+}
+
+async function loadInput(env: CloudflareEnv, session: WorkspaceContext, id: string, language: MailAiInput['language'], limit: number) {
+  const message = await readEligibleMessage(env, session, id);
   const key: MailAiKey = { owner: session.userId, kind: isInboundMessageId(id) ? 'inbound' : 'workspace', id: isInboundMessageId(id) ? fromInboundMessageId(id) : id };
   const row = key.kind === 'inbound'
     ? await env.DB.prepare('SELECT text_body, html_body, body_object_id FROM email_messages WHERE owner_user_id = ? AND id = ?').bind(key.owner, key.id).first<{ text_body: string; html_body: string; body_object_id: string | null }>()
@@ -26,17 +31,19 @@ async function loadInput(env: CloudflareEnv, session: WorkspaceContext, id: stri
   if (!row) throw new ApiError(404, 'MESSAGE_NOT_FOUND', 'Message not found.');
   let text = row.text_body ?? '';
   let html = row.html_body ?? '';
+  let bodyFingerprint: string | null = null;
   if (row.body_object_id) {
     const object = await findBodyObject(env.DB, row.body_object_id, key.owner, key.kind === 'inbound' ? 'email_message' : 'workspace_message', key.id);
     if (!object || !env.BUCKET) throw new ApiError(503, 'AI_BODY_UNAVAILABLE', 'Email body is unavailable.');
     try {
       const body = await readBodyObject(env.BUCKET, object.r2_key, object.size_bytes, object.sha256);
       text = body.textBody; html = body.htmlBody;
+      bodyFingerprint = object.sha256;
     } catch { throw new ApiError(409, 'AI_BODY_UNAVAILABLE', 'Email body integrity check failed.'); }
   }
   const input = prepareMailAiInput(message.subject, message.fromEmail, text, html, language, limit);
   // Include the full canonical body in the cache identity, including the omitted tail.
-  const contentHash = await mailAiFingerprint({ ...input, body: JSON.stringify([text, html]) }, '', '', MAIL_AI_VERSION);
+  const contentHash = await mailAiFingerprint({ ...input, body: bodyFingerprint ?? JSON.stringify([text, html]) }, '', '', MAIL_AI_VERSION);
   return { key, input, contentHash };
 }
 
@@ -47,8 +54,11 @@ export async function workspaceMailAi(
 ) {
   if (session.storage !== 'd1') throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', 'Workspace storage unavailable.');
   const configuration = resolveMailAiConfiguration(env);
-  const loaded = await loadInput(env, session, id, options.language, configuration.config?.maxInputChars ?? 16000);
-  if (!configuration.config) return { status: configuration.status, analysis: null };
+  if (!configuration.config) {
+    await readEligibleMessage(env, session, id);
+    return { status: configuration.status, analysis: null };
+  }
+  const loaded = await loadInput(env, session, id, options.language, configuration.config.maxInputChars);
   const { config } = configuration;
   const { key, input, contentHash } = loaded;
   const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, config.baseUrl, MAIL_AI_VERSION);
