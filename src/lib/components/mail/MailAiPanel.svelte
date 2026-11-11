@@ -15,7 +15,8 @@
   let busy = $state(false);
   let applying = $state(false);
   let error = $state('');
-  let applied = $state(false);
+  let appliedCategory = $state<MailInboxCategory | null>(null);
+  const applied = $derived(appliedCategory !== null && message.inboxCategoryOverride === appliedCategory);
   const controller = new AbortController();
   onDestroy(() => controller.abort());
   const panelId = $derived(`mail-ai-${message.id}`);
@@ -33,9 +34,9 @@
   }
   function toggle() { open = !open; if (open && !result) void load(); }
   async function apply() {
-    if (!analysis?.suggestion || !onApplyCategory || applying || message.inboxCategoryOverride || applied) return;
+    if (!analysis?.suggestion || !onApplyCategory || applying || message.inboxCategoryOverride) return;
     applying = true; error = '';
-    try { await onApplyCategory(message, analysis.suggestion.category); applied = true; }
+    try { const category = analysis.suggestion.category; await onApplyCategory(message, category); appliedCategory = category; }
     catch { error = t('ai.applyFailed'); }
     finally { applying = false; }
   }

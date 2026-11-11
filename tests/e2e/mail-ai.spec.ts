@@ -16,6 +16,12 @@ test('AI accessible summary, explicit category application and cached refresh', 
     } } : { status: 'empty', analysis: null }, requestId: 'fake-ai' } });
   });
   await login(page);
+  const restoreAutomatic = () => page.request.patch('/api/workspace/mailbox/categories', {
+    headers: { origin: new URL(page.url()).origin },
+    data: { ids: ['e2e-inbox-message'], category: null, scope: { section: 'inbox', identityFilter: null, category: 'all' } }
+  });
+  expect((await restoreAutomatic()).status()).toBe(200);
+  await page.reload({ waitUntil: 'domcontentloaded' });
   await page.locator('.mail-list-panel').getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
   const panel = page.getByRole('region', { name: title });
   const toggle = panel.getByRole('button', { name: title, exact: true }).first();
@@ -29,6 +35,16 @@ test('AI accessible summary, explicit category application and cached refresh', 
   expect(generations).toBe(1);
   await panel.getByRole('button', { name: '确认应用此分类' }).click();
   await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+  expect((await restoreAutomatic()).status()).toBe(200);
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
+    channel.close();
+  });
+  await expect(panel.getByRole('button', { name: '确认应用此分类' })).toBeVisible();
+  await panel.getByRole('button', { name: '确认应用此分类' }).click();
+  await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+  expect(generations).toBe(1);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByRole('region', { name: title }).getByRole('button', { name: title, exact: true }).first().click();
   await expect(page.getByText('会议邀请：', { exact: false })).toBeVisible();
