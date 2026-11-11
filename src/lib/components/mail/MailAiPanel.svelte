@@ -82,7 +82,12 @@
       {:else if result?.status === 'empty'}
         <p>{t('ai.empty')}</p><Button variant="secondary" size="sm" disabled={busy} onclick={() => void load(true)}>{t('ai.generate')}</Button>
       {/if}
-      {#if error}<Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load()}>{t('ai.refresh')}</Button>{/if}
+      {#if error}
+        <div class="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load()}>{t('ai.refresh')}</Button>
+          {#if !analysis}<Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load(true, true)}>{t('ai.regenerate')}</Button>{/if}
+        </div>
+      {/if}
     </div>
   {/if}
 </section>

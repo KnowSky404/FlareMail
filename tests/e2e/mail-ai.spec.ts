@@ -56,3 +56,86 @@ test('AI disabled state does not generate and standalone reader shares the panel
   expect(posts).toBe(0);
   await assertNoHorizontalOverflow(page); await assertNoConsoleErrors(consoleErrors);
 });
+
+test('AI accessible error recovery requires consent and prevents duplicate generation while loading', async ({ page, consoleErrors }) => {
+  let posts = 0;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => release = resolve);
+  await page.route(`**${path}*`, async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ status: 409, json: { ok: false, error: { code: 'AI_CACHE_INVALID', message: 'Invalid cache' }, requestId: 'fake-ai' } }); return;
+    }
+    posts++;
+    expect(route.request().postDataJSON()).toMatchObject({ regenerate: true });
+    if (posts === 1) {
+      await gate;
+      await route.fulfill({ status: 503, json: { ok: false, error: { code: 'AI_PROVIDER_UNAVAILABLE', message: 'Unavailable' }, requestId: 'fake-ai' } }); return;
+    }
+    await route.fulfill({ json: { ok: true, data: { status: 'ready', analysis: { summary: '已恢复分析', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN', suggestion: null } }, requestId: 'fake-ai' } });
+  });
+  await login(page);
+  await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
+  const panel = page.getByRole('region', { name: title });
+  await panel.getByRole('button', { name: title, exact: true }).first().click();
+  await expect(panel.getByRole('alert')).toContainText('AI_CACHE_INVALID'); expect(posts).toBe(0);
+  const regenerate = panel.getByRole('button', { name: '同意重新生成' });
+  await regenerate.click();
+  await expect(panel.getByRole('status')).toContainText('正在读取或生成');
+  await expect(regenerate).toHaveCount(0); expect(posts).toBe(1);
+  release?.();
+  await expect(panel.getByRole('alert')).toContainText('AI_PROVIDER_UNAVAILABLE');
+  await regenerate.click(); await expect(panel.getByText('已恢复分析')).toBeVisible(); expect(posts).toBe(2);
+  await panel.getByRole('button', { name: '分类建议', exact: true }).click();
+  await expect(panel.getByText('没有可靠的分类建议。')).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*(?:409|503)/u.test(text)));
+});
+
+test('AI English output, regeneration and system light/dark themes in standalone reader', async ({ page, consoleErrors }, info) => {
+  let posts = 0;
+  await page.route(`**${path}*`, async (route) => {
+    if (route.request().method() === 'GET') {
+      expect(new URL(route.request().url()).searchParams.get('language')).toBe('en');
+      await route.fulfill({ json: { ok: true, data: { status: 'empty', analysis: null }, requestId: 'fake-ai' } }); return;
+    }
+    posts++;
+    expect(route.request().postDataJSON()).toMatchObject({ language: 'en', regenerate: posts > 1 });
+    await route.fulfill({ json: { ok: true, data: { status: 'ready', analysis: { summary: `Meeting summary ${posts}`, keyPoints: [], actionItems: [], dates: [], language: 'en', suggestion: null } }, requestId: 'fake-ai' } });
+  });
+  await login(page);
+  await page.evaluate(() => { localStorage.setItem('flaremail-locale', 'en'); localStorage.setItem('flaremail-theme', 'system'); document.cookie = 'flaremail-locale=en; Path=/'; });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  const panel = page.getByRole('region', { name: 'AI summary and category suggestion' });
+  await panel.getByRole('button', { name: 'AI summary and category suggestion', exact: true }).first().click();
+  await panel.getByRole('button', { name: 'Agree and generate analysis' }).click();
+  await expect(panel.getByText('Meeting summary 1')).toBeVisible();
+  await panel.getByRole('button', { name: 'Agree and regenerate' }).click();
+  await expect(panel.getByText('Meeting summary 2')).toBeVisible(); expect(posts).toBe(2);
+  await assertNoHorizontalOverflow(page);
+  expect((await new AxeBuilder({ page }).include('.message-content').analyze()).violations).toEqual([]);
+  await mkdir('/tmp/flaremail-ai-evidence', { recursive: true });
+  await page.screenshot({ path: `/tmp/flaremail-ai-evidence/${info.project.name}-english-dark.png` });
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(panel.getByText('Meeting summary 2')).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
+test('AI focused reader uses the shared cached analysis without another generation', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', 'Focused reader toggle is a desktop control.');
+  let posts = 0;
+  await page.route(`**${path}*`, async (route) => {
+    if (route.request().method() === 'POST') posts++;
+    await route.fulfill({ json: { ok: true, data: { status: 'ready', analysis: { summary: '专注阅读缓存', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN', suggestion: null } }, requestId: 'fake-ai' } });
+  });
+  await login(page);
+  await page.locator('.mail-list-panel').getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  await page.locator('#fm-open-reader-trigger').click();
+  const dialog = page.getByRole('dialog'); await expect(dialog).toBeVisible();
+  await dialog.getByRole('region', { name: title }).getByRole('button', { name: title, exact: true }).first().click();
+  await expect(dialog.getByText('专注阅读缓存')).toBeVisible(); expect(posts).toBe(0);
+  await expect(page.getByRole('region', { name: title })).toHaveCount(1);
+  await dialog.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
+  await expect(dialog).toBeHidden();
+});
