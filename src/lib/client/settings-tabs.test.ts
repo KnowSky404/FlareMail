@@ -17,6 +17,7 @@ describe('settings tabs', () => {
     expect(acceptProfileSave(server, { ...server, forwardingEnabled: true }, draft, 'notifications')).toMatchObject({ name: '  Edited  ', forwardingEnabled: true });
   });
   test('round trips tabs, reads old anchors and removes tabs when leaving settings', () => {
+    expect(readSettingsTab(new URL('https://flaremail.test/?folder=settings&tab=ai'))).toBe('ai');
     const old = new URL('https://flaremail.test/?folder=settings#settings-telegram');
     expect(readSettingsTab(old)).toBe('telegram');
     const normalized = updateWorkspaceUrl(old, { settingsTab: 'telegram' });

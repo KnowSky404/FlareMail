@@ -7,6 +7,8 @@ declare global {
   interface CloudflareEnv extends Pick<Cloudflare.Env, 'DB' | 'BUCKET' | 'ASSETS'> {
     APP_VERSION?: string;
     AI_ENABLED?: string;
+    AI_API_FORMAT?: string;
+    AI_SETTINGS_KEY?: string;
     AI_PROVIDER?: string;
     AI_BASE_URL?: string;
     AI_MODEL?: string;

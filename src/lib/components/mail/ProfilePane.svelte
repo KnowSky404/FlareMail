@@ -6,6 +6,7 @@
   import Switch from '$lib/components/ui/Switch.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
+  import MailAiSettingsPanel from '$lib/components/mail/MailAiSettingsPanel.svelte';
   import BlockedSendersPanel from '$lib/components/mail/BlockedSendersPanel.svelte';
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
   import type { UserProfile, WorkspaceMetrics } from '$lib/domain/mail';
@@ -91,7 +92,7 @@
       if (tab === current) document.getElementById(`settings-tab-${current}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   });
-  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title'), blocked: t('blocked.title') });
+  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title'), blocked: t('blocked.title'), ai: t('aiSettings.title') });
 
   function moveTab(event: KeyboardEvent, index: number) {
     const next = event.key === 'ArrowRight' ? (index + 1) % settingsTabs.length : event.key === 'ArrowLeft' ? (index - 1 + settingsTabs.length) % settingsTabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? settingsTabs.length - 1 : null;
@@ -145,7 +146,7 @@
     {/each}
   </div>
 
-  <div id={tab === 'telegram' || tab === 'blocked' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram' || tab === 'blocked'}>
+  <div id={tab === 'telegram' || tab === 'blocked' || tab === 'ai' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram' || tab === 'blocked' || tab === 'ai'}>
   <form onsubmit={submit}>
     {#if tab === 'profile'}
     <Panel id="settings-profile" class="scroll-mt-[5.25rem]" title={t('settings.profile')} description={t('settings.profileDescription')}>
@@ -272,6 +273,9 @@
     {/if}
   </form>
   </div>
+  {#if tab === 'ai' && !authExpired}
+    <div id="settings-panel-ai" role="tabpanel" aria-labelledby="settings-tab-ai"><MailAiSettingsPanel /></div>
+  {/if}
   {#if blockedVisited}
     <div id="settings-panel-blocked" role="tabpanel" aria-labelledby="settings-tab-blocked" hidden={tab !== 'blocked'}><BlockedSendersPanel active={tab === 'blocked' && !authExpired} onRelease={onQuarantineRelease} onPageChange={onQuarantinePageChange} /></div>
   {/if}

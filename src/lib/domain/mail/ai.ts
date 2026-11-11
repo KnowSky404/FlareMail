@@ -27,3 +27,23 @@ export interface MailAiResponse {
   truncated?: boolean;
   updatedAt?: number;
 }
+
+export const mailAiApiFormats = ['chat-completions', 'responses'] as const;
+export type MailAiApiFormat = typeof mailAiApiFormats[number];
+
+export interface MailAiSettings {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  apiFormat: MailAiApiFormat;
+  timeoutMs: number;
+  maxInputChars: number;
+}
+
+export interface MailAiSettingsView {
+  settings: MailAiSettings;
+  hasApiKey: boolean;
+  canSave: boolean;
+  revision: string;
+  source: 'server' | 'workspace';
+}

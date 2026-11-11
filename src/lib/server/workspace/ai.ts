@@ -4,7 +4,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { readBodyObject } from '$lib/server/body';
 import { findBodyObject } from '$lib/server/db/body';
 import { claimMailAi, consumeMailAiQuota, finishMailAi, readMailAi, type MailAiKey } from '$lib/server/db/mail-ai';
-import { resolveMailAiConfiguration } from '$lib/server/ai/config';
+import { resolveWorkspaceMailAiConfiguration } from '$lib/server/ai/settings';
 import { mailAiFingerprint, prepareMailAiInput } from '$lib/server/ai/input';
 import { createMailAiProvider, validateMailAiAnalysis, type MailAiProvider } from '$lib/server/ai/provider';
 import { categorySenderAddress } from '$lib/domain/mail/categories';
@@ -53,7 +53,7 @@ export async function workspaceMailAi(
   provider?: MailAiProvider
 ) {
   if (session.storage !== 'd1') throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', 'Workspace storage unavailable.');
-  const configuration = resolveMailAiConfiguration(env);
+  const configuration = await resolveWorkspaceMailAiConfiguration(env, session.userId);
   if (!configuration.config) {
     await readEligibleMessage(env, session, id);
     return { status: configuration.status, analysis: null };
@@ -61,7 +61,7 @@ export async function workspaceMailAi(
   const loaded = await loadInput(env, session, id, options.language, configuration.config.maxInputChars);
   const { config } = configuration;
   const { key, input, contentHash } = loaded;
-  const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, config.baseUrl, MAIL_AI_VERSION);
+  const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, `${config.baseUrl}#${config.apiFormat}`, MAIL_AI_VERSION);
   const cached = await readMailAi(env.DB, key);
   if (cached?.fingerprint === fingerprint && cached.status === 'ready' && cached.result_json && !options.regenerate) {
     let analysis: MailAiAnalysis;

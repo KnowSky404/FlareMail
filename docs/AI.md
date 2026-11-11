@@ -13,40 +13,53 @@ AI **默认关闭**。仅按需生成单封邮件摘要和分类建议，不自�
    and deletion triggers; schema version becomes 30. Run all migrations locally
    with `bun run db:migrate:local`. Remote migration and deployment require their
    own authorization; this guide does not execute them.
-2. Add these **string variables** to `vars` in the appropriate ignored private
-   Cloudflare JSON target. Choose your trusted provider's public HTTPS endpoint:
+2. Once per deployment environment, create a cryptographically random 32-byte
+   encryption key (64 hexadecimal characters) as Worker/Preview Secret
+   **AI_SETTINGS_KEY** and declare its name in the ignored target's `secrets`
+   list. Keep it stable across deployments, separate from D1 and Git. A native
+   Preview needs its own Secret; it does not inherit production secrets.
+3. Sign in as the workspace **Owner**, open **Settings → AI settings**, enter
+   the API base URL, model and API key, choose **Chat Completions** or
+   **Responses API**, enable AI, and save. Changes apply immediately without
+   redeployment. Saving does not call the provider. No new database or bucket
+   is needed: public options and an AES-GCM encrypted key use the existing
+   `workspace_settings` record. The encryption Secret stays outside D1.
+4. A blank key preserves the current key; entering a value replaces it. Keys
+   are never returned or prefilled. Changing the API base requires re-entering
+   the key. To remove it, disable AI and select **Delete the saved API key**.
+   Concurrent edits return `AI_SETTINGS_CONFLICT`; reload before saving again.
+   Losing or rotating the encryption Secret requires entering a replacement
+   provider key; the old encrypted value cannot be recovered without it.
 
-   ```json
-   {
-     "AI_ENABLED": "true",
-     "AI_PROVIDER": "openai-compatible",
-     "AI_BASE_URL": "https://api.your-provider.com/v1",
-     "AI_MODEL": "your-model-id",
-     "AI_TIMEOUT_MS": "15000",
-     "AI_MAX_INPUT_CHARS": "16000"
-   }
-   ```
+The API base is a trusted public HTTPS address, such as
+`https://api.your-provider.com/v1`, excluding `/chat/completions` and `/responses`.
+Credentials, queries, fragments, IP literals, local names and nonstandard ports
+are rejected; redirects are never followed. Choose a provider you trust with
+email contents. Hostname validation cannot prevent a trusted hostname's DNS
+from resolving to an inappropriate destination.
 
-   `AI_BASE_URL` must be the API base, excluding `/chat/completions`. Credentials,
-   query strings, fragments, IP literals, local names and nonstandard ports are
-   rejected; redirects are never followed. Only an administrator can choose the
-   endpoint. Use a provider you trust with email contents and check its retention
-   policy. Domain validation cannot prevent an administrator-controlled hostname
-   from resolving to an inappropriate destination; keep DNS under trusted control.
-3. Add `AI_API_KEY` to the target's `secrets` list, preserving existing names.
-   Store its value as the Worker Secret **AI_API_KEY** in the corresponding
-   Cloudflare Worker/Preview settings. Never put the value in `vars`, D1,
-   frontend files, shell arguments or Git. Use permissions `0600` for any ignored
-   local secret file. Native cf does not automatically load old `.dev.vars` files.
-4. Publish only through the existing authorized release workflow. The remote
-   Preview shares production data: use read-only acceptance unless writes and
-   external processing have separate authorization.
+中文：每个环境仅需管理员初始化一次 **AI_SETTINGS_KEY** 加密 Secret（随机 32 字节，
+64 位十六进制），后续 Owner 直接在「设置 → AI 设置」修改地址、模型、Key、接口格式、
+超时和正文长度，保存立即生效，无需重新部署，也不会发起模型调用。复用现有设置表，
+Key 经 AES-GCM 加密保存且永不回显；留空保留，填新值替换，更换地址须重新输入。
+删除 Key 前先关闭 AI，再勾选删除。并发修改时重新读取配置后保存。加密 Secret 必须跨部署
+保持稳定；丢失或轮换后需重新填写供应商 Key。原生 PRE 的 Secret 与生产环境分别配置。
 
-中文步骤：先按现有发布流程验证本地 migration 0030（schema 30），再在对应私有 JSON
-配置的 `vars` 中加入上述字符串配置；`AI_BASE_URL` 不含 `/chat/completions`，模型名
-使用供应商实际支持的名称。将 `AI_API_KEY` 名称追加到 `secrets` 列表，并在对应 Worker
-或 Preview 的 Secret 设置中安全保存值，不写入公开配置、命令参数、D1 或 Git。
-配置完成后按已授权的 Preview/生产流程发布；本指南本身不授权发布或远程迁移。
+For server-managed installations with no saved UI override, the existing
+string variables remain supported: `AI_ENABLED`, `AI_PROVIDER` (only
+`openai-compatible`), `AI_BASE_URL`, `AI_MODEL`, `AI_TIMEOUT_MS` (default 15000),
+`AI_MAX_INPUT_CHARS` (default 16000), `AI_API_FORMAT` (`chat-completions` by
+default, or `responses`) and Secret `AI_API_KEY`. Once UI settings exist,
+these defaults no longer override them, including the enable flag and key.
+Never put plaintext provider keys in `vars`, D1, frontend files or Git.
+
+Responses mode sends a non-streaming `POST /responses` with `instructions`,
+`input`, `max_output_tokens` and `store: false`. Chat mode uses
+`POST /chat/completions` with `messages` and `store: false`. Both validate the
+same analysis JSON and limits. Responses must finish with `status: completed`
+and assistant `output_text`; incomplete, refusal or tool output fails safely.
+This is an outbound provider adapter, not a public OpenAI proxy endpoint.
+See the [official Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create).
 
 ## Use / 使用
 
@@ -56,7 +69,7 @@ analysis** after reading the external-processing notice. Expanding reads only th
 cache. Summary and category views share one result and do not consume extra tokens
 when switching views. Refreshing the page preserves D1 results. **Agree and
 regenerate** requests a new analysis. Interface language (`zh-CN` or `en`), model,
-endpoint, prompt/schema version and full body changes invalidate the cache.
+endpoint, API format, prompt/schema version and full body changes invalidate the cache.
 
 The category view shows the current category, explanation and uncalibrated model
 self-assessment. **Confirm and apply category** uses the existing inbox category
@@ -67,7 +80,7 @@ its cached result; return it to the inbox to apply a category.
 
 在邮件详情展开「AI 摘要与分类建议」，阅读隐私提示后点击「同意并生成分析」。
 展开面板只读缓存，摘要和分类视图共用一次分析；刷新页面保留结果。「同意重新生成」
-会请求新的分析。界面语言、模型、服务端地址、Prompt/Schema 或完整正文变化都会使缓存失效。
+会请求新的分析。界面语言、模型、服务端地址、接口格式、Prompt/Schema 或完整正文变化都会使缓存失效。
 分类建议不会自动生效；点击「确认应用此分类」才调用现有分类接口，并保留当前筛选范围。
 已有手动分类时禁止应用建议；数据库原子条件也会保留另一标签页的并发手动设置。可先通过原有收件箱操作恢复自动分类。归档和回收站保留缓存，
 永久删除邮件会同步清理分析结果。
@@ -97,13 +110,15 @@ explicit `429` with `Retry-After: 0` is retried once. Network errors, timeouts a
 
 ## Disable and troubleshoot / 禁用与排错
 
-Set `AI_ENABLED` to `"false"` and publish through the authorized workflow to stop
-all new provider calls; normal email rules continue. Saved analyses stay in D1
+Turn off AI in **Settings → AI settings** and save to stop new provider calls; normal email rules continue. Saved analyses stay in D1
 until their message is permanently deleted. Disablement is not provider-side
 removal of content already submitted.
 
-- `disabled` / `unconfigured`: check enable flag, provider, model, HTTPS base,
-  timeout/input limits and the **presence**, never the displayed value, of Secret.
+- `disabled` / `unconfigured`: check the saved enable flag, model, HTTPS base,
+  API format, timeout/input limits and whether a key is configured.
+- `AI_SETTINGS_KEY_UNAVAILABLE`: initialize the environment encryption Secret;
+  if it changed, replace the provider key. No plaintext key is returned.
+- `AI_KEY_REENTRY_REQUIRED`: re-enter the key after changing the base URL.
 - `AI_PROVIDER_AUTH`: verify provider credential access privately; do not paste it
   into logs or issue reports.
 - `AI_BUSY` / `processing`: refresh after a minute. Worker interruption cannot
@@ -117,7 +132,7 @@ removal of content already submitted.
   attachment-only messages are not analyzed.
 - `AI_CACHE_INVALID`: explicitly regenerate after cooldown.
 
-禁用：将 `AI_ENABLED` 改为 `"false"` 并按授权流程发布，原有邮箱行为继续。
+禁用：在「设置 → AI 设置」关闭并保存，原有邮箱行为继续。
 禁用不删除已缓存结果，也不能撤回已发送至供应商的内容。配置错误时核对启用开关、
 HTTPS 地址、模型、参数范围及 Secret 是否存在，勿输出密钥。繁忙时一分钟后刷新；
 超时或供应商故障可稍后重试；认证错误私下检查权限；限流等待配额恢复；响应校验失败
@@ -127,7 +142,7 @@ HTTPS 地址、模型、参数范围及 Secret 是否存在，勿输出密钥。
 
 `bun test src/lib/server/ai` uses deterministic injectable fake providers and
 in-memory SQLite, without external requests or real tokens. Browser tests in
-`tests/e2e/mail-ai.spec.ts` use synthetic local mailbox data and mocked AI HTTP
+`tests/e2e/mail-ai.spec.ts` and `mail-ai-settings.spec.ts` use synthetic local mailbox data and mocked AI HTTP
 responses; they prove UI behavior, not a real MaaS integration. For later manual
 provider acceptance, use an explicitly authorized synthetic non-sensitive email,
 verify Chinese and English, cached reload, regeneration, invalid credential,
