@@ -45,6 +45,7 @@ Cloudflare 操作统一使用全局 `cf`（Node.js ≥ 22.18），可用 `bun ad
 | [维护与恢复](./docs/DEPLOYMENT.md) | 备份、搜索索引、清理与故障恢复 |
 | [收信可靠性](./docs/specs/inbound-delivery-reliability.md) | 收信锁冲突、子地址、路由范围与验证边界 |
 | [Telegram](./docs/TELEGRAM.md) | Bot 配置与通知运维 |
+| [Logo 下载](./docs/brand/README.md) | Telegram 头像、SVG/PNG/JPG/PDF 与品牌资源 ZIP |
 | [全部文档](./docs/README.md) | API、架构、预览、设计与发布记录 |
 
 详细指南目前包含英文和中文，语言标注见[文档索引](./docs/README.md)。

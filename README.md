@@ -47,6 +47,7 @@ See the
 | [Maintenance and recovery](./docs/DEPLOYMENT.md) | Backups, search indexes, cleanup, and recovery |
 | [Inbound reliability](./docs/specs/inbound-delivery-reliability.md) | Ingest conflicts, plus aliases, routing scope, and delivery evidence |
 | [Telegram](./docs/TELEGRAM.md) | Bot setup and notification operations |
+| [Logo downloads](./docs/brand/README.md) | Telegram avatars, SVG/PNG/JPG/PDF, and a brand kit ZIP |
 | [All documentation](./docs/README.md) | API, architecture, previews, design, and release records |
 
 ## License

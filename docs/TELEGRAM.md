@@ -1,5 +1,8 @@
 # FlareMail Telegram notifications
 
+For a FlareMail profile photo for your Telegram account or bot, use the
+[Logo downloads](./brand/README.md) (1024 × 1024 JPG/PNG avatars).
+
 Telegram notifications are an additive, one-Bot-per-Worker channel for
 inbound mail. Each workspace user can bind one Telegram private chat. A
 binding is a candidate until the user confirms it in FlareMail, and it remains
