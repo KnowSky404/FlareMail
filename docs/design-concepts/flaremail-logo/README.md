@@ -5,6 +5,9 @@ production FlareMail logo. The generated PNGs are concept records, not shipping 
 
 ## Production assets
 
+For ready-to-upload Telegram avatars, transparent PNGs, vector PDFs and a ZIP kit,
+see [Logo downloads](../../brand/README.md). These exports preserve the existing mark.
+
 - [`../../../static/brand/flaremail-mark.svg`](../../../static/brand/flaremail-mark.svg): standalone
   product mark.
 - [`../../../static/brand/flaremail-logo.svg`](../../../static/brand/flaremail-logo.svg): horizontal

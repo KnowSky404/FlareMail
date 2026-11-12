@@ -34,7 +34,8 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 | [FTS5 search ADR](./adr/0012-fts5-search.md) | English | Search projection and index decisions |
 | [Outbound attachments ADR](./adr/0013-outbound-attachments.md) | English | Attachment sending decisions |
 | [Design system](../DESIGN.md) | 中文 | Visual design, responsive behavior, and accessibility rules |
-| [Brand assets](./design-concepts/flaremail-logo/README.md) | English | Logo, favicon, and design sources |
+| [Logo downloads](./brand/README.md) | 中文 / English | Telegram avatars, SVG/PNG/JPG/PDF, and a brand kit ZIP |
+| [Brand sources](./design-concepts/flaremail-logo/README.md) | English | Original logo, favicon, and design sources |
 | [Runtime budget](./RUNTIME_BUDGET.md) | English | Worker CPU budget and preview measurements |
 | [Proposed SLOs](./SLO.md) | English | Reliability objectives and observability expectations |
 | [Roadmap](../TODO.md) | 中文 | Remaining product work |
