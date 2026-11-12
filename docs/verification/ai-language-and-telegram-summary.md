@@ -96,7 +96,8 @@ read through cf's authenticated API client; deletion used `cf previews delete`.
 No credential values were printed or copied.
 
 Actual deployment metadata confirms that `mail-ai` has an **independent existing
-D1** and **shares production R2**. Both D1s report schema 30 and saved enabled AI
+D1** and **shares production R2**. Before the authorized migration, both D1s
+reported schema 30 and saved enabled AI
 settings with a key present. These reads checked metadata only, without reading
 mail or key values. Operational docs were corrected; the existing PRE binding is
 preserved rather than redirected to production to match outdated documentation.
@@ -106,7 +107,7 @@ binding metadata. Automatic reply/email notification/Telegram flags remain off,
 Cron remains empty, and only existing Secret names are declared. No Secret value
 is copied from production and no new cloud resource is provisioned.
 
-## Pending remote acceptance and release
+## Initial remote handoff at d614653, before authorization
 
 - Publish the reviewed committed source to the existing `mail-ai` PRE and record
   its deployment ID and SHA; an older PRE or a live health endpoint is not feature
@@ -127,4 +128,54 @@ is copied from production and no new cloud resource is provisioned.
 - Keep the branch/worktree until PRE and the independent local/bot review gates
   permit PR/merge. Do not bypass PRE because a build, health check or review passed.
 
-No physical Safari/iOS or real delivery/billing evidence is claimed.
+## Authorized PRE acceptance — completed 2026-11-12
+
+The user authorized the existing independent PRE D1 migration, a 20-minute
+verification session, two synthetic inline-text messages, at most two model
+generations, and restoration/cleanup. No production database or R2 writes,
+real inbound mail, Telegram delivery or production publishing were authorized.
+
+- Accepted source: `d6146532a44785de61d9615c0a3b5df55c9c9771`.
+- Native PRE: `mail-ai`, ID `f03ccb8c9df44d188f2d8dd8d2ebff11`.
+- Deployment: `5b035278-8a57-4a86-b673-1457d7b0ae3f`, at the stable URL above.
+- Before execution, the live PRE source/bindings matched the explicit private
+  PRE target, its D1 differed from production, only migration 0031 was pending,
+  a D1 Time Travel bookmark was saved privately, and cf dry-run passed.
+- Migration 0031 applied successfully. The migration record and all three added
+  columns were checked. PRE is schema **31**, production remains schema **30**.
+- Authenticated `/api/readiness` returned success with the accepted source SHA.
+  Telegram settings returned `schemaReady=true` and `globalEnabled=false`.
+- Invalid AI language settings were rejected; the Telegram PATCH path correctly
+  returned `TELEGRAM_DISABLED` while the deployment switch remained off.
+- Real configured provider acceptance used exactly **two** synthetic messages:
+  auto with interface `en` returned `language=en`; fixed `ja` with interface `en`
+  returned `language=ja`. Repeated GETs returned the identical analysis and stable
+  cache timestamp. Fixed `ja` also persisted when the GET context was `zh-CN`.
+  Both analyses were observed as ready in PRE D1 before cleanup.
+- Actual PRE Chromium desktop/mobile settings showed the persisted custom language,
+  a blank API key field, no horizontal overflow, no console errors and no browser
+  mutations. Screenshots of the real settings panel are kept outside Git.
+- Original public settings/preferences were restored using the latest revision.
+  The two messages, their analysis rows and the temporary session were deleted;
+  zero retained test rows and zero R2 cleanup tasks were verified. The two actual
+  generation attempts remain accounted for by the PRE usage limiter.
+- The application/schema trees did not change in the subsequent documentation-only
+  acceptance commit; its exact head is recorded with the PR and refreshed PRE
+  deployment evidence. No additional model call is required for docs-only changes.
+
+The final full-base local review of `d614653` reported no actionable regressions.
+Its 179 focused tests passed. Three cf/D1 tests could not write tool state inside
+that review sandbox; the permitted local environment independently passed all 892
+checks and a 17-test cf-focused rerun at the exact head. This limitation does not
+stand in for an unrun or failed review.
+
+Synthetic local screenshots for review:
+
+![Summary language setting, desktop dark theme](../images/ai-summary-language-desktop.png)
+
+![Independent Telegram AI consent, desktop](../images/telegram-ai-summary-desktop.png)
+
+Physical Safari/iOS and real inbound/Telegram delivery were not exercised.
+Provider billing amounts were not independently checked. Production release,
+production schema migration and its compatibility bridge remain separate authorized
+steps; the PRE acceptance does not execute them.
