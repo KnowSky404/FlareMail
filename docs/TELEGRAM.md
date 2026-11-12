@@ -192,7 +192,8 @@ This repository change does not run migrations, deploy a Worker, register a
 webhook, or send a real Telegram message.
 
 1. Review the release commit, create/verify the intended D1 Time Travel
-   bookmark, and apply migrations 0019 through 0022 to the intended D1 database.
+   bookmark, and apply all ordered migrations through 0031 to the intended D1
+   database, following the compatibility rollout above for an existing deployment.
    Confirm `workspace_schema_metadata.schema_version = 31` before enabling the
    feature.
 2. Create a Bot with BotFather. Record the username without `@`. Keep the

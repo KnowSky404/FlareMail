@@ -655,21 +655,35 @@ export async function markTelegramCancelled(db: D1Database, deliveryId: string, 
   `).bind(errorCode, now, now, now, deliveryId, claimToken).run();
 }
 
+const telegramAiAuthorization = `d.id = ? AND d.claim_token = ? AND d.status = 'processing' AND d.external_started = 0
+  AND d.lease_expires_at > ? AND d.ai_summary_enabled = 1 AND d.summary_enabled = 1 AND d.privacy_mode = 0
+  AND EXISTS (SELECT 1 FROM workspace_telegram_bindings AS b
+    WHERE b.user_id = d.owner_user_id AND b.binding_id = d.binding_id
+      AND b.authorization_version = d.authorization_version AND b.state = 'active' AND b.enabled = 1
+      AND b.privacy_mode = 0 AND b.summary_enabled = 1 AND b.ai_summary_enabled = 1)
+  AND EXISTS (SELECT 1 FROM email_messages AS e LEFT JOIN workspace_email_states AS s
+    ON s.user_id = d.owner_user_id AND s.email_message_id = e.id
+    WHERE e.owner_user_id = d.owner_user_id AND e.id = d.email_message_id
+      AND e.recipient_status IN ('managed', 'unregistered') AND s.deleted_at IS NULL AND s.quarantined_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM blocked_senders AS blocked
+        WHERE blocked.owner_user_id = d.owner_user_id AND blocked.email = lower(trim(
+          CASE WHEN instr(e."from", '<') > 0 AND instr(e."from", '>') > instr(e."from", '<')
+            THEN substr(e."from", instr(e."from", '<') + 1, instr(e."from", '>') - instr(e."from", '<') - 1)
+            ELSE e."from" END))))`;
+
 /** Reserve before the provider call; Telegram retries must never bill AI again. */
 export async function reserveTelegramAiAttempt(db: D1Database, deliveryId: string, claimToken: string, now = nowIso()) {
   const row = await db.prepare(`UPDATE workspace_telegram_deliveries AS d SET ai_attempted = 1, updated_at = ?
-    WHERE d.id = ? AND d.claim_token = ? AND d.status = 'processing' AND d.external_started = 0
-      AND d.lease_expires_at > ? AND d.ai_attempted = 0 AND d.ai_summary_enabled = 1
-      AND d.summary_enabled = 1 AND d.privacy_mode = 0
-      AND EXISTS (SELECT 1 FROM workspace_telegram_bindings AS b
-        WHERE b.user_id = d.owner_user_id AND b.binding_id = d.binding_id
-          AND b.authorization_version = d.authorization_version AND b.state = 'active' AND b.enabled = 1
-          AND b.privacy_mode = 0 AND b.summary_enabled = 1 AND b.ai_summary_enabled = 1)
-      AND EXISTS (SELECT 1 FROM email_messages AS e LEFT JOIN workspace_email_states AS s
-        ON s.user_id = d.owner_user_id AND s.email_message_id = e.id
-        WHERE e.owner_user_id = d.owner_user_id AND e.id = d.email_message_id
-          AND e.recipient_status IN ('managed', 'unregistered') AND s.deleted_at IS NULL AND s.quarantined_at IS NULL)
-    RETURNING id`).bind(now, deliveryId, claimToken, now).first<{ id: string }>();
+    WHERE ${telegramAiAuthorization} AND d.ai_attempted = 0 RETURNING id`)
+    .bind(now, deliveryId, claimToken, now).first<{ id: string }>();
+  return Boolean(row);
+}
+
+/** Recheck at the external AI boundary after body, claim and quota awaits. */
+export async function isReservedTelegramAiAuthorized(db: D1Database, deliveryId: string, claimToken: string, now = nowIso()) {
+  const row = await db.prepare(`SELECT d.id FROM workspace_telegram_deliveries AS d
+    WHERE ${telegramAiAuthorization} AND d.ai_attempted = 1`)
+    .bind(deliveryId, claimToken, now).first<{ id: string }>();
   return Boolean(row);
 }
 

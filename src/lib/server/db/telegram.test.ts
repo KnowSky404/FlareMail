@@ -6,6 +6,7 @@ import {
   activateTelegramBinding,
   claimTelegramDelivery,
   reserveTelegramAiAttempt,
+  isReservedTelegramAiAuthorized,
   cleanupTelegramState,
   consumeTelegramActionLimit,
   consumeTelegramChallenge,
@@ -330,11 +331,13 @@ test('AI generation reserves one attempt, preserves Telegram external state, and
   const claim = await claimTelegramDelivery(d1 as unknown as D1Database, '2026-01-02', '2026-01-03');
   expect(claim?.ai_summary_enabled).toBe(1);
   if (!claim) throw new Error('expected claim');
+  expect(await isReservedTelegramAiAuthorized(d1 as unknown as D1Database, claim.id, claim.claim_token, '2026-01-02')).toBe(false);
   expect(await Promise.all([
     reserveTelegramAiAttempt(d1 as unknown as D1Database, claim.id, claim.claim_token, '2026-01-02'),
     reserveTelegramAiAttempt(d1 as unknown as D1Database, claim.id, claim.claim_token, '2026-01-02')
   ])).toEqual([true, false]);
   expect(db.query('SELECT ai_attempted, external_started FROM workspace_telegram_deliveries').get()).toEqual({ ai_attempted: 1, external_started: 0 });
+  expect(await isReservedTelegramAiAuthorized(d1 as unknown as D1Database, claim.id, claim.claim_token, '2026-01-02')).toBe(true);
   const reclaimed = await claimTelegramDelivery(d1 as unknown as D1Database, '2026-01-04', '2026-01-05');
   expect(reclaimed?.ai_attempted).toBe(1);
   expect(await reserveTelegramAiAttempt(d1 as unknown as D1Database, claim.id, reclaimed!.claim_token, '2026-01-04')).toBe(false);

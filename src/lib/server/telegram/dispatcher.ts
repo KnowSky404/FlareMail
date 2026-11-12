@@ -4,6 +4,7 @@ import {
   claimTelegramDelivery,
   deferTelegramDelivery,
   reserveTelegramAiAttempt,
+  isReservedTelegramAiAuthorized,
   cleanupTelegramState,
   hasTelegramTables,
   markTelegramCancelled,
@@ -86,23 +87,6 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
     if (!claimed) break;
     result.processed += 1;
 
-    if (!await reserveScopes(env.DB, claimed.owner_user_id, claimed.telegram_chat_id, current)) {
-      try {
-        await markTelegramFailure(env.DB, {
-          deliveryId: claimed.id,
-          claimToken: claimed.claim_token,
-          status: 'retryable',
-          errorCode: 'local_rate_limited',
-          nextAttemptAt: isoAfter(5_000, Date.parse(current))
-        });
-        result.retryable += 1;
-      } catch {
-        await markUnknownAfterFinalizationFailure(env.DB, claimed.id, claimed.claim_token, 'unknown_finalize_after_rate_limit');
-        result.unknown += 1;
-      }
-      continue;
-    }
-
     let aiSummary: string | undefined;
     if (claimed.ai_summary_enabled === 1) {
       try {
@@ -122,7 +106,9 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
             if (await reserveTelegramAiAttempt(env.DB, claimed.id, claimed.claim_token, new Date((options.now ?? Date.now)()).toISOString())) {
               const timeoutMs = Math.floor(budget - ((options.now ?? Date.now)() - started) - config.timeoutMs - 500);
               if (timeoutMs > 0) {
-                const analysis = await workspaceMailAi(env, session, messageId, { analyze: true, timeoutMs }, options.aiProvider);
+                const analysis = await workspaceMailAi(env, session, messageId, { analyze: true, timeoutMs,
+                  beforeAnalyze: () => isReservedTelegramAiAuthorized(env.DB, claimed.id, claimed.claim_token, new Date((options.now ?? Date.now)()).toISOString())
+                }, options.aiProvider);
                 if (analysis.status === 'ready') aiSummary = analysis.analysis?.summary;
               }
             }
@@ -132,6 +118,26 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
         // AI is optional: keep the ordinary snippet and the Telegram send policy.
       }
     }
+    const sendTime = (options.now ?? Date.now)();
+    if (sendTime >= leaseUntil) continue;
+    const sendNow = new Date(sendTime).toISOString();
+    if (!await reserveScopes(env.DB, claimed.owner_user_id, claimed.telegram_chat_id, sendNow)) {
+      try {
+        await markTelegramFailure(env.DB, {
+          deliveryId: claimed.id,
+          claimToken: claimed.claim_token,
+          status: 'retryable',
+          errorCode: 'local_rate_limited',
+          nextAttemptAt: isoAfter(5_000, sendTime)
+        });
+        result.retryable += 1;
+      } catch {
+        await markUnknownAfterFinalizationFailure(env.DB, claimed.id, claimed.claim_token, 'unknown_finalize_after_rate_limit');
+        result.unknown += 1;
+      }
+      continue;
+    }
+
     const sendSettings = await markTelegramExternalStarted(env.DB, claimed.id, claimed.claim_token, new Date((options.now ?? Date.now)()).toISOString());
     if (!sendSettings) {
       if ((options.now ?? Date.now)() < leaseUntil) {
@@ -175,7 +181,7 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       clearTimeout(timeout);
       if (error instanceof TelegramApiError && error.kind === 'rate_limited') {
         const retryAfter = Math.max(1, error.retryAfterSeconds ?? 60);
-        const cooldownUntil = new Date(Date.parse(current) + retryAfter * 1000 + Math.floor(Math.random() * 1_000)).toISOString();
+        const cooldownUntil = new Date((options.now ?? Date.now)() + retryAfter * 1000 + Math.floor(Math.random() * 1_000)).toISOString();
         await setTelegramDeliveryCooldown(env.DB, 'bot', cooldownUntil).catch(() => undefined);
         await setTelegramDeliveryCooldown(env.DB, `chat:${claimed.telegram_chat_id}`, cooldownUntil).catch(() => undefined);
         try {
@@ -203,7 +209,7 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       } else if (error instanceof TelegramApiError && error.kind === 'temporary') {
         try {
           const terminal = claimed.attempts >= claimed.max_attempts;
-          const nextAttemptAt = isoAfter(retryDelayMs(claimed.attempts), Date.parse(current));
+          const nextAttemptAt = isoAfter(retryDelayMs(claimed.attempts), (options.now ?? Date.now)());
           await setTelegramDeliveryCooldown(env.DB, 'bot', nextAttemptAt).catch(() => undefined);
           await markTelegramFailure(env.DB, {
             deliveryId: claimed.id,

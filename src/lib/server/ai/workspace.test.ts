@@ -305,3 +305,62 @@ test('a background language change during generation is checked using the actual
     else await expect(pending).rejects.toMatchObject({ code: 'AI_SETTINGS_CHANGED' });
   }
 });
+
+
+test('authorization is checked immediately before generation and denial releases the claim without a provider call', async () => {
+  const f = setup(); let checks = 0;
+  await expect(workspaceMailAi(f.env, session(), 'email:mail', {
+    language: 'en', analyze: true, beforeAnalyze: async () => { checks++; return false; }
+  }, f.provider)).rejects.toMatchObject({ status: 409, code: 'AI_AUTHORIZATION_CHANGED' });
+  expect(checks).toBe(1); expect(f.calls()).toBe(0);
+  expect(await readMailAi(f.db, f.key)).toMatchObject({ status: 'failed', result_json: null, lease_until: 0 });
+  f.cooldown();
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', {
+    language: 'en', analyze: true, beforeAnalyze: async () => { checks++; return true; }
+  }, f.provider)).toMatchObject({ status: 'ready' });
+  expect(f.calls()).toBe(1); expect(checks).toBe(2);
+  await workspaceMailAi(f.env, session(), 'email:mail', {
+    language: 'en', analyze: true, beforeAnalyze: async () => { throw new Error('cache must not need a provider authorization hook'); }
+  }, f.provider);
+  expect(f.calls()).toBe(1);
+});
+
+test('authorization hook time is deducted before starting the provider', async () => {
+  const f = setup(); let checks = 0;
+  await expect(workspaceMailAi(f.env, session(), 'email:mail', {
+    analyze: true, timeoutMs: 100, beforeAnalyze: async () => {
+      checks++;
+      await new Promise((resolve) => setTimeout(resolve, 110));
+      return true;
+    }
+  }, f.provider)).rejects.toMatchObject({ code: 'AI_TIMEOUT' });
+  expect(checks).toBe(1); expect(f.calls()).toBe(0);
+  expect(await readMailAi(f.db, f.key)).toMatchObject({ status: 'failed', result_json: null, lease_until: 0 });
+});
+
+test.each([{ enabled: false }, { summaryLanguage: 'ja' }])('settings changed while preparing input prevent the provider call: %j', async (changed) => {
+  const f = setup(); const saved = await saveLanguages(f.env, 'auto', 'en');
+  const prepare = f.env.DB.prepare.bind(f.env.DB);
+  let changedDuringInput = false;
+  f.env.DB.prepare = (sql: string) => {
+    const statement = prepare(sql);
+    if (sql.includes('SELECT text_body, html_body, body_object_id FROM email_messages')) {
+      const first = statement.first.bind(statement);
+      statement.first = async <T>() => {
+        const row = await first<T>();
+        if (!changedDuringInput) {
+          changedDuringInput = true;
+          await saveMailAiSettings(f.env, 'owner', { ...saved.settings, revision: saved.revision, ...changed });
+        }
+        return row;
+      };
+    }
+    return statement;
+  };
+  let authorizationChecks = 0;
+  await expect(workspaceMailAi(f.env, session(), 'email:mail', {
+    language: 'en', analyze: true, beforeAnalyze: async () => { authorizationChecks++; return true; }
+  }, f.provider)).rejects.toMatchObject({ code: 'AI_SETTINGS_CHANGED' });
+  expect(changedDuringInput).toBe(true); expect(f.calls()).toBe(0); expect(authorizationChecks).toBe(0);
+  expect(await readMailAi(f.db, f.key)).toMatchObject({ status: 'failed', result_json: null, lease_until: 0 });
+});
