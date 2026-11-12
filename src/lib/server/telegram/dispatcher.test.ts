@@ -146,3 +146,168 @@ describe('Telegram outbox dispatcher', () => {
     expect(value.db.query('SELECT status FROM workspace_telegram_deliveries').get()).toEqual({ status: 'cancelled' });
   });
 });
+
+function aiFixture() {
+  const value = fixture();
+  value.db.exec(`UPDATE workspace_telegram_bindings SET ai_summary_enabled = 1;
+    UPDATE workspace_telegram_deliveries SET ai_summary_enabled = 1;
+    UPDATE email_messages SET text_body = 'Meeting tomorrow.';`);
+  Object.assign(value.env, { AI_ENABLED: 'true', AI_BASE_URL: 'https://maas.vendor.com/v1', AI_API_KEY: 'fake-key', AI_MODEL: 'fake-model' });
+  let calls = 0;
+  const provider = { analyze: async (input: import('$lib/domain/mail/ai').MailAiInput) => {
+    calls++;
+    expect(value.db.query('SELECT external_started, ai_attempted FROM workspace_telegram_deliveries').get())
+      .toEqual({ external_started: 0, ai_attempted: 1 });
+    return { summary: 'AI meeting summary', keyPoints: [], actionItems: [], dates: [], language: input.language, suggestion: null };
+  } };
+  return { ...value, provider, calls: () => calls };
+}
+
+const dispatchTime = Date.parse('2026-09-09T12:00:00.000Z');
+const telegramSuccess = () => new Response(JSON.stringify({ ok: true, result: { message_id: 9004 } }), { status: 200 });
+
+test('generates and sends one AI summary; Telegram retry reuses cache without another generation', async () => {
+  const value = aiFixture();
+  const texts: string[] = [];
+  const first = await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => dispatchTime, aiProvider: value.provider,
+    fetchImpl: async (_input, init) => {
+      texts.push(String(JSON.parse(String(init?.body)).text));
+      return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 1 } }), { status: 429 });
+    }
+  });
+  expect(first.retryable).toBe(1);
+  const second = await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => dispatchTime + 10_000, aiProvider: value.provider,
+    fetchImpl: async (_input, init) => { texts.push(String(JSON.parse(String(init?.body)).text)); return telegramSuccess(); }
+  });
+  expect(second.sent).toBe(1);
+  expect(value.calls()).toBe(1);
+  expect(texts).toHaveLength(2);
+  expect(texts.every((text) => text.includes('AI 摘要：AI meeting summary'))).toBe(true);
+});
+
+test('AI failure falls back to the snippet and does not retry the provider after manual delivery retry', async () => {
+  const value = aiFixture();
+  let aiCalls = 0;
+  const texts: string[] = [];
+  const aiProvider = { analyze: async () => { aiCalls++; throw new Error('synthetic timeout'); } };
+  const options = {
+    limit: 1, now: () => dispatchTime, aiProvider,
+    fetchImpl: async (_input: unknown, init?: RequestInit) => {
+      texts.push(String(JSON.parse(String(init?.body)).text));
+      return new Response(JSON.stringify({ ok: false, error_code: 403 }), { status: 403 });
+    }
+  };
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, options)).failed).toBe(1);
+  const { retryTelegramDelivery } = await import('$lib/server/db/telegram');
+  expect(await retryTelegramDelivery(value.DB as unknown as D1Database, 'user-1', 'delivery-1')).toBe(true);
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    ...options, now: () => Date.now() + 1_000, fetchImpl: async (_input, init) => {
+      texts.push(String(JSON.parse(String(init?.body)).text)); return telegramSuccess();
+    }
+  })).sent).toBe(1);
+  expect(aiCalls).toBe(1);
+  expect(texts.every((text) => text.includes('摘要：A bounded summary.') && !text.includes('AI 摘要'))).toBe(true);
+});
+
+test('a two-second inbound budget defers AI work without spending a delivery or AI attempt', async () => {
+  const value = aiFixture();
+  let sends = 0;
+  await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, timeBudgetMs: 2_000, now: () => dispatchTime, aiProvider: value.provider,
+    fetchImpl: async () => { sends++; return telegramSuccess(); }
+  });
+  expect(value.calls()).toBe(0); expect(sends).toBe(0);
+  expect(value.db.query('SELECT status, attempts, ai_attempted, external_started FROM workspace_telegram_deliveries').get())
+    .toEqual({ status: 'pending', attempts: 0, ai_attempted: 0, external_started: 0 });
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => dispatchTime + 10_000, aiProvider: value.provider, fetchImpl: async () => telegramSuccess()
+  })).sent).toBe(1);
+  expect(value.calls()).toBe(1);
+});
+
+test.each([
+  "UPDATE workspace_telegram_bindings SET ai_summary_enabled = 0",
+  "UPDATE workspace_telegram_deliveries SET ai_summary_enabled = 0",
+  "UPDATE workspace_telegram_bindings SET privacy_mode = 1",
+  "UPDATE workspace_telegram_deliveries SET privacy_mode = 1",
+  "UPDATE workspace_telegram_bindings SET summary_enabled = 0",
+  "UPDATE workspace_telegram_deliveries SET summary_enabled = 0"
+])('does not call AI without both snapshot and current consent: %s', async (sql) => {
+  const value = aiFixture(); value.db.exec(sql);
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => dispatchTime, aiProvider: value.provider, fetchImpl: async () => telegramSuccess()
+  })).sent).toBe(1);
+  expect(value.calls()).toBe(0);
+});
+
+test.each(['privacy', 'summary', 'ai', 'binding', 'deleted'])('rechecks %s changes while AI is running before sending', async (change) => {
+  const value = aiFixture();
+  const texts: string[] = [];
+  const sql = {
+    privacy: 'UPDATE workspace_telegram_bindings SET privacy_mode = 1',
+    summary: 'UPDATE workspace_telegram_bindings SET summary_enabled = 0',
+    ai: 'UPDATE workspace_telegram_bindings SET ai_summary_enabled = 0',
+    binding: 'UPDATE workspace_telegram_bindings SET enabled = 0',
+    deleted: "INSERT INTO workspace_email_states (id, user_id, email_message_id, deleted_at) VALUES ('state', 'user-1', 'email-1', 'now')"
+  }[change]!;
+  const result = await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => dispatchTime,
+    aiProvider: { analyze: async (input) => { const analysis = await value.provider.analyze(input); value.db.exec(sql); return analysis; } },
+    fetchImpl: async (_input, init) => { texts.push(String(JSON.parse(String(init?.body)).text)); return telegramSuccess(); }
+  });
+  if (change === 'binding' || change === 'deleted') { expect(result.sent).toBe(0); expect(texts).toHaveLength(0); }
+  else {
+    expect(result.sent).toBe(1); expect(texts[0]).not.toContain('AI 摘要');
+    if (change === 'privacy') expect(texts[0]).toBe('FlareMail：收到一封新邮件。');
+    else if (change === 'summary') expect(texts[0]).not.toContain('摘要：');
+    else expect(texts[0]).toContain('摘要：A bounded summary.');
+  }
+});
+
+test.each(['disabled', 'unconfigured', 'empty', 'quota', 'interrupted'])('optional AI %s falls back without blocking Telegram', async (state) => {
+  const value = aiFixture();
+  if (state === 'disabled') Object.assign(value.env, { AI_ENABLED: 'false' });
+  if (state === 'unconfigured') Object.assign(value.env, { AI_API_KEY: '' });
+  if (state === 'empty') value.db.exec("UPDATE email_messages SET text_body = ''");
+  if (state === 'quota') value.db.query('INSERT INTO mail_ai_rate_limits (owner_user_id, attempts, reset_at) VALUES (?, 30, ?)').run('user-1', Date.now() + 60_000);
+  if (state === 'interrupted') value.db.exec('UPDATE workspace_telegram_deliveries SET ai_attempted = 1');
+  let text = '';
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => dispatchTime, aiProvider: value.provider,
+    fetchImpl: async (_input, init) => { text = String(JSON.parse(String(init?.body)).text); return telegramSuccess(); }
+  })).sent).toBe(1);
+  expect(value.calls()).toBe(0);
+  expect(text).toContain('摘要：A bounded summary.'); expect(text).not.toContain('AI 摘要');
+});
+
+test('globally disabled Telegram does not dispatch or analyze', async () => {
+  const value = aiFixture(); Object.assign(value.env, { TELEGRAM_ENABLED: 'false' });
+  let sends = 0;
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    aiProvider: value.provider, fetchImpl: async () => { sends++; return telegramSuccess(); }
+  })).processed).toBe(0);
+  expect(sends).toBe(0); expect(value.calls()).toBe(0);
+});
+
+test('expired AI delivery leases remain recoverable and the next dispatcher reuses the completed analysis', async () => {
+  const value = aiFixture();
+  let clock = dispatchTime;
+  let sends = 0;
+  const aiProvider = { analyze: async (input: import('$lib/domain/mail/ai').MailAiInput) => {
+    const analysis = await value.provider.analyze(input);
+    clock += 46_000;
+    return analysis;
+  } };
+  const fetchImpl = async () => { sends++; return telegramSuccess(); };
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => clock, aiProvider, fetchImpl
+  })).sent).toBe(0);
+  expect(value.db.query('SELECT status, external_started, ai_attempted FROM workspace_telegram_deliveries').get())
+    .toEqual({ status: 'processing', external_started: 0, ai_attempted: 1 });
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => clock, aiProvider, fetchImpl
+  })).sent).toBe(1);
+  expect(value.calls()).toBe(1); expect(sends).toBe(1);
+});

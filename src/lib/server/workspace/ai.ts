@@ -8,6 +8,7 @@ import { resolveWorkspaceMailAiConfiguration } from '$lib/server/ai/settings';
 import { mailAiFingerprint, prepareMailAiInput } from '$lib/server/ai/input';
 import { createMailAiProvider, validateMailAiAnalysis, type MailAiProvider } from '$lib/server/ai/provider';
 import { categorySenderAddress } from '$lib/domain/mail/categories';
+import { isSupportedLocale, type Locale } from '$lib/i18n/locale';
 import { ApiError } from '$lib/server/http/api';
 import { readWorkspaceMessage } from './reader';
 import type { WorkspaceContext } from './shared';
@@ -49,17 +50,21 @@ async function loadInput(env: CloudflareEnv, session: WorkspaceContext, id: stri
 
 export async function workspaceMailAi(
   env: CloudflareEnv, session: WorkspaceContext, id: string,
-  options: { language: MailAiInput['language']; analyze?: boolean; regenerate?: boolean },
+  options: { language?: Locale; analyze?: boolean; regenerate?: boolean; timeoutMs?: number },
   provider?: MailAiProvider
 ) {
   if (session.storage !== 'd1') throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', 'Workspace storage unavailable.');
+  if (options.language !== undefined && !isSupportedLocale(options.language)) throw new ApiError(400, 'AI_INVALID_LANGUAGE', 'Unsupported interface language.');
+  if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new ApiError(400, 'AI_INVALID_REQUEST', 'Invalid analysis time budget.');
+  const deadline = options.timeoutMs === undefined ? null : Date.now() + options.timeoutMs;
   const configuration = await resolveWorkspaceMailAiConfiguration(env, session.userId);
+  const language = configuration.summaryLanguage === 'auto' ? options.language ?? configuration.backgroundLanguage : configuration.summaryLanguage;
   if (!configuration.config) {
     await readEligibleMessage(env, session, id);
-    return { status: configuration.status, analysis: null };
+    return { status: configuration.status, analysis: null, language };
   }
-  const loaded = await loadInput(env, session, id, options.language, configuration.config.maxInputChars);
-  const { config } = configuration;
+  const loaded = await loadInput(env, session, id, language, configuration.config.maxInputChars);
+  const config = { ...configuration.config, timeoutMs: Math.min(configuration.config.timeoutMs, options.timeoutMs ?? configuration.config.timeoutMs) };
   const { key, input, contentHash } = loaded;
   const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, `${config.baseUrl}#${config.apiFormat}`, MAIL_AI_VERSION);
   const cached = await readMailAi(env.DB, key);
@@ -67,21 +72,32 @@ export async function workspaceMailAi(
     let analysis: MailAiAnalysis;
     try { analysis = validateMailAiAnalysis(JSON.parse(cached.result_json), input); }
     catch { throw new ApiError(409, 'AI_CACHE_INVALID', 'Saved analysis is invalid. Regenerate it.'); }
-    return { status: 'ready', analysis, truncated: input.truncated, updatedAt: cached.updated_at };
+    return { status: 'ready', analysis, language, truncated: input.truncated, updatedAt: cached.updated_at };
   }
-  if (!options.analyze) return { status: cached?.status === 'processing' && cached.lease_until > Date.now() ? 'processing' : 'empty', analysis: null };
+  if (!options.analyze) return { status: cached?.status === 'processing' && cached.lease_until > Date.now() ? 'processing' : 'empty', analysis: null, language };
   if (!input.body.trim()) throw new ApiError(422, 'AI_BODY_EMPTY', 'This message has no readable text.');
   const token = await claimMailAi(env.DB, key, fingerprint, config.model, Boolean(options.regenerate));
   if (!token) throw new ApiError(429, 'AI_BUSY', 'Analysis is busy or cooling down. Retry in a minute.');
   try {
     if (!await consumeMailAiQuota(env.DB, key.owner)) throw new ApiError(429, 'AI_QUOTA_EXCEEDED', 'AI analysis hourly limit reached.');
+    if (deadline !== null) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new ApiError(503, 'AI_TIMEOUT', 'AI analysis timed out.');
+      config.timeoutMs = Math.min(config.timeoutMs, remaining);
+    }
     const analysis = validateMailAiAnalysis(await (provider ?? createMailAiProvider(config)).analyze(input), input);
     // Recheck visibility and content after the external request, before returning or saving.
-    const current = await loadInput(env, session, id, options.language, config.maxInputChars);
+    const current = await loadInput(env, session, id, language, config.maxInputChars);
     if (current.contentHash !== contentHash) throw new ApiError(409, 'AI_CONTENT_CHANGED', 'The message changed. Please retry.');
+    const latest = await resolveWorkspaceMailAiConfiguration(env, session.userId);
+    const latestLanguage = latest.summaryLanguage === 'auto' ? options.language ?? latest.backgroundLanguage : latest.summaryLanguage;
+    if (!latest.config || latestLanguage !== language || latest.config.model !== config.model ||
+      latest.config.baseUrl !== config.baseUrl || latest.config.apiFormat !== config.apiFormat || latest.config.maxInputChars !== config.maxInputChars) {
+      throw new ApiError(409, 'AI_SETTINGS_CHANGED', 'AI settings changed. Please retry.');
+    }
     const completed = await finishMailAi(env.DB, key, token, JSON.stringify(analysis));
     if (!completed.meta.changes) throw new ApiError(409, 'AI_CLAIM_LOST', 'Analysis expired. Please retry.');
-    return { status: 'ready', analysis, truncated: input.truncated, updatedAt: Date.now() };
+    return { status: 'ready', analysis, language, truncated: input.truncated, updatedAt: Date.now() };
   } catch (error) {
     await finishMailAi(env.DB, key, token, null);
     throw error;

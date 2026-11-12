@@ -71,3 +71,13 @@ describe('Telegram notification formatting', () => {
     );
   });
 });
+
+test('marks AI summaries and applies the same plain-text and length protections', () => {
+  const payload = buildTelegramNotification({ ...input, aiSummary: '<b>AI</b> https://private.example.test\u0000' + '界'.repeat(400) });
+  const summary = payload.text.split('\n').at(-1)!;
+  expect(summary).toStartWith('AI 摘要：AI [链接已省略]');
+  expect(Array.from(summary).length).toBeLessThanOrEqual(306);
+  expect(payload.text).not.toContain('<b>'); expect(payload.text).not.toContain('\u0000');
+  expect(buildTelegramNotification({ ...input, aiSummary: 'secret', privacyMode: true }).text).not.toContain('secret');
+  expect(buildTelegramNotification({ ...input, aiSummary: 'secret', summaryEnabled: false }).text).not.toContain('secret');
+});

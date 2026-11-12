@@ -198,3 +198,40 @@ test('OpenAI quota errors explain Platform billing without exposing provider mes
   expect(calls).toBe(1);
   await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*429/u.test(text)));
 });
+
+for (const preference of ['auto', 'ja']) {
+  test(`AI accessible language switch reads cache and ignores a late response (${preference})`, async ({ page, consoleErrors }) => {
+    let posts = 0;
+    let initialRead = false;
+    let lateFinished = false;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => release = resolve);
+    const payload = (summary: string, language: string) => ({ ok: true, data: {
+      status: 'ready', language, analysis: { summary, keyPoints: [], actionItems: [], dates: [], language, suggestion: null }
+    }, requestId: 'fake-language' });
+    await page.route(`**${path}*`, async (route) => {
+      if (route.request().method() === 'POST') posts++;
+      const language = new URL(route.request().url()).searchParams.get('language');
+      if (language === 'zh-CN') {
+        initialRead = true;
+        await gate;
+        await route.fulfill({ json: payload('过期的旧语言响应', preference === 'auto' ? 'zh-CN' : preference) }).catch(() => {});
+        lateFinished = true;
+        return;
+      }
+      expect(language).toBe('en');
+      await route.fulfill({ json: payload(preference === 'auto' ? 'Current English summary' : '日本語のキャッシュ', preference === 'auto' ? 'en' : preference) });
+    });
+    await login(page); await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('region', { name: title }).getByRole('button', { name: title, exact: true }).first().click();
+    await expect.poll(() => initialRead).toBe(true);
+    await page.getByRole('combobox', { name: '切换语言', exact: true }).selectOption('en');
+    const panel = page.getByRole('region', { name: 'AI summary and category suggestion' });
+    await expect(panel.getByText(preference === 'auto' ? 'Current English summary' : '日本語のキャッシュ')).toBeVisible();
+    release?.();
+    await expect.poll(() => lateFinished).toBe(true);
+    await expect(panel).not.toContainText('过期的旧语言响应');
+    expect(posts).toBe(0);
+    await assertNoHorizontalOverflow(page); await assertNoConsoleErrors(consoleErrors);
+  });
+}

@@ -1,5 +1,5 @@
 import type { MailAiSettings, MailAiSettingsView } from '$lib/domain/mail/ai';
-import { mailAiApiFormats } from '$lib/domain/mail/ai';
+import { mailAiApiFormats, parseMailAiLanguage } from '$lib/domain/mail/ai';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError } from '$lib/server/http/api';
 import { parseBoolean } from '$lib/server/config/env';
@@ -42,10 +42,13 @@ function parseSettings(value: unknown): MailAiSettings {
     typeof v.apiFormat !== 'string' || !(mailAiApiFormats as readonly string[]).includes(v.apiFormat) ||
     typeof v.timeoutMs !== 'number' || !Number.isInteger(v.timeoutMs) || v.timeoutMs < 100 || v.timeoutMs > 30000 ||
     typeof v.maxInputChars !== 'number' || !Number.isInteger(v.maxInputChars) || v.maxInputChars < 256 || v.maxInputChars > 32000) throw invalid();
+  const summaryLanguage = v.summaryLanguage === undefined || v.summaryLanguage === 'auto' ? 'auto' : parseMailAiLanguage(v.summaryLanguage);
+  const backgroundLanguage = v.backgroundLanguage === undefined ? 'zh-CN' : v.backgroundLanguage;
+  if (!summaryLanguage || (backgroundLanguage !== 'zh-CN' && backgroundLanguage !== 'en')) throw invalid();
   const baseUrl = v.baseUrl.trim() ? parseAiBaseUrl(v.baseUrl.trim()) : '';
   const model = v.model.trim();
   if (baseUrl === null || v.baseUrl.length > 2048 || model.length > 128 || /[\r\n]/u.test(model) || (v.enabled && (!baseUrl || !model))) throw invalid();
-  return { enabled: v.enabled, baseUrl, model, apiFormat: v.apiFormat as MailAiSettings['apiFormat'], timeoutMs: v.timeoutMs, maxInputChars: v.maxInputChars };
+  return { enabled: v.enabled, baseUrl, model, apiFormat: v.apiFormat as MailAiSettings['apiFormat'], timeoutMs: v.timeoutMs, maxInputChars: v.maxInputChars, summaryLanguage, backgroundLanguage };
 }
 async function readSaved(env: CloudflareEnv, owner: string): Promise<SavedSettings | null> {
   const row = await env.DB.prepare("SELECT json_extract(settings_json, '$.mailAi') AS settings FROM workspace_settings WHERE user_id = ?").bind(owner).first<{ settings: string | null }>();
@@ -60,11 +63,11 @@ async function readSaved(env: CloudflareEnv, owner: string): Promise<SavedSettin
 function defaults(env: CloudflareEnv): MailAiSettings {
   const positive = (value: string | undefined, fallback: number, min: number, max: number) => value && /^\d+$/u.test(value) && Number(value) >= min && Number(value) <= max ? Number(value) : fallback;
   return { enabled: parseBoolean(env.AI_ENABLED), baseUrl: parseAiBaseUrl(env.AI_BASE_URL) ?? '', model: env.AI_MODEL?.trim().slice(0, 128) ?? '',
-    apiFormat: env.AI_API_FORMAT === 'responses' ? 'responses' : 'chat-completions', timeoutMs: positive(env.AI_TIMEOUT_MS, 15000, 100, 30000), maxInputChars: positive(env.AI_MAX_INPUT_CHARS, 16000, 256, 32000) };
+    apiFormat: env.AI_API_FORMAT === 'responses' ? 'responses' : 'chat-completions', timeoutMs: positive(env.AI_TIMEOUT_MS, 15000, 100, 30000), maxInputChars: positive(env.AI_MAX_INPUT_CHARS, 16000, 256, 32000), summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' };
 }
 function view(env: CloudflareEnv, saved: SavedSettings | null): MailAiSettingsView {
   const settings = saved ?? defaults(env);
-  return { settings: { enabled: settings.enabled, baseUrl: settings.baseUrl, model: settings.model, apiFormat: settings.apiFormat, timeoutMs: settings.timeoutMs, maxInputChars: settings.maxInputChars },
+  return { settings: { enabled: settings.enabled, baseUrl: settings.baseUrl, model: settings.model, apiFormat: settings.apiFormat, timeoutMs: settings.timeoutMs, maxInputChars: settings.maxInputChars, summaryLanguage: settings.summaryLanguage, backgroundLanguage: settings.backgroundLanguage },
     hasApiKey: saved ? Boolean(saved.encryptedKey) : validKey(env.AI_API_KEY), canSave: canEncrypt(env), revision: saved?.revision ?? '', source: saved ? 'workspace' : 'server' };
 }
 
@@ -78,12 +81,13 @@ export async function saveMailAiSettings(env: CloudflareEnv, owner: string, valu
   if (!canEncrypt(env)) throw unavailable();
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid();
   const v = value as Record<string, unknown>;
-  const keys = ['enabled', 'baseUrl', 'model', 'apiFormat', 'timeoutMs', 'maxInputChars', 'apiKey', 'clearApiKey', 'revision'];
+  const keys = ['enabled', 'baseUrl', 'model', 'apiFormat', 'timeoutMs', 'maxInputChars', 'apiKey', 'clearApiKey', 'revision', 'summaryLanguage', 'backgroundLanguage'];
   if (Object.keys(v).some((k) => !keys.includes(k)) || typeof v.revision !== 'string' || v.revision.length > 128 ||
     (v.apiKey !== undefined && v.apiKey !== '' && !validKey(v.apiKey)) || (v.clearApiKey !== undefined && typeof v.clearApiKey !== 'boolean') ||
     (v.clearApiKey && v.apiKey)) throw invalid();
-  const settings = parseSettings(v);
   const current = await readSaved(env, owner);
+  const settings = parseSettings({ ...v, summaryLanguage: v.summaryLanguage === undefined ? current?.summaryLanguage : v.summaryLanguage,
+    backgroundLanguage: v.backgroundLanguage === undefined ? current?.backgroundLanguage : v.backgroundLanguage });
   if ((current?.revision ?? '') !== v.revision) throw new ApiError(409, 'AI_SETTINGS_CONFLICT', 'AI settings changed. Reload before saving.');
   const previous = current ?? defaults(env);
   const hasPreviousKey = current ? Boolean(current.encryptedKey) : validKey(env.AI_API_KEY);
@@ -102,11 +106,12 @@ export async function saveMailAiSettings(env: CloudflareEnv, owner: string, valu
   return view(env, saved);
 }
 
-export async function resolveWorkspaceMailAiConfiguration(env: CloudflareEnv, owner: string): Promise<MailAiConfiguration> {
+export async function resolveWorkspaceMailAiConfiguration(env: CloudflareEnv, owner: string): Promise<MailAiConfiguration & Pick<MailAiSettings, 'summaryLanguage' | 'backgroundLanguage'>> {
   const saved = await readSaved(env, owner);
-  if (!saved) return resolveMailAiConfiguration(env);
-  if (!saved.enabled) return { status: 'disabled', config: null };
+  const language = { summaryLanguage: saved?.summaryLanguage ?? 'auto', backgroundLanguage: saved?.backgroundLanguage ?? 'zh-CN' as const };
+  if (!saved) return { ...resolveMailAiConfiguration(env), ...language };
+  if (!saved.enabled) return { status: 'disabled', config: null, ...language };
   const apiKey = saved.encryptedKey ? await decrypt(env, owner, saved.baseUrl, saved.encryptedKey) : '';
-  return resolveMailAiConfiguration({ ...env, AI_ENABLED: 'true', AI_PROVIDER: 'openai-compatible', AI_BASE_URL: saved.baseUrl, AI_MODEL: saved.model,
-    AI_API_FORMAT: saved.apiFormat, AI_TIMEOUT_MS: String(saved.timeoutMs), AI_MAX_INPUT_CHARS: String(saved.maxInputChars), AI_API_KEY: apiKey });
+  return { ...resolveMailAiConfiguration({ ...env, AI_ENABLED: 'true', AI_PROVIDER: 'openai-compatible', AI_BASE_URL: saved.baseUrl, AI_MODEL: saved.model,
+    AI_API_FORMAT: saved.apiFormat, AI_TIMEOUT_MS: String(saved.timeoutMs), AI_MAX_INPUT_CHARS: String(saved.maxInputChars), AI_API_KEY: apiKey }), ...language };
 }

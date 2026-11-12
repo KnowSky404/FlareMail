@@ -38,7 +38,7 @@ describe('encrypted Owner AI settings', () => {
     const f = setup();
     Object.assign(f.env, { AI_ENABLED: 'true', AI_BASE_URL: f.input.baseUrl, AI_MODEL: 'env-model', AI_API_KEY: 'env-secret' });
     const view = await readMailAiSettings(f.env, 'owner');
-    expect(view).toMatchObject({ source: 'server', hasApiKey: true, canSave: true, revision: '', settings: { model: 'env-model', apiFormat: 'chat-completions' } });
+    expect(view).toMatchObject({ source: 'server', hasApiKey: true, canSave: true, revision: '', settings: { model: 'env-model', apiFormat: 'chat-completions', summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' } });
     expect(JSON.stringify(view)).not.toContain('env-secret');
     expect((await resolveWorkspaceMailAiConfiguration(f.env, 'owner')).config?.apiKey).toBe('env-secret');
   });
@@ -75,6 +75,41 @@ describe('encrypted Owner AI settings', () => {
       await expect(f.save({ ...extra, revision: v.revision })).rejects.toMatchObject({ status: 400 });
     }
     expect((await readMailAiSettings(f.env, 'owner')).revision).toBe(v.revision);
+  });
+  test('canonical language preferences persist and old clients preserve them', async () => {
+    const f = setup();
+    const saved = await f.save({ summaryLanguage: 'ZH-tw', backgroundLanguage: 'en' });
+    expect(saved.settings).toMatchObject({ summaryLanguage: 'zh-TW', backgroundLanguage: 'en' });
+    const updated = await f.save({ apiKey: '', revision: saved.revision });
+    expect(updated.settings).toMatchObject({ summaryLanguage: 'zh-TW', backgroundLanguage: 'en' });
+    expect(await resolveWorkspaceMailAiConfiguration(f.env, 'owner')).toMatchObject({ summaryLanguage: 'zh-TW', backgroundLanguage: 'en' });
+    f.sqlite.exec("UPDATE workspace_settings SET settings_json=json_remove(settings_json,'$.mailAi.summaryLanguage','$.mailAi.backgroundLanguage') WHERE user_id='owner'");
+    expect((await readMailAiSettings(f.env, 'owner')).settings).toMatchObject({ summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' });
+    expect((await resolveWorkspaceMailAiConfiguration(f.env, 'owner')).config?.apiKey).toBe('provider-secret');
+    const legacySave = await f.save({ apiKey: '', revision: updated.revision });
+    expect(legacySave.settings).toMatchObject({ summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' });
+    const languageOnly = await f.save({ apiKey: '', summaryLanguage: 'ja', revision: legacySave.revision });
+    expect(languageOnly.settings).toMatchObject({ summaryLanguage: 'ja', backgroundLanguage: 'zh-CN' });
+    const backgroundOnly = await f.save({ apiKey: '', backgroundLanguage: 'en', revision: languageOnly.revision });
+    expect(backgroundOnly.settings).toMatchObject({ summaryLanguage: 'ja', backgroundLanguage: 'en' });
+  });
+  test('invalid language settings never change saved preferences', async () => {
+    const f = setup(); const saved = await f.save({ summaryLanguage: 'ja', backgroundLanguage: 'en' });
+    for (const extra of [
+      ...['', 'en_US', 'Respond in Japanese', 'en\n', 'x'.repeat(65), 'en--US', null, 1, ['en']].map((summaryLanguage) => ({ summaryLanguage })),
+      ...['ja', '', null, 1].map((backgroundLanguage) => ({ backgroundLanguage }))
+    ]) await expect(f.save({ ...extra, revision: saved.revision })).rejects.toMatchObject({ code: 'AI_INVALID_SETTINGS' });
+    expect((await readMailAiSettings(f.env, 'owner')).settings).toMatchObject({ summaryLanguage: 'ja', backgroundLanguage: 'en' });
+    expect((await readMailAiSettings(f.env, 'owner')).revision).toBe(saved.revision);
+  });
+  test('malformed persisted language fails closed instead of falling back to environment AI', async () => {
+    for (const changed of [{ summaryLanguage: null }, { summaryLanguage: 'en_US' }, { backgroundLanguage: 'ja' }]) {
+      const f = setup(); await f.save();
+      const saved = f.raw(); Object.assign(saved.mailAi, changed);
+      f.sqlite.query("UPDATE workspace_settings SET settings_json = ? WHERE user_id='owner'").run(JSON.stringify(saved));
+      await expect(readMailAiSettings(f.env, 'owner')).rejects.toMatchObject({ code: 'AI_SETTINGS_INVALID' });
+      await expect(resolveWorkspaceMailAiConfiguration(f.env, 'owner')).rejects.toMatchObject({ code: 'AI_SETTINGS_INVALID' });
+    }
   });
   test('fences concurrent saves and keeps the winning key', async () => {
     const f = setup(); const v = await f.save();

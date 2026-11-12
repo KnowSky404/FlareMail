@@ -233,7 +233,7 @@
     }
   }
 
-  async function changeSettings(input: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean }) {
+  async function changeSettings(input: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean; aiSummaryEnabled?: boolean }) {
     if (!telegramState?.binding || telegramState.binding.state !== 'active') return;
     cancelRefresh();
     action = 'settings';
@@ -358,6 +358,15 @@
             disabled={action !== '' || telegramState.binding.privacyMode}
             onchange={(checked) => void changeSettings({ summaryEnabled: checked })}
           />
+          <Switch
+            id="telegram-ai-summary"
+            checked={telegramState.binding.aiSummaryEnabled}
+            label={t('telegram.aiSummary')}
+            description={t('telegram.aiSummaryDescription')}
+            disabled={action !== '' || telegramState.binding.privacyMode || !telegramState.binding.summaryEnabled}
+            onchange={(checked) => void changeSettings({ aiSummaryEnabled: checked })}
+          />
+          <p class="muted">{t('telegram.aiSummaryDependency')}</p>
           <div class="actions"><Button variant="secondary" loading={action === 'test'} disabled={!telegramState.binding.enabled || action !== ''} onclick={() => void testNotification()}>{t('telegram.sendTest')}</Button><Button variant="danger" loading={action === 'unbind'} disabled={action !== ''} onclick={() => void removeBinding()}>{t('telegram.unbind')}</Button></div>
           {#if telegramState.binding.lastErrorCode}<p class="muted">{t('telegram.lastError')}：{telegramState.binding.lastErrorCode} · {formatDate(telegramState.binding.lastErrorAt)}</p>{/if}
         </div>

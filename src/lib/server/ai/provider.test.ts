@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createMailAiProvider, validateMailAiAnalysis } from './provider';
 import { parseAiBaseUrl, resolveMailAiConfiguration } from './config';
 import { aiHtmlText, mailAiFingerprint, prepareMailAiInput } from './input';
+import { parseMailAiLanguage } from '$lib/domain/mail/ai';
 import type { MailAiInput, MailAiAnalysis } from '$lib/domain/mail/ai';
 
 const config = { apiFormat: 'chat-completions' as const, baseUrl: 'https://maas.vendor.com/v1', apiKey: 'test-secret', model: 'test-model', timeoutMs: 100, maxInputChars: 16000 };
@@ -63,7 +64,7 @@ describe('privacy input projection', () => {
 
 describe('analysis output boundary', () => {
   test('accepts Chinese/English, null suggestion and date excerpts with direct body evidence', () => {
-    for (const language of ['zh-CN', 'en'] as const) {
+    for (const language of ['zh-CN', 'en', 'ja', 'zh-TW'] as const) {
       const localized = { ...input, language };
       expect(validateMailAiAnalysis({ ...fakeMailAiAnalysis(localized), dates: ['November 12', '10:00'], suggestion: null }, localized).dates).toHaveLength(2);
     }
@@ -281,4 +282,28 @@ describe('OpenAI Platform requests and errors', () => {
       await expect(createMailAiProvider({ ...config, apiFormat }, fakeFetch(() => Response.json(body))).analyze(input)).rejects.toMatchObject({ code, retryable: false });
     }
   });
+});
+
+
+test('language labels are canonical bounded codes rather than prompts', () => {
+  expect(parseMailAiLanguage('ZH-tw')).toBe('zh-TW');
+  expect(parseMailAiLanguage('ja')).toBe('ja');
+  for (const value of ['auto', 'AUTO', '', 'en_US', 'en--US', 'en\n', 'Respond in English', 'a'.repeat(65), null, 1]) expect(parseMailAiLanguage(value)).toBeNull();
+});
+
+test.each(['responses', 'chat-completions'] as const)('custom language constrains official %s schema and remains exact in output validation', async (apiFormat) => {
+  const localized = { ...input, language: 'ja' };
+  const provider = createMailAiProvider({ ...config, apiFormat, baseUrl: 'https://api.openai.com/v1' }, fakeFetch((_, init) => {
+    const payload = JSON.parse(String(init.body));
+    const schema = apiFormat === 'responses' ? payload.text.format.schema : payload.response_format.json_schema.schema;
+    expect(schema.properties.language).toEqual({ type: 'string', enum: ['ja'] });
+    const email = JSON.parse(apiFormat === 'responses' ? payload.input[0].content : payload.messages[1].content);
+    expect(email.language).toBe('ja');
+    const analysis = fakeMailAiAnalysis(localized);
+    return Response.json(apiFormat === 'responses'
+      ? { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(analysis) }] }] }
+      : envelope(analysis));
+  }));
+  expect((await provider.analyze(localized)).language).toBe('ja');
+  expect(() => validateMailAiAnalysis({ ...fakeMailAiAnalysis(localized), language: 'en' }, localized)).toThrow();
 });

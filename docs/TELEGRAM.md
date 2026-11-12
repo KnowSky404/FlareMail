@@ -14,7 +14,7 @@ forward the original message.
 ## Data and delivery boundary
 
 The inbound Worker first stores the accepted message in D1/R2. When Telegram
-is enabled, configured, and the current schema (version 24) is present, the same D1 batch inserts a
+is enabled, configured, and the current schema (version 31) is present, the same D1 batch inserts a
 small Telegram outbox row only when all of these checks pass:
 
 - the trusted Email Routing envelope recipient resolves to an active managed
@@ -46,6 +46,51 @@ connection failure, or database finalization failure becomes
 `unknown_delivery` and is never retried automatically. A manual retry warns
 that Telegram may already have displayed the message. A `sent` row is never
 an automatic retry target.
+
+## Optional automatic AI summary
+
+The existing **Include short summary** switch continues to mean a bounded snippet.
+The separate **Automatic AI summary** switch defaults off and asks for explicit
+consent to send bounded subject/sender/body text to the configured AI provider and
+consume the shared Owner quota. Both queue-time and current settings must allow
+AI, summaries and non-private delivery. Enabling the switch does not grant consent
+to older queued notifications. Privacy mode never generates or displays a summary.
+
+The outbox reuses the mail AI cache and validation. Successful results use a
+300-character plain-text **AI summary**; failures fall back to the ordinary
+snippet without delaying mail persistence or adding a second notification. The
+summary language follows [AI settings](AI.md#summary-language--摘要语言); automatic
+background language is the interface language captured on the last AI-settings
+save. Telegram labels and receive-time formatting retain their existing behavior.
+
+Each delivery reserves AI generation at most once, separately from Telegram's
+external-send marker. A retry can read an existing ready cache, but does not
+initiate a new AI attempt. Short inbound dispatch budgets defer eligible work to
+Cron. Permission is checked before AI processing and again before Telegram sends.
+Content already submitted to an external provider cannot be recalled by revoking
+consent during the request.
+
+Migration `0031_telegram_ai_summary.sql` adds default-off binding/outbox consent
+and an AI-attempt marker. The new application accepts schema 30/31 for ordinary
+mail, but Telegram requires the new columns; before migration its settings report
+that migration is required. **Old production code accepts only schema 30.** Do not
+apply migration 0031 to production D1 (or a target sharing it) while that old code
+serves traffic:
+first arrange an explicitly authorized compatibility deployment that only accepts
+schema 31 while retaining the existing schema-30 Telegram implementation, then
+the remote migration and feature acceptance. Do not deploy the full feature to
+production before migration: its schema-30 Telegram gate suppresses new outbox
+rows, so notifications received during that gap would not be queued. A PRE-only deployment does not upgrade
+production handlers or prove that migration is safe for production.
+
+The current `mail-ai` Preview has an independent D1 and shared production R2.
+Its separately authorized migration does not upgrade production D1; preserve its
+actual binding rather than redirecting it to production for acceptance.
+
+中文：自动 AI 摘要需要独立授权，已有短摘要开关不会自动升级为外部 AI 同意。
+入队/当前授权取交集；隐私模式优先；失败退回原摘要；同一通知不因 Telegram 重试
+重复生成。迁移 0031 前须先解决生产旧代码仅支持 schema 30 的兼容问题，不能直接在
+与生产共享的数据库上升级；当前独立 PRE D1 可单独授权迁移。收信与 Cron 的真实 handler 仍属于生产，需要单独授权验收。
 
 ## Configuration
 
@@ -121,7 +166,7 @@ stored in the browser.
    `TELEGRAM_WEBHOOK_SECRET` as an independent override, but it is not needed.
    Do not put either value in Git, D1, browser storage, or a URL.
 4. Apply all ordered migrations through the checkout's current schema version
-   (currently 24) and verify `workspace_schema_metadata.schema_version = 24`.
+   (currently 31) and verify `workspace_schema_metadata.schema_version = 31`.
    The Telegram tables originate in migrations 0019-0022; migrations 0023-0024
    add Owner/auth separation and managed mail identities without changing the
    Telegram delivery model. Then deploy the Worker and
@@ -145,7 +190,7 @@ webhook, or send a real Telegram message.
 
 1. Review the release commit, create/verify the intended D1 Time Travel
    bookmark, and apply migrations 0019 through 0022 to the intended D1 database.
-   Confirm `workspace_schema_metadata.schema_version = 24` before enabling the
+   Confirm `workspace_schema_metadata.schema_version = 31` before enabling the
    feature.
 2. Create a Bot with BotFather. Record the username without `@`. Keep the
    returned token in the secret manager only.

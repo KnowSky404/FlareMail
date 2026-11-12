@@ -1,6 +1,9 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { toInboundMessageId } from '$lib/domain/mail';
 import {
   claimTelegramDelivery,
+  deferTelegramDelivery,
+  reserveTelegramAiAttempt,
   cleanupTelegramState,
   hasTelegramTables,
   markTelegramCancelled,
@@ -15,6 +18,10 @@ import {
 import { buildTelegramNotification } from './message';
 import { TelegramApiError, sendTelegramMessage, type TelegramFetch } from './api';
 import { resolveTelegramConfig } from './config';
+import { workspaceMailAi } from '$lib/server/workspace/ai';
+import { findUserById } from '$lib/server/db/users';
+import { mapUserRowToProfile, type WorkspaceContext } from '$lib/server/workspace/shared';
+import type { MailAiProvider } from '$lib/server/ai/provider';
 
 export interface TelegramDispatchOptions {
   limit?: number;
@@ -22,6 +29,7 @@ export interface TelegramDispatchOptions {
   fetchImpl?: TelegramFetch;
   now?: () => number;
   cleanup?: boolean;
+  aiProvider?: MailAiProvider;
 }
 
 const LEASE_MS = 45_000;
@@ -73,7 +81,8 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
 
   while (result.processed < limit && (options.now ?? Date.now)() - started < budget) {
     const current = new Date((options.now ?? Date.now)()).toISOString();
-    const claimed = await claimTelegramDelivery(env.DB, current, new Date(Date.parse(current) + LEASE_MS).toISOString());
+    const leaseUntil = Date.parse(current) + LEASE_MS;
+    const claimed = await claimTelegramDelivery(env.DB, current, new Date(leaseUntil).toISOString());
     if (!claimed) break;
     result.processed += 1;
 
@@ -94,9 +103,40 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       continue;
     }
 
-    const sendSettings = await markTelegramExternalStarted(env.DB, claimed.id, claimed.claim_token);
+    let aiSummary: string | undefined;
+    if (claimed.ai_summary_enabled === 1) {
+      try {
+        const user = await findUserById(env.DB, claimed.owner_user_id);
+        if (user) {
+          const session: WorkspaceContext = { id: '', userId: user.id, storage: 'd1',
+            profile: mapUserRowToProfile(user), incomingSequence: user.incoming_sequence, createdAt: '', updatedAt: '' };
+          const messageId = toInboundMessageId(claimed.email_message_id);
+          const cached = await workspaceMailAi(env, session, messageId, {});
+          if (cached.status === 'ready') aiSummary = cached.analysis?.summary;
+          else if (claimed.ai_attempted === 0 && cached.status !== 'disabled' && cached.status !== 'unconfigured') {
+            const remaining = budget - ((options.now ?? Date.now)() - started) - config.timeoutMs - 500;
+            if (remaining < 1_000) {
+              await deferTelegramDelivery(env.DB, claimed.id, claimed.claim_token, isoAfter(5_000, (options.now ?? Date.now)()));
+              break;
+            }
+            if (await reserveTelegramAiAttempt(env.DB, claimed.id, claimed.claim_token, new Date((options.now ?? Date.now)()).toISOString())) {
+              const timeoutMs = Math.floor(budget - ((options.now ?? Date.now)() - started) - config.timeoutMs - 500);
+              if (timeoutMs > 0) {
+                const analysis = await workspaceMailAi(env, session, messageId, { analyze: true, timeoutMs }, options.aiProvider);
+                if (analysis.status === 'ready') aiSummary = analysis.analysis?.summary;
+              }
+            }
+          }
+        }
+      } catch {
+        // AI is optional: keep the ordinary snippet and the Telegram send policy.
+      }
+    }
+    const sendSettings = await markTelegramExternalStarted(env.DB, claimed.id, claimed.claim_token, new Date((options.now ?? Date.now)()).toISOString());
     if (!sendSettings) {
-      await markTelegramCancelled(env.DB, claimed.id, claimed.claim_token, 'binding_or_message_changed').catch(() => undefined);
+      if ((options.now ?? Date.now)() < leaseUntil) {
+        await markTelegramCancelled(env.DB, claimed.id, claimed.claim_token, 'binding_or_message_changed').catch(() => undefined);
+      }
       continue;
     }
     const payload = buildTelegramNotification({
@@ -110,6 +150,7 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
       snippet: claimed.snippet,
       privacyMode: sendSettings.privacyMode,
       summaryEnabled: sendSettings.summaryEnabled,
+      aiSummary: sendSettings.aiSummaryEnabled ? aiSummary : undefined,
       timezone: claimed.timezone
     });
 

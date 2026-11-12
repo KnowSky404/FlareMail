@@ -52,7 +52,8 @@
 1. 先在隔离本地 D1/R2 和 demo/fake provider 上实现、验证，再提交当前任务。不要用共享 Preview 数据做 fixture、自动化测试或破坏性验收。
 2. 需要远程验收且用户已授权发布 Preview 时，先通过本地门禁和打包检查，再按 [Preview 指南](docs/PREVIEW.md) 发布已验证的提交。未指定生产的发布请求优先使用 Preview，不直接调用 `bun run deploy`。普通修复、审查或约束更新不自动触发部署。
 3. 区分 `bun run preview`（本地 Worker）、`cf previews deploy`（原生远程 Preview）和 `cf workers versions create`（版本预览）。原生 Preview 是默认远程验收方式；需要复用生产既有 secrets 检查上传版本时，按指南使用版本预览。不得用 `cf deploy` 代替 Preview 发布，也不得擅自执行 `cf workers deployments create` 或 `cf workers triggers deploy`。
-4. 当前 Preview 有意共用生产 D1/R2 和 Owner，发布代码不切换生产流量，但写入会影响生产数据。默认只读验收；写入、真实邮件/Telegram、远程迁移或路由/DNS 变更必须在用户授权范围内。已明确授权的同一范围无需重复确认。不要为发布 Preview 初始化 Owner、重置数据库或自动创建/删除云资源。
+   远程 PRE 仅保留一个最新可用环境，复用稳定的 `mail-ai` 名称。发布前后核对预览清单；新 PRE 可用后删除其他已确认的旧 PRE，无需重复询问。删除只针对 Preview，不能删除生产 Worker、生产当前版本或共享 D1/R2；存在资源引用时保留并报告，不强制删除。历史版本预览不等于独立 PRE，保留生产部署及回退所需版本。
+4. 当前 `mail-ai` Preview 使用既有独立 D1，但 R2 与生产共用；沿用实际绑定，不为了匹配旧指南而切回生产 D1。发布代码不切换生产流量；独立 D1 的迁移不会升级生产数据库，但共享 R2 写入仍会影响生产数据。默认只读验收；写入、真实邮件/Telegram、远程迁移或路由/DNS 变更必须在用户授权范围内。已明确授权的同一范围无需重复确认。不要为发布 Preview 初始化 Owner、重置数据库或创建/删除 D1/R2 等底层资源。
 5. Preview 发布后记录提交 SHA、URL、部署/版本 ID，核对登录、相关页面/API、绑定和生产流量指向。`/api/health` 只证明存活；数据库/绑定就绪另查已认证的 `/api/readiness`。Preview HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
    功能改动只有在对应提交完成 PRE 相关页面/API 验收后才可提 PR；仅发布成功或健康检查通过不算验收完成。PR 后追加影响实现的提交，必须补做受影响的本地验证和 PRE 验收后才能合并。PRE 无法覆盖的 handler 需记录替代验证路径；环境阻塞不能记为通过或自动跳过，绕过此门禁需用户明确授权。纯文档/约束改动完成差异、命令、链接检查及本地 `/review` 后即可提 PR，无需为此部署 PRE。
 6. 生产发布是后续独立步骤，需要明确生产授权；按 [生产清单](docs/PRODUCTION_CHECKLIST.md) 核对同一提交的本地验证、依赖审计、迁移兼容性及回退边界。原则上先保留对应 Preview 验收证据；首次部署、事件处理或 Preview 无法覆盖的 handler 变更需说明替代验证路径。

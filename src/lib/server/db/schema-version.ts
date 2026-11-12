@@ -1,5 +1,6 @@
-export const FLAREMAIL_SCHEMA_VERSION = 30;
+export const FLAREMAIL_SCHEMA_VERSION = 31;
 
 export function isSupportedWorkspaceSchemaVersion(version: number | null | undefined): version is number {
-  return version === FLAREMAIL_SCHEMA_VERSION;
+  // Keep ordinary mail usable while the additive Telegram migration is pending.
+  return version === 30 || version === FLAREMAIL_SCHEMA_VERSION;
 }
