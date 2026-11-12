@@ -394,3 +394,39 @@ test('Telegram rate-limit cooldown starts at the fresh response time after AI an
   const row = value.db.query('SELECT next_attempt_at FROM workspace_telegram_deliveries').get() as { next_attempt_at: string };
   expect(Date.parse(row.next_attempt_at)).toBeGreaterThanOrEqual(clock + 1_000);
 });
+
+test.each(['ai', 'privacy'])('native AI 429 cannot retry after Telegram %s consent changes; delivery retry does not regenerate', async (change) => {
+  const value = aiFixture();
+  const originalFetch = globalThis.fetch;
+  let modelRequests = 0;
+  const notifications: string[] = [];
+  globalThis.fetch = (async () => {
+    modelRequests++;
+    value.db.exec(change === 'ai'
+      ? 'UPDATE workspace_telegram_bindings SET ai_summary_enabled = 0'
+      : 'UPDATE workspace_telegram_bindings SET privacy_mode = 1');
+    return new Response(JSON.stringify({ error: { code: 'rate_limit_exceeded' } }), {
+      status: 429, headers: { 'retry-after': '0' }
+    });
+  }) as unknown as typeof fetch;
+  const fetchImpl = async (_input: unknown, init?: RequestInit) => {
+    notifications.push(String(JSON.parse(String(init?.body)).text));
+    return notifications.length === 1
+      ? new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 1 } }), { status: 429 })
+      : telegramSuccess();
+  };
+  try {
+    expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+      limit: 1, now: () => dispatchTime, fetchImpl
+    })).retryable).toBe(1);
+    expect(modelRequests).toBe(1);
+    expect(value.db.query('SELECT ai_attempted FROM workspace_telegram_deliveries').get()).toEqual({ ai_attempted: 1 });
+    expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+      limit: 1, now: () => dispatchTime + 10_000, fetchImpl
+    })).sent).toBe(1);
+    expect(modelRequests).toBe(1);
+    expect(notifications).toHaveLength(2);
+    if (change === 'privacy') expect(notifications).toEqual(['FlareMail：收到一封新邮件。', 'FlareMail：收到一封新邮件。']);
+    else expect(notifications.every((text) => text.includes('摘要：A bounded summary.') && !text.includes('AI 摘要'))).toBe(true);
+  } finally { globalThis.fetch = originalFetch; }
+});

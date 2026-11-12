@@ -20,8 +20,9 @@
   let controller = new AbortController();
   let requestSequence = 0;
   onDestroy(() => { requestSequence++; controller.abort(); });
+  const requestIdentity = $derived(`${message.id}:${i18n.locale}`);
   $effect(() => {
-    message.id; i18n.locale;
+    requestIdentity;
     untrack(() => {
       requestSequence++; controller.abort();
       busy = false; result = null; error = ''; appliedCategory = null;

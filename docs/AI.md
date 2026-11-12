@@ -204,14 +204,16 @@ Results render as plain text, never executable HTML or Markdown links.
 Requests have a 15-second default total timeout (100–30000 ms), 16000-character
 body limit (256–32000), 256 KiB outbound request cap, 1800 output tokens and
 32 KiB response cap. Per-message generation has a 30-second cooldown and
-60-second recoverable claim lease; each Owner has 30 attempts/hour. Only an
-explicit `429` with `Retry-After: 0` is retried once. Network errors, timeouts and
+60-second recoverable claim lease; each Owner has 30 attempts/hour. For manual analysis only, an
+explicit `429` with `Retry-After: 0` is retried once. Background analyses do not
+perform adapter retries, so revoked consent cannot be bypassed by a retry. Network errors, timeouts and
 5xx responses are not automatically retried because they may already be billed.
 
 仅发送必要主题、发件人及有限长度的纯文本，不发送附件、原始邮件、技术 Headers、
 收件人列表或认证信息。长邮件有覆盖范围提示。日期必须直接出现在正文中，但其他摘要内容仍可能
 被模型误解，请以原文为准。默认超时 15 秒、正文最多 16000 字符、输出最多 1800 Token、
-响应最多 32 KiB。每封邮件冷却 30 秒，租约 60 秒可恢复；每 Owner 每小时最多 30 次尝试。
+响应最多 32 KiB。每封邮件冷却 30 秒，租约 60 秒可恢复；每 Owner 每小时最多 30 次尝试。手动分析仅对明确的 `429` / `Retry-After: 0` 重试一次；
+后台分析不自动重试供应商请求，限流时退回原摘要。
 隔离和黑名单邮件禁用 AI，草稿与已发送邮件暂不支持。
 
 ## Disable and troubleshoot / 禁用与排错

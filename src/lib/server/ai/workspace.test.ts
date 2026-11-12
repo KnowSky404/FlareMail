@@ -364,3 +364,33 @@ test.each([{ enabled: false }, { summaryLanguage: 'ja' }])('settings changed whi
   expect(changedDuringInput).toBe(true); expect(f.calls()).toBe(0); expect(authorizationChecks).toBe(0);
   expect(await readMailAi(f.db, f.key)).toMatchObject({ status: 'failed', result_json: null, lease_until: 0 });
 });
+
+
+test.each([false, true])('immediate rate-limit handling preserves manual retry and prevents background resubmission (guarded=%s)', async (guarded) => {
+  const f = setup(); let calls = 0; let checks = 0; let authorized = true;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    calls++;
+    if (calls === 1) {
+      authorized = false;
+      return Response.json({ error: { code: 'rate_limit_exceeded' } }, { status: 429, headers: { 'retry-after': '0' } });
+    }
+    return Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+      summary: 'A meeting invitation.', keyPoints: [], actionItems: [], dates: [], language: 'en', suggestion: null
+    }) } }] });
+  }) as unknown as typeof fetch;
+  try {
+    const result = workspaceMailAi(f.env, session(), 'email:mail', {
+      language: 'en', analyze: true,
+      ...(guarded ? { beforeAnalyze: async () => { checks++; return authorized; } } : {})
+    });
+    if (guarded) {
+      await expect(result).rejects.toMatchObject({ code: 'AI_RATE_LIMITED' });
+      expect(calls).toBe(1); expect(checks).toBe(1);
+      expect(await readMailAi(f.db, f.key)).toMatchObject({ status: 'failed', result_json: null, lease_until: 0 });
+    } else {
+      expect(await result).toMatchObject({ status: 'ready' });
+      expect(calls).toBe(2); expect(checks).toBe(0);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});

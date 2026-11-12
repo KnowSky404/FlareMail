@@ -148,6 +148,15 @@ describe('native MaaS adapter', () => {
     await provider.analyze(input);
     expect(calls).toBe(2);
   });
+  test.each(['responses', 'chat-completions'] as const)('can disable the immediate rate-limit retry for %s background analysis', async (apiFormat) => {
+    let calls = 0;
+    const provider = createMailAiProvider({ ...config, apiFormat }, fakeFetch(() => {
+      calls++;
+      return Response.json({ error: { code: 'rate_limit_exceeded' } }, { status: 429, headers: { 'retry-after': '0' } });
+    }), { retryRateLimit: false });
+    await expect(provider.analyze(input)).rejects.toMatchObject({ code: 'AI_RATE_LIMITED' });
+    expect(calls).toBe(1);
+  });
   test('limits response bytes and rejects malformed JSON and incomplete output', async () => {
     for (const response of [new Response('x'.repeat(32769)), new Response('bad json'), Response.json({ choices: [] }),
       Response.json(envelope({ summary: 'only summary' }))]) {

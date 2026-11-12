@@ -19,7 +19,7 @@ separate gates before PR/merge.
 
 ## Local acceptance
 
-- `bun run test`: **892 passed**, 0 failed, 5266 assertions, 120 files. This includes
+- `bun run test`: **898 passed**, 0 failed, 5291 assertions, 120 files. This includes
   migration/snapshot checks, language and cache behavior, provider formats, permission
   changes, AI fallback/attempt limits and concurrent partial-setting updates.
 - A simulated 46-second lease overrun preserves the retryable processing row;
@@ -179,3 +179,29 @@ Physical Safari/iOS and real inbound/Telegram delivery were not exercised.
 Provider billing amounts were not independently checked. Production release,
 production schema migration and its compatibility bridge remain separate authorized
 steps; the PRE acceptance does not execute them.
+
+
+## Additional PR-preflight review regressions
+
+A separate pre-PR full-base review of `c01eff6` identified two further valid P2s:
+
+- A provider-internal explicit-429 retry could run after Telegram consent was
+  revoked. Guarded background analyses now disable adapter retries completely;
+  manual analysis retains the existing explicit `Retry-After: 0` retry. Native
+  factory + fake HTTP tests revoke consent/privacy on the first 429 and prove
+  that only one model HTTP request occurs, even when Telegram later retries.
+- A reactive same-ID message object replacement (such as starring) reset the AI
+  panel and discarded the pending result. The reset effect now depends on a
+  derived primitive ID/locale identity. Browser regression holds a generation,
+  changes the star flag, releases it, and verifies the result with one GET/POST.
+
+These changes do not require another real model generation: successful manual
+request parameters are unchanged; the new guarded-429 branch is tested with a
+local fake HTTP rejection, while final-head PRE checks remain authenticated and
+respect the already-used two-generation budget. The new message-flag interaction
+is verified through the browser suite; real Telegram delivery remains excluded.
+
+The four focused interaction cases passed in all five projects: Chromium desktop,
+mobile and narrow, Linux WebKit desktop, and Firefox desktop (20/20). This includes
+both locale-switch variants, cached summary/category behavior, and the new pending
+and completed generation regression for same-message flag updates.
