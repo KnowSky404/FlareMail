@@ -311,3 +311,86 @@ test('expired AI delivery leases remain recoverable and the next dispatcher reus
   })).sent).toBe(1);
   expect(value.calls()).toBe(1); expect(sends).toBe(1);
 });
+
+test.each([
+  ['body', 'ai'], ['body', 'privacy'], ['body', 'disabled'], ['body', 'lease'],
+  ['claim', 'ai'], ['claim', 'privacy'], ['claim', 'disabled'], ['claim', 'lease'],
+  ['quota', 'ai'], ['quota', 'privacy'], ['quota', 'disabled'], ['quota', 'lease'],
+  ['quota', 'blocked'], ['quota', 'quarantined']
+])('rechecks Telegram AI authorization after %s awaits when %s changes', async (stage, change) => {
+  const value = aiFixture();
+  let clock = dispatchTime;
+  let changed = false;
+  let providerCalls = 0;
+  const prepare = value.DB.prepare.bind(value.DB);
+  const target = stage === 'body' ? 'SELECT text_body, html_body, body_object_id'
+    : stage === 'claim' ? 'INSERT INTO mail_ai_analyses' : 'INSERT INTO mail_ai_rate_limits';
+  value.DB.prepare = (sql: string) => {
+    const statement = prepare(sql);
+    if (sql.includes(target)) {
+      const first = statement.first.bind(statement);
+      statement.first = async <T>() => {
+        const row = await first<T>();
+        const delivery = value.db.query('SELECT ai_attempted FROM workspace_telegram_deliveries').get() as { ai_attempted: number };
+        if (delivery.ai_attempted === 1 && !changed) {
+          if (change === 'lease') clock += 46_000;
+          else value.db.exec({
+            ai: 'UPDATE workspace_telegram_bindings SET ai_summary_enabled = 0',
+            privacy: 'UPDATE workspace_telegram_bindings SET privacy_mode = 1',
+            disabled: 'UPDATE workspace_telegram_bindings SET enabled = 0',
+            blocked: "INSERT INTO blocked_senders VALUES ('user-1', 'sender@example.test', 'now')",
+            quarantined: "INSERT INTO workspace_email_states (id,user_id,email_message_id,quarantined_at) VALUES ('state','user-1','email-1','now')"
+          }[change]!);
+          changed = true;
+        }
+        return row;
+      };
+    }
+    return statement;
+  };
+  const texts: string[] = [];
+  await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => clock,
+    aiProvider: { analyze: async (input) => { providerCalls++; return value.provider.analyze(input); } },
+    fetchImpl: async (_input, init) => { texts.push(String(JSON.parse(String(init?.body)).text)); return telegramSuccess(); }
+  });
+  expect(changed).toBe(true); expect(providerCalls).toBe(0);
+  if (change === 'lease' || change === 'disabled') expect(texts).toHaveLength(0);
+  else if (change === 'privacy') expect(texts).toEqual(['FlareMail：收到一封新邮件。']);
+  else { expect(texts).toHaveLength(1); expect(texts[0]).toContain('摘要：A bounded summary.'); expect(texts[0]).not.toContain('AI 摘要'); }
+});
+
+test('AI latency cannot spend Telegram send reservations early and cause back-to-back delivery', async () => {
+  const value = aiFixture();
+  value.db.exec(`INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, timestamp, snippet, raw_key, recipient_status)
+      VALUES ('email-2', 'user-1', 'sender@example.test', 'owner@example.test', 'Second', 'now', 'Second', '', 'managed');
+    INSERT INTO workspace_telegram_deliveries
+      (id, owner_user_id, email_message_id, binding_id, authorization_version, summary_enabled, status, next_attempt_at, created_at, updated_at)
+      VALUES ('delivery-2', 'user-1', 'email-2', 'binding-1', 1, 1, 'pending', '2026-09-09T11:00:01.000Z', 'now', 'now');`);
+  let clock = dispatchTime;
+  const sends: number[] = [];
+  const result = await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 2, now: () => clock,
+    aiProvider: { analyze: async (input) => { const analysis = await value.provider.analyze(input); clock += 2_000; return analysis; } },
+    fetchImpl: async () => { sends.push(clock); return telegramSuccess(); }
+  });
+  expect(result).toMatchObject({ processed: 2, sent: 1, retryable: 1 });
+  expect(sends).toEqual([dispatchTime + 2_000]);
+  expect(value.db.query("SELECT status, last_error_code, next_attempt_at FROM workspace_telegram_deliveries WHERE id = 'delivery-2'").get())
+    .toEqual({ status: 'retryable', last_error_code: 'local_rate_limited', next_attempt_at: new Date(dispatchTime + 7_000).toISOString() });
+});
+
+test('Telegram rate-limit cooldown starts at the fresh response time after AI and transport latency', async () => {
+  const value = aiFixture();
+  let clock = dispatchTime;
+  await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => clock,
+    aiProvider: { analyze: async (input) => { const analysis = await value.provider.analyze(input); clock += 2_000; return analysis; } },
+    fetchImpl: async () => {
+      clock += 5_000;
+      return new Response(JSON.stringify({ ok: false, error_code: 429, parameters: { retry_after: 1 } }), { status: 429 });
+    }
+  });
+  const row = value.db.query('SELECT next_attempt_at FROM workspace_telegram_deliveries').get() as { next_attempt_at: string };
+  expect(Date.parse(row.next_attempt_at)).toBeGreaterThanOrEqual(clock + 1_000);
+});

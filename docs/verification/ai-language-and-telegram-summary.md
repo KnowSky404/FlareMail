@@ -19,7 +19,7 @@ separate gates before PR/merge.
 
 ## Local acceptance
 
-- `bun run test`: **872 passed**, 0 failed, 5184 assertions, 120 files. This includes
+- `bun run test`: **892 passed**, 0 failed, 5266 assertions, 120 files. This includes
   migration/snapshot checks, language and cache behavior, provider formats, permission
   changes, AI fallback/attempt limits and concurrent partial-setting updates.
 - A simulated 46-second lease overrun preserves the retryable processing row;
@@ -55,6 +55,23 @@ and refreshes the open panel's cache while cancelling stale requests.
 | Concurrency | Late locale response ignored; no implicit generation; concurrent server PATCH preserves revocation |
 | Layout / accessibility | 1280px desktop, 390px mobile, 320px narrow, overflow assertions, keyboard and axe |
 | Screenshots | `/tmp/flaremail-ai-settings-evidence/<project>.png` and `<project>-telegram.png`; synthetic data only |
+
+## Local review findings and disposition
+
+The first built-in `codex review --base origin/main` examined head
+`f210eba69da9d811fcfa68f5eed9e2355bcc6eda` and returned two valid findings:
+
+- **P1:** authorization could be revoked during asynchronous body preparation
+  after the AI attempt was reserved. The provider now has a final pre-call
+  authorization hook, sharing the delivery permission predicate and checking
+  configuration before that hook. Regressions assert zero provider calls after
+  revocation, privacy enablement, binding disablement or lease expiry.
+- **P2:** one-second Telegram pacing reservations expired while AI ran. Scopes
+  are now reserved with a fresh timestamp after AI work at the send boundary;
+  queued cache hits cannot send immediately behind a slow generation.
+
+Affected checks are repeated for the fix commit, followed by a new full-base
+built-in review; the initial review is not a passing gate for the corrected head.
 
 ## PRE inventory and data boundaries
 

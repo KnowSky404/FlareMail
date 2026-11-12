@@ -50,7 +50,7 @@ async function loadInput(env: CloudflareEnv, session: WorkspaceContext, id: stri
 
 export async function workspaceMailAi(
   env: CloudflareEnv, session: WorkspaceContext, id: string,
-  options: { language?: Locale; analyze?: boolean; regenerate?: boolean; timeoutMs?: number },
+  options: { language?: Locale; analyze?: boolean; regenerate?: boolean; timeoutMs?: number; beforeAnalyze?: () => Promise<boolean> },
   provider?: MailAiProvider
 ) {
   if (session.storage !== 'd1') throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', 'Workspace storage unavailable.');
@@ -65,6 +65,14 @@ export async function workspaceMailAi(
   }
   const loaded = await loadInput(env, session, id, language, configuration.config.maxInputChars);
   const config = { ...configuration.config, timeoutMs: Math.min(configuration.config.timeoutMs, options.timeoutMs ?? configuration.config.timeoutMs) };
+  async function requireCurrentConfiguration() {
+    const latest = await resolveWorkspaceMailAiConfiguration(env, session.userId);
+    const latestLanguage = latest.summaryLanguage === 'auto' ? options.language ?? latest.backgroundLanguage : latest.summaryLanguage;
+    if (!latest.config || latestLanguage !== language || latest.config.model !== config.model ||
+      latest.config.baseUrl !== config.baseUrl || latest.config.apiFormat !== config.apiFormat || latest.config.maxInputChars !== config.maxInputChars) {
+      throw new ApiError(409, 'AI_SETTINGS_CHANGED', 'AI settings changed. Please retry.');
+    }
+  }
   const { key, input, contentHash } = loaded;
   const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, `${config.baseUrl}#${config.apiFormat}`, MAIL_AI_VERSION);
   const cached = await readMailAi(env.DB, key);
@@ -80,6 +88,9 @@ export async function workspaceMailAi(
   if (!token) throw new ApiError(429, 'AI_BUSY', 'Analysis is busy or cooling down. Retry in a minute.');
   try {
     if (!await consumeMailAiQuota(env.DB, key.owner)) throw new ApiError(429, 'AI_QUOTA_EXCEEDED', 'AI analysis hourly limit reached.');
+    await requireCurrentConfiguration();
+    // Caller authorization is the final await before any billable request.
+    if (options.beforeAnalyze && !await options.beforeAnalyze()) throw new ApiError(409, 'AI_AUTHORIZATION_CHANGED', 'AI authorization changed.');
     if (deadline !== null) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new ApiError(503, 'AI_TIMEOUT', 'AI analysis timed out.');
@@ -89,12 +100,7 @@ export async function workspaceMailAi(
     // Recheck visibility and content after the external request, before returning or saving.
     const current = await loadInput(env, session, id, language, config.maxInputChars);
     if (current.contentHash !== contentHash) throw new ApiError(409, 'AI_CONTENT_CHANGED', 'The message changed. Please retry.');
-    const latest = await resolveWorkspaceMailAiConfiguration(env, session.userId);
-    const latestLanguage = latest.summaryLanguage === 'auto' ? options.language ?? latest.backgroundLanguage : latest.summaryLanguage;
-    if (!latest.config || latestLanguage !== language || latest.config.model !== config.model ||
-      latest.config.baseUrl !== config.baseUrl || latest.config.apiFormat !== config.apiFormat || latest.config.maxInputChars !== config.maxInputChars) {
-      throw new ApiError(409, 'AI_SETTINGS_CHANGED', 'AI settings changed. Please retry.');
-    }
+    await requireCurrentConfiguration();
     const completed = await finishMailAi(env.DB, key, token, JSON.stringify(analysis));
     if (!completed.meta.changes) throw new ApiError(409, 'AI_CLAIM_LOST', 'Analysis expired. Please retry.');
     return { status: 'ready', analysis, language, truncated: input.truncated, updatedAt: Date.now() };

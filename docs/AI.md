@@ -12,7 +12,8 @@ AI **默认关闭**。网页按需生成单封邮件摘要和分类建议；Tele
 
 1. Follow the existing [Preview](PREVIEW.md) and [production checklist](PRODUCTION_CHECKLIST.md)
    before publishing. Migration `0030_mail_ai_analyses.sql` adds the cache, quota
-   and deletion triggers; schema version becomes 30. Run all migrations locally
+   and deletion triggers at schema 30; migration `0031_telegram_ai_summary.sql`
+   adds automatic Telegram consent at schema 31. Run all migrations locally
    with `bun run db:migrate:local`. Remote migration and deployment require their
    own authorization; this guide does not execute them.
 2. Create one cryptographically random 32-byte encryption key (64 hexadecimal
@@ -243,6 +244,8 @@ removal of content already submitted.
 - `AI_BODY_EMPTY` / `AI_BODY_UNAVAILABLE`: check the owned canonical D1/R2 body;
   attachment-only messages are not analyzed.
 - `AI_CACHE_INVALID`: explicitly regenerate after cooldown.
+- `AI_AUTHORIZATION_CHANGED`: background processing consent was revoked before
+  provider submission; no AI request is started and normal notification policy applies.
 - `AI_SETTINGS_CHANGED`: settings were disabled or the effective language/model/input
   configuration changed during generation; reload and explicitly retry. The old
   result is not returned or cached. This cannot recall an already submitted request.
