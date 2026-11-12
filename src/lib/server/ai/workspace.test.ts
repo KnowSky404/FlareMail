@@ -9,6 +9,7 @@ import { workspaceMailAi } from '$lib/server/workspace/ai';
 import { claimMailAi, consumeMailAiQuota, finishMailAi, readMailAi } from '$lib/server/db/mail-ai';
 import { GET, POST } from '../../../routes/api/workspace/messages/[id]/ai/+server';
 import type { MailAiProvider } from './provider';
+import { readMailAiSettings, saveMailAiSettings } from './settings';
 
 class Statement {
   values: SQLQueryBindings[] = [];
@@ -213,4 +214,94 @@ test('Owner deletion cleans analyses and generation quotas', async () => {
   f.sqlite.exec("DELETE FROM workspace_users WHERE id = 'owner'");
   expect(await readMailAi(f.db, f.key)).toBeNull();
   expect(f.sqlite.query('SELECT COUNT(*) AS n FROM mail_ai_rate_limits').get()).toEqual({ n: 0 });
+});
+
+
+async function saveLanguages(env: CloudflareEnv, summaryLanguage: string, backgroundLanguage: 'zh-CN' | 'en') {
+  env.AI_SETTINGS_KEY = 'a'.repeat(64);
+  const view = await readMailAiSettings(env, 'owner');
+  return saveMailAiSettings(env, 'owner', { ...view.settings, revision: view.revision, summaryLanguage, backgroundLanguage });
+}
+
+test('saved custom language overrides browser context and shares cache with background notifications', async () => {
+  const f = setup();
+  await saveLanguages(f.env, 'ZH-tw', 'en');
+  const generated = await f.analyze();
+  expect(generated).toMatchObject({ language: 'zh-TW', analysis: { language: 'zh-TW' } });
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', { language: 'zh-CN' }, f.provider)).toMatchObject({ status: 'ready', language: 'zh-TW' });
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', { analyze: true }, f.provider)).toMatchObject({ status: 'ready', language: 'zh-TW' });
+  expect(f.calls()).toBe(1);
+  const response = await GET(event(f.env));
+  expect(await response.json()).toMatchObject({ data: { status: 'ready', language: 'zh-TW' } });
+  await saveLanguages(f.env, 'ja', 'en');
+  expect(await f.get()).toMatchObject({ status: 'empty', language: 'ja', analysis: null });
+  expect(f.calls()).toBe(1);
+});
+
+test('automatic language follows web context, then saved background context, and invalidates only the resolved cache', async () => {
+  const f = setup(); await saveLanguages(f.env, 'auto', 'en');
+  await f.analyze();
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', {}, f.provider)).toMatchObject({ status: 'ready', language: 'en' });
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', { language: 'zh-CN' }, f.provider)).toMatchObject({ status: 'empty', language: 'zh-CN' });
+  await saveLanguages(f.env, 'auto', 'zh-CN');
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', {}, f.provider)).toMatchObject({ status: 'empty', language: 'zh-CN' });
+  expect(await f.get()).toMatchObject({ status: 'ready', language: 'en' });
+  expect(f.calls()).toBe(1);
+});
+
+test('background analysis has a Chinese default without saved settings', async () => {
+  const f = setup();
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', { analyze: true }, f.provider)).toMatchObject({ status: 'ready', language: 'zh-CN', analysis: { language: 'zh-CN' } });
+});
+
+test('dispatcher time budgets shorten provider timeout and reject invalid budgets without a call', async () => {
+  const f = setup();
+  for (const timeoutMs of [0, -1, 1.5, Infinity, NaN]) {
+    await expect(workspaceMailAi(f.env, session(), 'email:mail', { analyze: true, timeoutMs }, f.provider)).rejects.toMatchObject({ code: 'AI_INVALID_REQUEST' });
+  }
+  expect(f.calls()).toBe(0);
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = ((_: unknown, init: RequestInit) => new Promise((_, reject) => {
+    calls++;
+    init.signal?.addEventListener('abort', () => reject(new Error('fake abort')));
+  })) as typeof fetch;
+  try {
+    await expect(workspaceMailAi(f.env, session(), 'email:mail', { analyze: true, timeoutMs: 100 })).rejects.toMatchObject({ code: 'AI_TIMEOUT' });
+    expect(calls).toBe(1);
+    expect(await readMailAi(f.db, f.key)).toMatchObject({ status: 'failed', lease_until: 0 });
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+
+test.each([
+  { enabled: false }, { summaryLanguage: 'ja' }, { model: 'replacement-model' },
+  { baseUrl: 'https://other.vendor.com/v1', apiKey: 'replacement-key' },
+  { apiFormat: 'responses' }, { maxInputChars: 256 }
+])('settings changed during analysis discard the old result: %j', async (changed) => {
+  const f = setup(); const saved = await saveLanguages(f.env, 'auto', 'en');
+  await expect(workspaceMailAi(f.env, session(), 'email:mail', { language: 'en', analyze: true }, {
+    analyze: async (input) => {
+      const analysis = await f.provider.analyze(input);
+      await saveMailAiSettings(f.env, 'owner', { ...saved.settings, revision: saved.revision, ...changed });
+      return analysis;
+    }
+  })).rejects.toMatchObject({ code: 'AI_SETTINGS_CHANGED' });
+  expect(await readMailAi(f.db, f.key)).toMatchObject({ status: 'failed', result_json: null, lease_until: 0 });
+  expect(f.calls()).toBe(1);
+});
+
+test('a background language change during generation is checked using the actual request context', async () => {
+  for (const webContext of [false, true]) {
+    const f = setup(); await saveLanguages(f.env, 'auto', 'en');
+    const pending = workspaceMailAi(f.env, session(), 'email:mail', { ...(webContext ? { language: 'en' as const } : {}), analyze: true }, {
+      analyze: async (input) => {
+        const analysis = await f.provider.analyze(input);
+        await saveLanguages(f.env, 'auto', 'zh-CN');
+        return analysis;
+      }
+    });
+    if (webContext) expect(await pending).toMatchObject({ status: 'ready', language: 'en' });
+    else await expect(pending).rejects.toMatchObject({ code: 'AI_SETTINGS_CHANGED' });
+  }
 });

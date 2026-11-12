@@ -73,4 +73,4 @@ and [SnappyMail](https://github.com/the-djmaze/snappymail/blob/master/dev/Common
 using [CSSTree](https://github.com/csstree/csstree) for CSS parsing and validation
 and [parse5](https://github.com/inikulin/parse5) for HTML5 structure normalization.
 
-Optional on-demand AI summaries and inbox category suggestions: [AI setup and privacy guide](docs/AI.md). Disabled by default. Configure the model/key in **Settings → AI settings**; Chat Completions and Responses API are supported.
+Optional AI summaries with a separate output-language preference, opt-in automatic Telegram summaries, and inbox category suggestions: [AI setup and privacy guide](docs/AI.md). Disabled by default. Configure the model/key in **Settings → AI settings**; Chat Completions and Responses API are supported.

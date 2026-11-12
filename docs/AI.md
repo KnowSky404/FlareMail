@@ -1,10 +1,12 @@
 # Optional AI mail assistance / 可选 AI 邮件辅助
 
 AI is **off by default**. This is an on-demand single-message summary and category
-suggestion, not an agent. Nothing is sent to MaaS on receipt or merely opening a
-message. The inbox rules, sending and receiving remain independent of AI.
+suggestion, not an agent. Opening a message does not call the provider. Telegram notifications can generate
+a summary automatically only after a separate opt-in (see below). The inbox
+rules, sending and receiving remain independent of AI.
 
-AI **默认关闭**。仅按需生成单封邮件摘要和分类建议，不自动分析新邮件，不参与收发信事务。
+AI **默认关闭**。网页按需生成单封邮件摘要和分类建议；Telegram 另行明确开启自动 AI
+摘要后，才会在通知投递时自动分析新邮件，不参与收发信持久化事务。
 
 ## Enable / 启用
 
@@ -116,8 +118,9 @@ expand **AI summary and category suggestion**, then select **Agree and generate
 analysis** after reading the external-processing notice. Expanding reads only the
 cache. Summary and category views share one result and do not consume extra tokens
 when switching views. Refreshing the page preserves D1 results. **Agree and
-regenerate** requests a new analysis. Interface language (`zh-CN` or `en`), model,
-endpoint, API format, prompt/schema version and full body changes invalidate the cache.
+regenerate** requests a new analysis. The effective summary language, model, endpoint, API format, prompt/schema version
+and full body changes invalidate the cache. Summary language defaults to the
+interface language; a fixed language remains independent of interface changes.
 
 The category view shows the current category, explanation and uncalibrated model
 self-assessment. **Confirm and apply category** uses the existing inbox category
@@ -128,10 +131,64 @@ its cached result; return it to the inbox to apply a category.
 
 在邮件详情展开「AI 摘要与分类建议」，阅读隐私提示后点击「同意并生成分析」。
 展开面板只读缓存，摘要和分类视图共用一次分析；刷新页面保留结果。「同意重新生成」
-会请求新的分析。界面语言、模型、服务端地址、接口格式、Prompt/Schema 或完整正文变化都会使缓存失效。
+会请求新的分析。最终摘要语言、模型、服务端地址、接口格式、Prompt/Schema 或完整正文变化都会使缓存失效；
+固定摘要语言时，切换界面语言不会改变摘要语言。
 分类建议不会自动生效；点击「确认应用此分类」才调用现有分类接口，并保留当前筛选范围。
 已有手动分类时禁止应用建议；数据库原子条件也会保留另一标签页的并发手动设置。可先通过原有收件箱操作恢复自动分类。归档和回收站保留缓存，
 永久删除邮件会同步清理分析结果。
+
+## Summary language / 摘要语言
+
+In **Settings → AI settings**, choose **Follow interface** (default), Simplified
+Chinese, English, or a custom BCP 47 language code such as `ja`, `fr` or `zh-TW`.
+This preference controls the summary, key points, action items and category reason;
+verbatim date excerpts remain unchanged. Saving makes no provider request. Existing
+settings default to following the interface. The provider must echo the requested
+language code; generated prose still needs human judgment.
+
+For Telegram, **Follow interface** uses the interface language captured when AI
+settings were last saved, defaulting to Simplified Chinese for older settings.
+After changing the interface language, save AI settings again to update that
+background default. A custom summary language applies to both web and Telegram.
+
+「设置 → AI 设置」可选择跟随界面（默认）、简体中文、English 或自定义语言代码
+（例如 `ja`、`fr`、`zh-TW`）。偏好用于摘要、要点、待办和分类说明，日期仍保留
+原文证据。Telegram 没有浏览器上下文，自动模式使用最近一次保存 AI 设置时的
+界面语言，旧设置默认为简体中文；修改界面语言后需重新保存。固定语言同时作用于
+网页和 Telegram。保存不调用模型，已有缓存按最终输出语言匹配。
+
+## Automatic Telegram summary / Telegram 自动摘要
+
+In Telegram notification settings, separately enable **Automatic AI summary**
+after reviewing the external-processing and usage notice. The switch defaults off;
+the existing short-summary switch alone does not grant AI consent. Notifications
+must be enabled, include summaries and have privacy mode off. Both queue-time and
+current consent must permit AI; enabling it does not expand older queued messages.
+
+The outbox reuses the same bounded body processing, provider, validated analysis,
+cache and Owner quota. It sends only `analysis.summary` as a bounded plain-text
+**AI summary**. AI failure, unavailable configuration, exhausted quota or an empty
+body falls back to the original snippet. Privacy mode suppresses both kinds of
+summary. No automatic category changes or second Telegram message are sent.
+
+A delivery may initiate AI generation once; Telegram retries can reuse a ready
+cache but never start another generation for that delivery. A timeout may already
+be billed. Notification delivery does not retry an AI failure. The short inbound
+dispatch budget defers eligible AI work to the scheduled dispatcher. Permission is
+checked again before Telegram sends; revocation cannot recall content already
+submitted to the provider.
+
+Telegram 的「自动 AI 摘要」默认关闭，必须独立同意有限正文发送给已有 AI 服务及
+额度/费用提示。还需启用通知、包含摘要并关闭隐私模式；入队时和发送前均须授权。
+成功时推送标记为「AI 摘要」的有限纯文本；失败、未配置、超额或空正文退回原摘要。
+同一通知最多发起一次 AI 生成，Telegram 重试只复用缓存，不重复自动计费请求。
+隐私模式始终不生成也不展示摘要，分类不会自动写入。
+
+Migration `0031_telegram_ai_summary.sql` adds default-off consent snapshots and a
+single-attempt marker. See the [SPEC](specs/ai-language-and-telegram-summary.md)
+and [Telegram guide](TELEGRAM.md) for rollout and acceptance. Remote migrations
+are separate authorized operations; do not apply this schema upgrade against a
+production deployment that only accepts schema 30.
 
 ## Privacy and limits / 隐私与限制
 
@@ -186,6 +243,9 @@ removal of content already submitted.
 - `AI_BODY_EMPTY` / `AI_BODY_UNAVAILABLE`: check the owned canonical D1/R2 body;
   attachment-only messages are not analyzed.
 - `AI_CACHE_INVALID`: explicitly regenerate after cooldown.
+- `AI_SETTINGS_CHANGED`: settings were disabled or the effective language/model/input
+  configuration changed during generation; reload and explicitly retry. The old
+  result is not returned or cached. This cannot recall an already submitted request.
 
 禁用：在「设置 → AI 设置」关闭并保存，原有邮箱行为继续。
 禁用不删除已缓存结果，也不能撤回已发送至供应商的内容。配置错误时核对启用开关、

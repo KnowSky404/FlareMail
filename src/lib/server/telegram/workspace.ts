@@ -21,6 +21,7 @@ export async function telegramWorkspaceStatus(env: CloudflareEnv, userId: string
       enabled: binding.enabled === 1,
       privacyMode: binding.privacy_mode === 1,
       summaryEnabled: binding.summary_enabled === 1,
+      aiSummaryEnabled: binding.ai_summary_enabled === 1,
       telegramUsername: binding.telegram_username,
       telegramDisplayName: binding.telegram_display_name,
       candidateExpiresAt: binding.candidate_expires_at,

@@ -5,10 +5,10 @@
 ## 默认验收顺序
 
 1. 在独立 worktree 从最新 `origin/main` 开发，完成 `bun run test`、`bun run check`、`bun run build`、相关浏览器 QA、`bun run deploy:dry-run`，创建干净原子提交。
-2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。必须使用现有生产 Worker 名称、同一 D1/R2 和 Owner；`APP_ENV=preview`，实际 Provider/Auth 配置，关闭自动回复、通知、Telegram，`cron=[]`。不得创建替代资源或初始化 Owner。Preview 使用的生产邮件路由目的 Worker/account 保持不变。
+2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。必须使用现有生产 Worker 名称并沿用 `mail-ai` 的实际绑定（当前为既有独立 D1、共享生产 R2）；不把 D1 改指生产；`APP_ENV=preview`，实际 Provider/Auth 配置，关闭自动回复、通知、Telegram，`cron=[]`。不得创建替代资源或初始化 Owner。Preview 使用的生产邮件路由目的 Worker/account 保持不变。
 3. `bun run deploy:pre -- <preview-name>` 先构建 Svelte 应用，再在 `worker/` 通过全局 `cf previews deploy --mode preview` 构建并上传原生 Preview，不切换生产流量。名称是合法稳定名称，不把 `/` 等分支字符直接拼进去。记录命令时间、提交 SHA、Preview URL 和部署/版本 ID。
 4. 对该提交验收登录、相关业务页面/API、已认证 `/api/readiness`、D1/R2 绑定，并核对生产流量指向没有变化。`/api/health` 仅证明存活，不能替代业务验收；HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
-5. **共享生产数据，默认只读**。不要运行 E2E seed、fixture、Owner bootstrap、数据库重置或迁移。打开未读邮件会自动写入已读状态；使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
+5. **当前 D1 独立、R2 共享，默认只读**。不要运行 E2E seed、fixture、Owner bootstrap、数据库重置或迁移。打开未读邮件会自动写入已读状态；使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
 6. PRE 业务验收完成后，分别在 push 和创建 PR 前实际执行 `codex review --base origin/main` 并处理有效问题。等待当前 head 的 Codex Code Review 和 Security Review 完成，再按仓库默认授权 rebase 合并和收尾。实现提交追加后补做受影响本地/PRE 验收及两种 review。
 
 原生 Preview 不继承生产 secrets；新 Preview 从 Previews Base 获取 secrets。仅在 JSON 中声明 secret 名称不会复制其值，发布成功也不能证明密钥齐全。检查已安装 cf 帮助、Base 和实际部署绑定；不要为了缺少配置改用生产 `cf deploy`，也不要为验收重置密钥。
@@ -16,6 +16,26 @@
 需要复用生产既有 secrets 时，可上传独立版本而不切生产流量：先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。沿用同一份私有 `cloudflare.preview.json`，保持 `APP_ENV=preview`、关闭自动动作和 Cron，不能改成 production mode。先核对 `--help`、绑定、secrets 及版本预览域名现状，再核对上传版本和生产 deployment 指针。记录该路径不能覆盖的原生 Preview 行为。禁止擅自创建生产 deployment 或应用 triggers。
 
 本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
+
+## Keep one current PRE
+
+Reuse the stable native Preview name `mail-ai` at
+`https://mail-ai-flaremail.littlecontrol.workers.dev/`. Keep one latest usable
+PRE; after checking its availability, remove other confirmed native Previews.
+The user has authorized this Preview cleanup as the default. Verify the parent
+Worker and Preview IDs, run `cf previews delete <id> --worker <parent> --dry-run`,
+then use `--force` only to skip the confirmation for that verified Preview.
+Do not use `--delete-with-references`; stop and report references that prevent
+safe deletion. Never delete the parent production Worker, shared D1/R2 or
+production/recovery versions as part of Preview cleanup. Version preview URLs
+are not separate native Preview environments.
+
+The installed cf CLI may expose native Preview deploy/delete without a list
+subcommand. Its `builds previews list` lists Workers Builds records and is not
+the native Preview inventory. Use the authenticated native Preview collection
+API when necessary; never infer that zero Builds records means there are no
+native Previews. Keep auth values out of output and preserve the current PRE
+until a usable replacement is confirmed.
 
 ## 邮件阅读页验收
 
@@ -52,7 +72,7 @@ Cloudflare 接口只执行读取，不创建/修改/删除路由或 DNS。导入
 `imported`，不取得规则删除权限，也不会自动启用发信。重复同步保留已有名称、
 签名、启停、删除及操作状态，不恢复已删除地址。同步失败时仍展示本地配置和重试提示。
 新接入且确认指向本应用的 catch-all 域名初始采用未知地址收集；既有域名的
-未知地址策略保持不变。此同步写入的是共用 D1 的身份记录，两种环境都能看到。
+未知地址策略保持不变。同步写入当前目标 D1 的身份记录；当前 `mail-ai` 独立 D1 的同步不会更新生产 D1。若其他目标共享 D1，则双方可见。
 
 本地配置可见不等于本次 Cloudflare 同步成功。同步错误区分 Token 权限、连接失败、
 超时和限流；接口只返回安全的 `details.reason`，不暴露 Token 或原始供应商响应。
@@ -79,4 +99,20 @@ Worker 收信及执行定时任务，Preview 网页可查看其写入的邮件�
 
 ## Optional AI acceptance
 
-See [AI setup](AI.md). AI is disabled by default. Preview shares production data, and AI generation sends selected email text to an external service. Publishing Preview does not authorize AI processing or migration 0030; obtain the relevant authorization separately. Fake/local tests are not real-provider acceptance.
+See [AI setup](AI.md). AI is disabled by default. Current `mail-ai` uses an independent D1 with saved AI settings and shares production R2. AI generation sends selected email text to an external service. Publishing Preview does not authorize AI processing or migration 0030; obtain the relevant authorization separately. Fake/local tests are not real-provider acceptance.
+
+
+AI language preferences and Telegram automatic summaries follow the
+[SPEC](specs/ai-language-and-telegram-summary.md). Migration 0031 is additive,
+but the old production binary only accepts schema 30. The existing independent
+`mail-ai` D1 can be migrated with explicit authorization without upgrading
+production D1. For production or any target sharing production D1, deploying a
+new PRE alone cannot make that database upgrade safe. Arrange the authorized
+compatibility rollout (schema-version tolerance only, retaining old Telegram
+code) before remote migration; do not use the full feature as that bridge, since
+its schema-30 Telegram gate stops enqueueing new notifications. Record any blocked Telegram PRE
+acceptance rather than treating the migration-required UI as a feature pass.
+Do not enable automatic AI or generate from real shared email during acceptance
+without explicit authorization for that external processing and settings write.
+The ordinary Telegram test button sends a fixed test message and does not prove
+AI outbox processing. Local synthetic dispatcher tests cover that handler path.

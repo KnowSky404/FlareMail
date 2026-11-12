@@ -32,7 +32,7 @@
 </script>
 
 <label class="grid gap-1.5" for={id}>
-  {#if label}<span class="text-xs font-medium">{label}{#if required}<span class="ml-1 text-[var(--fm-brand-orange)]" aria-hidden="true">*</span>{/if}</span>{/if}
+  {#if label}<span class="text-xs font-medium text-[var(--fm-text)]">{label}{#if required}<span class="ml-1 text-[var(--fm-brand-orange)]" aria-hidden="true">*</span>{/if}</span>{/if}
   <span class="relative">
     <select
       {id}

@@ -138,7 +138,8 @@ describe('versioned D1 migrations', () => {
       '0027_persistent_mail_labels.sql',
       '0028_inbox_categories.sql',
       '0029_blocked_senders.sql',
-      '0030_mail_ai_analyses.sql'
+      '0030_mail_ai_analyses.sql',
+      '0031_telegram_ai_summary.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -242,7 +243,7 @@ describe('versioned D1 migrations', () => {
     expect(tableColumns(db, 'workspace_telegram_bindings')).toEqual(new Set([
       'user_id', 'binding_id', 'state', 'telegram_user_id', 'telegram_chat_id',
       'telegram_username', 'telegram_display_name', 'candidate_challenge_id',
-      'candidate_expires_at', 'enabled', 'privacy_mode', 'summary_enabled',
+      'candidate_expires_at', 'enabled', 'privacy_mode', 'summary_enabled', 'ai_summary_enabled',
       'authorization_version', 'bound_at', 'confirmed_at', 'revoked_at',
       'last_sent_at', 'last_error_code', 'last_error_at', 'created_at', 'updated_at'
     ]));
@@ -255,7 +256,7 @@ describe('versioned D1 migrations', () => {
     ]));
     expect(tableColumns(db, 'workspace_telegram_deliveries')).toEqual(new Set([
       'id', 'owner_user_id', 'email_message_id', 'channel', 'binding_id',
-      'authorization_version', 'privacy_mode', 'summary_enabled', 'status', 'attempts', 'max_attempts', 'next_attempt_at',
+      'authorization_version', 'privacy_mode', 'summary_enabled', 'ai_summary_enabled', 'ai_attempted', 'status', 'attempts', 'max_attempts', 'next_attempt_at',
       'claim_token', 'lease_expires_at', 'external_started', 'external_started_at',
       'telegram_message_id', 'last_error_code', 'last_error_at', 'completed_at',
       'created_at', 'updated_at'
@@ -273,7 +274,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 30 }
+      { schema_name: 'flaremail', schema_version: 31 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
@@ -500,4 +501,19 @@ describe('versioned D1 migrations', () => {
       { id: 'user-b', login_email: 'b@example.test', email: '' }
     ]);
   });
+});
+
+test('migration 0031 keeps pre-existing Telegram AI authorization and attempts off', () => {
+  const db = createDatabase();
+  applyMigrationsThrough(db, '0030_mail_ai_analyses.sql');
+  db.exec(`INSERT INTO workspace_users (id, name, role, email, company, location, timezone, signature)
+      VALUES ('owner', 'Owner', 'Owner', '', '', '', 'UTC', '');
+    INSERT INTO workspace_telegram_bindings (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, summary_enabled, created_at, updated_at)
+      VALUES ('owner', 'binding', 'active', '42', '42', 1, 1, 'now', 'now');
+    INSERT INTO workspace_telegram_deliveries (id, owner_user_id, email_message_id, binding_id, authorization_version, status, summary_enabled, next_attempt_at, created_at, updated_at)
+      VALUES ('delivery', 'owner', 'mail', 'binding', 1, 'pending', 1, 'now', 'now', 'now');`);
+  applyMigrations(db);
+  expect(db.query('SELECT ai_summary_enabled FROM workspace_telegram_bindings').get()).toEqual({ ai_summary_enabled: 0 });
+  expect(db.query('SELECT ai_summary_enabled, ai_attempted FROM workspace_telegram_deliveries').get())
+    .toEqual({ ai_summary_enabled: 0, ai_attempted: 0 });
 });

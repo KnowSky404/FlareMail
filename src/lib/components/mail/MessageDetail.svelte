@@ -190,7 +190,7 @@
         {/if}
 
         {#if message.folder === 'inbox' && !message.quarantinedAt && !trashMode}
-          {#key `${message.id}:${i18n.locale}`}<MailAiPanel {message} onApplyCategory={onApplyAiCategory} />{/key}
+          {#key message.id}<MailAiPanel {message} onApplyCategory={onApplyAiCategory} />{/key}
         {/if}
         {#key message.id}
           <MessageBody

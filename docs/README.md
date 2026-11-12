@@ -14,6 +14,7 @@ The project overview is available in both languages. Detailed guides currently u
 | [Preview and domain setup](./PREVIEW.md) | 中文 | Preview environments, shared production data, provider credentials, and browser domain setup |
 | [Maintenance and recovery](./DEPLOYMENT.md) | English | Read-only audits, identity backfill, retention, R2 cleanup, FTS export, and incident recovery |
 | [Production checklist](./PRODUCTION_CHECKLIST.md) | English | Release gates, migration review, provider checks, and rollback readiness |
+| [AI setup and privacy](./AI.md) | English / 中文 | Provider settings, summary language, explicit consent, limits and troubleshooting |
 | [Telegram](./TELEGRAM.md) | English | Bot setup, binding, webhooks, outbox, Cron, privacy, and troubleshooting |
 
 Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `migrations/` for schema changes. Historical acceptance records describe their original release and verification scope.
@@ -22,6 +23,7 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 
 | Document | Language | Purpose |
 | --- | --- | --- |
+| [AI language and Telegram summary SPEC](./specs/ai-language-and-telegram-summary.md) | 中文 | Language resolution, automatic-summary consent, retry behavior, implementation split and acceptance |
 | [List pagination and settings tabs spec](./specs/list-pagination-and-settings-tabs.md) | 中文 | Implemented pagination APIs, independent settings saves, tab navigation, and local acceptance |
 | [Account menu and About spec](./specs/account-menu-and-about.md) | 中文 | Menu actions, project metadata, centered dialog, focus behavior and acceptance |
 | [Blocked senders spec](./specs/blocked-senders.md) | 中文 | Owner rules, recoverable quarantine, notification boundaries and release constraints |

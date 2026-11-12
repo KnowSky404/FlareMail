@@ -23,14 +23,16 @@ describe('workspace schema capabilities', () => {
 
     const stale = new Database(':memory:');
     stale.exec('CREATE TABLE workspace_schema_metadata (schema_name TEXT PRIMARY KEY, schema_version INTEGER NOT NULL)');
-    stale.query('INSERT INTO workspace_schema_metadata VALUES (?, ?)').run('flaremail', FLAREMAIL_SCHEMA_VERSION - 1);
+    stale.query('INSERT INTO workspace_schema_metadata VALUES (?, ?)').run('flaremail', 29);
     expect(await hasWorkspaceCoreTables(envFor(stale))).toBe(false);
   });
 
-  test('accepts only the feature schema version', async () => {
+  test('accepts the current and migration bridge schema versions', async () => {
     const current = new Database(':memory:');
     current.exec('CREATE TABLE workspace_schema_metadata (schema_name TEXT PRIMARY KEY, schema_version INTEGER NOT NULL)');
     current.query('INSERT INTO workspace_schema_metadata VALUES (?, ?)').run('flaremail', FLAREMAIL_SCHEMA_VERSION);
+    expect(await hasWorkspaceCoreTables(envFor(current))).toBe(true);
+    current.query('UPDATE workspace_schema_metadata SET schema_version = 30').run();
     expect(await hasWorkspaceCoreTables(envFor(current))).toBe(true);
     current.query('UPDATE workspace_schema_metadata SET schema_version = 28').run();
     expect(await hasWorkspaceCoreTables(envFor(current))).toBe(false);

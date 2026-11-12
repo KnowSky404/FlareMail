@@ -375,7 +375,7 @@ user's binding or delivery rows.
 
 - `GET /api/workspace/notifications/telegram/settings` returns global enabled
   state, configuration/schema readiness, the current user's candidate/active
-  binding state, privacy/summary switches, and a small recent-delivery list.
+  binding state, privacy/summary/AI-summary switches, and a small recent-delivery list.
 - `POST /api/workspace/notifications/telegram/bind` creates a 10-minute,
   one-time deep link. The token is returned only in that authenticated response
   and is stored only as a hash. An active binding must be explicitly unbound
@@ -383,7 +383,9 @@ user's binding or delivery rows.
 - `POST /api/workspace/notifications/telegram/confirm` promotes the current
   candidate to an active but disabled binding.
 - `PATCH /api/workspace/notifications/telegram/settings` accepts boolean
-  `enabled`, `privacyMode`, and/or `summaryEnabled`. Enabling requires an
+  `enabled`, `privacyMode`, `summaryEnabled`, and/or `aiSummaryEnabled`. The AI
+  switch defaults off and has queue-time/current consent intersection; it also
+  requires summaries and non-private delivery. Enabling notifications requires an
   active binding; `forwardingEnabled` and `INBOUND_NOTIFICATION_ENABLED` are
   separate legacy controls.
 - `POST /api/workspace/notifications/telegram/test` sends only a fixed safe
@@ -733,9 +735,9 @@ explicit operator actions.
 
 ## Optional mail AI
 
-`GET /api/workspace/messages/[id]/ai?language=zh-CN|en` reads an owner-scoped cache, never the model. `POST` to the same path accepts only `{ "language": "en", "regenerate": false }` (JSON, at most 1024 bytes); `regenerate` is optional. URL, model, key and body overrides are rejected. Authentication, CSRF and no-store policies apply.
+`GET /api/workspace/messages/[id]/ai?language=zh-CN|en` reads an owner-scoped cache, never the model. Request `language` is the current interface context; the saved summary-language preference takes precedence. `POST` to the same path accepts only `{ "language": "en", "regenerate": false }` (JSON, at most 1024 bytes); `regenerate` is optional. URL, model, key and body overrides are rejected. Authentication, CSRF and no-store policies apply.
 
-The standard envelope contains `{status, analysis, truncated?, updatedAt?}`; status is `disabled`, `unconfigured`, `empty`, `processing` or `ready`. Analysis contains `summary`, `keyPoints`, `actionItems`, verbatim `dates`, `language`, and nullable `suggestion: {category, confidence, reason}`. Only the five existing categories are accepted. AI-confirmed category PATCH requests set `onlyIfAutomatic: true`; the database updates only a null category override, so concurrent manual edits win and the response returns their current summaries. No automatic mailbox mutations occur; user-confirmed application uses the existing category PATCH endpoint.
+The standard envelope contains `{status, analysis, language?, truncated?, updatedAt?}`; status is `disabled`, `unconfigured`, `empty`, `processing` or `ready`. Analysis contains `summary`, `keyPoints`, `actionItems`, verbatim `dates`, `language`, and nullable `suggestion: {category, confidence, reason}`. Only the five existing categories are accepted. AI-confirmed category PATCH requests set `onlyIfAutomatic: true`; the database updates only a null category override, so concurrent manual edits win and the response returns their current summaries. `language` exposes the effective output-language code when present. No automatic mailbox mutations occur; user-confirmed application uses the existing category PATCH endpoint.
 
 Only owned inbox messages are supported, including archived inbox sources. Trash, quarantine, blocked messages, sent mail and drafts cannot generate analyses. Claims expire after 60 seconds, with a 30-second cooldown and 30 attempts/hour per Owner. Body/model/endpoint/language/schema changes invalidate caches. Permanent deletion triggers cache cleanup. See [privacy, environment configuration and error codes](AI.md).
 
@@ -743,7 +745,11 @@ Only owned inbox messages are supported, including archived inbox sources. Trash
 
 `GET /api/workspace/ai/settings` returns `{settings, hasApiKey, canSave, revision, source}`.
 `settings` contains `enabled`, `baseUrl`, `model`, `apiFormat` (`chat-completions` or
-`responses`), `timeoutMs` (100–30000), and `maxInputChars` (256–32000).
+`responses`), `timeoutMs` (100–30000), `maxInputChars` (256–32000),
+`summaryLanguage` (`auto` or a canonical BCP 47 tag up to 64 characters), and
+`backgroundLanguage` (`zh-CN` or `en`). Missing legacy fields default to `auto`
+and `zh-CN`; clients omitting them on save preserve current preferences. Web auto
+uses request language; background auto uses the language saved with AI settings.
 `PATCH` accepts those fields plus the latest `revision`, optional `apiKey` and
 optional `clearApiKey` (JSON, at most 12 KiB). Blank/omitted keys are retained;
 endpoint changes require key re-entry. Delete with `clearApiKey: true` while
@@ -753,7 +759,9 @@ and no-store apply. Neither API returns plaintext/ciphertext keys. Stale saves
 return 409 `AI_SETTINGS_CONFLICT`; encryption setup errors return 503
 `AI_SETTINGS_KEY_UNAVAILABLE`. Saving has no provider call and takes effect
 on the next analysis request. Existing encrypted settings override environment
-defaults. No new schema migration is required beyond schema 30.
+defaults. The language preferences reuse the existing settings JSON; Telegram
+automatic generation additionally requires migration 0031. See the
+[language and Telegram SPEC](specs/ai-language-and-telegram-summary.md).
 
 AI provider URLs accept either an HTTPS base or a full `/responses` or `/chat/completions` URL. The selected API format determines the final method path; it is appended once. Stored URL values are preserved to retain encrypted-key bindings.
 

@@ -96,7 +96,7 @@ describe('/api/readiness', () => {
     database.close();
   });
 
-  test.each([FLAREMAIL_SCHEMA_VERSION - 1, FLAREMAIL_SCHEMA_VERSION + 1])(
+  test.each([29, FLAREMAIL_SCHEMA_VERSION + 1])(
     'rejects schema version %i',
     async (schemaVersion) => {
       const database = new Database(':memory:');

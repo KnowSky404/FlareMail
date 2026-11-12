@@ -744,6 +744,7 @@ type MockTelegramState = {
   enabled: boolean;
   privacyMode: boolean;
   summaryEnabled: boolean;
+  aiSummaryEnabled?: boolean;
 };
 
 function mockTelegramStatus(state: MockTelegramState) {
@@ -760,6 +761,7 @@ function mockTelegramStatus(state: MockTelegramState) {
       enabled: state.binding === 'active' && state.enabled,
       privacyMode: state.privacyMode,
       summaryEnabled: state.summaryEnabled,
+      aiSummaryEnabled: state.aiSummaryEnabled ?? false,
       telegramUsername: 'e2e_alice',
       telegramDisplayName: 'Alice E2E',
       candidateExpiresAt: state.binding === 'candidate' ? '2099-01-01T00:10:00.000Z' : null,
@@ -800,11 +802,12 @@ async function installTelegramApiMock(page: Page) {
       return response(route, mockTelegramStatus(state));
     }
     if (pathname.endsWith('/settings') && (method === 'PATCH' || method === 'PUT')) {
-      const input = JSON.parse(request.postData() ?? '{}') as Partial<Pick<MockTelegramState, 'enabled' | 'privacyMode' | 'summaryEnabled'>>;
+      const input = JSON.parse(request.postData() ?? '{}') as Partial<Pick<MockTelegramState, 'enabled' | 'privacyMode' | 'summaryEnabled' | 'aiSummaryEnabled'>>;
       if (typeof input.enabled === 'boolean') state.enabled = input.enabled;
       if (typeof input.privacyMode === 'boolean') state.privacyMode = input.privacyMode;
       if (typeof input.summaryEnabled === 'boolean') state.summaryEnabled = input.summaryEnabled;
-      return response(route, { settings: { enabled: state.enabled, privacyMode: state.privacyMode, summaryEnabled: state.summaryEnabled } });
+      if (typeof input.aiSummaryEnabled === 'boolean') state.aiSummaryEnabled = input.aiSummaryEnabled;
+      return response(route, { settings: { enabled: state.enabled, privacyMode: state.privacyMode, summaryEnabled: state.summaryEnabled, aiSummaryEnabled: state.aiSummaryEnabled ?? false } });
     }
     if (pathname.endsWith('/deliveries') && method === 'GET') return response(route, { deliveries: mockTelegramStatus(state).recentDeliveries, hasMore: false, nextCursor: null });
     if (pathname.endsWith('/bind') && method === 'POST') {

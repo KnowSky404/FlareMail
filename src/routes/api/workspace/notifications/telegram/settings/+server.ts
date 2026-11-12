@@ -25,8 +25,8 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
 export const PATCH: RequestHandler = withApiHandler(async (event) => {
   const session = await requireWorkspaceMailboxSession(event);
   const env = await requireTelegramSchema(event);
-  const body = await readJsonBody<{ enabled?: unknown; privacyMode?: unknown; summaryEnabled?: unknown }>(event, { maxBytes: 8 * 1024 });
-  const keys = ['enabled', 'privacyMode', 'summaryEnabled'] as const;
+  const body = await readJsonBody<{ enabled?: unknown; privacyMode?: unknown; summaryEnabled?: unknown; aiSummaryEnabled?: unknown }>(event, { maxBytes: 8 * 1024 });
+  const keys = ['enabled', 'privacyMode', 'summaryEnabled', 'aiSummaryEnabled'] as const;
   if (!keys.some((key) => typeof body?.[key] === 'boolean')) throw new ApiError(400, 'INVALID_TELEGRAM_SETTINGS', '至少提供一个布尔设置。', undefined, undefined, false);
   for (const key of keys) {
     if (body?.[key] !== undefined && typeof body[key] !== 'boolean') throw new ApiError(400, 'INVALID_TELEGRAM_SETTINGS', 'Telegram 设置值无效。', undefined, undefined, false);
@@ -36,12 +36,14 @@ export const PATCH: RequestHandler = withApiHandler(async (event) => {
   const updated = await updateTelegramSettings(env.DB, session.userId, {
     enabled: body.enabled as boolean | undefined,
     privacyMode: body.privacyMode as boolean | undefined,
-    summaryEnabled: body.summaryEnabled as boolean | undefined
+    summaryEnabled: body.summaryEnabled as boolean | undefined,
+    aiSummaryEnabled: body.aiSummaryEnabled as boolean | undefined
   });
   return apiSuccess(event, { settings: updated ? {
     enabled: updated.enabled === 1,
     privacyMode: updated.privacy_mode === 1,
-    summaryEnabled: updated.summary_enabled === 1
+    summaryEnabled: updated.summary_enabled === 1,
+    aiSummaryEnabled: updated.ai_summary_enabled === 1
   } : null });
 });
 

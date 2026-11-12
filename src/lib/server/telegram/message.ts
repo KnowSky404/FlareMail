@@ -13,6 +13,7 @@ export interface TelegramNotificationInput {
   snippet: string;
   privacyMode: boolean;
   summaryEnabled: boolean;
+  aiSummary?: string;
 }
 
 export interface TelegramNotificationPayload {
@@ -68,8 +69,8 @@ export function buildTelegramNotification(input: TelegramNotificationInput): Tel
     `附件：${Math.max(0, Math.trunc(input.attachmentCount))} 个`
   ];
   if (input.summaryEnabled) {
-    const summary = truncateTelegramText(cleanTelegramText(input.snippet, '(无摘要)'), 300);
-    lines.push(`摘要：${summary}`);
+    const summary = truncateTelegramText(cleanTelegramText(input.aiSummary ?? input.snippet, '(无摘要)'), 300);
+    lines.push(`${input.aiSummary ? 'AI 摘要' : '摘要'}：${summary}`);
   }
 
   let text = lines.join('\n');

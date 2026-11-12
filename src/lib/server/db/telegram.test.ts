@@ -5,6 +5,7 @@ import {
   listTelegramDeliveryPage,
   activateTelegramBinding,
   claimTelegramDelivery,
+  reserveTelegramAiAttempt,
   cleanupTelegramState,
   consumeTelegramActionLimit,
   consumeTelegramChallenge,
@@ -145,8 +146,8 @@ describe('Telegram D1 state', () => {
     expect(claimed).toMatchObject({ id: 'delivery-1', telegram_chat_id: '42', attempts: 1 });
     if (!claimed) throw new Error('expected a claim');
     db.query(`UPDATE workspace_telegram_bindings SET privacy_mode = 1, summary_enabled = 1 WHERE user_id = 'user-1'`).run();
-    expect(await markTelegramExternalStarted(d1 as unknown as D1Database, claimed.id, claimed.claim_token))
-      .toEqual({ privacyMode: true, summaryEnabled: false });
+    expect(await markTelegramExternalStarted(d1 as unknown as D1Database, claimed.id, claimed.claim_token, '2026-09-09T12:00:02.000Z'))
+      .toEqual({ privacyMode: true, summaryEnabled: false, aiSummaryEnabled: false });
     await markTelegramSent(d1 as unknown as D1Database, { deliveryId: claimed.id, claimToken: claimed.claim_token, messageId: '500' });
     expect(db.query(`SELECT status, telegram_message_id, attempts FROM workspace_telegram_deliveries WHERE id = 'delivery-1'`).get())
       .toEqual({ status: 'sent', telegram_message_id: '500', attempts: 1 });
@@ -314,4 +315,78 @@ test('Telegram history pages every owned record at a stable tied timestamp and r
   const trashCursor = encodeListCursor({ scope: 'trash', owner: 'user-1', timestamp: time, id: 'id', kind: 'draft' });
   await expect(listTelegramDeliveryPage(d1 as unknown as D1Database, 'user-1', 20, trashCursor)).rejects.toMatchObject({ code: 'INVALID_CURSOR' });
   db.close();
+});
+
+test('AI generation reserves one attempt, preserves Telegram external state, and survives delivery reclaims', async () => {
+  const { db, d1 } = database();
+  db.exec(`INSERT INTO workspace_telegram_bindings
+    (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, summary_enabled, ai_summary_enabled, created_at, updated_at)
+    VALUES ('user-1', 'binding', 'active', '42', '42', 1, 1, 1, 'now', 'now');
+    INSERT INTO email_messages (id, owner_user_id, "from", "to", timestamp, raw_key, recipient_status)
+    VALUES ('mail', 'user-1', 'sender@example.test', 'owner@example.test', 'now', '', 'managed');`);
+  await d1.batch([insertTelegramDeliveryIfEligible(d1 as unknown as D1Database, {
+    deliveryId: 'delivery', ownerUserId: 'user-1', emailMessageId: 'mail', nextAttemptAt: '2026-01-01', now: '2026-01-01'
+  })]);
+  const claim = await claimTelegramDelivery(d1 as unknown as D1Database, '2026-01-02', '2026-01-03');
+  expect(claim?.ai_summary_enabled).toBe(1);
+  if (!claim) throw new Error('expected claim');
+  expect(await Promise.all([
+    reserveTelegramAiAttempt(d1 as unknown as D1Database, claim.id, claim.claim_token, '2026-01-02'),
+    reserveTelegramAiAttempt(d1 as unknown as D1Database, claim.id, claim.claim_token, '2026-01-02')
+  ])).toEqual([true, false]);
+  expect(db.query('SELECT ai_attempted, external_started FROM workspace_telegram_deliveries').get()).toEqual({ ai_attempted: 1, external_started: 0 });
+  const reclaimed = await claimTelegramDelivery(d1 as unknown as D1Database, '2026-01-04', '2026-01-05');
+  expect(reclaimed?.ai_attempted).toBe(1);
+  expect(await reserveTelegramAiAttempt(d1 as unknown as D1Database, claim.id, reclaimed!.claim_token, '2026-01-04')).toBe(false);
+  expect(await markTelegramExternalStarted(d1 as unknown as D1Database, claim.id, claim.claim_token, '2026-01-04')).toBeNull();
+  expect(await markTelegramExternalStarted(d1 as unknown as D1Database, claim.id, reclaimed!.claim_token, '2026-01-06')).toBeNull();
+});
+
+test.each(['blocked', 'quarantined'])('drops AI content at the final send gate when the mail becomes %s', async (state) => {
+  const { db, d1 } = database();
+  db.exec(`INSERT INTO workspace_telegram_bindings
+    (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, summary_enabled, ai_summary_enabled, created_at, updated_at)
+    VALUES ('user-1', 'binding', 'active', '42', '42', 1, 1, 1, 'now', 'now');
+    INSERT INTO email_messages (id, owner_user_id, "from", "to", timestamp, raw_key, recipient_status)
+    VALUES ('mail', 'user-1', 'Sender <sender@example.test>', 'owner@example.test', 'now', '', 'managed');`);
+  await d1.batch([insertTelegramDeliveryIfEligible(d1 as unknown as D1Database, {
+    deliveryId: 'delivery', ownerUserId: 'user-1', emailMessageId: 'mail', nextAttemptAt: '2026-01-01', now: '2026-01-01'
+  })]);
+  const claim = await claimTelegramDelivery(d1 as unknown as D1Database, '2026-01-02', '2026-01-03');
+  if (state === 'blocked') db.exec("INSERT INTO blocked_senders VALUES ('user-1', 'sender@example.test', 'now')");
+  else db.exec("INSERT INTO workspace_email_states (id,user_id,email_message_id,quarantined_at) VALUES ('state','user-1','mail','now')");
+  expect(await markTelegramExternalStarted(d1 as unknown as D1Database, claim!.id, claim!.claim_token, '2026-01-02'))
+    .toEqual({ privacyMode: false, summaryEnabled: true, aiSummaryEnabled: false });
+});
+
+test.each([{ summaryEnabled: false }, { privacyMode: true }])('concurrent partial Telegram settings cannot restore revoked AI consent: %j', async (other) => {
+  const { db, d1 } = database();
+  db.exec(`INSERT INTO workspace_telegram_bindings
+    (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, summary_enabled, ai_summary_enabled, created_at, updated_at)
+    VALUES ('user-1', 'binding', 'active', '42', '42', 1, 1, 1, 'now', 'now');`);
+  await Promise.all([
+    updateTelegramSettings(d1 as unknown as D1Database, 'user-1', { aiSummaryEnabled: false }),
+    updateTelegramSettings(d1 as unknown as D1Database, 'user-1', other)
+  ]);
+  expect(db.query('SELECT enabled, privacy_mode, summary_enabled, ai_summary_enabled FROM workspace_telegram_bindings').get())
+    .toEqual({ enabled: 1, privacy_mode: other.privacyMode ? 1 : 0, summary_enabled: other.summaryEnabled === false ? 0 : 1, ai_summary_enabled: 0 });
+});
+
+test('concurrent partial settings preserve notification disablement and cancel only unsent work', async () => {
+  const { db, d1 } = database();
+  db.exec(`INSERT INTO workspace_telegram_bindings
+    (user_id, binding_id, state, telegram_user_id, telegram_chat_id, enabled, summary_enabled, ai_summary_enabled, created_at, updated_at)
+    VALUES ('user-1', 'binding', 'active', '42', '42', 1, 1, 1, 'now', 'now');
+    INSERT INTO workspace_telegram_deliveries
+      (id, owner_user_id, email_message_id, binding_id, authorization_version, status, external_started, next_attempt_at, created_at, updated_at)
+    VALUES ('pending', 'user-1', 'mail', 'binding', 1, 'pending', 0, 'now', 'now', 'now'),
+      ('started', 'user-1', 'mail-2', 'binding', 1, 'processing', 1, 'now', 'now', 'now');`);
+  await Promise.all([
+    updateTelegramSettings(d1 as unknown as D1Database, 'user-1', { enabled: false }),
+    updateTelegramSettings(d1 as unknown as D1Database, 'user-1', { privacyMode: true })
+  ]);
+  expect(db.query('SELECT enabled, privacy_mode, ai_summary_enabled FROM workspace_telegram_bindings').get())
+    .toEqual({ enabled: 0, privacy_mode: 1, ai_summary_enabled: 1 });
+  expect(db.query('SELECT id, status FROM workspace_telegram_deliveries ORDER BY id').all())
+    .toEqual([{ id: 'pending', status: 'cancelled' }, { id: 'started', status: 'processing' }]);
 });

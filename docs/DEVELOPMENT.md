@@ -36,8 +36,9 @@ merged task worktree and branches. These Git steps have standing authorization
 for requested changes unless the user limits the task. Preview and production
 publication each require separate authorization. Ordinary development does not
 automatically deploy.
-The repository's configured preview environments share production D1/R2 and
-the Owner account; writes there affect production. Use local state for
+The current `mail-ai` Preview has its existing independent D1 and shares
+production R2. Preserve its actual bindings; do not replace its D1 with the
+production target. Shared R2 writes still affect production. Use local state for
 development and read the [preview guide](./PREVIEW.md) before using a remote
 preview. Production uses Resend and rejects missing required bindings or secrets.
 

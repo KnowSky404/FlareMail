@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { Sparkles } from '@lucide/svelte';
   import { Button, IconButton } from '$lib/components/ui';
   import { ClientApiError, requestJson } from '$lib/client/api';
@@ -17,8 +17,17 @@
   let error = $state('');
   let appliedCategory = $state<MailInboxCategory | null>(null);
   const applied = $derived(appliedCategory !== null && message.inboxCategoryOverride === appliedCategory);
-  const controller = new AbortController();
-  onDestroy(() => controller.abort());
+  let controller = new AbortController();
+  let requestSequence = 0;
+  onDestroy(() => { requestSequence++; controller.abort(); });
+  $effect(() => {
+    message.id; i18n.locale;
+    untrack(() => {
+      requestSequence++; controller.abort();
+      busy = false; result = null; error = ''; appliedCategory = null;
+      if (open) void load();
+    });
+  });
   const panelId = $derived(`mail-ai-${message.id}`);
   const analysis = $derived(result?.analysis);
   const errorHints = {
@@ -31,17 +40,20 @@
   async function load(analyze = false, regenerate = false) {
     if (busy) return;
     busy = true; error = '';
+    const sequence = ++requestSequence;
+    controller = new AbortController();
     try {
-      result = await requestJson<MailAiResponse>(`/api/workspace/messages/${encodeURIComponent(message.id)}/ai${analyze ? '' : `?language=${i18n.locale}`}`, {
+      const response = await requestJson<MailAiResponse>(`/api/workspace/messages/${encodeURIComponent(message.id)}/ai${analyze ? '' : `?language=${i18n.locale}`}`, {
         signal: controller.signal, ...(analyze ? { method: 'POST', body: JSON.stringify({ language: i18n.locale, regenerate }) } : {})
       });
+      if (sequence === requestSequence) result = response;
     } catch (cause) {
-      if (!controller.signal.aborted) {
+      if (sequence === requestSequence && !controller.signal.aborted) {
         const code = cause instanceof ClientApiError ? cause.code : 'NETWORK_FAILURE';
         const hint = errorHints[code as keyof typeof errorHints];
         error = t('ai.error', { code }) + (hint ? ` ${t(hint)}` : '');
       }
-    } finally { busy = false; }
+    } finally { if (sequence === requestSequence) busy = false; }
   }
   function toggle() { open = !open; if (open && !result) void load(); }
   async function apply() {

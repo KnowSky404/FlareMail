@@ -18,6 +18,7 @@ export interface TelegramBindingRow {
   enabled: number;
   privacy_mode: number;
   summary_enabled: number;
+  ai_summary_enabled: number;
   authorization_version: number;
   bound_at: string | null;
   confirmed_at: string | null;
@@ -51,6 +52,8 @@ export interface TelegramDeliveryRow {
   authorization_version: number;
   privacy_mode: number;
   summary_enabled: number;
+  ai_summary_enabled: number;
+  ai_attempted: number;
   status: TelegramDeliveryStatus;
   attempts: number;
   max_attempts: number;
@@ -84,6 +87,8 @@ export interface ClaimedTelegramDelivery {
   telegram_chat_id: string;
   privacy_mode: number;
   summary_enabled: number;
+  ai_summary_enabled: number;
+  ai_attempted: number;
   telegram_username: string | null;
   timezone: string;
   from_address: string;
@@ -125,7 +130,7 @@ const telegramRequiredColumns = {
   workspace_telegram_bindings: [
     'user_id', 'binding_id', 'state', 'telegram_user_id', 'telegram_chat_id', 'telegram_username',
     'telegram_display_name', 'candidate_challenge_id', 'candidate_expires_at', 'enabled',
-    'privacy_mode', 'summary_enabled', 'authorization_version', 'bound_at', 'confirmed_at',
+    'privacy_mode', 'summary_enabled', 'ai_summary_enabled', 'authorization_version', 'bound_at', 'confirmed_at',
     'revoked_at', 'last_sent_at', 'last_error_code', 'last_error_at', 'created_at', 'updated_at'
   ],
   workspace_telegram_bind_challenges: [
@@ -135,7 +140,7 @@ const telegramRequiredColumns = {
   workspace_telegram_updates: ['update_id', 'processing_token', 'status', 'result_code', 'created_at', 'processed_at'],
   workspace_telegram_deliveries: [
     'id', 'owner_user_id', 'email_message_id', 'channel', 'binding_id', 'authorization_version', 'privacy_mode',
-    'summary_enabled', 'status', 'attempts', 'max_attempts', 'next_attempt_at', 'claim_token',
+    'summary_enabled', 'ai_summary_enabled', 'ai_attempted', 'status', 'attempts', 'max_attempts', 'next_attempt_at', 'claim_token',
     'lease_expires_at', 'external_started', 'external_started_at', 'telegram_message_id',
     'last_error_code', 'last_error_at', 'completed_at', 'created_at', 'updated_at'
   ],
@@ -484,26 +489,25 @@ export async function activateTelegramBinding(db: D1Database, userId: string, no
 export async function updateTelegramSettings(
   db: D1Database,
   userId: string,
-  settings: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean }
+  settings: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean; aiSummaryEnabled?: boolean }
 ) {
   const current = await findTelegramBinding(db, userId);
   if (!current || current.state !== 'active') return null;
   const now = nowIso();
-  const enabled = settings.enabled ?? current.enabled === 1;
-  const privacyMode = settings.privacyMode ?? current.privacy_mode === 1;
-  const summaryEnabled = settings.summaryEnabled ?? current.summary_enabled === 1;
   await db.batch([
     db.prepare(`
       UPDATE workspace_telegram_bindings
-      SET enabled = ?, privacy_mode = ?, summary_enabled = ?, updated_at = ?
+      SET enabled = COALESCE(?, enabled), privacy_mode = COALESCE(?, privacy_mode),
+        summary_enabled = COALESCE(?, summary_enabled), ai_summary_enabled = COALESCE(?, ai_summary_enabled), updated_at = ?
       WHERE user_id = ? AND state = 'active'
-    `).bind(enabled ? 1 : 0, privacyMode ? 1 : 0, summaryEnabled ? 1 : 0, now, userId),
-    ...(enabled ? [] : [db.prepare(`
+    `).bind(settings.enabled === undefined ? null : Number(settings.enabled), settings.privacyMode === undefined ? null : Number(settings.privacyMode),
+      settings.summaryEnabled === undefined ? null : Number(settings.summaryEnabled), settings.aiSummaryEnabled === undefined ? null : Number(settings.aiSummaryEnabled), now, userId),
+    ...(settings.enabled === false ? [db.prepare(`
       UPDATE workspace_telegram_deliveries
       SET status = 'cancelled', claim_token = NULL, lease_expires_at = NULL,
         completed_at = ?, updated_at = ?
       WHERE owner_user_id = ? AND status IN ('pending', 'retryable', 'processing') AND external_started = 0
-    `).bind(now, now, userId)])
+    `).bind(now, now, userId)] : [])
   ]);
   return findTelegramBinding(db, userId);
 }
@@ -535,11 +539,11 @@ export function insertTelegramDeliveryIfEligible(
   return db.prepare(`
     INSERT INTO workspace_telegram_deliveries (
       id, owner_user_id, email_message_id, channel, binding_id,
-      authorization_version, privacy_mode, summary_enabled, status, attempts, max_attempts, next_attempt_at,
+      authorization_version, privacy_mode, summary_enabled, ai_summary_enabled, status, attempts, max_attempts, next_attempt_at,
       created_at, updated_at
     )
     SELECT ?, e.owner_user_id, e.id, 'telegram', b.binding_id,
-      b.authorization_version, b.privacy_mode, b.summary_enabled, 'pending', 0, 5, ?, ?, ?
+      b.authorization_version, b.privacy_mode, b.summary_enabled, b.ai_summary_enabled, 'pending', 0, 5, ?, ?, ?
     FROM email_messages AS e
     JOIN workspace_telegram_bindings AS b
       ON b.user_id = e.owner_user_id AND b.state = 'active' AND b.enabled = 1
@@ -616,7 +620,9 @@ export async function claimTelegramDelivery(db: D1Database, now: string, leaseUn
       CASE WHEN b.privacy_mode = 1 OR d.privacy_mode = 1 THEN 1 ELSE 0 END AS privacy_mode,
       CASE WHEN b.privacy_mode = 1 OR d.privacy_mode = 1 THEN 0
         WHEN b.summary_enabled = 1 AND d.summary_enabled = 1 THEN 1 ELSE 0 END AS summary_enabled,
-      b.telegram_username, u.timezone,
+      CASE WHEN b.privacy_mode = 0 AND d.privacy_mode = 0 AND b.summary_enabled = 1 AND d.summary_enabled = 1
+        AND b.ai_summary_enabled = 1 AND d.ai_summary_enabled = 1 THEN 1 ELSE 0 END AS ai_summary_enabled,
+      d.ai_attempted, b.telegram_username, u.timezone,
       e."from" AS from_address, e."to" AS to_address, e.subject,
       COALESCE(e.created_at, e."timestamp") AS received_at, e.snippet,
       (SELECT COUNT(*) FROM workspace_attachments AS a WHERE a.message_id = e.id AND a.relation_type = 'inbound') AS attachment_count
@@ -649,12 +655,38 @@ export async function markTelegramCancelled(db: D1Database, deliveryId: string, 
   `).bind(errorCode, now, now, now, deliveryId, claimToken).run();
 }
 
+/** Reserve before the provider call; Telegram retries must never bill AI again. */
+export async function reserveTelegramAiAttempt(db: D1Database, deliveryId: string, claimToken: string, now = nowIso()) {
+  const row = await db.prepare(`UPDATE workspace_telegram_deliveries AS d SET ai_attempted = 1, updated_at = ?
+    WHERE d.id = ? AND d.claim_token = ? AND d.status = 'processing' AND d.external_started = 0
+      AND d.lease_expires_at > ? AND d.ai_attempted = 0 AND d.ai_summary_enabled = 1
+      AND d.summary_enabled = 1 AND d.privacy_mode = 0
+      AND EXISTS (SELECT 1 FROM workspace_telegram_bindings AS b
+        WHERE b.user_id = d.owner_user_id AND b.binding_id = d.binding_id
+          AND b.authorization_version = d.authorization_version AND b.state = 'active' AND b.enabled = 1
+          AND b.privacy_mode = 0 AND b.summary_enabled = 1 AND b.ai_summary_enabled = 1)
+      AND EXISTS (SELECT 1 FROM email_messages AS e LEFT JOIN workspace_email_states AS s
+        ON s.user_id = d.owner_user_id AND s.email_message_id = e.id
+        WHERE e.owner_user_id = d.owner_user_id AND e.id = d.email_message_id
+          AND e.recipient_status IN ('managed', 'unregistered') AND s.deleted_at IS NULL AND s.quarantined_at IS NULL)
+    RETURNING id`).bind(now, deliveryId, claimToken, now).first<{ id: string }>();
+  return Boolean(row);
+}
+
+/** A short inbound dispatch leaves AI work for Cron without spending a send attempt. */
+export function deferTelegramDelivery(db: D1Database, deliveryId: string, claimToken: string, nextAttemptAt: string) {
+  return db.prepare(`UPDATE workspace_telegram_deliveries SET status = 'pending', attempts = MAX(0, attempts - 1),
+    claim_token = NULL, lease_expires_at = NULL, next_attempt_at = ?, updated_at = ?
+    WHERE id = ? AND claim_token = ? AND status = 'processing' AND external_started = 0`)
+    .bind(nextAttemptAt, nowIso(), deliveryId, claimToken).run();
+}
+
 export async function markTelegramExternalStarted(
   db: D1Database,
   deliveryId: string,
-  claimToken: string
-): Promise<{ privacyMode: boolean; summaryEnabled: boolean } | null> {
-  const now = nowIso();
+  claimToken: string,
+  now = nowIso()
+): Promise<{ privacyMode: boolean; summaryEnabled: boolean; aiSummaryEnabled: boolean } | null> {
   const row = await db.prepare(`
     UPDATE workspace_telegram_deliveries AS d
     SET external_started = 1,
@@ -688,8 +720,24 @@ export async function markTelegramExternalStarted(
             AND current_binding.summary_enabled = 1
         ) THEN 1
         ELSE 0 END,
+      ai_summary_enabled = CASE WHEN d.privacy_mode = 0 AND d.summary_enabled = 1 AND d.ai_summary_enabled = 1 AND EXISTS (
+        SELECT 1 FROM workspace_telegram_bindings AS b WHERE b.user_id = d.owner_user_id
+          AND b.binding_id = d.binding_id AND b.authorization_version = d.authorization_version
+          AND b.state = 'active' AND b.enabled = 1 AND b.privacy_mode = 0
+          AND b.summary_enabled = 1 AND b.ai_summary_enabled = 1
+      ) AND EXISTS (
+        SELECT 1 FROM email_messages AS e LEFT JOIN workspace_email_states AS s
+          ON s.user_id = d.owner_user_id AND s.email_message_id = e.id
+        WHERE e.owner_user_id = d.owner_user_id AND e.id = d.email_message_id
+          AND s.deleted_at IS NULL AND s.quarantined_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM blocked_senders AS blocked
+            WHERE blocked.owner_user_id = d.owner_user_id AND blocked.email = lower(trim(
+              CASE WHEN instr(e."from", '<') > 0 AND instr(e."from", '>') > instr(e."from", '<')
+                THEN substr(e."from", instr(e."from", '<') + 1, instr(e."from", '>') - instr(e."from", '<') - 1)
+                ELSE e."from" END)))
+      ) THEN 1 ELSE 0 END,
       external_started_at = ?, updated_at = ?
-    WHERE d.id = ? AND d.claim_token = ? AND d.status = 'processing'
+    WHERE d.id = ? AND d.claim_token = ? AND d.status = 'processing' AND d.lease_expires_at > ?
       AND EXISTS (
         SELECT 1 FROM workspace_telegram_bindings AS b
         WHERE b.user_id = d.owner_user_id
@@ -705,9 +753,9 @@ export async function markTelegramExternalStarted(
           AND e.owner_user_id = d.owner_user_id
           AND e.recipient_status IN ('managed', 'unregistered') AND s.deleted_at IS NULL
       )
-    RETURNING privacy_mode, summary_enabled
-  `).bind(now, now, deliveryId, claimToken).first<{ privacy_mode: number; summary_enabled: number }>();
-  return row ? { privacyMode: row.privacy_mode === 1, summaryEnabled: row.summary_enabled === 1 } : null;
+    RETURNING privacy_mode, summary_enabled, ai_summary_enabled
+  `).bind(now, now, deliveryId, claimToken, now).first<{ privacy_mode: number; summary_enabled: number; ai_summary_enabled: number }>();
+  return row ? { privacyMode: row.privacy_mode === 1, summaryEnabled: row.summary_enabled === 1, aiSummaryEnabled: row.ai_summary_enabled === 1 } : null;
 }
 
 export async function markTelegramSent(db: D1Database, input: { deliveryId: string; claimToken: string; messageId: string }) {

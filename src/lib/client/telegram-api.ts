@@ -28,6 +28,7 @@ export interface TelegramSettingsStatus {
     enabled: boolean;
     privacyMode: boolean;
     summaryEnabled: boolean;
+    aiSummaryEnabled: boolean;
     telegramUsername: string | null;
     telegramDisplayName: string;
     candidateExpiresAt: string | null;
@@ -64,8 +65,8 @@ export function setupTelegram() {
   return requestJson<TelegramSetupResult>(`${settingsPath}/setup`, { method: 'POST' });
 }
 
-export function updateTelegramSettings(input: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean }) {
-  return requestJson<{ settings: { enabled: boolean; privacyMode: boolean; summaryEnabled: boolean } | null }>(`${settingsPath}/settings`, {
+export function updateTelegramSettings(input: { enabled?: boolean; privacyMode?: boolean; summaryEnabled?: boolean; aiSummaryEnabled?: boolean }) {
+  return requestJson<{ settings: { enabled: boolean; privacyMode: boolean; summaryEnabled: boolean; aiSummaryEnabled: boolean } | null }>(`${settingsPath}/settings`, {
     method: 'PATCH',
     body: JSON.stringify(input)
   });
