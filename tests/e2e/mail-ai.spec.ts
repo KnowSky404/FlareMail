@@ -235,3 +235,46 @@ for (const preference of ['auto', 'ja']) {
     await assertNoHorizontalOverflow(page); await assertNoConsoleErrors(consoleErrors);
   });
 }
+
+test('AI accessible generation and completed result survive same-message flag updates', async ({ page, consoleErrors }) => {
+  let reads = 0;
+  let posts = 0;
+  let release: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => release = resolve);
+  await page.route(`**${path}*`, async (route) => {
+    if (route.request().method() === 'GET') {
+      reads++;
+      await route.fulfill({ json: { ok: true, data: { status: 'empty', analysis: null }, requestId: 'fake-ai-flags' } }); return;
+    }
+    posts++;
+    await gate;
+    await route.fulfill({ json: { ok: true, data: { status: 'ready', analysis: {
+      summary: '标记变化后保留分析', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN', suggestion: null
+    } }, requestId: 'fake-ai-flags' } }).catch(() => {});
+  });
+  await login(page);
+  await page.locator('.mail-list-panel').getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  const panel = page.getByRole('region', { name: title });
+  await panel.getByRole('button', { name: title, exact: true }).first().click();
+  await panel.getByRole('button', { name: '同意并生成分析' }).click();
+  await expect.poll(() => posts).toBe(1);
+  const star = page.getByRole('region', { name: '邮件详情', exact: true }).getByRole('button', { name: /^(?:加星|取消星标)$/u });
+  const initialStarred = await star.getAttribute('aria-pressed') === 'true';
+  const toggleStar = async (starred: boolean) => {
+    const updated = page.waitForResponse((response) => response.request().method() === 'PATCH' && new URL(response.url()).pathname === '/api/workspace/messages/e2e-inbox-message/flags');
+    await star.click(); await updated;
+    await expect(star).toHaveAttribute('aria-pressed', String(starred));
+    await expect(star).toBeEnabled();
+  };
+  try {
+    await toggleStar(!initialStarred);
+    await expect(panel.getByRole('status')).toContainText('正在读取或生成');
+    release?.();
+    await expect(panel.getByText('标记变化后保留分析')).toBeVisible();
+    await toggleStar(initialStarred);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await expect(panel.getByText('标记变化后保留分析')).toBeVisible();
+    expect(reads).toBe(1); expect(posts).toBe(1);
+  } finally { release?.(); }
+  await assertNoConsoleErrors(consoleErrors);
+});

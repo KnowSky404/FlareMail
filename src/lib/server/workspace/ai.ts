@@ -96,7 +96,7 @@ export async function workspaceMailAi(
       if (remaining <= 0) throw new ApiError(503, 'AI_TIMEOUT', 'AI analysis timed out.');
       config.timeoutMs = Math.min(config.timeoutMs, remaining);
     }
-    const analysis = validateMailAiAnalysis(await (provider ?? createMailAiProvider(config)).analyze(input), input);
+    const analysis = validateMailAiAnalysis(await (provider ?? createMailAiProvider(config, fetch, { retryRateLimit: !options.beforeAnalyze })).analyze(input), input);
     // Recheck visibility and content after the external request, before returning or saving.
     const current = await loadInput(env, session, id, language, config.maxInputChars);
     if (current.contentHash !== contentHash) throw new ApiError(409, 'AI_CONTENT_CHANGED', 'The message changed. Please retry.');
