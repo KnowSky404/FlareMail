@@ -5,6 +5,7 @@ import type { MessageKey, Translator } from '$lib/i18n';
 export class LocalizedError extends Error {}
 
 const errorKeys: Record<string, MessageKey> = {
+  ATTACHMENT_CONFLICT: 'errors.ATTACHMENT_CONFLICT',
   CLOUDFLARE_EXTERNAL_RULE_PRESERVED: 'errors.CLOUDFLARE_EXTERNAL_RULE_PRESERVED',
   CLOUDFLARE_REJECT_ROUTE_UNAVAILABLE: 'errors.CLOUDFLARE_REJECT_ROUTE_UNAVAILABLE',
   CLOUDFLARE_RULE_CHANGED: 'errors.CLOUDFLARE_RULE_CHANGED',
