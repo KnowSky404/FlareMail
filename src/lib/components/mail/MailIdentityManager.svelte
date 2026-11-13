@@ -274,13 +274,21 @@
     const active = () => mounted && currentSession(epoch);
     try {
       await refreshDomains(domains.map((domain) => domain.id), async (id) => {
-        const result = await requestJson<{ check: FreshCheck }>(
-          `/api/workspace/mail-identities/domains/${encodeURIComponent(id)}/check`, { method: 'POST', body: '{}' }
-        );
-        if (!result?.check?.cloudflare || !Array.isArray(result.check.cloudflare.addresses) || !result.check.resend) {
-          throw new ClientApiError(502, 'INVALID_RESPONSE', '');
+        // Cancelled automatic requests can retain their 90-second server lease.
+        for (let attempt = 0; ; attempt++) {
+          const result = await requestJson<{ check: FreshCheck }>(
+            `/api/workspace/mail-identities/domains/${encodeURIComponent(id)}/check`, { method: 'POST', body: '{}' }
+          );
+          if (!result?.check?.cloudflare || !Array.isArray(result.check.cloudflare.addresses) || !result.check.resend) {
+            throw new ClientApiError(502, 'INVALID_RESPONSE', '');
+          }
+          const checking = [result.check.cloudflare.errorCode, result.check.resend.errorCode]
+            .some((code) => code?.endsWith('_check_in_progress'));
+          if (!checking) return result;
+          if (attempt >= 6) throw new ClientApiError(409, 'MAIL_DOMAIN_CHECK_BUSY', '');
+          await new Promise<void>((resolve) => setTimeout(resolve, 15_000));
+          if (!active()) throw new DOMException('Aborted', 'AbortError');
         }
-        return result;
       }, (id, result) => {
         batchCompleted++;
         if (result.status === 'fulfilled') {

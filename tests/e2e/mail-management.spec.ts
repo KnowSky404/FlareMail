@@ -1859,3 +1859,59 @@ test('retains failed batch attempts alongside saved successful observations', as
   await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors.filter((message) => !/Failed to load resource.*503/u.test(message)));
 });
+
+test('waits for provider leases before completing manual batch checks', async ({ page }) => {
+  await login(page);
+  const original = await readIdentities(page);
+  await page.clock.install({ time: new Date() });
+  const domain = { ...original.domains[0], cloudflare_checked_at: new Date().toISOString(), resend_configured: false, resend_checked_at: null };
+  let attempts = 0;
+  let alwaysBusy = false;
+  await page.route(identitiesUrl, (route) => route.fulfill({ json: { ok: true, data: {
+    ...original, domains: [domain], addresses: [], providerConfiguration: { cloudflare: false, resend: false }
+  } } }));
+  await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, (route) => {
+    attempts++;
+    return route.fulfill({ json: { ok: true, data: { check: {
+      cloudflare: { state: 'ready', errorCode: alwaysBusy || attempts === 1 ? 'cloudflare_check_in_progress' : null,
+        catchAllTarget: 'this_worker', checkedAt: domain.cloudflare_checked_at, addresses: [] },
+      resend: { state: attempts === 2 ? 'error' : 'not_configured', errorCode: attempts === 2 ? 'resend_check_in_progress' : null, checkedAt: null }
+    } } } });
+  });
+  async function finishCheck(action: () => Promise<unknown>) {
+    const response = page.waitForResponse((result) => result.request().method() === 'POST' && result.url().endsWith('/check'));
+    await action();
+    await (await response).finished();
+  }
+  await gotoManagement(page, '/?folder=settings&view=domains');
+  await dismissNotifications(page);
+  const refresh = page.locator('#refresh-all-domains');
+  await finishCheck(() => refresh.click());
+  await expect.poll(() => attempts).toBe(1);
+  await expect(refresh).toBeDisabled();
+  await finishCheck(() => page.clock.fastForward(15_000));
+  await expect.poll(() => attempts).toBe(2);
+  await expect(refresh).toBeDisabled();
+  await finishCheck(() => page.clock.fastForward(15_000));
+  await expect.poll(() => attempts).toBe(3);
+  await expect(refresh).toBeEnabled();
+  const row = page.locator(`[data-domain-id="${domain.id}"]`);
+  await expect(row).not.toHaveClass(/needs-attention/u);
+  alwaysBusy = true;
+  await finishCheck(() => refresh.click());
+  await expect.poll(() => attempts).toBe(4);
+  for (let next = 5; next <= 10; next++) {
+    await finishCheck(() => page.clock.fastForward(15_000));
+    await expect.poll(() => attempts).toBe(next);
+  }
+  await expect(refresh).toBeEnabled();
+  await expect(row).toHaveClass(/needs-attention/u);
+  await row.getByRole('button', { name: String(domain.domain_name), exact: true }).click();
+  await expect(page.locator('#mail-diagnostics').getByRole('alert')).toContainText(/仍在进行|still running/u);
+  await page.locator('#mail-diagnostics').getByRole('button', { name: /关闭|Close/u }).last().click();
+  await finishCheck(() => refresh.click());
+  await expect.poll(() => attempts).toBe(11);
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('flaremail:auth-expired')));
+  await page.clock.fastForward(30_000);
+  expect(attempts).toBe(11);
+});
