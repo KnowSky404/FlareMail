@@ -4,12 +4,12 @@
 
 基线为 `45920aa03229649d8d3bacd7407aa966ce3f7d9b`，任务分支为
 `feat/domain-refresh-ui`，独立 worktree 为 `/tmp/FlareMail-domain-refresh`。
-实现提交为 `8c4e9bccc9559e8b1df5af7d67947ff017bf5067`；后续提交补充本验收记录、截图及附件并发冲突的中英文恢复建议。
+实现提交为 `8c4e9bccc9559e8b1df5af7d67947ff017bf5067`；后续提交补充本验收记录、截图及附件/草稿冲突及投递安全的中英文恢复建议。
 最终 head、本地审查时间与结果、PRE 部署 ID 保存在源码外的任务证据中，PR 引用对应记录。
 
 ## 本地验证
 
-- `bun run test`：909 通过，0 失败；`bun run check`：0 错误、0 警告。
+- `bun run test`：910 通过，0 失败；`bun run check`：0 错误、0 警告。
 - `bun run build`、`bun run deploy:dry-run` 通过。无新增依赖或数据库迁移。
 - Chromium 桌面、手机及 320px 窄屏覆盖批量检查、部分失败、自动刷新暂停恢复、
   编辑草稿保留、英文错误与信息提示；相关 Firefox、WebKit 和无障碍验证通过。

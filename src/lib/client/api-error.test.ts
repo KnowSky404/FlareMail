@@ -28,6 +28,25 @@ test('keeps attachment conflict recovery advice in both languages', () => {
   expect(formatApiError(error, createTranslator('zh-CN'), '失败')).toContain('重新载入草稿');
 });
 
+test('preserves delivery and draft recovery instructions and safe request IDs', () => {
+  const cases = [
+    ['DELIVERY_REVIEW_REQUIRED', 'Resend Dashboard', '投递时间线'],
+    ['DELIVERY_NOT_RETRYABLE', 'delivery timeline first', '先检查投递时间线'],
+    ['IDEMPOTENCY_CONFLICT', 'avoid sending a duplicate', '避免重复发送'],
+    ['DRAFT_BODY_RELOAD_REQUIRED', 'complete body', '完整正文'],
+    ['DRAFT_CONFLICT', 'latest server version', '最新服务器版本'],
+    ['SEND_RATE_LIMITED', 'Wait before', '稍后再试']
+  ] as const;
+  for (const [code, englishAdvice, chineseAdvice] of cases) {
+    const error = new ClientApiError(409, code, '原始后端提示', 'proxy:trace.123');
+    const english = formatApiError(error, createTranslator('en'), 'Failed');
+    expect(english).toContain(englishAdvice);
+    expect(english).toContain('proxy:trace.123');
+    expect(english).not.toMatch(/\p{Script=Han}/u);
+    expect(formatApiError(error, createTranslator('zh-CN'), '失败')).toContain(chineseAdvice);
+  }
+});
+
 test('preserves trusted translated validation advice and filenames in both languages', () => {
   for (const locale of ['en', 'zh-CN'] as const) {
     const t = createTranslator(locale);
