@@ -542,7 +542,7 @@ test.describe('mail resource management', () => {
     await moreButton(domainRow).click();
     await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
     await expect.poll(() => identityGets).toBe(2);
-    await expect(page.getByRole('status').filter({ hasText: /检查未完成|did not complete/u }).first()).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /需要处理|need attention/u }).first()).toBeVisible();
     await expect(page.locator('#refresh-mail-resources, #refresh-all-domains')).toBeEnabled();
 
     await expect(domainRow).toContainText(/可用|Ready/u);
@@ -782,7 +782,7 @@ test.describe('mail resource management', () => {
     const domainRow = page.locator(`[data-domain-id="${domain.id}"]`);
     await moreButton(domainRow).click();
     await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
-    await expect(page.getByRole('status').filter({ hasText: /状态检查已完成|检查未完成|status checks completed|did not complete/u }).first()).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /状态检查已完成|需要处理|status checks completed|need attention/u }).first()).toBeVisible();
     await expect(page.locator('#refresh-mail-resources, #refresh-all-domains')).toBeEnabled();
     await moreButton(domainRow).click();
     await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
@@ -800,7 +800,7 @@ test.describe('mail resource management', () => {
     await expect(page).toHaveURL(/view=domains/u);
     await moreButton(domainRow).click();
     await page.getByRole('menuitem', { name: /检查状态|Check status/u }).click();
-    await expect(page.getByRole('status').filter({ hasText: /状态检查已完成|检查未完成|status checks completed|did not complete/u }).first()).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /状态检查已完成|需要处理|status checks completed|need attention/u }).first()).toBeVisible();
     await expect(page.locator('#refresh-mail-resources, #refresh-all-domains')).toBeEnabled();
     await moreButton(domainRow).click();
     await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
@@ -1776,4 +1776,51 @@ test('preserves batch address observations and counts imported routing conflicts
   await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
   await page.locator(`[data-address-id="${addresses[0].id}"]`).getByRole('button', { name: addresses[0].email, exact: true }).click();
   await expect(page.locator('#mail-diagnostics')).toContainText(/可导入|Importable/u);
+});
+
+test('clears recovered batch markers and keeps active collection failures visible', async ({ page }) => {
+  await login(page);
+  const original = await readIdentities(page);
+  const domain = { ...original.domains[0], unknown_recipient_policy: 'collect', catch_all_target: 'none',
+    cloudflare_checked_at: new Date().toISOString(), cloudflare_error_code: 'cloudflare_collect_catch_all_unavailable' as string | null,
+    resend_configured: false, resend_checked_at: null };
+  let recover = false;
+  await page.route(identitiesUrl, (route) => route.fulfill({ json: { ok: true, data: {
+    ...original, domains: [domain], addresses: [], providerConfiguration: { cloudflare: true, resend: false }
+  } } }));
+  await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, async (route) => {
+    domain.catch_all_target = recover ? 'this_worker' : domain.catch_all_target;
+    domain.cloudflare_error_code = recover ? null : 'cloudflare_collect_catch_all_unavailable';
+    domain.cloudflare_checked_at = new Date().toISOString();
+    await route.fulfill({ json: { ok: true, data: { check: {
+      cloudflare: { state: 'ready', errorCode: domain.cloudflare_error_code, catchAllTarget: domain.catch_all_target,
+        checkedAt: domain.cloudflare_checked_at, addresses: [] },
+      resend: { state: 'not_configured', errorCode: null, checkedAt: null }
+    } } } });
+  });
+  await gotoManagement(page, '/?folder=settings&view=domains');
+  await dismissNotifications(page);
+  const row = page.locator(`[data-domain-id="${domain.id}"]`);
+  await page.locator('#refresh-all-domains').click();
+  await expect(page.locator('#refresh-all-domains')).toBeEnabled();
+  await expect(row).toHaveClass(/needs-attention/u);
+  await row.getByRole('button', { name: /域名设置|Domain settings/u }).click();
+  const dialog = page.locator('#domain-settings');
+  const warning = dialog.locator('p[role="alert"]').filter({ hasText: /未知地址收集仅在|Unknown-address collection works only/u });
+  await expect(warning).toBeVisible();
+  await dialog.getByRole('button', { name: /检查状态|Check status/u }).click();
+  await expect(dialog.getByRole('status')).toContainText(/需要处理|need attention/u);
+  await expect(warning).toBeVisible();
+  recover = true;
+  await dialog.getByRole('button', { name: /检查状态|Check status/u }).click();
+  await expect(warning).toBeHidden();
+  await expect(dialog.getByRole('button', { name: /检查状态|Check status/u })).toBeEnabled();
+  await dialog.getByRole('button', { name: /取消|Cancel/u }).click();
+  await expect(row).not.toHaveClass(/needs-attention/u);
+  domain.catch_all_target = 'drop'; domain.cloudflare_error_code = 'cloudflare_collect_catch_all_unavailable';
+  await gotoManagement(page, '/?folder=settings&view=domains');
+  await page.locator(`[data-domain-id="${domain.id}"]`).getByRole('button', { name: /域名设置|Domain settings/u }).click();
+  await expect(warning).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  expect((await new AxeBuilder({ page }).include('#domain-settings').analyze()).violations).toEqual([]);
 });

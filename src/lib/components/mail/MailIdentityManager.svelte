@@ -490,7 +490,9 @@
       const result = await requestJson<{ check: FreshCheck }>(`/api/workspace/mail-identities/domains/${encodeURIComponent(domain.id)}/check`, { method: 'POST', body: '{}' });
       if (!currentSession(epoch)) { unresolvedDomainChecks = { ...unresolvedDomainChecks, [domain.id]: true }; errorMessage = t('settings.writeOutcomeUnknown'); return; }
       checks = { ...checks, [domain.id]: result.check };
-      await saved(t(result.check.cloudflare.state === 'ready' ? 'settings.mailIdentityCheckComplete' : 'settings.mailIdentityCheckIncomplete'), result.check.cloudflare.state !== 'ready', {
+      const needsAttention = domainCheckNeedsAttention(result.check);
+      if (!needsAttention) batchAttention = batchAttention.filter((id) => id !== domain.id);
+      await saved(t(needsAttention ? 'settings.mailIdentityCheckIncomplete' : 'settings.mailIdentityCheckComplete'), needsAttention, {
         preserveChecks: { [domain.id]: result.check }
       });
       if (domainSettingsTarget?.id === domain.id) domainSettingsTarget = domains.find((item) => item.id === domain.id) ?? domainSettingsTarget;
@@ -878,6 +880,7 @@
         <Button size="sm" variant="secondary" loading={pendingAction === `check:${domainSettingsTarget.id}`} disabled={busy || unknownWrite || unresolvedDomainChecks[domainSettingsTarget.id]} onclick={() => void checkDomain(domainSettingsTarget!)}>{t('settings.checkMailDomain')}</Button>
       </div>
       {#if domainSettingsTarget.catch_all_target === 'external'}<p class="attention">{t('settings.externalCatchAllRisk')}</p>{/if}
+      {#if domainSettingsTarget.unknown_recipient_policy === 'collect' && domainSettingsTarget.catch_all_target !== 'this_worker'}<p class="attention" role="alert">{t('settings.collectRequiresWorkerCatchAll')}</p>{/if}
       {#if errorMessage}<p class="message error" role="alert">{errorMessage}</p>{/if}
       {#if noticeNeedsAttention && notice}<p class="attention" role="status">{notice}</p>{/if}
       {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
