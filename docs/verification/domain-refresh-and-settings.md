@@ -4,12 +4,12 @@
 
 基线为 `45920aa03229649d8d3bacd7407aa966ce3f7d9b`，任务分支为
 `feat/domain-refresh-ui`，独立 worktree 为 `/tmp/FlareMail-domain-refresh`。
-实现提交为 `8c4e9bccc9559e8b1df5af7d67947ff017bf5067`；后续提交补充本验收记录、截图及附件/草稿冲突及投递安全的中英文恢复建议，以及单域名恢复标记与失效 Collect 警告。
+实现提交为 `8c4e9bccc9559e8b1df5af7d67947ff017bf5067`；后续提交补充本验收记录、截图及附件/草稿冲突及投递安全的中英文恢复建议，以及单域名恢复标记、失效 Collect 警告和批量失败详情。
 最终 head、本地审查时间与结果、PRE 部署 ID 保存在源码外的任务证据中，PR 引用对应记录。
 
 ## 本地验证
 
-- `bun run test`：910 通过，0 失败；`bun run check`：0 错误、0 警告。
+- `bun run test`：911 通过，0 失败；`bun run check`：0 错误、0 警告。
 - `bun run build`、`bun run deploy:dry-run` 通过。无新增依赖或数据库迁移。
 - Chromium 桌面、手机及 320px 窄屏覆盖批量检查、部分失败、自动刷新暂停恢复、
   编辑草稿保留、英文错误与信息提示；相关 Firefox、WebKit 和无障碍验证通过。
@@ -17,6 +17,8 @@
   待处理状态及检查快照保留均有回归覆盖。
 - 审查补充回归：单域名恢复后清除批量标记，Collect 已启用但 catch-all 禁用/丢弃时
   直接显示故障警告，HTTP 200 内部错误不再显示检查正常。五种浏览器/视口组合共 26 个相关场景通过。
+- 批量请求被拒绝时按域名保留失败原因，诊断明确区分失败尝试与已保存观察；
+  登录限流、Telegram 绑定等既有恢复步骤提供中英文提示。新增 15 个相关浏览器场景通过。
 - Browser 插件不可用，使用仓库 Playwright。Linux WebKit 设备模拟不等于真实 iOS。
 
 ## 真实 PRE 验收
