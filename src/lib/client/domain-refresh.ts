@@ -18,9 +18,11 @@ export async function refreshDomains<T>(
 }
 
 export function domainCheckNeedsAttention(check: {
-  cloudflare: { state: string; errorCode?: string | null };
+  cloudflare: { state: string; errorCode?: string | null; addresses?: Array<{ status: string }> };
   resend: { state: string; errorCode?: string | null };
 }) {
   return check.cloudflare.state !== 'ready' || Boolean(check.cloudflare.errorCode) ||
+    Boolean(check.cloudflare.addresses?.some((address) =>
+      !['managed', 'imported', 'deleted_absent', 'imported_preserved', 'reject_route_preserved'].includes(address.status))) ||
     !['verified', 'not_configured'].includes(check.resend.state) || Boolean(check.resend.errorCode);
 }
