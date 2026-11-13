@@ -505,7 +505,7 @@
       const needsAttention = domainCheckNeedsAttention(result.check);
       if (!needsAttention) batchAttention = batchAttention.filter((id) => id !== domain.id);
       await saved(t(needsAttention ? 'settings.mailIdentityCheckIncomplete' : 'settings.mailIdentityCheckComplete'), needsAttention, {
-        preserveChecks: { [domain.id]: result.check }
+        preserveChecks: checks
       });
       if (domainSettingsTarget?.id === domain.id) domainSettingsTarget = domains.find((item) => item.id === domain.id) ?? domainSettingsTarget;
     } catch (error) {
