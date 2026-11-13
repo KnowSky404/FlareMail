@@ -6,6 +6,12 @@ export class LocalizedError extends Error {}
 
 const errorKeys: Record<string, MessageKey> = {
   ATTACHMENT_CONFLICT: 'errors.ATTACHMENT_CONFLICT',
+  DELIVERY_REVIEW_REQUIRED: 'errors.DELIVERY_REVIEW_REQUIRED',
+  DELIVERY_NOT_RETRYABLE: 'errors.DELIVERY_NOT_RETRYABLE',
+  IDEMPOTENCY_CONFLICT: 'errors.IDEMPOTENCY_CONFLICT',
+  DRAFT_BODY_RELOAD_REQUIRED: 'errors.DRAFT_BODY_RELOAD_REQUIRED',
+  DRAFT_CONFLICT: 'errors.DRAFT_CONFLICT',
+  SEND_RATE_LIMITED: 'errors.SEND_RATE_LIMITED',
   CLOUDFLARE_EXTERNAL_RULE_PRESERVED: 'errors.CLOUDFLARE_EXTERNAL_RULE_PRESERVED',
   CLOUDFLARE_REJECT_ROUTE_UNAVAILABLE: 'errors.CLOUDFLARE_REJECT_ROUTE_UNAVAILABLE',
   CLOUDFLARE_RULE_CHANGED: 'errors.CLOUDFLARE_RULE_CHANGED',
@@ -70,6 +76,6 @@ export function formatApiError(error: unknown, t: Translator, fallback: string):
   const key = errorKeys[code];
   const message = key ? t(key) : t('errors.unknown', { code });
   const requestId = error.requestId;
-  return requestId && /^[a-zA-Z0-9_-]{1,128}$/u.test(requestId)
+  return requestId && /^[a-zA-Z0-9._:-]{1,128}$/u.test(requestId)
     ? `${message} ${t('errors.requestId', { requestId })}` : message;
 }
