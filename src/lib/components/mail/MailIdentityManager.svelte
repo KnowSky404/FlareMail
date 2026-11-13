@@ -42,6 +42,7 @@
   let domains = $state<MailDomain[]>([]);
   let addresses = $state<MailAddress[]>([]);
   let checks = $state<Record<string, Partial<DomainCheck>>>({});
+  let checkFailures = $state<Record<string, string>>({});
   let loading = $state(true);
   let loadedOnce = $state(false);
   let pendingAction = $state('');
@@ -283,9 +284,11 @@
       }, (id, result) => {
         batchCompleted++;
         if (result.status === 'fulfilled') {
+          checkFailures = { ...checkFailures, [id]: '' };
           checks = { ...checks, [id]: result.value.check };
           if (domainCheckNeedsAttention(result.value.check)) batchAttention = [...batchAttention, id];
         } else {
+          checkFailures = { ...checkFailures, [id]: formatApiError(result.reason, t, t('settings.mailIdentityActionFailed')) };
           batchAttention = [...batchAttention, id];
           unresolvedDomainChecks = { ...unresolvedDomainChecks, [id]: true };
         }
@@ -490,6 +493,7 @@
       const result = await requestJson<{ check: FreshCheck }>(`/api/workspace/mail-identities/domains/${encodeURIComponent(domain.id)}/check`, { method: 'POST', body: '{}' });
       if (!currentSession(epoch)) { unresolvedDomainChecks = { ...unresolvedDomainChecks, [domain.id]: true }; errorMessage = t('settings.writeOutcomeUnknown'); return; }
       checks = { ...checks, [domain.id]: result.check };
+      checkFailures = { ...checkFailures, [domain.id]: '' };
       const needsAttention = domainCheckNeedsAttention(result.check);
       if (!needsAttention) batchAttention = batchAttention.filter((id) => id !== domain.id);
       await saved(t(needsAttention ? 'settings.mailIdentityCheckIncomplete' : 'settings.mailIdentityCheckComplete'), needsAttention, {
@@ -499,6 +503,7 @@
     } catch (error) {
       const unknown = !currentSession(epoch) || uncertain(error);
       const message = formError(error);
+      checkFailures = { ...checkFailures, [domain.id]: message };
       if (unknown) {
         unresolvedDomainChecks = { ...unresolvedDomainChecks, [domain.id]: true };
         const remainingChecks = { ...checks };
@@ -881,6 +886,7 @@
       </div>
       {#if domainSettingsTarget.catch_all_target === 'external'}<p class="attention">{t('settings.externalCatchAllRisk')}</p>{/if}
       {#if domainSettingsTarget.unknown_recipient_policy === 'collect' && domainSettingsTarget.catch_all_target !== 'this_worker'}<p class="attention" role="alert">{t('settings.collectRequiresWorkerCatchAll')}</p>{/if}
+      {#if checkFailures[domainSettingsTarget.id]}<p class="attention" role="alert">{t('settings.lastDomainCheckFailed', { error: checkFailures[domainSettingsTarget.id] })}</p>{/if}
       {#if errorMessage}<p class="message error" role="alert">{errorMessage}</p>{/if}
       {#if noticeNeedsAttention && notice}<p class="attention" role="status">{notice}</p>{/if}
       {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
@@ -905,6 +911,7 @@
 
 {#if diagnosticsDomain}
   <Dialog open id="mail-diagnostics" title={t('settings.diagnostics')} description={diagnosticsAddress?.email ?? diagnosticsDomain.domain_name} size="lg" dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus={view === 'domains' ? '#refresh-all-domains' : '#refresh-mail-resources'} onClose={() => requestClose()}>
+    {#if checkFailures[diagnosticsDomain.id]}<p class="attention" role="alert">{t('settings.lastDomainCheckFailed', { error: checkFailures[diagnosticsDomain.id] })}</p>{/if}
     <MailIdentityDiagnostics domain={diagnosticsDomain} address={diagnosticsAddress} check={checks[diagnosticsDomain.id]} {busy} showActions={false} />
     {#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
     {#if notice}<p class="message" role="status">{notice}</p>{/if}

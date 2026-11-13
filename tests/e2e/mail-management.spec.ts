@@ -1824,3 +1824,38 @@ test('clears recovered batch markers and keeps active collection failures visibl
   await assertNoHorizontalOverflow(page);
   expect((await new AxeBuilder({ page }).include('#domain-settings').analyze()).violations).toEqual([]);
 });
+
+test('retains failed batch attempts alongside saved successful observations', async ({ page, consoleErrors }) => {
+  await login(page);
+  const original = await readIdentities(page);
+  const domain = { ...original.domains[0], cloudflare_checked_at: new Date().toISOString(),
+    cloudflare_error_code: null, resend_configured: false, resend_checked_at: null };
+  let fail = false;
+  await page.route(identitiesUrl, (route) => route.fulfill({ json: { ok: true, data: {
+    ...original, domains: [domain], addresses: [], providerConfiguration: { cloudflare: true, resend: false }
+  } } }));
+  await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, (route) => route.fulfill(fail
+    ? { status: 503, json: { ok: false, error: { code: 'NETWORK_FAILURE', message: '模拟供应商连接失败' } } }
+    : { json: { ok: true, data: { check: {
+      cloudflare: { state: 'ready', errorCode: null, catchAllTarget: 'this_worker', checkedAt: domain.cloudflare_checked_at, addresses: [] },
+      resend: { state: 'not_configured', errorCode: null, checkedAt: null }
+    } } } }));
+  await gotoManagement(page, '/?folder=settings&view=domains');
+  await dismissNotifications(page);
+  await page.locator('#refresh-all-domains').click();
+  await expect(page.locator('#refresh-all-domains')).toBeEnabled();
+  fail = true;
+  await page.locator('#refresh-all-domains').click();
+  await expect(page.locator('#refresh-all-domains')).toBeEnabled();
+  const row = page.locator(`[data-domain-id="${domain.id}"]`);
+  await expect(row).toHaveClass(/needs-attention/u);
+  await row.getByRole('button', { name: String(domain.domain_name), exact: true }).click();
+  const dialog = page.locator('#mail-diagnostics');
+  await expect(dialog.getByRole('alert')).toContainText(/上次手动检查失败|last manual check failed/u);
+  await expect(dialog.getByRole('alert')).toContainText(/外部服务|external service/iu);
+  fail = false;
+  await dialog.getByRole('button', { name: /检查状态|Check status/u }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors.filter((message) => !/Failed to load resource.*503/u.test(message)));
+});

@@ -55,3 +55,20 @@ test('preserves trusted translated validation advice and filenames in both langu
     expect(message).toContain('report.pdf');
   }
 });
+
+test('keeps login and Telegram recovery steps in both languages', () => {
+  for (const [code, englishAdvice, chineseAdvice] of [
+    ['LOGIN_RATE_LIMITED', 'Wait before', '稍后再试'],
+    ['INVALID_CREDENTIALS', 'Check your credentials', '检查后重试'],
+    ['LOCAL_LOGIN_DISABLED', 'Sign in through Access', 'Access 登录'],
+    ['TELEGRAM_CANDIDATE_REQUIRED', '/start', '/start'],
+    ['TELEGRAM_ALREADY_BOUND', 'Unbind it before', '先解除绑定'],
+    ['TELEGRAM_RATE_LIMITED', 'Wait before', '稍后再试']
+  ] as const) {
+    const error = new ClientApiError(409, code, '原始后端中文提示');
+    const english = formatApiError(error, createTranslator('en'), 'Failed');
+    expect(english).toContain(englishAdvice);
+    expect(english).not.toMatch(/\p{Script=Han}/u);
+    expect(formatApiError(error, createTranslator('zh-CN'), '失败')).toContain(chineseAdvice);
+  }
+});
