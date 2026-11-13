@@ -1,6 +1,9 @@
 import { ClientApiError } from './api';
 import type { MessageKey, Translator } from '$lib/i18n';
 
+/** Only frontend validation may mark a message as already localized. */
+export class LocalizedError extends Error {}
+
 const errorKeys: Record<string, MessageKey> = {
   CLOUDFLARE_EXTERNAL_RULE_PRESERVED: 'errors.CLOUDFLARE_EXTERNAL_RULE_PRESERVED',
   CLOUDFLARE_REJECT_ROUTE_UNAVAILABLE: 'errors.CLOUDFLARE_REJECT_ROUTE_UNAVAILABLE',
@@ -60,6 +63,7 @@ const errorKeys: Record<string, MessageKey> = {
 };
 
 export function formatApiError(error: unknown, t: Translator, fallback: string): string {
+  if (error instanceof LocalizedError) return error.message;
   if (!(error instanceof ClientApiError)) return fallback;
   const code = /^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code) ? error.code : 'REQUEST_FAILED';
   const key = errorKeys[code];

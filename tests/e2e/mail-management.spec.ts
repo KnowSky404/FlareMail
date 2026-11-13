@@ -1669,3 +1669,40 @@ test.describe('domain refresh and settings', () => {
     await dialog.screenshot({ path: `/tmp/flaremail-domain-settings-${testInfo.project.name}.png` });
   });
 });
+
+test('invalidates cached successful diagnostics after an automatic provider failure', async ({ page }) => {
+  await login(page);
+  const original = await readIdentities(page);
+  const start = Date.now();
+  await page.clock.install({ time: new Date(start) });
+  const domain = { ...original.domains[0], cloudflare_checked_at: new Date(start).toISOString(),
+    cloudflare_error_code: null as string | null, cloudflare_error_at: null as string | null, resend_checked_at: null };
+  let reads = 0;
+  let refreshes = 0;
+  await page.route(identitiesUrl, (route) => {
+    reads++;
+    return route.fulfill({ json: { ok: true, data: { ...original, domains: [domain],
+      providerConfiguration: { cloudflare: true, resend: false } } } });
+  });
+  await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, (route) => route.fulfill({
+    json: { ok: true, data: { check: {
+      cloudflare: { state: 'ready', errorCode: null, checkedAt: domain.cloudflare_checked_at, addresses: [] },
+      resend: { state: 'not_configured', checkedAt: null }
+    } } }
+  }));
+  await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/refresh$/u, async (route) => {
+    refreshes++;
+    domain.cloudflare_error_code = 'cloudflare_permission_denied';
+    domain.cloudflare_error_at = new Date(await page.evaluate(() => Date.now())).toISOString();
+    await route.fulfill({ json: { ok: true, data: { refresh: {} } } });
+  });
+  await gotoManagement(page, '/?folder=settings&view=domains');
+  await page.locator('#refresh-all-domains').click();
+  await expect(page.locator('#refresh-all-domains')).toBeEnabled();
+  const before = reads;
+  await page.clock.fastForward(5 * 60_000);
+  await expect.poll(() => refreshes).toBe(1);
+  await expect.poll(() => reads).toBe(before + 2);
+  await page.locator('[data-domain-id]').getByRole('button', { name: String(domain.domain_name), exact: true }).click();
+  await expect(page.locator('#mail-diagnostics')).toContainText(/检查无权访问|check access was denied/u);
+});

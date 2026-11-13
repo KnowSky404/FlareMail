@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatApiError } from '$lib/client/api-error';
+  import { formatApiError, LocalizedError } from '$lib/client/api-error';
   import { navigationCounts } from '$lib/client/navigation-counts';
   import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
@@ -2053,7 +2053,7 @@
       const result = await createSession(payload);
 
       if (!result.workspace) {
-        throw new Error(t('notify.loginMissingWorkspace'));
+        throw new LocalizedError(t('notify.loginMissingWorkspace'));
       }
 
       applyWorkspaceSnapshot(result.workspace, {

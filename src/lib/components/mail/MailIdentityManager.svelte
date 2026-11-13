@@ -160,6 +160,7 @@
       const loaded = await requestJson<Identities>('/api/workspace/mail-identities', { signal: request.signal });
       if (!request.isCurrent()) return false;
       if (options.quiet && !canAutoRefresh()) return false;
+      const previousDomains = domains;
       providerConfiguration = loaded.providerConfiguration;
       onboarding = loaded.domainOnboarding ?? { available: false, workerName: null, canManageRouting: false };
       domains = loaded.domains.map((domain) => ({ ...domain, cloudflare_configured: loaded.providerConfiguration.cloudflare, resend_configured: loaded.providerConfiguration.resend }));
@@ -167,8 +168,11 @@
       loadedOnce = true;
       checks = options.quiet ? Object.fromEntries(Object.entries(checks).filter(([id, check]) => {
         const domain = domains.find((item) => item.id === id);
-        return domain && (!check.cloudflare || check.cloudflare.checkedAt === domain.cloudflare_checked_at) &&
-          (!check.resend || check.resend.checkedAt === domain.resend_checked_at);
+        const previous = previousDomains.find((item) => item.id === id);
+        return domain && previous && (!check.cloudflare || (check.cloudflare.checkedAt === domain.cloudflare_checked_at &&
+          (check.cloudflare.errorCode ?? null) === domain.cloudflare_error_code && previous.cloudflare_error_at === domain.cloudflare_error_at)) &&
+          (!check.resend || (check.resend.checkedAt === domain.resend_checked_at &&
+          (check.resend.errorCode ?? null) === domain.resend_error_code && previous.resend_error_at === domain.resend_error_at));
       })) : {};
       const preserved = options.preserveCheck;
       if (preserved) {
