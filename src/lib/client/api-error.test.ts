@@ -20,6 +20,14 @@ test('unknown and network errors use localized fallbacks without leaking raw mes
   expect(formatApiError(new ClientApiError(500, '<unsafe>', 'secret', '<request>'), t, 'Failed')).not.toContain('<');
 });
 
+test('keeps attachment conflict recovery advice in both languages', () => {
+  const error = new ClientApiError(409, 'ATTACHMENT_CONFLICT', '草稿附件已在其他会话中更新，请重新载入。');
+  const english = formatApiError(error, createTranslator('en'), 'Failed');
+  expect(english).toContain('Reload the draft');
+  expect(english).not.toMatch(/\p{Script=Han}/u);
+  expect(formatApiError(error, createTranslator('zh-CN'), '失败')).toContain('重新载入草稿');
+});
+
 test('preserves trusted translated validation advice and filenames in both languages', () => {
   for (const locale of ['en', 'zh-CN'] as const) {
     const t = createTranslator(locale);
