@@ -30,6 +30,7 @@ Use [DEPLOY.md](../DEPLOY.md) for deployment order and the current checkout's `m
 | [Inbound reliability spec](./specs/inbound-delivery-reliability.md) | 中文 | Ingest conflicts, plus-address identity mapping, routing scope and verification limits |
 | [Sidebar attention-count spec](./specs/sidebar-attention-counts.md) | 中文 | Attention badges, sending/exception states, identity scope and acceptance |
 | [Navigation and read-state spec](./specs/mailbox-navigation-and-read-state.md) | 中文 | Cache behavior, unread counters, partial state writes and acceptance |
+| [Domain refresh and settings spec](./specs/domain-refresh-and-settings.md) | 中文 | Batch checks, automatic health observations, quieter settings, and localized errors |
 | [Workspace API](./API.md) | English | Authentication, identity management, mailbox pagination, search, drafts, mutations, and delivery contracts |
 | [Owner, identities, and Access ADR](./adr/0014-owner-managed-mail-identities-and-access.md) | English | Authentication and mail ownership architecture |
 | [Body storage ADR](./adr/0011-body-storage.md) | English | Mail body storage decisions |

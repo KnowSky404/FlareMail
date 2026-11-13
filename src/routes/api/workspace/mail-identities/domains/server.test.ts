@@ -3,6 +3,7 @@ import { afterEach, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { POST } from './+server';
 import { PATCH } from './[domainId]/+server';
+import { POST as REFRESH } from './[domainId]/refresh/+server';
 
 const zoneId = 'a'.repeat(32);
 const accountId = 'b'.repeat(32);
@@ -13,6 +14,7 @@ class Statement {
   constructor(private db: Database, private sql: string) {}
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this; }
   async first<T>() { return this.db.query(this.sql).get(...this.values) as T | null; }
+  async all<T>() { return { results: this.db.query(this.sql).all(...this.values) as T[] }; }
   async run() { return { success: true, meta: { changes: this.db.query(this.sql).run(...this.values).changes } }; }
 }
 function fixture() {
@@ -54,4 +56,30 @@ test('domain endpoints require a session, reject client-chosen Worker targets, a
   expect((await PATCH(event(env, 'PATCH', { unknownRecipientPolicy: ['collect'] }, 'owner-1', id))).status).toBe(400);
   expect((await PATCH(event(env, 'PATCH', { enabled: false }, 'other-owner', id))).status).toBe(404);
   expect((await PATCH(event(env, 'PATCH', { enabled: false }, 'owner-1', id))).status).toBe(200);
+});
+
+test('foreground health endpoint scopes observations to the Owner, enforces cooldown, and never mutates providers', async () => {
+  const env = fixture();
+  const id = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+  await env.DB.prepare(`INSERT INTO mail_domains (
+    id, owner_user_id, domain_name, cloudflare_zone_id, cloudflare_account_id, worker_name, created_at, updated_at
+  ) VALUES (?, 'owner-1', 'example.com', ?, ?, 'flaremail', ?, ?)`).bind(id, zoneId, accountId, timestamp, timestamp).run();
+  expect((await REFRESH(event(env, 'POST', {}, null, id))).status).toBe(401);
+  expect((await REFRESH(event(env, 'POST', {}, 'other-owner', id))).status).toBe(404);
+  expect((await REFRESH(event(env, 'POST', {}, 'owner-1', 'invalid'))).status).toBe(404);
+  const requests: string[] = [];
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(url);
+    requests.push((init?.method ?? 'GET') + ' ' + path);
+    const result = path.includes('catch_all') ? { enabled: true, actions: [{ type: 'worker', value: ['flaremail'] }] }
+      : path.includes('/rules') ? [] : { id: zoneId, name: 'example.com', account: { id: accountId } };
+    return Response.json({ success: true, result });
+  }) as typeof fetch;
+  const result = await REFRESH(event(env, 'POST', {}, 'owner-1', id));
+  expect(result.status).toBe(200);
+  expect(await result.json()).toMatchObject({ data: { refresh: { cloudflare: { checked: 1 }, resend: { state: 'not_configured' } } } });
+  expect((await REFRESH(event(env, 'POST', {}, 'owner-1', id))).status).toBe(200);
+  expect(requests).toHaveLength(3);
+  expect(requests.every((request) => request.startsWith('GET '))).toBe(true);
 });

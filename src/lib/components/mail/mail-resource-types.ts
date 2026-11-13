@@ -6,6 +6,7 @@ export type MailDomain = {
   worker_name: string;
   unknown_recipient_policy: 'reject' | 'collect';
   catch_all_target: 'unknown' | 'this_worker' | 'external' | 'drop' | 'none';
+  catch_all_checked_at: string | null;
   resend_status: 'unknown' | 'pending' | 'verified' | 'failed';
   resend_sending_status: 'unknown' | 'enabled' | 'disabled';
   resend_checked_at: string | null;
@@ -13,9 +14,11 @@ export type MailDomain = {
   cloudflare_check_expires_at: string | null;
   cloudflare_next_check_at: string | null;
   cloudflare_error_code: string | null;
+  cloudflare_error_at: string | null;
   resend_check_expires_at: string | null;
   resend_next_check_at: string | null;
   resend_error_code: string | null;
+  resend_error_at: string | null;
   cloudflare_configured: boolean;
   resend_configured: boolean;
 };

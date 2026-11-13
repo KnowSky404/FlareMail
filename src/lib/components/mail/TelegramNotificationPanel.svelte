@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatApiError } from '$lib/client/api-error';
   import { onMount, tick, untrack } from 'svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -20,7 +21,6 @@
     updateTelegramSettings,
     type TelegramSettingsStatus
   } from '$lib/client/telegram-api';
-  import { ClientApiError } from '$lib/client/api';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let { active = true }: { active?: boolean } = $props();
@@ -88,11 +88,7 @@
   }
 
   function errorMessage(value: unknown) {
-    return value instanceof ClientApiError && i18n.locale === 'en'
-      ? t('telegram.updateError')
-      : value instanceof Error
-        ? value.message
-        : t('telegram.updateError');
+    return formatApiError(value, t, t('telegram.updateError'));
   }
 
   function cancelRefresh() {

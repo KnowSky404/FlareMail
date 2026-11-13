@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatApiError } from '$lib/client/api-error';
   import { navigationCounts } from '$lib/client/navigation-counts';
   import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
@@ -166,11 +167,7 @@
   const i18n = useLocale();
   const { t } = i18n;
   const displayError = (error: unknown, fallback: string) =>
-    error instanceof ClientApiError && i18n.locale === 'en'
-      ? fallback
-      : error instanceof Error
-        ? error.message
-        : fallback;
+    formatApiError(error, t, fallback);
   const sameIdentityScope = (left: MailboxIdentityFilter | null | undefined, right: MailboxIdentityFilter | null | undefined) =>
     (left?.kind ?? null) === (right?.kind ?? null) && (left?.id ?? null) === (right?.id ?? null);
   const serverWorkspace = $derived(data.workspace);

@@ -1,8 +1,11 @@
 <script lang="ts">
   import { createPageScroll } from '$lib/client/page-scroll';
   import Pagination from '$lib/components/ui/Pagination.svelte';
-  import { onMount } from 'svelte';
-  import { AlertTriangle, MoreHorizontal, Pencil, Plus, RefreshCw } from '@lucide/svelte';
+  import { onMount, untrack } from 'svelte';
+  import { AlertTriangle, Info, MoreHorizontal, Pencil, Plus, RefreshCw } from '@lucide/svelte';
+  import Tooltip from '$lib/components/ui/Tooltip.svelte';
+  import { formatDate } from '$lib/i18n';
+  import { domainCheckNeedsAttention, refreshDomains } from '$lib/client/domain-refresh';
   import Button from '$lib/components/ui/Button.svelte';
   import IconButton from '$lib/components/ui/IconButton.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
@@ -13,6 +16,7 @@
   import Skeleton from '$lib/components/ui/Skeleton.svelte';
   import MailDomainSetup from './MailDomainSetup.svelte';
   import MailIdentityDiagnostics from './MailIdentityDiagnostics.svelte';
+  import { formatApiError } from '$lib/client/api-error';
   import { ClientApiError, requestJson } from '$lib/client/api';
   import { AUTH_EXPIRED_EVENT, isClientAuthExpired } from '$lib/client/auth-session';
   import { LatestRequest } from '$lib/client/latest-request';
@@ -33,7 +37,8 @@
     onSelectedDomainChange?: (domainId: string) => void;
     onNavigationGuardChange?: (guard: ((proceed: () => void) => boolean) | null) => void;
   } = $props();
-  const { t } = useLocale();
+  const i18n = useLocale();
+  const { t } = i18n;
   let domains = $state<MailDomain[]>([]);
   let addresses = $state<MailAddress[]>([]);
   let checks = $state<Record<string, Partial<DomainCheck>>>({});
@@ -99,6 +104,12 @@
   let now = $state(Date.now());
   let deleteExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   let sessionEpoch = 0;
+  let mounted = false;
+  let autoRefreshing = false;
+  let autoRequests = new AbortController();
+  let batchCompleted = $state(0);
+  let batchTotal = $state(0);
+  let batchAttention = $state<string[]>([]);
   const loadRequests = new LatestRequest();
   const deleteRequests = new LatestRequest();
   const busy = $derived(Boolean(pendingAction) || domainSetupBusy);
@@ -120,7 +131,7 @@
   const expectedEmail = $derived(`${localPart.trim().toLowerCase()}@${domains.find((domain) => domain.id === selectedDomainId)?.domain_name ?? '…'}`);
 
   $effect(() => { domainFilter = initialDomainId; pageNumber = 1; });
-  $effect(() => { view; pageNumber = 1; });
+  $effect(() => { view; pageNumber = 1; untrack(() => { if (mounted) void automaticRefresh(true); }); });
   $effect(() => { if (loadedOnce && pageNumber !== currentPage.page) pageNumber = currentPage.page; });
   $effect(() => {
     onNavigationGuardChange?.((proceed) => {
@@ -140,21 +151,25 @@
     providerConfiguration: { cloudflare: boolean; resend: boolean }; domainOnboarding?: typeof onboarding };
 
   type FreshCheck = DomainCheck & { resend: DomainCheck['resend'] & { checkedAt: string | null } };
-  type LoadOptions = { preserveCheck?: { domainId: string; check: FreshCheck } };
+  type LoadOptions = { preserveCheck?: { domainId: string; check: FreshCheck }; quiet?: boolean };
 
   async function load(options: LoadOptions = {}): Promise<boolean> {
     const request = loadRequests.begin();
-    loading = true;
-    errorMessage = '';
+    if (!options.quiet) { loading = true; errorMessage = ''; }
     try {
       const loaded = await requestJson<Identities>('/api/workspace/mail-identities', { signal: request.signal });
       if (!request.isCurrent()) return false;
+      if (options.quiet && !canAutoRefresh()) return false;
       providerConfiguration = loaded.providerConfiguration;
       onboarding = loaded.domainOnboarding ?? { available: false, workerName: null, canManageRouting: false };
       domains = loaded.domains.map((domain) => ({ ...domain, cloudflare_configured: loaded.providerConfiguration.cloudflare, resend_configured: loaded.providerConfiguration.resend }));
       addresses = loaded.addresses;
       loadedOnce = true;
-      checks = {};
+      checks = options.quiet ? Object.fromEntries(Object.entries(checks).filter(([id, check]) => {
+        const domain = domains.find((item) => item.id === id);
+        return domain && (!check.cloudflare || check.cloudflare.checkedAt === domain.cloudflare_checked_at) &&
+          (!check.resend || check.resend.checkedAt === domain.resend_checked_at);
+      })) : {};
       const preserved = options.preserveCheck;
       if (preserved) {
         const domain = domains.find((item) => item.id === preserved.domainId);
@@ -171,10 +186,12 @@
       return true;
     } catch (error) {
       if (!request.isCurrent()) return false;
-      errorMessage = t(loadedOnce ? 'settings.refreshFailedKept' : 'settings.loadFailedRetry');
-      onError?.(error);
+      if (!options.quiet) {
+        errorMessage = t(loadedOnce ? 'settings.refreshFailedKept' : 'settings.loadFailedRetry');
+        onError?.(error);
+      }
       return false;
-    } finally { if (request.isCurrent()) loading = false; }
+    } finally { if (request.isCurrent() && !options.quiet) loading = false; }
   }
 
   function publishOptions() {
@@ -193,12 +210,88 @@
   }
 
   onMount(() => {
-    void load();
+    mounted = true;
+    void load().then(() => automaticRefresh(false));
     const interval = setInterval(() => { now = Date.now(); if (loadedOnce) publishOptions(); }, 30_000);
-    const expire = () => { sessionEpoch++; loadRequests.cancel(); loading = false; };
+    const refreshInterval = setInterval(() => void automaticRefresh(true), 60_000);
+    const resume = () => void automaticRefresh(true);
+    const expire = () => { sessionEpoch++; autoRequests.abort(); loadRequests.cancel(); loading = false; };
     window.addEventListener(AUTH_EXPIRED_EVENT, expire);
-    return () => { clearInterval(interval); clearTimeout(deleteExpiryTimer); loadRequests.cancel(); deleteRequests.cancel(); window.removeEventListener(AUTH_EXPIRED_EVENT, expire); };
+    window.addEventListener('online', resume);
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('focus', resume);
+    return () => {
+      mounted = false; sessionEpoch++; autoRequests.abort();
+      clearInterval(interval); clearInterval(refreshInterval); clearTimeout(deleteExpiryTimer);
+      loadRequests.cancel(); deleteRequests.cancel(); window.removeEventListener(AUTH_EXPIRED_EVENT, expire);
+      window.removeEventListener('online', resume); window.removeEventListener('focus', resume);
+      document.removeEventListener('visibilitychange', resume);
+    };
   });
+
+  $effect(() => {
+    if (hasDialog || busy || view !== 'domains') autoRequests.abort();
+  });
+
+  function canAutoRefresh() {
+    return mounted && view === 'domains' && !hasDialog && !busy && !dirty &&
+      !isClientAuthExpired() && document.visibilityState === 'visible' && navigator.onLine;
+  }
+
+  async function automaticRefresh(readList: boolean) {
+    if (!canAutoRefresh() || loading || autoRefreshing || !loadedOnce) return;
+    autoRefreshing = true; autoRequests = new AbortController();
+    const signal = autoRequests.signal;
+    const epoch = sessionEpoch;
+    const active = () => !signal.aborted && currentSession(epoch) && canAutoRefresh();
+    try {
+      if (readList && !await load({ quiet: true })) return;
+      if (!active()) return;
+      const cutoff = Date.now() - 5 * 60_000;
+      const dueAt = (checkedAt: string | null, errorAt: string | null) =>
+        Math.max(Date.parse(checkedAt ?? '') || 0, Date.parse(errorAt ?? '') || 0) <= cutoff;
+      const due = domains.filter((domain) =>
+        (domain.cloudflare_configured && dueAt(domain.cloudflare_checked_at, domain.cloudflare_error_at)) ||
+        (domain.resend_configured && dueAt(domain.resend_checked_at, domain.resend_error_at))
+      );
+      if (!due.length) return;
+      await refreshDomains(due.map((domain) => domain.id), (id) => requestJson(
+        `/api/workspace/mail-identities/domains/${encodeURIComponent(id)}/refresh`,
+        { method: 'POST', body: '{}', signal }
+      ), () => {}, active);
+      if (active()) await load({ quiet: true });
+    } finally { autoRefreshing = false; }
+  }
+
+  async function refreshAllDomains() {
+    if (busy || loading || !loadedOnce || !domains.length) return;
+    autoRequests.abort(); pendingAction = 'check-all'; errorMessage = ''; notice = '';
+    batchCompleted = 0; batchTotal = domains.length; batchAttention = [];
+    const epoch = sessionEpoch;
+    const active = () => mounted && currentSession(epoch);
+    try {
+      await refreshDomains(domains.map((domain) => domain.id), async (id) => {
+        const result = await requestJson<{ check: FreshCheck }>(
+          `/api/workspace/mail-identities/domains/${encodeURIComponent(id)}/check`, { method: 'POST', body: '{}' }
+        );
+        if (!result?.check?.cloudflare || !Array.isArray(result.check.cloudflare.addresses) || !result.check.resend) {
+          throw new ClientApiError(502, 'INVALID_RESPONSE', '');
+        }
+        return result;
+      }, (id, result) => {
+        batchCompleted++;
+        if (result.status === 'fulfilled') {
+          checks = { ...checks, [id]: result.value.check };
+          if (domainCheckNeedsAttention(result.value.check)) batchAttention = [...batchAttention, id];
+        } else {
+          batchAttention = [...batchAttention, id];
+          unresolvedDomainChecks = { ...unresolvedDomainChecks, [id]: true };
+        }
+      }, active);
+      if (!active()) return;
+      await saved(t('settings.refreshAllComplete', { total: batchTotal, attention: batchAttention.length }), Boolean(batchAttention.length));
+    } finally { pendingAction = ''; }
+  }
 
   function beforeUnload(event: BeforeUnloadEvent) {
     if (!dirty && !busy) return;
@@ -267,7 +360,7 @@
       : view !== 'domains' || filterMailDomains([resource], domainSearch, domainStatus).length > 0;
     return matches ? message : `${message} ${t('settings.resourceOutsideFilter')}`;
   }
-  function formError(error: unknown) { onError?.(error); return error instanceof Error ? error.message : t('settings.mailIdentityActionFailed'); }
+  function formError(error: unknown) { onError?.(error); return formatApiError(error, t, t('settings.mailIdentityActionFailed')); }
 
   async function verifyWriteOutcome() {
     if (busy) return;
@@ -398,6 +491,7 @@
       await saved(t(result.check.cloudflare.state === 'ready' ? 'settings.mailIdentityCheckComplete' : 'settings.mailIdentityCheckIncomplete'), result.check.cloudflare.state !== 'ready', {
         preserveCheck: { domainId: domain.id, check: result.check }
       });
+      if (domainSettingsTarget?.id === domain.id) domainSettingsTarget = domains.find((item) => item.id === domain.id) ?? domainSettingsTarget;
     } catch (error) {
       const unknown = !currentSession(epoch) || uncertain(error);
       const message = formError(error);
@@ -505,11 +599,14 @@
   }
 
   function deleteCatchAllLabel(preview: DeletePreview) {
+    return catchAllLabel(preview.cloudflare.catchAll.target);
+  }
+  function catchAllLabel(target: MailDomain['catch_all_target']) {
     const labels: Record<MailDomain['catch_all_target'], string> = {
       unknown: t('settings.catchAllUnknown'), this_worker: t('settings.catchAllWorker'),
       external: t('settings.catchAllExternal'), drop: t('settings.catchAllDrop'), none: t('settings.catchAllDisabled')
     };
-    return labels[preview.cloudflare.catchAll.target];
+    return labels[target];
   }
 
   function canSendFrom(address: MailAddress) {
@@ -559,6 +656,14 @@
 
 </script>
 
+{#snippet infoHelp(label: string, content: string)}
+  <Tooltip {content} side="bottom" floating containEscape>
+    {#snippet trigger(tooltipId)}
+      <button type="button" class="info-help" aria-label={label} aria-describedby={tooltipId} onclick={(event) => event.currentTarget.focus()}><Info size={16} aria-hidden="true" /></button>
+    {/snippet}
+  </Tooltip>
+{/snippet}
+
 <svelte:window onbeforeunload={beforeUnload} />
 
 {#snippet stateBadge(state: DomainCapabilityState)}
@@ -569,7 +674,10 @@
   <header class="resource-header">
     <h1 id="resource-manager-title">{title}<span class="resource-count">{loadedOnce ? totalResources : '…'}</span></h1>
     {#if view === 'domains'}
-      <Button id="add-mail-domain" disabled={!loadedOnce || busy} onclick={openAddDomain}><Plus size={16} aria-hidden="true" />{t('settings.addMailDomain')}</Button>
+      <div class="header-actions">
+        <Button id="refresh-all-domains" variant="secondary" loading={pendingAction === 'check-all'} disabled={!loadedOnce || busy || loading || !domains.length} onclick={() => void refreshAllDomains()}>{#if pendingAction !== 'check-all'}<RefreshCw size={16} aria-hidden="true" />{/if}{t('settings.refreshAll')}</Button>
+        <Button id="add-mail-domain" disabled={!loadedOnce || busy} onclick={openAddDomain}><Plus size={16} aria-hidden="true" />{t('settings.addMailDomain')}</Button>
+      </div>
     {:else}
       <Button id="add-mail-address" disabled={!loadedOnce || busy || availableDomains.length === 0} onclick={(event) => openCreateAddress(domainFilter, event)}><Plus size={16} aria-hidden="true" />{t('settings.addMailAddress')}</Button>
     {/if}
@@ -599,9 +707,10 @@
       {/if}
     </label>
     <div class="toolbar-actions">
-      <IconButton id="refresh-mail-resources" ariaLabel={t('settings.refreshList')} loading={loading && loadedOnce} disabled={busy || loading} onclick={() => void load()}><RefreshCw size={17} aria-hidden="true" /></IconButton>
+      {#if view === 'addresses'}<IconButton id="refresh-mail-resources" ariaLabel={t('settings.refreshList')} loading={loading && loadedOnce} disabled={busy || loading} onclick={() => void load()}><RefreshCw size={17} aria-hidden="true" /></IconButton>{/if}
       <DropdownMenu id="mail-resources-menu" triggerAriaLabel={t('settings.moreActions')} align="end" showChevron={false}>
         {#snippet trigger()}<MoreHorizontal size={18} aria-hidden="true" />{/snippet}
+        {#if view === 'domains'}<button role="menuitem" type="button" disabled={busy || loading} onclick={() => void load()}>{t('settings.refreshList')}</button>{/if}
         <button role="menuitem" type="button" disabled={busy || !loadedOnce} onclick={(event) => { captureTrigger(event); syncNotice = ''; syncError = ''; syncOpen = true; }}>{t('settings.syncCloudflare')}</button>
         {#if view === 'addresses'}<button role="menuitem" type="button" disabled={busy || !loadedOnce} onclick={openAddDomain}>{t('settings.addMailDomain')}</button>{/if}
         <button role="menuitem" type="button" onclick={() => { sortDescending = !sortDescending; pageNumber = 1; }}>{t(sortDescending ? 'settings.sortAscending' : 'settings.sortDescending')}</button>
@@ -609,6 +718,9 @@
       </DropdownMenu>
     </div>
   </div>
+  {#if view === 'domains'}
+    <div class="refresh-status"><span role="status">{pendingAction === 'check-all' ? t('settings.refreshAllProgress', { completed: batchCompleted, total: batchTotal }) : t('settings.autoRefreshHelp')}</span>{@render infoHelp(t('settings.refreshAll'), t('settings.refreshAllHelp'))}</div>
+  {/if}
   {#if errorMessage}<p class="message error" role="alert">{errorMessage}<button type="button" class="text-action" disabled={loading || busy} onclick={() => void load()}>{t('settings.refreshList')}</button></p>{/if}
   {#if notice}<p class="message" class:success={!noticeNeedsAttention} class:attention={noticeNeedsAttention} role="status">{notice}</p>{/if}
   {#if invalidDomainFilter}<p class="message attention" role="status">{t('settings.invalidDomainContext')} <button type="button" class="text-action" onclick={() => filterDomain('')}>{t('settings.clearFilters')}</button></p>{/if}
@@ -627,7 +739,7 @@
               {@const associated = domainAddresses(domain.id)}
               {@const capabilities = capabilitiesFor(domain, associated)}
               {@const count = associated.filter((address) => address.lifecycle_status !== 'deleted').length}
-              <tr data-domain-id={domain.id} data-resource-row data-resource-kind="domain">
+              <tr data-domain-id={domain.id} data-resource-row data-resource-kind="domain" class:needs-attention={batchAttention.includes(domain.id)}>
                 <td class="identity-cell"><button type="button" class="identity-link" onclick={(event) => openDiagnostics(domain, undefined, event)}>{domain.domain_name}</button>
                   <div class="mobile-summary"><span>{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span><button type="button" class="text-action" title={t('settings.addressCountHelp')} onclick={() => onViewAddressesForDomain?.(domain.id)}><span class="sr-only">{t('settings.viewAddresses')}: {domain.domain_name} </span>{t('shell.addresses')} {count}</button></div>
                   <div class="mobile-capabilities"><span>{t('settings.receive')}: {capabilityLabel(capabilities.receiving)}</span><span>{t('settings.send')}: {capabilityLabel(capabilities.sending)}</span></div>
@@ -748,14 +860,24 @@
 {#if domainSettingsTarget}
   <Dialog open id="domain-settings" title={t('settings.domainSettings')} description={domainSettingsTarget.domain_name} dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#add-mail-domain" initialFocus="#domain-enabled" onClose={() => requestClose()}>
     <form id="domain-settings-form" class="identity-form" onsubmit={saveDomainSettings}>
-      <p>{t('settings.domainMappingLocked')}</p>
-      <dl class="readonly-mapping"><div><dt>{t('settings.domainName')}</dt><dd>{domainSettingsTarget.domain_name}</dd></div><div><dt>{t('settings.domainZoneId')}</dt><dd>{domainSettingsTarget.cloudflare_zone_id}</dd></div><div><dt>Worker</dt><dd>{domainSettingsTarget.worker_name}</dd></div></dl>
-      <label><input id="domain-enabled" type="checkbox" bind:checked={domainEnabled} disabled={busy || unknownWrite} /> {t('settings.domainEnabled')}</label>
-      <p class="attention">{t('settings.domainDisableHelp')}</p>
-      <label for="domain-unknown-policy">{t('settings.unknownRecipients')}</label>
+      <details class="connection-details">
+        <summary>{t('settings.connectionDetails')}</summary>
+        <dl class="readonly-mapping"><div><dt>{t('settings.domainZoneId')}</dt><dd>{domainSettingsTarget.cloudflare_zone_id}</dd></div><div><dt>Worker</dt><dd>{domainSettingsTarget.worker_name}</dd></div></dl>
+        {@render infoHelp(t('settings.mappingHelp'), t('settings.domainMappingLocked'))}
+      </details>
+      <div class="setting-label"><label for="domain-enabled">{t('settings.domainEnabled')}</label><div class="setting-controls">
+        {@render infoHelp(t('settings.domainEnabledHelp'), t('settings.domainDisableHelp'))}
+        <input id="domain-enabled" type="checkbox" bind:checked={domainEnabled} disabled={busy || unknownWrite} />
+      </div></div>
+      <div class="setting-label"><label for="domain-unknown-policy">{t('settings.unknownRecipients')}</label>{@render infoHelp(t('settings.unknownRecipientsHelp'), t('settings.collectRequiresWorkerCatchAll'))}</div>
       <select id="domain-unknown-policy" bind:value={unknownPolicy} disabled={busy || unknownWrite}><option value="reject">{t('settings.unknownReject')}</option><option value="collect">{t('settings.unknownCollect')}</option></select>
-      <p class="attention">{t('settings.collectRequiresWorkerCatchAll')}</p>
+      <div class="catch-all-summary">
+        <div><span>{t('settings.catchAll')}: {catchAllLabel(domainSettingsTarget.catch_all_target)}</span><small>{domainSettingsTarget.catch_all_checked_at ? formatDate(domainSettingsTarget.catch_all_checked_at, i18n.locale, { dateStyle: 'medium', timeStyle: 'short' }) : t('settings.statusNotChecked')}</small></div>
+        <Button size="sm" variant="secondary" loading={pendingAction === `check:${domainSettingsTarget.id}`} disabled={busy || unknownWrite || unresolvedDomainChecks[domainSettingsTarget.id]} onclick={() => void checkDomain(domainSettingsTarget!)}>{t('settings.checkMailDomain')}</Button>
+      </div>
       {#if domainSettingsTarget.catch_all_target === 'external'}<p class="attention">{t('settings.externalCatchAllRisk')}</p>{/if}
+      {#if errorMessage}<p class="message error" role="alert">{errorMessage}</p>{/if}
+      {#if noticeNeedsAttention && notice}<p class="attention" role="status">{notice}</p>{/if}
       {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
       {#if unknownWrite}<p class="attention">{t('settings.writeOutcomeUnknown')}</p><Button variant="secondary" disabled={busy} onclick={() => void verifyWriteOutcome()}>{t('settings.verifyWriteOutcome')}</Button>{/if}
     </form>
@@ -777,7 +899,7 @@
 {/if}
 
 {#if diagnosticsDomain}
-  <Dialog open id="mail-diagnostics" title={t('settings.diagnostics')} description={diagnosticsAddress?.email ?? diagnosticsDomain.domain_name} size="lg" dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#refresh-mail-resources" onClose={() => requestClose()}>
+  <Dialog open id="mail-diagnostics" title={t('settings.diagnostics')} description={diagnosticsAddress?.email ?? diagnosticsDomain.domain_name} size="lg" dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus={view === 'domains' ? '#refresh-all-domains' : '#refresh-mail-resources'} onClose={() => requestClose()}>
     <MailIdentityDiagnostics domain={diagnosticsDomain} address={diagnosticsAddress} check={checks[diagnosticsDomain.id]} {busy} showActions={false} />
     {#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
     {#if notice}<p class="message" role="status">{notice}</p>{/if}
@@ -863,6 +985,18 @@
 <style>
   .resource-manager { max-width: 80rem; margin-inline: auto; min-width: 0; color: var(--fm-text); font-size: 14px; }
   .resource-header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .refresh-status { display: flex; align-items: center; gap: 4px; color: var(--fm-text-muted); font-size: 12px; margin-block: 8px; }
+  .needs-attention { box-shadow: inset 3px 0 var(--fm-warning); }
+  .setting-label, .setting-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .info-help { display: grid; place-items: center; min-width: 32px; min-height: 32px; border-radius: var(--radius-md); color: var(--fm-text-muted); }
+  .info-help:hover { color: var(--fm-text); background: var(--fm-surface-hover); }
+  .connection-details { color: var(--fm-text-secondary); font-size: 13px; border-bottom: 1px solid var(--fm-border); padding-bottom: 12px; }
+  .connection-details summary { cursor: pointer; min-height: 32px; display: list-item; align-content: center; }
+  .connection-details .readonly-mapping { margin-top: 12px; }
+  .catch-all-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-radius: var(--radius-md); background: var(--fm-surface-subtle); }
+  .catch-all-summary > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+  .catch-all-summary small { color: var(--fm-text-muted); }
   h1 { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 650; line-height: 1.3; }
   .resource-count { color: var(--fm-text-muted); font-size: 14px; font-weight: 500; }
   .resource-toolbar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -933,6 +1067,9 @@
     .toolbar-field { flex: 1; min-width: 7rem; max-width: 100%; }
   }
   @media (max-width: 540px) {
+    .header-actions { width: 100%; }
+    .header-actions :global(button) { flex: 1; }
+    .info-help { min-width: 44px; min-height: 44px; }
     .capability-column { display: none; }
     .mobile-capabilities { display: flex; gap: 8px; flex-wrap: wrap; color: var(--fm-text-secondary); font-size: 13px; margin-top: 5px; }
     .resource-search { flex-basis: 100%; }

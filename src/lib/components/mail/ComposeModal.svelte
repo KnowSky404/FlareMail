@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatApiError } from '$lib/client/api-error';
   import {
     inspectAddressList,
     parseAddressList,
@@ -115,11 +116,7 @@
   const i18n = useLocale();
   const { t } = i18n;
   const displayError = (error: unknown, fallback: string) =>
-    error instanceof ClientApiError && i18n.locale === 'en'
-      ? fallback
-      : error instanceof Error
-        ? error.message
-        : fallback;
+    formatApiError(error, t, fallback);
 
   const formatAttachmentSize = (size: number) => {
     if (size < 1024) return `${formatNumber(size, i18n.locale)} B`;
@@ -463,7 +460,7 @@
       attachmentTasks = attachmentTasks.filter((candidate) => candidate.id !== task.id);
     } catch (error) {
       const message = error instanceof Error
-        ? t('compose.cancelAttachmentUnconfirmed', { error: error.message })
+        ? t('compose.cancelAttachmentUnconfirmed', { error: displayError(error, t('compose.cancelAttachmentRetry')) })
         : t('compose.cancelAttachmentRetry');
       updateAttachmentTask(task.id, { state: 'failed', cancel: undefined, error: message });
       attachmentMutationError = message;

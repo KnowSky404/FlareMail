@@ -3,6 +3,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { mailHealthNextCheckAt } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
+import { ApiError } from '$lib/server/http/api';
 
 const providerLeaseMs = 90 * 1000;
 const maxDomainsPerProvider = 1;
@@ -212,15 +213,19 @@ function selectCandidates(db: D1Database, provider: ProviderName, now: string) {
   ).bind(now, now, candidateReadLimit).all<HealthDomainRow>();
 }
 
-async function claimDomain(db: D1Database, provider: ProviderName, domain: HealthDomainRow, token: string, startedAt: string) {
+async function claimDomain(db: D1Database, provider: ProviderName, domain: HealthDomainRow, token: string, startedAt: string, foreground = false) {
   const expiresAt = isoAt(Date.parse(startedAt) + providerLeaseMs);
   const stem = provider;
   const result = await db.prepare(
     `UPDATE mail_domains SET ${stem}_check_token = ?, ${stem}_check_expires_at = ?, updated_at = ?
      WHERE id = ? AND owner_user_id = ?
-       AND (${stem}_next_check_at IS NULL OR ${stem}_next_check_at <= ?)
+       AND ${foreground
+         ? `(${stem}_checked_at IS NULL OR ${stem}_checked_at <= ?) AND (${stem}_error_at IS NULL OR ${stem}_error_at <= ?)`
+         : `(${stem}_next_check_at IS NULL OR ${stem}_next_check_at <= ?)`}
        AND (${stem}_check_token IS NULL OR ${stem}_check_expires_at IS NULL OR ${stem}_check_expires_at <= ?)`
-  ).bind(token, expiresAt, startedAt, domain.id, domain.owner_user_id, startedAt, startedAt).run();
+  ).bind(token, expiresAt, startedAt, domain.id, domain.owner_user_id,
+    ...(foreground ? [isoAt(Date.parse(startedAt) - 5 * 60 * 1000), isoAt(Date.parse(startedAt) - 5 * 60 * 1000)] : [startedAt]),
+    startedAt).run();
   return Number(result.meta?.changes ?? 0) === 1;
 }
 
@@ -287,14 +292,15 @@ async function runProvider(
   env: CloudflareEnv,
   provider: ProviderName,
   credential: string | undefined,
-  dependencies: MailHealthRefreshDependencies
+  dependencies: MailHealthRefreshDependencies,
+  foregroundDomain?: HealthDomainRow
 ): Promise<ProviderRefreshSummary> {
   if (!credential?.trim()) return { state: 'not_configured', checked: 0, skippedBusy: 0, errorCode: null };
   if (!env.DB) return { state: 'unavailable', checked: 0, skippedBusy: 0, errorCode: 'd1_unavailable' };
   const nowMs = dependencies.nowMs ?? Date.now;
   const uuid = dependencies.randomUUID ?? (() => crypto.randomUUID());
   const startedAt = isoAt(nowMs());
-  const selected = await selectCandidates(env.DB, provider, startedAt);
+  const selected = foregroundDomain ? { results: [foregroundDomain] } : await selectCandidates(env.DB, provider, startedAt);
   const limit = Math.max(1, Math.min(5, dependencies.maxDomainsPerProvider ?? maxDomainsPerProvider));
   let checked = 0;
   let skippedBusy = 0;
@@ -302,7 +308,7 @@ async function runProvider(
   for (const domain of selected.results ?? []) {
     if (checked >= limit) break;
     const token = uuid();
-    if (!await claimDomain(env.DB, provider, domain, token, startedAt)) {
+    if (!await claimDomain(env.DB, provider, domain, token, startedAt, Boolean(foregroundDomain))) {
       skippedBusy += 1;
       continue;
     }
@@ -344,14 +350,33 @@ export async function refreshMailDomainHealth(
   env: CloudflareEnv,
   dependencies: MailHealthRefreshDependencies = {}
 ): Promise<MailHealthRefreshSummary> {
+  return refreshProviders(env, dependencies);
+}
+
+/** Foreground observations share Cron's locks but never reconcile address lifecycle. */
+export async function refreshManagedMailDomainHealth(
+  env: CloudflareEnv, ownerUserId: string, domainId: string,
+  dependencies: MailHealthRefreshDependencies = {}
+): Promise<MailHealthRefreshSummary> {
+  if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂不可用。');
+  const domain = await env.DB.prepare('SELECT * FROM mail_domains WHERE id = ? AND owner_user_id = ?')
+    .bind(domainId, ownerUserId).first<HealthDomainRow>();
+  if (!domain) throw new ApiError(404, 'MAIL_DOMAIN_NOT_FOUND', '邮件域名不存在。', undefined, undefined, false);
+  return refreshProviders(env, dependencies, domain);
+}
+
+async function refreshProviders(
+  env: CloudflareEnv, dependencies: MailHealthRefreshDependencies, foregroundDomain?: HealthDomainRow
+): Promise<MailHealthRefreshSummary> {
   const [cloudflare, resend] = await Promise.allSettled([
     runProvider(
       env,
       'cloudflare',
       env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim(),
-      dependencies
+      dependencies,
+      foregroundDomain
     ),
-    runProvider(env, 'resend', env.RESEND_API_KEY?.trim(), dependencies)
+    runProvider(env, 'resend', env.RESEND_API_KEY?.trim(), dependencies, foregroundDomain)
   ]);
   return {
     cloudflare: cloudflare.status === 'fulfilled'
