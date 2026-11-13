@@ -1772,6 +1772,11 @@ test('preserves batch address observations and counts imported routing conflicts
   await page.locator('#refresh-all-domains').click();
   await expect(page.locator('.message[role="status"]')).toContainText(/2.*2/u);
   await expect(page.locator('[data-domain-id].needs-attention')).toHaveCount(2);
+  await page.locator(`[data-domain-id="${domains[1].id}"]`).getByRole('button', { name: /域名设置|Domain settings/u }).click();
+  const settings = page.locator('#domain-settings');
+  await settings.getByRole('button', { name: /检查状态|Check status/u }).click();
+  await expect(settings.getByRole('button', { name: /检查状态|Check status/u })).toBeEnabled();
+  await settings.getByRole('button', { name: /取消|Cancel/u }).click();
   await moreButton(page.locator(`[data-domain-id="${domains[0].id}"]`)).click();
   await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
   await page.locator(`[data-address-id="${addresses[0].id}"]`).getByRole('button', { name: addresses[0].email, exact: true }).click();
