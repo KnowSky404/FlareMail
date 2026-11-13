@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatApiError } from '$lib/client/api-error';
+  import { formatApiError, LocalizedError } from '$lib/client/api-error';
   import {
     inspectAddressList,
     parseAddressList,
@@ -310,7 +310,7 @@
   }
 
   async function preparedAttachmentInput() {
-    if (!onPrepareAttachments) throw new Error(t('compose.attachmentServiceUnavailable'));
+    if (!onPrepareAttachments) throw new LocalizedError(t('compose.attachmentServiceUnavailable'));
     const prepared = await onPrepareAttachments(inputWithRecipientDrafts);
     // Keep edits made while the preparation request was in flight. Pending
     // recipient text stays in its input, rather than becoming a duplicate chip.
@@ -339,7 +339,7 @@
     try {
       const prepared = await preparedAttachmentInput();
       if (session.cancelled) return false;
-      if (!prepared.draftId) throw new Error(t('compose.draftUnavailable'));
+      if (!prepared.draftId) throw new LocalizedError(t('compose.draftUnavailable'));
       const operation = uploadDraftAttachment(
         prepared.draftId,
         id,
@@ -384,20 +384,20 @@
         const activeAttachments = (input.attachments ?? []).filter((attachment) => !attachment.state || attachment.state === 'ready');
         const activeBytes = activeAttachments.reduce((sum, attachment) => sum + attachment.size, 0);
         if (activeAttachments.length >= 10 || candidate.size > 8 * 1024 * 1024 || activeBytes + candidate.size > 12 * 1024 * 1024) {
-          throw new Error(t('compose.forwardAttachmentLimit', { filename: candidate.filename }));
+          throw new LocalizedError(t('compose.forwardAttachmentLimit', { filename: candidate.filename }));
         }
         if (!candidate.downloadUrl?.startsWith('/api/workspace/messages/')) {
-          throw new Error(t('compose.forwardAttachmentUnavailable', { filename: candidate.filename }));
+          throw new LocalizedError(t('compose.forwardAttachmentUnavailable', { filename: candidate.filename }));
         }
         const response = await fetchApiResponse(candidate.downloadUrl, { credentials: 'same-origin', cache: 'no-store' });
-        if (!response.ok) throw new Error(t('compose.forwardAttachmentReadFailed', { filename: candidate.filename }));
+        if (!response.ok) throw new LocalizedError(t('compose.forwardAttachmentReadFailed', { filename: candidate.filename }));
         const blob = await response.blob();
-        if (blob.size !== candidate.size) throw new Error(t('compose.forwardAttachmentSizeMismatch', { filename: candidate.filename }));
+        if (blob.size !== candidate.size) throw new LocalizedError(t('compose.forwardAttachmentSizeMismatch', { filename: candidate.filename }));
         const file = new File([blob], candidate.filename, { type: candidate.contentType || blob.type || 'application/octet-stream' });
         const id = crypto.randomUUID();
         attachmentTasks = [...attachmentTasks, { id, file, progress: 0, state: 'queued', error: '' }];
         if (!(await startAttachmentUpload(id, file))) {
-          throw new Error(t('compose.forwardAttachmentUploadFailed', { filename: candidate.filename }));
+          throw new LocalizedError(t('compose.forwardAttachmentUploadFailed', { filename: candidate.filename }));
         }
         const remaining = (input.forwardAttachmentCandidates ?? []).filter(
           (item) => item.id !== candidate.id || item.downloadUrl !== candidate.downloadUrl
