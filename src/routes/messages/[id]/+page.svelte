@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatApiError } from '$lib/client/api-error';
   import { onMount, untrack } from 'svelte';
   import { MessageFlagsController, ReadActivationController } from '$lib/client/message-flags-controller';
   import type { PageData } from './$types';
@@ -62,11 +63,7 @@
   let pending = $derived(authExpired || inboundDetailPending || workspaceBodyPending || deliveryDetailPending || mutationPending);
 
   const errorMessage = (value: unknown, fallback: string) =>
-    value instanceof ClientApiError && i18n.locale === 'en'
-      ? fallback
-      : value instanceof Error
-        ? value.message
-        : fallback;
+    formatApiError(value, t, fallback);
 
   const flagController = new MessageFlagsController({
     onPatch: (_id, patch) => { flagRevision++; messageOverride = { ...message, ...patch }; },

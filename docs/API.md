@@ -160,8 +160,11 @@ unresolved routing or sending error.
   deployment account and imports existing literal recipient rules targeting
   the configured Worker. It requires the authenticated workspace Owner and
   Zone Read / Email Routing Rules Read permissions. The management UI invokes
-  it only after the Owner explicitly chooses the sync/import action; entering a
-  page and ordinary Refresh use `GET /api/workspace/mail-identities` only.
+  it only after the Owner explicitly chooses the sync/import action. Address-list
+  Refresh and the saved-list-only menu action use `GET /api/workspace/mail-identities`.
+  Domains also performs automatic health observations through the separate
+  `/domains/:domainId/refresh` endpoint; Refresh all uses the full domain check.
+  Neither refresh discovers or imports new identity records.
   Provider requests are
   read-only, paginated and bounded. Other Worker/forward/drop rules, malformed
   recipients and competing exact rules are skipped. Worker catch-all imports
@@ -199,6 +202,13 @@ unresolved routing or sending error.
   the returned rule ID. Repeated or concurrent requests reconcile the same
   address operation; an uncertain remote result remains visible as pending or
   error for a later check/retry.
+- `POST /api/workspace/mail-identities/domains/:domainId/refresh` performs an
+  authenticated Owner-scoped health observation without reconciling address
+  lifecycle or preferences. It reuses Cron's independent Cloudflare/Resend leases
+  and enforces a five-minute cooldown against both success and error timestamps.
+  The response contains `refresh.cloudflare` and `refresh.resend` summaries;
+  recent/busy providers perform no remote work. Provider operations are read-only,
+  while health metadata is saved in D1. No request body options bypass cooldown.
 - `POST /api/workspace/mail-identities/domains/:domainId/check` reads that
   configured zone's exact rules and catch-all, and checks the domain-level
   Resend sending status. The two provider reads have separate expiring leases;

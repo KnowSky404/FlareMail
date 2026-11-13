@@ -6,7 +6,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { CloudflareEmailRoutingError, type CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 import { ResendDomainError } from '$lib/server/resend-domains';
-import { refreshMailDomainHealth, type MailHealthRefreshDependencies } from './health-refresh';
+import { refreshMailDomainHealth, refreshManagedMailDomainHealth, type MailHealthRefreshDependencies } from './health-refresh';
 
 const schema = readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8');
 const ownerId = 'health-owner-000000000000000001';
@@ -98,6 +98,63 @@ function successDependencies(nowMs = defaultNow): MailHealthRefreshDependencies 
 }
 
 describe('scheduled mail domain health refresh', () => {
+  test('foreground refresh ignores the long schedule, preserves address intent, and deduplicates recent attempts', async () => {
+    const fixture = createFixture({ due: false, checkedAt: new Date(defaultNow - 6 * 60_000).toISOString() });
+    const before = fixture.sqlite.query('SELECT * FROM mail_addresses').all();
+    const deps = successDependencies();
+    const result = await refreshManagedMailDomainHealth(fixture.env, ownerId, domainId, deps);
+    expect(result.cloudflare.checked).toBe(1);
+    expect(result.resend.checked).toBe(1);
+    expect(fixture.sqlite.query('SELECT * FROM mail_addresses').all()).toEqual(before);
+    deps.cloudflareClientFactory = () => { throw new Error('Must not call provider during cooldown'); };
+    deps.resendLookup = async () => { throw new Error('Must not call provider during cooldown'); };
+    const recent = await refreshManagedMailDomainHealth(fixture.env, ownerId, domainId, deps);
+    expect(recent.cloudflare.checked).toBe(0);
+    expect(recent.resend.checked).toBe(0);
+    await expect(refreshManagedMailDomainHealth(fixture.env, 'another-owner', domainId, deps))
+      .rejects.toMatchObject({ status: 404, code: 'MAIL_DOMAIN_NOT_FOUND' });
+    fixture.sqlite.close();
+  });
+
+  test('foreground failure cooldown uses error time and recovers after five minutes', async () => {
+    const fixture = createFixture();
+    const deps = successDependencies();
+    deps.cloudflareClientFactory = () => ({
+      async getZone() { throw new CloudflareEmailRoutingError('permission_denied'); },
+      async listRules() { return []; },
+      async getCatchAll() { throw new CloudflareEmailRoutingError('permission_denied'); }
+    });
+    await refreshManagedMailDomainHealth(fixture.env, ownerId, domainId, deps);
+    expect(fixture.readDomain().cloudflare_checked_at).toBeNull();
+    expect(fixture.readDomain().cloudflare_error_code).toBe('cloudflare_permission_denied');
+    const blocked = await refreshManagedMailDomainHealth(fixture.env, ownerId, domainId, successDependencies(defaultNow + 60_000));
+    expect(blocked.cloudflare.checked).toBe(0);
+    const recovered = await refreshManagedMailDomainHealth(fixture.env, ownerId, domainId, successDependencies(defaultNow + 5 * 60_000));
+    expect(recovered.cloudflare.checked).toBe(1);
+    expect(fixture.readDomain().cloudflare_error_code).toBeNull();
+    fixture.sqlite.close();
+  });
+
+  test('foreground and scheduled checks share the same active provider lease', async () => {
+    const fixture = createFixture();
+    let release!: () => void;
+    const pause = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const deps = successDependencies();
+    const client = deps.cloudflareClientFactory!('token', defaultNow);
+    deps.cloudflareClientFactory = () => ({ ...client, async getZone(id) { entered(); await pause; return client.getZone(id); } });
+    const pending = refreshManagedMailDomainHealth(fixture.env, ownerId, domainId, deps);
+    await started;
+    const otherTab = await refreshManagedMailDomainHealth(fixture.env, ownerId, domainId, successDependencies());
+    expect(otherTab.cloudflare.checked).toBe(0);
+    const cron = await refreshMailDomainHealth(fixture.env, successDependencies());
+    expect(cron.cloudflare.checked).toBe(0);
+    release();
+    expect((await pending).cloudflare.checked).toBe(1);
+    fixture.sqlite.close();
+  });
+
   test('clears a recovered Cloudflare error without hiding an independent Resend failure', async () => {
     const fixture = createFixture();
     const previousFailureAt = new Date(defaultNow - 60_000).toISOString();

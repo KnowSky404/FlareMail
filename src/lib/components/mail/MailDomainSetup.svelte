@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
+  import { formatApiError } from '$lib/client/api-error';
   import { ClientApiError, requestJson } from '$lib/client/api';
   import { AUTH_EXPIRED_EVENT, isClientAuthExpired } from '$lib/client/auth-session';
   import type { MailDomain } from './mail-resource-types';
@@ -102,7 +103,7 @@
     try {
       await onRefresh();
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
+      errorMessage = formatApiError(error, t, t('settings.mailIdentityActionFailed'));
       onError?.(error);
     } finally {
       refreshing = false;
@@ -209,7 +210,7 @@
         onError?.(error);
         return;
       }
-      errorMessage = error instanceof Error ? error.message : t('settings.mailIdentityActionFailed');
+      errorMessage = formatApiError(error, t, t('settings.mailIdentityActionFailed'));
       onError?.(error);
     } finally { pending = false; }
   }

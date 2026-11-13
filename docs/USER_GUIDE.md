@@ -4,7 +4,7 @@
 
 ## Domains and addresses
 
-Open **Domains** or **Email addresses** from the sidebar. Each page starts with a table of the resources already saved for the Owner. Use the **Add domain** or **Add address** button for a dialog; edit an existing row from its accessible Edit pencil action. Refresh reads the saved list and keeps the current table context. A failed read is shown as an error instead of an empty configuration.
+Open **Domains** or **Email addresses** from the sidebar. Each page starts with a table of the resources already saved for the Owner. Use the **Add domain** or **Add address** button for a dialog; edit an existing row from its accessible Edit pencil action. On Email addresses, Refresh reads the saved list and keeps the current table context. A failed read is shown as an error instead of an empty configuration.
 
 Use Previous page and Next page to navigate the tables; changing search, sort, or filters returns to the first page.
 
@@ -21,6 +21,16 @@ The address dialog previews the complete address and supports optional display n
 Deleting an address first shows a read-only preview of its routing rules and catch-all behavior. Review the offered route policy before confirming. Historical mail and attachments remain available. Removing an exact rule does not block another external catch-all.
 
 Unknown recipients are rejected by default for manually connected domains. Collection requires a verified catch-all targeting this Worker; newly synced catch-all domains can start with collection enabled. See [domain setup](./PREVIEW.md) and the [identity API](./API.md#managed-domains-and-addresses) for configuration and policy details.
+
+On Domains, **Refresh all** checks every enrolled domain, including rows outside
+search filters or the current page, with progress and a per-domain attention
+summary. The visible, idle page reads saved states every minute and rechecks
+provider health after five minutes; editing, hidden tabs, offline state, and
+expired sessions pause automatic work. Closing the page leaves the normal
+background schedule in place. Domain settings keep connection details collapsed;
+information buttons explain routine options on hover, keyboard focus, or touch.
+Current warnings and failures stay visible. After changing a catch-all in
+Cloudflare, use Refresh all or Check status before enabling collection.
 
 ## Read and organize mail
 
