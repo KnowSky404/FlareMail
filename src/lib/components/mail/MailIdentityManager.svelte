@@ -151,9 +151,10 @@
     providerConfiguration: { cloudflare: boolean; resend: boolean }; domainOnboarding?: typeof onboarding };
 
   type FreshCheck = DomainCheck & { resend: DomainCheck['resend'] & { checkedAt: string | null } };
-  type LoadOptions = { preserveCheck?: { domainId: string; check: FreshCheck }; quiet?: boolean };
+  type LoadOptions = { preserveChecks?: Record<string, Partial<DomainCheck>>; quiet?: boolean };
 
   async function load(options: LoadOptions = {}): Promise<boolean> {
+    if (options.quiet && loading) return false;
     const request = loadRequests.begin();
     if (!options.quiet) { loading = true; errorMessage = ''; }
     try {
@@ -166,23 +167,20 @@
       domains = loaded.domains.map((domain) => ({ ...domain, cloudflare_configured: loaded.providerConfiguration.cloudflare, resend_configured: loaded.providerConfiguration.resend }));
       addresses = loaded.addresses;
       loadedOnce = true;
-      checks = options.quiet ? Object.fromEntries(Object.entries(checks).filter(([id, check]) => {
+      const preserved = options.preserveChecks ?? (options.quiet ? checks : {});
+      checks = {};
+      for (const [id, check] of Object.entries(preserved)) {
         const domain = domains.find((item) => item.id === id);
         const previous = previousDomains.find((item) => item.id === id);
-        return domain && previous && (!check.cloudflare || (check.cloudflare.checkedAt === domain.cloudflare_checked_at &&
-          (check.cloudflare.errorCode ?? null) === domain.cloudflare_error_code && previous.cloudflare_error_at === domain.cloudflare_error_at)) &&
-          (!check.resend || (check.resend.checkedAt === domain.resend_checked_at &&
-          (check.resend.errorCode ?? null) === domain.resend_error_code && previous.resend_error_at === domain.resend_error_at));
-      })) : {};
-      const preserved = options.preserveCheck;
-      if (preserved) {
-        const domain = domains.find((item) => item.id === preserved.domainId);
-        if (domain) {
-          const current: Partial<DomainCheck> = {};
-          if (preserved.check.cloudflare.checkedAt === domain.cloudflare_checked_at) current.cloudflare = preserved.check.cloudflare;
-          if (preserved.check.resend.checkedAt === domain.resend_checked_at) current.resend = preserved.check.resend;
-          if (current.cloudflare || current.resend) checks = { [preserved.domainId]: current };
-        }
+        if (!domain) continue;
+        const matches = (provider: 'cloudflare' | 'resend') => check[provider] &&
+          check[provider].checkedAt === domain[`${provider}_checked_at`] &&
+          (check[provider].errorCode ?? null) === domain[`${provider}_error_code`] &&
+          (!options.quiet || previous?.[`${provider}_error_at`] === domain[`${provider}_error_at`]);
+        const current: Partial<DomainCheck> = {};
+        if (matches('cloudflare')) current.cloudflare = check.cloudflare;
+        if (matches('resend')) current.resend = check.resend;
+        if (current.cloudflare || current.resend) checks = { ...checks, [id]: current };
       }
       unresolvedAddressActions = {};
       unresolvedDomainChecks = {};
@@ -293,7 +291,7 @@
         }
       }, active);
       if (!active()) return;
-      await saved(t('settings.refreshAllComplete', { total: batchTotal, attention: batchAttention.length }), Boolean(batchAttention.length));
+      await saved(t('settings.refreshAllComplete', { total: batchTotal, attention: batchAttention.length }), Boolean(batchAttention.length), { preserveChecks: checks });
     } finally { pendingAction = ''; }
   }
 
@@ -493,7 +491,7 @@
       if (!currentSession(epoch)) { unresolvedDomainChecks = { ...unresolvedDomainChecks, [domain.id]: true }; errorMessage = t('settings.writeOutcomeUnknown'); return; }
       checks = { ...checks, [domain.id]: result.check };
       await saved(t(result.check.cloudflare.state === 'ready' ? 'settings.mailIdentityCheckComplete' : 'settings.mailIdentityCheckIncomplete'), result.check.cloudflare.state !== 'ready', {
-        preserveCheck: { domainId: domain.id, check: result.check }
+        preserveChecks: { [domain.id]: result.check }
       });
       if (domainSettingsTarget?.id === domain.id) domainSettingsTarget = domains.find((item) => item.id === domain.id) ?? domainSettingsTarget;
     } catch (error) {
@@ -747,7 +745,7 @@
                 <td class="identity-cell"><button type="button" class="identity-link" onclick={(event) => openDiagnostics(domain, undefined, event)}>{domain.domain_name}</button>
                   <div class="mobile-summary"><span>{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span><button type="button" class="text-action" title={t('settings.addressCountHelp')} onclick={() => onViewAddressesForDomain?.(domain.id)}><span class="sr-only">{t('settings.viewAddresses')}: {domain.domain_name} </span>{t('shell.addresses')} {count}</button></div>
                   <div class="mobile-capabilities"><span>{t('settings.receive')}: {capabilityLabel(capabilities.receiving)}</span><span>{t('settings.send')}: {capabilityLabel(capabilities.sending)}</span></div>
-                  {#if capabilities.receiving === 'needs_check' || capabilities.sending === 'needs_check' || domain.cloudflare_error_code || domain.resend_error_code}<button type="button" class="attention detail-link" onclick={(event) => openDiagnostics(domain, undefined, event)}><AlertTriangle size={13} aria-hidden="true" />{t('settings.needsCheckDetails')}</button>{/if}
+                  {#if batchAttention.includes(domain.id) || capabilities.receiving === 'needs_check' || capabilities.sending === 'needs_check' || domain.cloudflare_error_code || domain.resend_error_code}<button type="button" class="attention detail-link" onclick={(event) => openDiagnostics(domain, undefined, event)}><AlertTriangle size={13} aria-hidden="true" />{t('settings.needsCheckDetails')}</button>{/if}
                 </td>
                 <td class="secondary-column"><button type="button" class="text-action" title={t('settings.addressCountHelp')} onclick={() => onViewAddressesForDomain?.(domain.id)}><span class="sr-only">{t('settings.viewAddresses')}: {domain.domain_name} </span>{count}</button></td>
                 <td class="secondary-column"><span class="state-badge">{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span></td>

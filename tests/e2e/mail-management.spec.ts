@@ -1706,3 +1706,74 @@ test('invalidates cached successful diagnostics after an automatic provider fail
   await page.locator('[data-domain-id]').getByRole('button', { name: String(domain.domain_name), exact: true }).click();
   await expect(page.locator('#mail-diagnostics')).toContainText(/检查无权访问|check access was denied/u);
 });
+
+test('keeps manual list refresh active while automatic checks finish', async ({ page }) => {
+  await login(page);
+  const original = await readIdentities(page);
+  const domain = { ...original.domains[0], cloudflare_checked_at: new Date(Date.now() - 6 * 60_000).toISOString() };
+  let releaseProvider!: () => void;
+  let releaseManual!: () => void;
+  const providerGate = new Promise<void>((resolve) => { releaseProvider = resolve; });
+  const manualGate = new Promise<void>((resolve) => { releaseManual = resolve; });
+  let reads = 0;
+  let posts = 0;
+  await page.route(identitiesUrl, async (route) => {
+    reads++;
+    if (reads === 2) await manualGate;
+    await route.fulfill({ json: { ok: true, data: { ...original, domains: [domain],
+      providerConfiguration: { cloudflare: true, resend: false } } } });
+  });
+  await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/refresh$/u, async (route) => {
+    posts++;
+    await providerGate;
+    domain.cloudflare_checked_at = new Date().toISOString();
+    await route.fulfill({ json: { ok: true, data: { refresh: {} } } });
+  });
+  try {
+    await gotoManagement(page, '/?folder=settings&view=domains');
+    await expect.poll(() => posts).toBe(1);
+    await page.locator('[aria-controls="mail-resources-menu-content"]').click();
+    await page.getByRole('menuitem', { name: /刷新列表|Refresh list/u }).click();
+    await expect.poll(() => reads).toBe(2);
+    const finished = page.waitForResponse((response) => response.url().endsWith('/refresh'));
+    releaseProvider();
+    await finished;
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    expect(reads).toBe(2);
+    releaseManual();
+    await expect(page.locator('#refresh-all-domains')).toBeEnabled();
+  } finally { releaseProvider(); releaseManual(); }
+});
+
+test('preserves batch address observations and counts imported routing conflicts', async ({ page }) => {
+  await login(page);
+  const original = await readIdentities(page);
+  const timestamp = new Date().toISOString();
+  const domains = [0, 1].map((index) => ({ ...original.domains[0],
+    id: `00000000-0000-4000-8000-00000000050${index}`,
+    domain_name: `batch-${index}.test`, cloudflare_checked_at: timestamp, cloudflare_error_code: null
+  }));
+  const addresses = domains.map((domain, index) => ({ ...original.addresses[0],
+    id: `00000000-0000-4000-8000-00000000060${index}`, domain_id: domain.id,
+    email: `hello@${domain.domain_name}`, routing_owner: 'imported', routing_state: 'error', last_error_code: null
+  }));
+  await page.route(identitiesUrl, (route) => route.fulfill({ json: { ok: true, data: {
+    ...original, domains, addresses, providerConfiguration: { cloudflare: true, resend: false }
+  } } }));
+  await page.route(/\/api\/workspace\/mail-identities\/domains\/[^/]+\/check$/u, (route) => {
+    const index = route.request().url().includes(domains[0].id) ? 0 : 1;
+    return route.fulfill({ json: { ok: true, data: { check: {
+      cloudflare: { state: 'ready', errorCode: null, checkedAt: timestamp,
+        addresses: [{ addressId: addresses[index].id, status: index === 0 ? 'importable' : 'conflict' }] },
+      resend: { state: 'not_configured', checkedAt: null }
+    } } } });
+  });
+  await gotoManagement(page, '/?folder=settings&view=domains');
+  await page.locator('#refresh-all-domains').click();
+  await expect(page.locator('.message[role="status"]')).toContainText(/2.*2/u);
+  await expect(page.locator('[data-domain-id].needs-attention')).toHaveCount(2);
+  await moreButton(page.locator(`[data-domain-id="${domains[0].id}"]`)).click();
+  await page.getByRole('menuitem', { name: /查看地址|View addresses/u }).click();
+  await page.locator(`[data-address-id="${addresses[0].id}"]`).getByRole('button', { name: addresses[0].email, exact: true }).click();
+  await expect(page.locator('#mail-diagnostics')).toContainText(/可导入|Importable/u);
+});

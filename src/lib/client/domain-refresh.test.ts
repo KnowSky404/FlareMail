@@ -34,4 +34,8 @@ test('classifies provider errors in successful HTTP responses and accepts absent
   expect(domainCheckNeedsAttention({ cloudflare: { state: 'ready' }, resend: { state: 'not_configured' } })).toBe(false);
   expect(domainCheckNeedsAttention({ cloudflare: { state: 'ready', errorCode: 'route_drift' }, resend: { state: 'verified' } })).toBe(true);
   expect(domainCheckNeedsAttention({ cloudflare: { state: 'ready' }, resend: { state: 'pending' } })).toBe(true);
+  for (const status of ['conflict', 'importable', 'missing', 'duplicate', 'busy']) {
+    expect(domainCheckNeedsAttention({ cloudflare: { state: 'ready', addresses: [{ status }] }, resend: { state: 'verified' } })).toBe(true);
+  }
+  expect(domainCheckNeedsAttention({ cloudflare: { state: 'ready', addresses: [{ status: 'imported_preserved' }] }, resend: { state: 'verified' } })).toBe(false);
 });
