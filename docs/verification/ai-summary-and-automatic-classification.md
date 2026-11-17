@@ -58,3 +58,22 @@ PRE 发布、独立 PRE D1 的 0032 迁移及相关页面/API 验收尚未获得
 后续应对已提交 SHA 单独授权 PRE 发布/迁移，核对恢复点、实际绑定、登录、认证 readiness、AI 缓存 GET、六类筛选和设置页；默认只读，不启用自动处理或发送真实邮件。email()/Cron 使用本地 fake 集成证据说明替代覆盖，不能把 HTTP 存活当作真实触发器验收。
 
 生产共享 D1 升级需独立授权并安排兼容切换。只放宽 schema 版本不能同步旧分类列写入；需暂停分类写入或实施已审查的双写桥接。此功能并非生产桥接部署。
+
+## 本次授权的 PRE 发布与验收 — 2026-11-17 UTC
+
+用户在本地交付后授权直接发布 PRE，范围包括现有独立 D1 的 0032 迁移、合成邮件有限 AI 验收及清理。Cloudflare 原 OAuth 刷新被拒绝后，用户重新完成官方登录；没有创建新账号或复制密钥。
+
+- 已验收实现提交：`ca5db6a4f7fa8485bcbe52519c4ea5c2afa04d24`。
+- 稳定原生 PRE：`mail-ai`，ID `f03ccb8c9df44d188f2d8dd8d2ebff11`，URL：<https://mail-ai-flaremail.littlecontrol.workers.dev/>。
+- 首次本任务部署：`54c49960-9806-43c2-b158-c963c65e12c9`。`APP_VERSION=preview+ca5db6a4f7fa8485bcbe52519c4ea5c2afa04d24`，认证 readiness 返回同一版本。
+- 发布前后清单均只有上述一个 PRE；无需删除其他环境。线上实际 D1/R2 与既有私有 PRE target 一致：D1 独立、R2 与生产共用。生产 deployment 始终为 `fc9f93e3-02a3-4e65-a1a2-6e4adf337a55`，版本流量指向未变。
+- 保存了私有 D1 Time Travel bookmark；迁移 dry-run 通过，仅 0032 待应用。应用后核对 schema 32、迁移记录、新列、旧人工分类映射及空工作表。原来 0 条入站和 2 条 workspace 邮件均保留。旧 PRE 仅接受 schema 30/31，升级期间旧网页写入会被 schema 门禁阻止，随后发布新代码恢复。
+- PRE 使用 `APP_ENV=preview`、local Auth、空 Cron，并保持自动回复、入站通知和 Telegram 全局关闭。沿用原有 Secret 声明；已加密 AI 设置可正常解密并调用，未轮换任何 Key。
+- `/api/health`、已认证 `/api/readiness`、工作区会话、AI 设置 GET 均通过。自动分类新字段初始为 false，现有 AI 配置及 Key 状态保留。未认证 readiness 返回 401。
+- 新建两封只含内联文本的合成入站记录，不上传共享 R2，不走真实收信或通知。临时开启自动分类并统一工作区摘要语言，用现有服务完成 **3 次应用分析生成请求**：账号验证码→security，账单→transactions，手动改为 primary 后重新生成摘要→仍保留人工 primary。D1 的本轮尝试计数为 3，未修改额度记录来隐藏消耗。
+- auto 模式下界面上下文 en/zh-CN 都返回 zh-CN 的同一分析及同一成功时间；重复 GET 不增加生成。重新生成成功时间更新。六个新类别及 social/forums 兼容筛选均返回正常业务响应。
+- 真实 PRE Chromium 桌面 1280×900、手机 390×844、窄屏 320×720 验证：AI 设置新开关及空 Key 输入框、缓存摘要默认展开、生成时间、人工优先提示、六类导航和交易分类列表。相关 axe、无横向页面溢出、无框架错误和无相关 console error 均通过；浏览器没有发起任何写请求或额外模型请求。截图只保留合成摘要/类别及隐藏服务地址和模型字段的设置面板。
+- 恢复原有全部公开 AI 设置，Key 存在状态一致，自动分类回到 false；使用 revision 核对没有覆盖并发编辑。两封合成邮件及分析、状态、工作记录均已清理，临时 20 分钟会话已删除，后续使用该会话访问 readiness 返回 401，磁盘会话 Token 也已删除。原有邮件数保留，未写共享 R2。
+- 原始 release/binding、迁移、模型、浏览器和清理证据在 `/tmp/flaremail-ai-evidence/pre-*.json`，恢复点及含私有配置/身份的文件均为 0600，不提交 Git。`pre-release-summary.json` 记录准确部署与版本；后续仅文档提交的最终 PRE 标识以该记录及 PR 为准。
+
+PRE 不承接生产 Email Routing 或 Cron。真实 `email()` 入队、后台 Cron 和 Telegram 投递没有通过 PRE HTTP 验收；相应 handler 使用已有本地 fake/集成回归作为替代证据。生产部署和生产 D1 迁移不在本次操作范围内。
