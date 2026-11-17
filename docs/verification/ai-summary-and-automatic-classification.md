@@ -77,3 +77,5 @@ PRE 发布、独立 PRE D1 的 0032 迁移及相关页面/API 验收尚未获得
 - 原始 release/binding、迁移、模型、浏览器和清理证据在 `/tmp/flaremail-ai-evidence/pre-*.json`，恢复点及含私有配置/身份的文件均为 0600，不提交 Git。`pre-release-summary.json` 记录准确部署与版本；后续仅文档提交的最终 PRE 标识以该记录及 PR 为准。
 
 PRE 不承接生产 Email Routing 或 Cron。真实 `email()` 入队、后台 Cron 和 Telegram 投递没有通过 PRE HTTP 验收；相应 handler 使用已有本地 fake/集成回归作为替代证据。生产部署和生产 D1 迁移不在本次操作范围内。
+
+PR 界面证据仅含合成内容：[缓存摘要](assets/ai-summary-preview.png)、[六类用途导航](assets/ai-categories-preview.png)。
