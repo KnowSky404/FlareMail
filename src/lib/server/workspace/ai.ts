@@ -99,7 +99,7 @@ export async function workspaceMailAi(
     if (options.beforeAnalyze && !await options.beforeAnalyze()) throw new ApiError(409, 'AI_AUTHORIZATION_CHANGED', 'AI authorization changed.');
     if (deadline !== null) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new ApiError(503, 'AI_TIMEOUT', 'AI analysis timed out.');
+      if (remaining <= 0) throw new ApiError(503, 'AI_TIMEOUT', 'AI analysis timed out.', undefined, { reason: 'before_provider_request' });
       config.timeoutMs = Math.min(config.timeoutMs, remaining);
     }
     const analysis = validateMailAiAnalysis(await (provider ?? createMailAiProvider(config, fetch, { retryRateLimit: !options.beforeAnalyze })).analyze(input), input);

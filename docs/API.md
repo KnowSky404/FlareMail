@@ -786,3 +786,5 @@ a provider error code and `retryable: false`. Provider quota failures return
 refusal (`AI_REFUSED`) return 502 without partial analysis or upstream messages.
 
 Provider failures may include a safe `error.details.reason`: `provider_http_<status>` or a fixed network category (`provider_redirect`, `provider_tls_error`, `provider_dns_error`, `provider_header_error`, `provider_network_error`). These diagnostics never include upstream messages, URLs, keys or email content.
+
+`AI_TIMEOUT` with `error.details.reason: before_provider_request` means the local time budget expired before invoking the provider. Background classification defers this work without consuming its single generation attempt; a timeout after invoking the provider is not automatically retried.

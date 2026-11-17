@@ -79,3 +79,7 @@ PRE 发布、独立 PRE D1 的 0032 迁移及相关页面/API 验收尚未获得
 PRE 不承接生产 Email Routing 或 Cron。真实 `email()` 入队、后台 Cron 和 Telegram 投递没有通过 PRE HTTP 验收；相应 handler 使用已有本地 fake/集成回归作为替代证据。生产部署和生产 D1 迁移不在本次操作范围内。
 
 PR 界面证据仅含合成内容：[缓存摘要](assets/ai-summary-preview.png)、[六类用途导航](assets/ai-categories-preview.png)。
+
+## PR 前复审修复
+
+本地 `/review` 发现慢 D1 预留可在模型调用前耗尽本轮预算，原逻辑会把尚未调用模型的任务误记为已尝试并永久失败。现在只对明确发生在 provider 调用前的预算超时恢复未尝试状态、延后调度；实际调用后的超时仍不自动重试。两项 fake-provider 回归验证零调用后可恢复、实际超时只调用一次；不增加 PRE 的 3 次真实生成额度。完整单元/集成测试现为 942 项。

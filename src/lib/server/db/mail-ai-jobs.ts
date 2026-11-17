@@ -55,10 +55,10 @@ export async function reserveMailAiJobAttempt(db: D1Database, job: MailAiJob) {
   return Boolean(row);
 }
 
-export function finishMailAiJob(db: D1Database, job: MailAiJob, status: 'pending' | 'done' | 'failed' | 'cancelled', nextAttemptAt = 0) {
-  return db.prepare(`UPDATE mail_ai_jobs SET status = ?, lease_until = 0, next_attempt_at = ?
+export function finishMailAiJob(db: D1Database, job: MailAiJob, status: 'pending' | 'done' | 'failed' | 'cancelled', nextAttemptAt = 0, resetAttempt = false) {
+  return db.prepare(`UPDATE mail_ai_jobs SET status = ?, lease_until = 0, next_attempt_at = ?, attempted = CASE WHEN ? THEN 0 ELSE attempted END
     WHERE owner_user_id = ? AND message_id = ? AND claim_token = ? AND status = 'processing'`)
-    .bind(status, nextAttemptAt, job.owner_user_id, job.message_id, job.claim_token).run();
+    .bind(status, nextAttemptAt, resetAttempt ? 1 : 0, job.owner_user_id, job.message_id, job.claim_token).run();
 }
 
 export function applyMailAiJobCategory(db: D1Database, job: MailAiJob, category: MailInboxCategory) {

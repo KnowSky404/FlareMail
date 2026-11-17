@@ -43,8 +43,9 @@ export async function dispatchMailAiJobs(env: CloudflareEnv, options: { provider
     } catch (error) {
       const unattempted = await env.DB.prepare('SELECT attempted FROM mail_ai_jobs WHERE owner_user_id = ? AND message_id = ? AND claim_token = ?')
         .bind(job.owner_user_id, job.message_id, job.claim_token).first<{ attempted: number }>();
-      const defer = !unattempted?.attempted && error instanceof ApiError && ['AI_BUSY', 'AI_QUOTA_EXCEEDED', 'AI_TIMEOUT'].includes(error.code);
-      await finishMailAiJob(env.DB, job, defer ? 'pending' : 'failed', defer ? Date.now() + (error instanceof ApiError && error.code === 'AI_QUOTA_EXCEEDED' ? 3_600_000 : 60_000) : 0);
+      const beforeRequest = error instanceof ApiError && error.code === 'AI_TIMEOUT' && error.details?.reason === 'before_provider_request';
+      const defer = beforeRequest || (!unattempted?.attempted && error instanceof ApiError && ['AI_BUSY', 'AI_QUOTA_EXCEEDED', 'AI_TIMEOUT'].includes(error.code));
+      await finishMailAiJob(env.DB, job, defer ? 'pending' : 'failed', defer ? Date.now() + (error instanceof ApiError && error.code === 'AI_QUOTA_EXCEEDED' ? 3_600_000 : 60_000) : 0, beforeRequest);
     }
   }
   return result;
