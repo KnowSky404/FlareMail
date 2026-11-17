@@ -150,3 +150,17 @@ describe('encrypted Owner AI settings', () => {
     expect((await PATCH(event(f.env, 'owner', { ...f.input, apiKey: 'x'.repeat(13000) }))).status).toBe(413);
   });
 });
+
+test('automatic classification consent is opt-in, preserved for old clients and renewed after revocation', async () => {
+  const f = setup(); expect((await readMailAiSettings(f.env, 'owner')).settings.automaticClassification).toBe(false);
+  let saved = await f.save({ automaticClassification: true });
+  const firstConsent = f.raw().mailAi.classificationConsent;
+  expect(typeof firstConsent).toBe('string'); expect(JSON.stringify(saved)).not.toContain(firstConsent);
+  saved = await f.save({ revision: saved.revision });
+  expect(saved.settings.automaticClassification).toBe(true); expect(f.raw().mailAi.classificationConsent).toBe(firstConsent);
+  for (const automaticClassification of [null, 1, 'true']) {
+    await expect(f.save({ automaticClassification, revision: saved.revision })).rejects.toMatchObject({ code: 'AI_INVALID_SETTINGS' });
+  }
+  saved = await f.save({ automaticClassification: false, revision: saved.revision }); expect(f.raw().mailAi.classificationConsent).toBeNull();
+  await f.save({ automaticClassification: true, revision: saved.revision }); expect(f.raw().mailAi.classificationConsent).not.toBe(firstConsent);
+});

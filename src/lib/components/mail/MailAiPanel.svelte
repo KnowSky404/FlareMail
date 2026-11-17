@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { Sparkles } from '@lucide/svelte';
   import { Button, IconButton } from '$lib/components/ui';
+  import { createWorkspaceSync, type WorkspaceSyncController } from '$lib/client/workspace-sync';
   import { ClientApiError, requestJson } from '$lib/client/api';
   import type { MailMessage, MailInboxCategory } from '$lib/domain/mail';
   import type { MailAiResponse } from '$lib/domain/mail/ai';
@@ -9,7 +10,7 @@
   let { message, onApplyCategory }: { message: MailMessage; onApplyCategory?: (message: MailMessage, category: MailInboxCategory) => Promise<void> } = $props();
   const i18n = useLocale();
   const { t } = i18n;
-  let open = $state(false);
+  let open = $state(true);
   let view = $state<'summary' | 'category'>('summary');
   let result = $state<MailAiResponse | null>(null);
   let busy = $state(false);
@@ -17,16 +18,18 @@
   let error = $state('');
   let appliedCategory = $state<MailInboxCategory | null>(null);
   const applied = $derived(appliedCategory !== null && message.inboxCategoryOverride === appliedCategory);
+  let sync: WorkspaceSyncController | undefined;
+  onMount(() => { sync = createWorkspaceSync(() => undefined); });
   let controller = new AbortController();
   let requestSequence = 0;
-  onDestroy(() => { requestSequence++; controller.abort(); });
+  onDestroy(() => { requestSequence++; controller.abort(); sync?.close(); });
   const requestIdentity = $derived(`${message.id}:${i18n.locale}`);
   $effect(() => {
     requestIdentity;
     untrack(() => {
       requestSequence++; controller.abort();
       busy = false; result = null; error = ''; appliedCategory = null;
-      if (open) void load();
+      open = true; void load();
     });
   });
   const panelId = $derived(`mail-ai-${message.id}`);
@@ -47,7 +50,10 @@
       const response = await requestJson<MailAiResponse>(`/api/workspace/messages/${encodeURIComponent(message.id)}/ai${analyze ? '' : `?language=${i18n.locale}`}`, {
         signal: controller.signal, ...(analyze ? { method: 'POST', body: JSON.stringify({ language: i18n.locale, regenerate }) } : {})
       });
-      if (sequence === requestSequence) result = response;
+      if (sequence === requestSequence) {
+        result = response;
+        if (response.appliedCategory) sync?.publish({ type: 'mailbox-refresh', id: message.id });
+      }
     } catch (cause) {
       if (sequence === requestSequence && !controller.signal.aborted) {
         const code = cause instanceof ClientApiError ? cause.code : 'NETWORK_FAILURE';
@@ -82,6 +88,8 @@
         <p role="status">{t('ai.processing')}</p>
         <Button variant="secondary" size="sm" disabled={busy} onclick={() => void load()}>{t('ai.refresh')}</Button>
       {:else if analysis}
+        {#if result?.updatedAt}<p class="text-xs text-[var(--fm-text-muted)]">{t('ai.generatedAt')} <time datetime={new Date(result.updatedAt).toISOString()}>{new Date(result.updatedAt).toLocaleString(i18n.locale)}</time></p>{/if}
+        {#if result?.refreshing}<p role="status">{t('ai.processing')}</p><Button variant="secondary" size="sm" disabled={busy} onclick={() => void load()}>{t('ai.refresh')}</Button>{/if}
         <div class="flex flex-wrap gap-2" role="group" aria-label={t('ai.views')}>
           <button type="button" class="rounded border border-[var(--fm-border)] px-3 py-1 focus-visible:outline-2" aria-pressed={view === 'summary'} onclick={() => view = 'summary'}>{t('ai.summary')}</button>
           <button type="button" class="rounded border border-[var(--fm-border)] px-3 py-1 focus-visible:outline-2" aria-pressed={view === 'category'} onclick={() => view = 'category'}>{t('ai.category')}</button>
@@ -92,7 +100,7 @@
             {#if group.items.length}<div><h2 class="mb-1 text-xs font-semibold">{t(group.title)}</h2><ul class="list-disc space-y-1 pl-5">{#each group.items as item}<li>{item}</li>{/each}</ul></div>{/if}
           {/each}
         {:else}
-          <p class="text-xs">{t('ai.currentCategory', { category: t(`mail.category.${message.inboxCategory ?? 'primary'}`) })}</p>
+          <p class="text-xs">{t('ai.currentCategory', { category: t(`mail.category.${message.inboxCategoryOverride ?? result?.appliedCategory ?? message.inboxCategory ?? 'primary'}`) })}</p>
           {#if analysis.suggestion}
             <p class="font-medium">{t(`mail.category.${analysis.suggestion.category}`)}</p><p>{analysis.suggestion.reason}</p>
             <p class="text-xs text-[var(--fm-text-muted)]">{t('ai.confidence', { confidence: Math.round(analysis.suggestion.confidence * 100) })}</p>
@@ -103,14 +111,14 @@
         {/if}
         {#if result?.truncated}<p class="text-xs text-[var(--fm-text-muted)]">{t('ai.truncated')}</p>{/if}
         <p class="text-xs text-[var(--fm-text-muted)]">{t('ai.caution')}</p>
-        <Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load(true, true)}>{t('ai.regenerate')}</Button>
+        <Button variant="secondary" size="sm" disabled={busy || applying || result?.refreshing} onclick={() => void load(true, true)}>{t('ai.regenerate')}</Button>
       {:else if result?.status === 'empty'}
         <p>{t('ai.empty')}</p><Button variant="secondary" size="sm" disabled={busy} onclick={() => void load(true)}>{t('ai.generate')}</Button>
       {/if}
       {#if error}
         <div class="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load()}>{t('ai.refresh')}</Button>
-          {#if !analysis}<Button variant="secondary" size="sm" disabled={busy || applying} onclick={() => void load(true, true)}>{t('ai.regenerate')}</Button>{/if}
+          {#if !analysis}<Button variant="secondary" size="sm" disabled={busy || applying || result?.refreshing} onclick={() => void load(true, true)}>{t('ai.regenerate')}</Button>{/if}
         </div>
       {/if}
     </div>

@@ -7,7 +7,7 @@ import type {
   MailboxSection,
   MailSearchQuery
 } from '$lib/domain/mail';
-import { isInboxCategoryFilter, parseMailSearchQuery, SearchQueryParseError } from '$lib/domain/mail';
+import { normalizeInboxCategory, isInboxCategoryFilter, parseMailSearchQuery, SearchQueryParseError } from '$lib/domain/mail';
 import { boundedUtf8 } from '$lib/domain/utf8';
 import { ApiError } from '$lib/server/http/api';
 
@@ -117,6 +117,7 @@ export function decodeMailboxCursor(
     const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
     const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
     const parsed = JSON.parse(atob(padded)) as Partial<MailboxCursor>;
+    if (parsed && typeof parsed === 'object' && 'category' in parsed) parsed.category = normalizeInboxCategory(parsed.category) as InboxCategoryFilter;
     if (
       parsed.version !== 2 ||
       parsed.folder !== folder ||
@@ -181,7 +182,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
     throw new ApiError(400, 'INVALID_LABEL_ID', '仅标签分区支持标签筛选。');
   }
 
-  const category = params.get('category') ?? 'all';
+  const category = normalizeInboxCategory(params.get('category') ?? 'all');
   if (!isInboxCategoryFilter(category) || (category !== 'all' && section !== 'inbox')) {
     throw new ApiError(400, 'INVALID_INBOX_CATEGORY', '收件箱分类无效或不适用于当前分区。');
   }

@@ -311,3 +311,10 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
 - [ ] After rollback/restore, health, schema metadata, FTS projection/index,
   cleanup queue, attachment integrity, delivery reconciliation and R2
   references will be reverified before traffic is reopened.
+
+## Schema 32 AI summary/classification upgrade
+
+- [ ] Review [SPEC](specs/ai-summary-and-automatic-classification.md), migration 0032 and the exact accepted SHA. New code requires schema 32; older schema-31 code rejects 32, so do not migrate a shared live database before an explicitly authorized compatibility rollout and restore-point plan. This feature is not the compatibility bridge. Schema-version tolerance alone does not mirror old category-column writes into the new columns: pause web classification writes during migration/cutover or use an explicitly reviewed dual-write bridge.
+- [ ] Verify six-category manual mappings, retained legacy values, empty background queue, default-off automatic classification and unchanged provider credentials. Prompt version 3 invalidates prior analyses without automatically regenerating historical mail.
+- [ ] Check independently authorized classification and Telegram consent, workspace output language and shared 30 attempts/hour limit. Do not enable new external processing as a side effect of deployment.
+- [ ] Rehearse rollback on the additive schema: original columns remain, but new-category choices are stored separately and older code will not see them. Preserve the upgraded data and deploy a compatible rollback binary rather than dropping columns/jobs or restoring over unreviewed new mail.

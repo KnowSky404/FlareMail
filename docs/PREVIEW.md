@@ -120,3 +120,7 @@ Do not enable automatic AI or generate from real shared email during acceptance
 without explicit authorization for that external processing and settings write.
 The ordinary Telegram test button sends a fixed test message and does not prove
 AI outbox processing. Local synthetic dispatcher tests cover that handler path.
+
+### Schema 32 summary/classification acceptance
+
+Follow the [current SPEC](specs/ai-summary-and-automatic-classification.md). Migration 0032 requires explicit target-D1 migration authorization, backup/restore-point review and a compatible application rollout. A schema-version-only bridge is insufficient for category writes; pause those writes during cutover or use a reviewed dual-write bridge. Keep the existing independent PRE D1 and shared R2 bindings. Validate the exact committed SHA: AI settings default-off/readback, cache-only reader GET, six category filters and retired links, authentication and readiness. Enabling auto-classification, saving settings or generating real summaries needs separate write/external-processing authorization. Local fake-provider tests cover inbound enqueue and scheduled leases; HTTP checks alone do not prove email()/Cron execution. No production deployment is implied.

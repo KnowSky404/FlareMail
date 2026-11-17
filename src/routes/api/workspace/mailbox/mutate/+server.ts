@@ -1,4 +1,4 @@
-import { isInboxCategoryFilter } from '$lib/domain/mail';
+import { normalizeInboxCategory, isInboxCategoryFilter } from '$lib/domain/mail';
 import type { RequestHandler } from './$types';
 import type { DeliveryStatus, MailboxFilter, MailboxMutationAction, MailboxMutationRequest, MailboxMutationScope } from '$lib/domain/mail';
 import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/http/api';
@@ -39,6 +39,7 @@ function parseMutationScope(value: unknown, hasThreadKeys: boolean): MailboxMuta
     throw new ApiError(400, 'INVALID_MAILBOX_SCOPE', '批量操作的地址筛选范围无效。');
   }
 
+  if (scope.category !== undefined) scope.category = normalizeInboxCategory(scope.category);
   if (scope.category !== undefined && (!isInboxCategoryFilter(scope.category) ||
     (scope.category !== 'all' && scope.section !== 'inbox'))) {
     throw new ApiError(400, 'INVALID_INBOX_CATEGORY', '批量操作的收件箱分类范围无效。');

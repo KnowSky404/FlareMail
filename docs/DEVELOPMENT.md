@@ -400,3 +400,7 @@ Use `bun run preview` for the complete local Worker. Set `FLAREMAIL_DEV_HOST` (d
 ## Optional mail AI
 
 See [AI setup and fake-provider testing](AI.md). AI tests do not need provider credentials. Use isolated local D1/R2; never analyze shared real email as a fixture.
+
+## AI summary and classification
+
+The [SPEC](specs/ai-summary-and-automatic-classification.md) defines six purpose categories, cache-first reading, workspace output language and opt-in new-mail classification. Schema 32 is required. Run AI persistence/dispatcher, category API/query and migration tests with fake providers before browser QA. Cron classification is independent of Telegram; keep model calls outside inbound persistence. Do not use real mail as fixtures or raise the shared quota implicitly.

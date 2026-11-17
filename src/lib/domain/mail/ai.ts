@@ -1,7 +1,7 @@
 import type { MailInboxCategory } from './categories';
 
 /** Bump whenever the prompt, input projection or result contract changes. */
-export const MAIL_AI_VERSION = 2;
+export const MAIL_AI_VERSION = 3;
 
 export interface MailAiInput {
   subject: string;
@@ -26,6 +26,8 @@ export interface MailAiResponse {
   analysis: MailAiAnalysis | null;
   truncated?: boolean;
   updatedAt?: number;
+  refreshing?: boolean;
+  appliedCategory?: MailInboxCategory;
   language?: string;
 }
 
@@ -39,6 +41,7 @@ export interface MailAiSettings {
   apiFormat: MailAiApiFormat;
   timeoutMs: number;
   maxInputChars: number;
+  automaticClassification: boolean;
   summaryLanguage: string;
   backgroundLanguage: 'zh-CN' | 'en';
 }

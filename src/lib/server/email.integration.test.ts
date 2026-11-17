@@ -22,6 +22,7 @@ class TestStatement {
 class TestD1 {
   failBatch = false;
   failTelegramBatch = false;
+  failAiBatch = false;
   failBatchAfterStatements: number | null = null;
   failClaimCompletion = false;
   readonly batches: string[][] = [];
@@ -35,6 +36,7 @@ class TestD1 {
   async batch(statements: D1PreparedStatement[]) {
     const sql = statements.map((statement) => (statement as unknown as TestStatement).sql);
     this.batches.push(sql);
+    if (this.failAiBatch && sql.some((statement) => statement.includes('mail_ai_jobs'))) throw new Error('simulated optional AI queue failure');
     if (this.failBatch) throw new Error('simulated d1 write failure');
     if (this.failTelegramBatch && sql.some((statement) => statement.includes('workspace_telegram_deliveries'))) {
       throw new Error('simulated optional Telegram write failure');
@@ -776,4 +778,17 @@ describe('inbound email persistence', () => {
     expect(test.database.query('SELECT storage_id, status FROM workspace_inbound_ingest_claims').get()).toMatchObject({ status: 'completed' });
     expect(test.database.query('SELECT storage_id FROM workspace_inbound_ingest_claims').get()).not.toEqual({ storage_id: 'stale-storage', status: 'completed' });
   });
+});
+
+test('new inbound mail enqueues classification without Telegram and optional queue failure cannot lose mail', async () => {
+  for (const failAiBatch of [false, true]) {
+    const value = environment();
+    value.database.query(`INSERT INTO workspace_settings (user_id,settings_json) VALUES ('user-1', ?)`)
+      .run(JSON.stringify({ mailAi: { enabled: true, automaticClassification: true, classificationConsent: crypto.randomUUID() } }));
+    value.DB.failAiBatch = failAiBatch;
+    await handleInboundEmail(message().value, value.env);
+    expect(value.database.query('SELECT COUNT(*) AS count FROM email_messages').get()).toEqual({ count: 1 });
+    expect(value.database.query('SELECT COUNT(*) AS count FROM mail_ai_jobs').get()).toEqual({ count: failAiBatch ? 0 : 1 });
+    value.database.close();
+  }
 });

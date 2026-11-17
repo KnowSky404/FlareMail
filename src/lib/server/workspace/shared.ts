@@ -99,7 +99,8 @@ export interface WorkspaceSessionJoinRow extends WorkspaceUserRow {
 }
 
 export interface WorkspaceMessageRow {
-  inbox_category?: MailInboxCategory | null;
+  inbox_category_v2?: MailInboxCategory | null;
+  ai_inbox_category?: MailInboxCategory | null;
   id: string;
   folder: Exclude<MailFolder, 'drafts'>;
   from_name: string;
@@ -163,7 +164,8 @@ export interface WorkspaceDraftRow {
 }
 
 export interface WorkspaceInboundRow {
-  inbox_category?: MailInboxCategory | null;
+  inbox_category_v2?: MailInboxCategory | null;
+  ai_inbox_category?: MailInboxCategory | null;
   email_id: string;
   from: string;
   to: string;
@@ -311,8 +313,8 @@ export const mapWorkspaceMessageRow = (
   folder: row.folder,
   source: 'workspace',
   ...(row.folder === 'inbox' ? {
-    inboxCategory: resolveInboxCategory(row.from_email, row.subject, row.inbox_category),
-    inboxCategoryOverride: row.inbox_category ?? null
+    inboxCategory: resolveInboxCategory(row.from_email, row.subject, row.inbox_category_v2, row.ai_inbox_category),
+    inboxCategoryOverride: row.inbox_category_v2 ?? null
   } : {}),
   fromName: row.from_name,
   fromEmail: row.from_email,
@@ -395,8 +397,8 @@ export function mapInboundRow(row: WorkspaceInboundRow, profile: UserProfile, se
     id: `email:${row.email_id}`,
     folder: 'inbox',
     source: 'inbound',
-    inboxCategory: resolveInboxCategory(row.from, row.subject, row.inbox_category),
-    inboxCategoryOverride: row.inbox_category ?? null,
+    inboxCategory: resolveInboxCategory(row.from, row.subject, row.inbox_category_v2, row.ai_inbox_category),
+    inboxCategoryOverride: row.inbox_category_v2 ?? null,
     fromName: sender.name,
     fromEmail: sender.email,
     toName: recipient.name || profile.name,

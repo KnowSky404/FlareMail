@@ -430,3 +430,46 @@ test.each(['ai', 'privacy'])('native AI 429 cannot retry after Telegram %s conse
     else expect(notifications.every((text) => text.includes('摘要：A bounded summary.') && !text.includes('AI 摘要'))).toBe(true);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('Telegram waits for an in-flight classification analysis and reuses it without another provider call', async () => {
+  const value = aiFixture();
+  const { workspaceMailAi } = await import('$lib/server/workspace/ai');
+  const { mapUserRowToProfile } = await import('$lib/server/workspace/shared');
+  const user = value.db.query('SELECT * FROM workspace_users').get() as import('$lib/server/workspace/shared').WorkspaceUserRow;
+  let enter!: () => void; let release!: () => void;
+  const entered = new Promise<void>((resolve) => enter = resolve);
+  const gate = new Promise<void>((resolve) => release = resolve);
+  const pending = workspaceMailAi(value.env as unknown as CloudflareEnv, {
+    id: '', userId: user.id, storage: 'd1', profile: mapUserRowToProfile(user), incomingSequence: 0, createdAt: '', updatedAt: ''
+  }, 'email:email-1', { analyze: true, beforeAnalyze: async () => true }, { analyze: async (input) => {
+    enter(); await gate;
+    return { summary: 'Shared classification summary', keyPoints: [], actionItems: [], dates: [], language: input.language, suggestion: null };
+  } });
+  await entered;
+  let text = '';
+  const options = { limit: 1, aiProvider: value.provider, fetchImpl: async (_input: unknown, init?: RequestInit) => {
+    text = JSON.parse(String(init?.body)).text; return telegramSuccess();
+  } };
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, { ...options, now: () => dispatchTime })).sent).toBe(0);
+  expect(value.db.query('SELECT status, ai_attempted FROM workspace_telegram_deliveries').get()).toEqual({ status: 'pending', ai_attempted: 0 });
+  release(); await pending;
+  expect((await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, { ...options, now: () => dispatchTime + 10_000 })).sent).toBe(1);
+  expect(text).toContain('AI 摘要：Shared classification summary'); expect(value.calls()).toBe(0);
+});
+
+test('Telegram defers a lost AI claim instead of racing another generation', async () => {
+  const value = aiFixture();
+  const prepare = value.DB.prepare.bind(value.DB);
+  value.DB.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (sql.startsWith('INSERT INTO mail_ai_analyses')) statement.first = async () => null;
+    return statement;
+  };
+  let sends = 0;
+  const result = await dispatchTelegramOutbox(value.env as unknown as CloudflareEnv, {
+    limit: 1, now: () => dispatchTime, aiProvider: value.provider,
+    fetchImpl: async () => { sends++; return telegramSuccess(); }
+  });
+  expect(result.sent).toBe(0); expect(sends).toBe(0); expect(value.calls()).toBe(0);
+  expect(value.db.query('SELECT status, ai_attempted FROM workspace_telegram_deliveries').get()).toEqual({ status: 'pending', ai_attempted: 1 });
+});

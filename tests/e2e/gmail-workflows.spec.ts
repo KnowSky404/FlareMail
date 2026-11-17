@@ -13,8 +13,8 @@ import {
 test.describe.configure({ mode: 'default' });
 const primaryAddressId = '00000000-0000-4000-8000-000000000021';
 const supportAddressId = '00000000-0000-4000-8000-000000000022';
-const categoryNames = ['全部', '主要', '推广', '社交', '更新', '论坛'];
-type Category = 'all' | 'primary' | 'promotions' | 'social' | 'updates' | 'forums';
+const categoryNames = ['全部', '主要往来', '交易账务', '账号安全', '服务通知', '订阅资讯', '营销推广'];
+type Category = 'all' | 'primary' | 'transactions' | 'security' | 'updates' | 'subscriptions' | 'promotions';
 type Message = {
   id: string;
   subject: string;
@@ -95,7 +95,7 @@ test('uses a full-width list by default and restores the same inbox after readin
   }
   await page.screenshot({ path: testInfo.outputPath('gmail-inbox-default.png') });
 
-  await clickCategory(page, '主要', 'primary');
+  await clickCategory(page, '主要往来', 'primary');
   await row(page, 'E2E Inbox Welcome').getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
   await expect(detail.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeVisible();
   await expect(list).toBeHidden();
@@ -105,13 +105,13 @@ test('uses a full-width list by default and restores the same inbox after readin
   await expect(list).toBeVisible();
   await expect(detail).toBeHidden();
   await expect(page).not.toHaveURL(/message=/u);
-  await expect(page.getByRole('tab', { name: '主要', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: '主要往来', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.goForward();
   await expect(detail.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeVisible();
   await detail.getByRole('button', { name: '返回邮件列表' }).click();
   await expect(list).toBeVisible();
   await expect(page).not.toHaveURL(/message=/u);
-  await expect(page.getByRole('tab', { name: '主要', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: '主要往来', exact: true })).toHaveAttribute('aria-selected', 'true');
   await assertNoHorizontalOverflow(page);
   await assertNoConsoleErrors(consoleErrors);
 });
@@ -180,14 +180,14 @@ test('keeps category navigation in one horizontal accessible tab strip', async (
   }
   // Roving keyboard focus must reveal the final tab on a narrow scroll strip.
   const all = tabs.getByRole('tab', { name: '全部', exact: true });
-  const forums = tabs.getByRole('tab', { name: '论坛', exact: true });
+  const lastTab = tabs.getByRole('tab', { name: '营销推广', exact: true });
   await all.focus();
-  const forumsLoaded = page.waitForResponse((response) => mailboxResponse(response, 'forums'));
+  const lastLoaded = page.waitForResponse((response) => mailboxResponse(response, 'promotions'));
   await all.press('End');
-  await forumsLoaded;
-  await expect(forums).toBeFocused();
-  await expect(forums).toHaveAttribute('aria-selected', 'true');
-  await forums.press('Home');
+  await lastLoaded;
+  await expect(lastTab).toBeFocused();
+  await expect(lastTab).toHaveAttribute('aria-selected', 'true');
+  await lastTab.press('Home');
   await expect(page.locator('#inbox-category-panel')).toHaveAttribute('aria-labelledby', 'inbox-tab-all');
   await expect(all).toBeFocused();
   await expect(all).toHaveAttribute('aria-selected', 'true');
@@ -199,23 +199,23 @@ test('loads categories from the server and preserves deep links, history, pagina
   test.setTimeout(75_000);
   await login(page);
   await setCategory(page, ['e2e-bulk-01'], 'promotions');
-  await setCategory(page, ['e2e-bulk-02'], 'social');
+  await setCategory(page, ['e2e-bulk-02'], 'security');
   try {
     await page.goto('/?folder=inbox');
-    await clickCategory(page, '推广', 'promotions');
+    await clickCategory(page, '营销推广', 'promotions');
     await expect(row(page, 'E2E Bulk 01')).toBeVisible();
     await expect(row(page, 'E2E Bulk 02')).toHaveCount(0);
-    await clickCategory(page, '社交', 'social');
+    await clickCategory(page, '账号安全', 'security');
     await expect(row(page, 'E2E Bulk 02')).toBeVisible();
     await page.goBack();
-    await expect(page.getByRole('tab', { name: '推广', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: '营销推广', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(row(page, 'E2E Bulk 01')).toBeVisible();
     await expect(row(page, 'E2E Bulk 02')).toHaveCount(0);
     await page.goForward();
-    await expect(page.getByRole('tab', { name: '社交', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: '账号安全', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(row(page, 'E2E Bulk 02')).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('tab', { name: '社交', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: '账号安全', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(row(page, 'E2E Bulk 02')).toBeVisible();
 
     await page.goto('/?folder=inbox&category=primary');
@@ -226,7 +226,7 @@ test('loads categories from the server and preserves deep links, history, pagina
     expect(payload.data.page.messages.every((message) => message.inboxCategory === 'primary')).toBe(true);
     await expect(row(page, 'E2E Bulk 45')).toBeVisible();
     await expect(row(page, 'E2E Bulk 01')).toHaveCount(0);
-    await clickCategory(page, '推广', 'promotions');
+    await clickCategory(page, '营销推广', 'promotions');
     await expect(row(page, 'E2E Bulk 01')).toBeVisible();
     await expect(row(page, 'E2E Bulk 45')).toHaveCount(0);
 
@@ -258,11 +258,11 @@ test('persists a manual category for only the selected message without changing 
   const changed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace/mailbox/categories'
     && response.request().method() === 'PATCH' && response.ok());
   await page.getByRole('button', { name: '更改收件分类' }).click();
-  await page.getByRole('menuitem', { name: '更新', exact: true }).click();
+  await page.getByRole('menuitem', { name: '服务通知', exact: true }).click();
   try {
     const response = await changed;
     expect(response.request().postDataJSON()).toMatchObject({ ids: ['e2e-inbox-message'], category: 'updates' });
-    await clickCategory(page, '更新', 'updates');
+    await clickCategory(page, '服务通知', 'updates');
     await expect(row(page, 'E2E Inbox Welcome')).toBeVisible();
     await page.reload();
     await expect(row(page, 'E2E Inbox Welcome')).toBeVisible();
@@ -272,7 +272,7 @@ test('persists a manual category for only the selected message without changing 
       inboxCategory: 'updates', inboxCategoryOverride: 'updates',
       fromEmail: before.fromEmail, recipientAddressId: before.recipientAddressId
     });
-    await clickCategory(page, '主要', 'primary');
+    await clickCategory(page, '主要往来', 'primary');
     await expect(row(page, 'E2E Inbox Welcome')).toHaveCount(0);
     await expect(row(page, 'E2E HTML Safety')).toBeVisible();
   } finally {
@@ -446,7 +446,7 @@ test('keeps row read, star, archive, trash and undo actions in the list and pres
 test('ignores a slower category response after newer category navigation', async ({ page, consoleErrors }) => {
   await login(page);
   await setCategory(page, ['e2e-bulk-01'], 'promotions');
-  await setCategory(page, ['e2e-bulk-02'], 'social');
+  await setCategory(page, ['e2e-bulk-02'], 'security');
   let releasePromotions!: () => void;
   const promotionsGate = new Promise<void>((resolve) => (releasePromotions = resolve));
   await page.route('**/api/workspace/mailbox?**', async (route) => {
@@ -457,14 +457,14 @@ test('ignores a slower category response after newer category navigation', async
   try {
     const requested = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/workspace/mailbox'
       && new URL(request.url()).searchParams.get('category') === 'promotions');
-    await page.getByRole('tab', { name: '推广', exact: true }).click();
+    await page.getByRole('tab', { name: '营销推广', exact: true }).click();
     await requested;
-    await clickCategory(page, '社交', 'social');
+    await clickCategory(page, '账号安全', 'security');
     await expect(row(page, 'E2E Bulk 02')).toBeVisible();
     releasePromotions();
     await page.waitForLoadState('networkidle');
-    await expect(page).toHaveURL(/category=social/u);
-    await expect(page.getByRole('tab', { name: '社交', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page).toHaveURL(/category=security/u);
+    await expect(page.getByRole('tab', { name: '账号安全', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(row(page, 'E2E Bulk 01')).toHaveCount(0);
     await expect(row(page, 'E2E Bulk 02')).toBeVisible();
     await expect(page.getByRole('region', { name: '邮件详情' })).toBeHidden();
@@ -517,7 +517,7 @@ test('opens a category deep link beyond the first page without selecting a visib
   await expect(page).toHaveURL(/category=primary/u);
   await expect(page).toHaveURL(/message=e2e-bulk-45/u);
   await detail.getByRole('button', { name: '返回邮件列表' }).click();
-  await expect(page.getByRole('tab', { name: '主要', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: '主要往来', exact: true })).toHaveAttribute('aria-selected', 'true');
   await expect(page).not.toHaveURL(/message=/u);
   await expect(page.locator('.mail-list-panel')).toBeVisible();
   await assertNoConsoleErrors(consoleErrors);
@@ -579,7 +579,7 @@ test('reuses warm category pages with their loaded cursor and no blocking reques
   const reads: string[] = [];
   page.on('request', (request) => { if (new URL(request.url()).pathname.endsWith('/flags')) reads.push(request.url()); });
   await login(page);
-  await clickCategory(page, '主要', 'primary');
+  await clickCategory(page, '主要往来', 'primary');
   const nextPage = page.waitForResponse((response) => mailboxResponse(response, 'primary', true));
   await page.getByRole('button', { name: '下一页', exact: true }).click();
   await nextPage;
@@ -588,11 +588,11 @@ test('reuses warm category pages with their loaded cursor and no blocking reques
   const scroller = page.locator('.fm-list-scroll');
   await scroller.evaluate((element) => { element.scrollTop = 280; });
   await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBe(280);
-  await clickCategory(page, '论坛', 'forums');
+  await clickCategory(page, '订阅资讯', 'subscriptions');
   await page.waitForLoadState('networkidle');
   const requested: string[] = [];
   page.on('request', (request) => { if (new URL(request.url()).pathname === '/api/workspace/mailbox') requested.push(request.url()); });
-  await clickCategory(page, '主要', 'primary');
+  await clickCategory(page, '主要往来', 'primary');
   await expect(row(page, 'E2E Bulk 45')).toHaveCount(0);
   await expect(page.getByRole('status', { name: '正在加载邮件', exact: true })).toHaveCount(0);
   await expect(page.getByRole('region', { name: '邮件详情' })).toBeHidden();

@@ -1,4 +1,5 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { dispatchMailAiJobs } from '$lib/server/ai/dispatcher';
 import { refreshMailDomainHealth } from '$lib/server/mail-identities/health-refresh';
 import { dispatchTelegramOutbox } from '$lib/server/telegram/dispatcher';
 
@@ -7,9 +8,10 @@ export interface ScheduledExecutionContext {
 }
 
 export interface ScheduledMaintenanceDependencies {
+  dispatchAi?: () => Promise<unknown>;
   dispatchTelegram?: () => Promise<unknown>;
   refreshMailHealth?: () => Promise<unknown>;
-  onFailure?: (task: 'telegram_outbox' | 'mail_domain_health') => void;
+  onFailure?: (task: 'telegram_outbox' | 'mail_domain_health' | 'mail_ai_jobs') => void;
 }
 
 /** Starts independent scheduled tasks so one rejected provider task cannot suppress another. */
@@ -18,7 +20,8 @@ export function scheduleMaintenance(
   context: ScheduledExecutionContext,
   dependencies: ScheduledMaintenanceDependencies = {}
 ) {
-  const tasks: Array<[ 'telegram_outbox' | 'mail_domain_health', () => Promise<unknown> ]> = [
+  const tasks: Array<[ 'telegram_outbox' | 'mail_domain_health' | 'mail_ai_jobs', () => Promise<unknown> ]> = [
+    ['mail_ai_jobs', dependencies.dispatchAi ?? (() => dispatchMailAiJobs(env))],
     ['telegram_outbox', dependencies.dispatchTelegram ?? (() => dispatchTelegramOutbox(env, { limit: 10, timeBudgetMs: 20_000, cleanup: true }))],
     ['mail_domain_health', dependencies.refreshMailHealth ?? (() => refreshMailDomainHealth(env))]
   ];

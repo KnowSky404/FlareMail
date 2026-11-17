@@ -76,3 +76,9 @@ test('inbox category round trips with search and identity, and clears when leavi
   expect(readWorkspaceUrl(new URL('https://flaremail.example/?category=unknown')).category).toBe('all');
   expect(readWorkspaceUrl(new URL('https://flaremail.example/?folder=sent&category=updates')).category).toBe('all');
 });
+
+test('retired category deep links normalize to service notifications', () => {
+  for (const category of ['social', 'forums']) {
+    expect(readWorkspaceUrl(new URL(`https://flaremail.example/?folder=inbox&category=${category}`)).category).toBe('updates');
+  }
+});

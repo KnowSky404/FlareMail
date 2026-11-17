@@ -193,9 +193,9 @@ export interface MailMessage extends MailRfcHeaders {
   deliveryLastEventAt?: string | null;
   deliveryIdempotencyKey?: string | null;
   deliveryAttemptStartedAt?: string | null;
-  /** Effective metadata-based category for an inbox message. */
+  /** Effective manual, AI or metadata category for an inbox message. */
   inboxCategory?: MailInboxCategory;
-  /** null means automatic metadata classification; non-null is the user override. */
+  /** null means automatic AI or metadata classification; non-null is the user override. */
   inboxCategoryOverride?: MailInboxCategory | null;
   /** Non-null only when an inbox message is in the archive section. */
   archivedAt?: string | null;

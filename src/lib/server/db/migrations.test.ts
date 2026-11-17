@@ -139,7 +139,8 @@ describe('versioned D1 migrations', () => {
       '0028_inbox_categories.sql',
       '0029_blocked_senders.sql',
       '0030_mail_ai_analyses.sql',
-      '0031_telegram_ai_summary.sql'
+      '0031_telegram_ai_summary.sql',
+      '0032_ai_automatic_classification.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -148,7 +149,7 @@ describe('versioned D1 migrations', () => {
         'in_reply_to', 'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'dedupe_key',
         'provider_message_id', 'idempotency_key', 'owner_user_id', 'body_object_id', 'to_json', 'cc_json',
         'reply_to_json', 'return_path', 'delivered_to', 'headers_json', 'authentication_results_json',
-        'mail_domain_id', 'mail_address_id', 'recipient_status', 'inbox_category'
+        'mail_domain_id', 'mail_address_id', 'recipient_status', 'inbox_category', 'inbox_category_v2', 'ai_inbox_category'
       ])
     );
     expect(tableColumns(db, 'workspace_messages')).toEqual(
@@ -157,7 +158,7 @@ describe('versioned D1 migrations', () => {
         'sent_at', 'labels_json', 'is_read', 'is_starred', 'created_at', 'updated_at', 'message_id', 'in_reply_to',
         'references', 'thread_key', 'direction', 'text_body', 'html_body', 'cc', 'to_json', 'cc_json', 'bcc_json', 'dedupe_key', 'provider_message_id',
         'idempotency_key', 'archived_at', 'deleted_at', 'body_object_id', 'sender_address_id',
-        'recipient_address_id', 'reply_to_json', 'inbox_category'
+        'recipient_address_id', 'reply_to_json', 'inbox_category', 'inbox_category_v2', 'ai_inbox_category'
       ])
     );
     expect(tableColumns(db, 'workspace_users')).toEqual(
@@ -274,7 +275,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 31 }
+      { schema_name: 'flaremail', schema_version: 32 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
@@ -516,4 +517,24 @@ test('migration 0031 keeps pre-existing Telegram AI authorization and attempts o
   expect(db.query('SELECT ai_summary_enabled FROM workspace_telegram_bindings').get()).toEqual({ ai_summary_enabled: 0 });
   expect(db.query('SELECT ai_summary_enabled, ai_attempted FROM workspace_telegram_deliveries').get())
     .toEqual({ ai_summary_enabled: 0, ai_attempted: 0 });
+});
+
+test('migration 0032 preserves raw manual choices, folds retired categories and starts without AI jobs', () => {
+  const db = createDatabase(); applyMigrationsThrough(db, '0031_telegram_ai_summary.sql');
+  db.exec(`INSERT INTO workspace_users (id,name,role,email) VALUES ('owner','Owner','Owner','owner@example.test');
+    INSERT INTO email_messages (id,owner_user_id,"from","to",subject,timestamp,raw_key,inbox_category)
+      VALUES ('social','owner','sender@example.test','owner@example.test','Hello','now','raw/social','social'),
+      ('automatic','owner','sender@example.test','owner@example.test','Hello','now','raw/auto',NULL);
+    INSERT INTO workspace_messages (id,user_id,folder,from_name,from_email,to_name,to_email,subject,preview,body,sent_at,labels_json,is_read,is_starred,created_at,updated_at,inbox_category)
+      VALUES ('forum','owner','inbox','Sender','sender@example.test','Owner','owner@example.test','','','','now','[]',0,0,'now','now','forums');
+    INSERT INTO mail_ai_analyses VALUES ('owner','inbound','social','hash','fake',2,'ready','{}','claim',0,1000,2000);`);
+  applyMigrations(db);
+  expect(db.query('SELECT id,inbox_category,inbox_category_v2,ai_inbox_category FROM email_messages ORDER BY id').all()).toEqual([
+    { id: 'automatic', inbox_category: null, inbox_category_v2: null, ai_inbox_category: null },
+    { id: 'social', inbox_category: 'social', inbox_category_v2: 'updates', ai_inbox_category: null }
+  ]);
+  expect(db.query('SELECT inbox_category,inbox_category_v2 FROM workspace_messages').get()).toEqual({ inbox_category: 'forums', inbox_category_v2: 'updates' });
+  expect(db.query('SELECT result_updated_at FROM mail_ai_analyses').get()).toEqual({ result_updated_at: 2000 });
+  expect(tableCount(db, 'mail_ai_jobs')).toBe(0);
+  db.close();
 });

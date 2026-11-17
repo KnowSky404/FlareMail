@@ -745,9 +745,9 @@ explicit operator actions.
 
 ## Optional mail AI
 
-`GET /api/workspace/messages/[id]/ai?language=zh-CN|en` reads an owner-scoped cache, never the model. Request `language` is the current interface context; the saved summary-language preference takes precedence. `POST` to the same path accepts only `{ "language": "en", "regenerate": false }` (JSON, at most 1024 bytes); `regenerate` is optional. URL, model, key and body overrides are rejected. Authentication, CSRF and no-store policies apply.
+`GET /api/workspace/messages/[id]/ai?language=zh-CN|en` reads an owner-scoped cache, never the model. Request `language` remains a validated legacy interface-context field; the saved preference controls output, with auto resolving to the saved workspace background language for all callers. `POST` to the same path accepts only `{ "language": "en", "regenerate": false }` (JSON, at most 1024 bytes); `regenerate` is optional. URL, model, key and body overrides are rejected. Authentication, CSRF and no-store policies apply.
 
-The standard envelope contains `{status, analysis, language?, truncated?, updatedAt?}`; status is `disabled`, `unconfigured`, `empty`, `processing` or `ready`. Analysis contains `summary`, `keyPoints`, `actionItems`, verbatim `dates`, `language`, and nullable `suggestion: {category, confidence, reason}`. Only the five existing categories are accepted. AI-confirmed category PATCH requests set `onlyIfAutomatic: true`; the database updates only a null category override, so concurrent manual edits win and the response returns their current summaries. `language` exposes the effective output-language code when present. No automatic mailbox mutations occur; user-confirmed application uses the existing category PATCH endpoint.
+The standard envelope contains `{status, analysis, language?, truncated?, updatedAt?, refreshing?, appliedCategory?}`; status is `disabled`, `unconfigured`, `empty`, `processing` or `ready`. Analysis contains `summary`, `keyPoints`, `actionItems`, verbatim `dates`, `language`, and nullable `suggestion: {category, confidence, reason}`. Categories are primary, transactions, security, updates, subscriptions and promotions. Retired social/forums filter and mutation IDs normalize to updates. AI-confirmed category PATCH requests set `onlyIfAutomatic: true`; the database updates only a null category override, so concurrent manual edits win and the response returns their current summaries. `language` exposes the effective output-language code when present. GET never mutates categories. When automatic classification is enabled, explicit POST analysis can save an automatic category and return appliedCategory; manual overrides are preserved atomically. The category PATCH endpoint records manual choices. updatedAt is the last successful generation time; refreshing indicates an in-flight replacement while a previous valid result is retained. Failed regeneration preserves that success.
 
 Only owned inbox messages are supported, including archived inbox sources. Trash, quarantine, blocked messages, sent mail and drafts cannot generate analyses. Claims expire after 60 seconds, with a 30-second cooldown and 30 attempts/hour per Owner. Body/model/endpoint/language/schema changes invalidate caches. Permanent deletion triggers cache cleanup. See [privacy, environment configuration and error codes](AI.md).
 
@@ -756,10 +756,9 @@ Only owned inbox messages are supported, including archived inbox sources. Trash
 `GET /api/workspace/ai/settings` returns `{settings, hasApiKey, canSave, revision, source}`.
 `settings` contains `enabled`, `baseUrl`, `model`, `apiFormat` (`chat-completions` or
 `responses`), `timeoutMs` (100–30000), `maxInputChars` (256–32000),
-`summaryLanguage` (`auto` or a canonical BCP 47 tag up to 64 characters), and
+`automaticClassification` (boolean, default false), `summaryLanguage` (`auto` or a canonical BCP 47 tag up to 64 characters), and
 `backgroundLanguage` (`zh-CN` or `en`). Missing legacy fields default to `auto`
-and `zh-CN`; clients omitting them on save preserve current preferences. Web auto
-uses request language; background auto uses the language saved with AI settings.
+and `zh-CN`; clients omitting them on save preserve current preferences. All auto callers use the language saved with AI settings. Classification opt-in is independent of Telegram and only queues newly arriving eligible mail; server-only consent tokens are never accepted from or exposed to clients.
 `PATCH` accepts those fields plus the latest `revision`, optional `apiKey` and
 optional `clearApiKey` (JSON, at most 12 KiB). Blank/omitted keys are retained;
 endpoint changes require key re-entry. Delete with `clearApiKey: true` while
@@ -771,7 +770,7 @@ return 409 `AI_SETTINGS_CONFLICT`; encryption setup errors return 503
 on the next analysis request. Existing encrypted settings override environment
 defaults. The language preferences reuse the existing settings JSON; Telegram
 automatic generation additionally requires migration 0031. See the
-[language and Telegram SPEC](specs/ai-language-and-telegram-summary.md).
+[summary and classification SPEC](specs/ai-summary-and-automatic-classification.md). Schema 32 is required; durable classification jobs, independent automatic/manual category fields and last-success times are added by migration 0032.
 
 AI provider URLs accept either an HTTPS base or a full `/responses` or `/chat/completions` URL. The selected API format determines the final method path; it is appended once. Stored URL values are preserved to retain encrypted-key bindings.
 

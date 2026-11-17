@@ -3,7 +3,7 @@ import { inboxCategoryRules } from '$lib/domain/mail/categories';
 const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 /** Inputs are trusted SQL column expressions, never request values. */
-export function inboxCategorySql(from: string, subject: string, override: string): string {
+export function inboxCategorySql(from: string, subject: string, override: string, automatic = 'NULL'): string {
   const sender = `lower(trim(CASE WHEN instr(${from}, '<') > 0 AND instr(${from}, '>') > instr(${from}, '<')
     THEN substr(${from}, instr(${from}, '<') + 1, instr(${from}, '>') - instr(${from}, '<') - 1) ELSE ${from} END))`;
   const rules = inboxCategoryRules.map((rule) => {
@@ -19,5 +19,5 @@ export function inboxCategorySql(from: string, subject: string, override: string
     ];
     return `WHEN (${predicates.join(' OR ')}) THEN ${literal(rule.category)}`;
   });
-  return `COALESCE(${override}, CASE ${rules.join(' ')} ELSE 'primary' END)`;
+  return `COALESCE(${override}, ${automatic}, CASE ${rules.join(' ')} ELSE 'primary' END)`;
 }

@@ -23,6 +23,7 @@ import { workspaceMailAi } from '$lib/server/workspace/ai';
 import { findUserById } from '$lib/server/db/users';
 import { mapUserRowToProfile, type WorkspaceContext } from '$lib/server/workspace/shared';
 import type { MailAiProvider } from '$lib/server/ai/provider';
+import { ApiError } from '$lib/server/http/api';
 
 export interface TelegramDispatchOptions {
   limit?: number;
@@ -96,6 +97,10 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
             profile: mapUserRowToProfile(user), incomingSequence: user.incoming_sequence, createdAt: '', updatedAt: '' };
           const messageId = toInboundMessageId(claimed.email_message_id);
           const cached = await workspaceMailAi(env, session, messageId, {});
+          if (cached.status === 'processing') {
+            await deferTelegramDelivery(env.DB, claimed.id, claimed.claim_token, isoAfter(5_000, (options.now ?? Date.now)()));
+            continue;
+          }
           if (cached.status === 'ready') aiSummary = cached.analysis?.summary;
           else if (claimed.ai_attempted === 0 && cached.status !== 'disabled' && cached.status !== 'unconfigured') {
             const remaining = budget - ((options.now ?? Date.now)() - started) - config.timeoutMs - 500;
@@ -114,7 +119,11 @@ export async function dispatchTelegramOutbox(env: CloudflareEnv, options: Telegr
             }
           }
         }
-      } catch {
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'AI_BUSY') {
+          await deferTelegramDelivery(env.DB, claimed.id, claimed.claim_token, isoAfter(5_000, (options.now ?? Date.now)()));
+          continue;
+        }
         // AI is optional: keep the ordinary snippet and the Telegram send policy.
       }
     }
