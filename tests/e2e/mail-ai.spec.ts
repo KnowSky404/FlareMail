@@ -41,6 +41,7 @@ for (const reader of ['workspace', 'standalone']) {
     await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
     await assertNoHorizontalOverflow(page); await assertNoConsoleErrors(consoleErrors);
     expect((await restore()).status()).toBe(200);
+    await page.unrouteAll({ behavior: 'wait' });
   });
 }
 
