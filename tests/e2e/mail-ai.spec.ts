@@ -5,6 +5,45 @@ import { test, expect, login, assertNoHorizontalOverflow, assertNoConsoleErrors 
 const title = 'AI 摘要与分类建议';
 const path = '/api/workspace/messages/e2e-inbox-message/ai';
 
+for (const reader of ['workspace', 'standalone']) {
+  test(`AI category confirmation retains the address boundary after reclassification (${reader})`, async ({ page, consoleErrors }) => {
+    let generated = false;
+    await page.route(`**${path}*`, async (route) => {
+      if (route.request().method() === 'POST') generated = true;
+      await route.fulfill({ json: { ok: true, data: generated ? { status: 'ready', appliedCategory: 'updates', analysis: {
+        summary: 'Synthetic reclassification', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN',
+        suggestion: { category: 'updates', confidence: 0.9, reason: 'Service update' }
+      } } : { status: 'empty', analysis: null }, requestId: 'fake-reclassification' } });
+    });
+    await page.route('**/api/workspace/messages/e2e-inbox-message', async (route) => {
+      const response = await route.fetch(); const body = await response.json();
+      if (generated && !body.data.message.inboxCategoryOverride) body.data.message.inboxCategory = 'updates';
+      await route.fulfill({ response, json: body });
+    });
+    await login(page);
+    const addressId = '00000000-0000-4000-8000-000000000021';
+    const restore = () => page.request.patch('/api/workspace/mailbox/categories', { headers: { origin: new URL(page.url()).origin },
+      data: { ids: ['e2e-inbox-message'], category: null, scope: { section: 'inbox', identityFilter: null, category: 'all' } } });
+    expect((await restore()).status()).toBe(200);
+    const query = `folder=inbox&category=primary&identity=address%3A${addressId}`;
+    await page.goto(reader === 'workspace' ? `/?${query}&message=e2e-inbox-message` : `/messages/e2e-inbox-message?${query}`, { waitUntil: 'domcontentloaded' });
+    const panel = page.getByRole('region', { name: title });
+    await panel.getByRole('button', { name: '同意并生成分析' }).click();
+    await expect(panel.getByText('Synthetic reclassification')).toBeVisible();
+    await expect(page).toHaveURL(/category=primary/u);
+    await panel.getByRole('button', { name: '分类建议', exact: true }).click();
+    const [request] = await Promise.all([
+      page.waitForRequest((request) => request.method() === 'PATCH' && request.url().endsWith('/api/workspace/mailbox/categories')),
+      panel.getByRole('button', { name: '确认应用此分类' }).click()
+    ]);
+    expect(request.postDataJSON()).toMatchObject({ ids: ['e2e-inbox-message'], onlyIfAutomatic: true,
+      scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } } });
+    await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+    await assertNoHorizontalOverflow(page); await assertNoConsoleErrors(consoleErrors);
+    expect((await restore()).status()).toBe(200);
+  });
+}
+
 test('AI accessible summary, explicit category application and cached refresh', async ({ page, consoleErrors }, info) => {
   let generations = 0;
   let cached = false;

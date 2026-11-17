@@ -1535,7 +1535,7 @@
     if (categoryPending || pending || activeSection !== 'inbox' || message.inboxCategoryOverride) throw new Error('Category unavailable');
     categoryPending = true;
     try {
-      const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory }, true);
+      const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: 'all' }, true);
       await refreshWorkspace(false);
       await refreshDeepLinkedMessage(message);
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
