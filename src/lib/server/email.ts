@@ -1,5 +1,6 @@
 import type { CloudflareEnv } from './cloudflare';
 import { MAX_RECIPIENTS, isValidMailboxEmail, parseAddressList, parseMessageIds, normalizeMessageId, normalizeThreadSubject, sanitizeFilename, serializeAddressJson, serializeAddressList } from '$lib/domain/mail';
+import { insertMailAiJobIfEligible } from '$lib/server/db/mail-ai-jobs';
 import { insertAttachment } from '$lib/server/db/attachments';
 import { insertBodyObject } from '$lib/server/db/body';
 import { isBlockedSender } from '$lib/server/db/blocked-senders';
@@ -372,16 +373,15 @@ export async function handleInboundEmail(
       nextAttemptAt: new Date().toISOString(),
       now: new Date().toISOString()
     }) : null;
-    const statements = telegramStatement ? [...coreStatements, telegramStatement] : coreStatements;
+    const aiStatement = ownerUserId && !quarantined ? insertMailAiJobIfEligible(env.DB, ownerUserId, storageId) : null;
+    const statements = [...coreStatements, ...(telegramStatement ? [telegramStatement] : []), ...(aiStatement ? [aiStatement] : [])];
     const d1StartedAt = Date.now();
     try {
       await env.DB.batch(statements);
     } catch (error) {
-      if (!telegramStatement) throw error;
-      // Telegram is additive. If its optional statement is unavailable or
-      // malformed on a partially upgraded database, retry only the core mail
-      // transaction so accepted mail and R2 remain durable.
-      safeLog('telegram_enqueue_failed', { correlationId, code: 'TELEGRAM_ENQUEUE_SKIPPED' });
+      if (!telegramStatement && !aiStatement) throw error;
+      // Optional notification/AI queues must not prevent durable mail ingestion.
+      safeLog('optional_mail_work_enqueue_failed', { correlationId, code: 'OPTIONAL_ENQUEUE_SKIPPED' });
       await env.DB.batch(coreStatements);
     }
     safeLog('inbound_phase', { correlationId, phase: 'd1_persist', bytes: raw.byteLength, attachments: attachmentRows.length, durationMs: Date.now() - d1StartedAt });

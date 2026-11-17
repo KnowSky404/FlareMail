@@ -1,14 +1,20 @@
 <script lang="ts">
-  import { Inbox, LayoutList, Megaphone, Users, Bell, MessagesSquare } from '@lucide/svelte';
+  import { Inbox, LayoutList, Megaphone, Receipt, Bell, ShieldCheck, Newspaper } from '@lucide/svelte';
   import type { InboxCategoryFilter } from '$lib/domain/mail';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let { category = 'all', onChange }: { category?: InboxCategoryFilter; onChange: (category: InboxCategoryFilter) => void } = $props();
   const { t } = useLocale();
+  let strip = $state<HTMLDivElement>();
+  $effect(() => {
+    category;
+    strip?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
   const categories = [
     { id: 'all', icon: LayoutList }, { id: 'primary', icon: Inbox },
-    { id: 'promotions', icon: Megaphone }, { id: 'social', icon: Users },
-    { id: 'updates', icon: Bell }, { id: 'forums', icon: MessagesSquare }
+    { id: 'transactions', icon: Receipt }, { id: 'security', icon: ShieldCheck },
+    { id: 'updates', icon: Bell }, { id: 'subscriptions', icon: Newspaper },
+    { id: 'promotions', icon: Megaphone }
   ] as const;
 
   function navigate(event: KeyboardEvent, index: number) {
@@ -24,7 +30,7 @@
   }
 </script>
 
-<div class="inbox-category-tabs" role="tablist" aria-label={t('mail.categories')} title={t('mail.category.hint')}>
+<div bind:this={strip} class="inbox-category-tabs" role="tablist" aria-label={t('mail.categories')} title={t('mail.category.hint')}>
   {#each categories as item, index (item.id)}
     <button id={`inbox-tab-${item.id}`} type="button" role="tab" aria-selected={category === item.id} aria-controls="inbox-category-panel"
       tabindex={category === item.id ? 0 : -1} onclick={() => onChange(item.id)} onkeydown={(event) => navigate(event, index)}>

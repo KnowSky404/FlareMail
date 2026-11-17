@@ -125,9 +125,9 @@ describe('inbox category query boundaries', () => {
   test('binds each cursor to the category that produced it', () => {
     const cursor = encodeMailboxCursor({
       folder: 'inbox', section: 'inbox', timestamp: '2026-09-01T12:00:00.000Z', id: 'message-1',
-      query: '', filter: 'all', deliveryStatus: null, category: 'social'
+      query: '', filter: 'all', deliveryStatus: null, category: 'updates'
     });
-    expect(parseMailboxQuery(new URLSearchParams({ category: 'social', cursor })).cursor?.category).toBe('social');
+    expect(parseMailboxQuery(new URLSearchParams({ category: 'updates', cursor })).cursor?.category).toBe('updates');
     expect(() => parseMailboxQuery(new URLSearchParams({ category: 'primary', cursor }))).toThrow();
     expect(() => parseMailboxQuery(new URLSearchParams({ cursor }))).toThrow();
     const legacyCursor = encodeMailboxCursor({
@@ -136,4 +136,10 @@ describe('inbox category query boundaries', () => {
     });
     expect(parseMailboxQuery(new URLSearchParams({ cursor: legacyCursor })).category).toBe('all');
   });
+});
+
+test('legacy inbox category parameters normalize before cursor and scope validation', () => {
+  for (const category of ['social', 'forums']) {
+    expect(parseMailboxQuery(new URLSearchParams({ category })).category).toBe('updates');
+  }
 });

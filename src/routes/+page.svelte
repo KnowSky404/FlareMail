@@ -6,6 +6,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
   import type { PageData } from './$types';
+  import { mailInboxCategories } from '$lib/domain/mail';
   import InboxCategoryTabs from '$lib/components/mail/InboxCategoryTabs.svelte';
   import FolderHeader from '$lib/components/mail/FolderHeader.svelte';
   import LoginView from '$lib/components/mail/LoginView.svelte';
@@ -254,7 +255,7 @@
   let mailFilter = $state<MailFilter>('all');
   let inboxCategory = $state<InboxCategoryFilter>('all');
   let categoryPending = $state(false);
-  const inboxCategories = ['primary', 'promotions', 'social', 'updates', 'forums'] as const;
+  const inboxCategories = mailInboxCategories;
   let mailIdentityFilter = $state<MailboxIdentityFilter | null>(null);
   let mailIdentityOptions = $state<WorkspaceSnapshot['mailIdentityOptions']>({ domains: [], addresses: [] });
   let mobileDetailOpen = $state(false);

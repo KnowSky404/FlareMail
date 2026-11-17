@@ -46,13 +46,13 @@ describe('mail AI persistence and ownership', () => {
     const f = setup();
     expect((await f.get()).status).toBe('empty'); expect(f.calls()).toBe(0);
     expect((await f.analyze()).status).toBe('ready');
-    expect((await f.get()).analysis?.summary).toBe('A meeting invitation.');
+    expect((await f.get()).analysis?.summary).toBe('会议邀请。');
     await f.analyze(); expect(f.calls()).toBe(1);
-    expect(f.sqlite.query('SELECT inbox_category FROM email_messages').get()).toEqual({ inbox_category: null });
-    f.sqlite.exec("UPDATE email_messages SET inbox_category = 'social'");
+    expect(f.sqlite.query('SELECT inbox_category_v2 FROM email_messages').get()).toEqual({ inbox_category_v2: null });
+    f.sqlite.exec("UPDATE email_messages SET inbox_category_v2 = 'updates'");
     f.cooldown(); await f.analyze(true);
     expect(f.calls()).toBe(2);
-    expect(f.sqlite.query('SELECT inbox_category FROM email_messages').get()).toEqual({ inbox_category: 'social' });
+    expect(f.sqlite.query('SELECT inbox_category_v2 FROM email_messages').get()).toEqual({ inbox_category_v2: 'updates' });
   });
   test('configuration missing or disabled makes no external request', async () => {
     const f = setup();
@@ -79,7 +79,7 @@ describe('mail AI persistence and ownership', () => {
     f.cooldown(); await f.analyze();
     f.env.AI_MODEL = 'new-model'; expect((await f.get()).analysis).toBeNull();
     f.cooldown(); await f.analyze();
-    expect((await workspaceMailAi(f.env, session(), 'email:mail', { language: 'zh-CN' }, f.provider)).analysis).toBeNull();
+    expect((await workspaceMailAi(f.env, session(), 'email:mail', { language: 'zh-CN' }, f.provider)).status).toBe('ready');
     f.sqlite.query('UPDATE email_messages SET text_body = ?').run('November 12. ' + 'a'.repeat(20000));
     expect((await f.get()).analysis).toBeNull(); f.cooldown(); await f.analyze();
     f.sqlite.query('UPDATE email_messages SET text_body = text_body || ?').run('tail changed');
@@ -162,7 +162,7 @@ test('workspace inbox analyses retain identity, reject sent/drafts, and retain a
   expect((await analyze()).status).toBe('ready');
   f.sqlite.exec("UPDATE workspace_messages SET archived_at = 'now'");
   await analyze(); expect(f.calls()).toBe(1);
-  expect(f.sqlite.query('SELECT from_email, to_email, inbox_category FROM workspace_messages').get()).toEqual({ from_email: 'sender@example.test', to_email: 'owner@example.test', inbox_category: null });
+  expect(f.sqlite.query('SELECT from_email, to_email, inbox_category_v2 FROM workspace_messages').get()).toEqual({ from_email: 'sender@example.test', to_email: 'owner@example.test', inbox_category_v2: null });
   f.sqlite.exec("UPDATE workspace_messages SET folder = 'sent', archived_at = NULL");
   await expect(analyze()).rejects.toMatchObject({ code: 'AI_MESSAGE_UNSUPPORTED' });
   await expect(workspaceMailAi(f.env, session(), 'missing-draft', { language: 'en', analyze: true }, f.provider)).rejects.toMatchObject({ status: 404 });
@@ -238,14 +238,14 @@ test('saved custom language overrides browser context and shares cache with back
   expect(f.calls()).toBe(1);
 });
 
-test('automatic language follows web context, then saved background context, and invalidates only the resolved cache', async () => {
+test('automatic language shares the saved workspace language across browser and background requests', async () => {
   const f = setup(); await saveLanguages(f.env, 'auto', 'en');
   await f.analyze();
   expect(await workspaceMailAi(f.env, session(), 'email:mail', {}, f.provider)).toMatchObject({ status: 'ready', language: 'en' });
-  expect(await workspaceMailAi(f.env, session(), 'email:mail', { language: 'zh-CN' }, f.provider)).toMatchObject({ status: 'empty', language: 'zh-CN' });
+  expect(await workspaceMailAi(f.env, session(), 'email:mail', { language: 'zh-CN' }, f.provider)).toMatchObject({ status: 'ready', language: 'en' });
   await saveLanguages(f.env, 'auto', 'zh-CN');
   expect(await workspaceMailAi(f.env, session(), 'email:mail', {}, f.provider)).toMatchObject({ status: 'empty', language: 'zh-CN' });
-  expect(await f.get()).toMatchObject({ status: 'ready', language: 'en' });
+  expect(await f.get()).toMatchObject({ status: 'empty', language: 'zh-CN' });
   expect(f.calls()).toBe(1);
 });
 
@@ -301,8 +301,7 @@ test('a background language change during generation is checked using the actual
         return analysis;
       }
     });
-    if (webContext) expect(await pending).toMatchObject({ status: 'ready', language: 'en' });
-    else await expect(pending).rejects.toMatchObject({ code: 'AI_SETTINGS_CHANGED' });
+    await expect(pending).rejects.toMatchObject({ code: 'AI_SETTINGS_CHANGED' });
   }
 });
 
@@ -376,7 +375,7 @@ test.each([false, true])('immediate rate-limit handling preserves manual retry a
       return Response.json({ error: { code: 'rate_limit_exceeded' } }, { status: 429, headers: { 'retry-after': '0' } });
     }
     return Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
-      summary: 'A meeting invitation.', keyPoints: [], actionItems: [], dates: [], language: 'en', suggestion: null
+      summary: 'A meeting invitation.', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN', suggestion: null
     }) } }] });
   }) as unknown as typeof fetch;
   try {
@@ -393,4 +392,38 @@ test.each([false, true])('immediate rate-limit handling preserves manual retry a
       expect(calls).toBe(2); expect(checks).toBe(0);
     }
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('failed regeneration preserves the last valid success and its timestamp across reads', async () => {
+  const f = setup(); const first = await f.analyze(); f.cooldown();
+  await expect(workspaceMailAi(f.env, session(), 'email:mail', { analyze: true, regenerate: true }, {
+    analyze: async () => { throw new Error('synthetic failure'); }
+  })).rejects.toThrow('synthetic failure');
+  const cached = await f.get();
+  expect(cached.analysis).toEqual(first.analysis);
+  expect(cached.updatedAt).toBe(first.updatedAt);
+  expect(cached.status).toBe('ready');
+  expect(f.calls()).toBe(1);
+});
+
+test('a failed analysis for a changed model cannot expose an obsolete success under the new fingerprint', async () => {
+  const f = setup(); await f.analyze(); f.cooldown(); f.env.AI_MODEL = 'replacement-model';
+  await expect(workspaceMailAi(f.env, session(), 'email:mail', { analyze: true }, {
+    analyze: async () => { throw new Error('synthetic new-model failure'); }
+  })).rejects.toThrow('synthetic new-model failure');
+  expect(await f.get()).toMatchObject({ status: 'empty', analysis: null });
+});
+
+test('a pending regeneration keeps the previous success readable and reports its processing state', async () => {
+  const f = setup(); const first = await f.analyze(); f.cooldown();
+  let enter!: () => void; let release!: () => void;
+  const entered = new Promise<void>((resolve) => enter = resolve);
+  const gate = new Promise<void>((resolve) => release = resolve);
+  const pending = workspaceMailAi(f.env, session(), 'email:mail', { analyze: true, regenerate: true }, {
+    analyze: async (input) => { enter(); await gate; return { ...await f.provider.analyze(input), summary: 'Updated summary' }; }
+  });
+  await entered;
+  expect(await f.get()).toMatchObject({ status: 'ready', refreshing: true, analysis: first.analysis, updatedAt: first.updatedAt });
+  release();
+  expect(await pending).toMatchObject({ status: 'ready', analysis: { summary: 'Updated summary' } });
 });

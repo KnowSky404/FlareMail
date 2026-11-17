@@ -3,7 +3,7 @@ import { MAIL_AI_VERSION, type MailAiAnalysis, type MailAiInput } from '$lib/dom
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { readBodyObject } from '$lib/server/body';
 import { findBodyObject } from '$lib/server/db/body';
-import { claimMailAi, consumeMailAiQuota, finishMailAi, readMailAi, type MailAiKey } from '$lib/server/db/mail-ai';
+import { applyMailAiCategory, claimMailAi, consumeMailAiQuota, finishMailAi, readMailAi, type MailAiKey } from '$lib/server/db/mail-ai';
 import { resolveWorkspaceMailAiConfiguration } from '$lib/server/ai/settings';
 import { mailAiFingerprint, prepareMailAiInput } from '$lib/server/ai/input';
 import { createMailAiProvider, validateMailAiAnalysis, type MailAiProvider } from '$lib/server/ai/provider';
@@ -58,7 +58,7 @@ export async function workspaceMailAi(
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1)) throw new ApiError(400, 'AI_INVALID_REQUEST', 'Invalid analysis time budget.');
   const deadline = options.timeoutMs === undefined ? null : Date.now() + options.timeoutMs;
   const configuration = await resolveWorkspaceMailAiConfiguration(env, session.userId);
-  const language = configuration.summaryLanguage === 'auto' ? options.language ?? configuration.backgroundLanguage : configuration.summaryLanguage;
+  const language = configuration.summaryLanguage === 'auto' ? configuration.backgroundLanguage : configuration.summaryLanguage;
   if (!configuration.config) {
     await readEligibleMessage(env, session, id);
     return { status: configuration.status, analysis: null, language };
@@ -67,7 +67,7 @@ export async function workspaceMailAi(
   const config = { ...configuration.config, timeoutMs: Math.min(configuration.config.timeoutMs, options.timeoutMs ?? configuration.config.timeoutMs) };
   async function requireCurrentConfiguration() {
     const latest = await resolveWorkspaceMailAiConfiguration(env, session.userId);
-    const latestLanguage = latest.summaryLanguage === 'auto' ? options.language ?? latest.backgroundLanguage : latest.summaryLanguage;
+    const latestLanguage = latest.summaryLanguage === 'auto' ? latest.backgroundLanguage : latest.summaryLanguage;
     if (!latest.config || latestLanguage !== language || latest.config.model !== config.model ||
       latest.config.baseUrl !== config.baseUrl || latest.config.apiFormat !== config.apiFormat || latest.config.maxInputChars !== config.maxInputChars) {
       throw new ApiError(409, 'AI_SETTINGS_CHANGED', 'AI settings changed. Please retry.');
@@ -75,12 +75,18 @@ export async function workspaceMailAi(
   }
   const { key, input, contentHash } = loaded;
   const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, `${config.baseUrl}#${config.apiFormat}`, MAIL_AI_VERSION);
+  async function applyCategory(analysis: MailAiAnalysis) {
+    if (options.analyze && !options.beforeAnalyze && configuration.automaticClassification && configuration.classificationConsent && analysis.suggestion) {
+      return applyMailAiCategory(env.DB, key, analysis.suggestion.category, configuration.classificationConsent);
+    }
+  }
   const cached = await readMailAi(env.DB, key);
-  if (cached?.fingerprint === fingerprint && cached.status === 'ready' && cached.result_json && !options.regenerate) {
+  if (cached?.fingerprint === fingerprint && cached.result_json && !options.regenerate) {
     let analysis: MailAiAnalysis;
     try { analysis = validateMailAiAnalysis(JSON.parse(cached.result_json), input); }
     catch { throw new ApiError(409, 'AI_CACHE_INVALID', 'Saved analysis is invalid. Regenerate it.'); }
-    return { status: 'ready', analysis, language, truncated: input.truncated, updatedAt: cached.updated_at };
+    return { status: 'ready', analysis, language, truncated: input.truncated, updatedAt: cached.result_updated_at,
+      appliedCategory: await applyCategory(analysis), refreshing: cached.status === 'processing' && cached.lease_until > Date.now() };
   }
   if (!options.analyze) return { status: cached?.status === 'processing' && cached.lease_until > Date.now() ? 'processing' : 'empty', analysis: null, language };
   if (!input.body.trim()) throw new ApiError(422, 'AI_BODY_EMPTY', 'This message has no readable text.');
@@ -101,9 +107,10 @@ export async function workspaceMailAi(
     const current = await loadInput(env, session, id, language, config.maxInputChars);
     if (current.contentHash !== contentHash) throw new ApiError(409, 'AI_CONTENT_CHANGED', 'The message changed. Please retry.');
     await requireCurrentConfiguration();
-    const completed = await finishMailAi(env.DB, key, token, JSON.stringify(analysis));
+    const updatedAt = Date.now();
+    const completed = await finishMailAi(env.DB, key, token, JSON.stringify(analysis), updatedAt);
     if (!completed.meta.changes) throw new ApiError(409, 'AI_CLAIM_LOST', 'Analysis expired. Please retry.');
-    return { status: 'ready', analysis, language, truncated: input.truncated, updatedAt: Date.now() };
+    return { status: 'ready', analysis, language, truncated: input.truncated, updatedAt, appliedCategory: await applyCategory(analysis) };
   } catch (error) {
     await finishMailAi(env.DB, key, token, null);
     throw error;

@@ -7,7 +7,7 @@
   const i18n = useLocale();
   const { t } = i18n;
   let response = $state<MailAiSettingsView | null>(null);
-  let settings = $state<MailAiSettings>({ enabled: false, apiFormat: 'chat-completions', baseUrl: '', model: '', timeoutMs: 15000, maxInputChars: 16000, summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' });
+  let settings = $state<MailAiSettings>({ enabled: false, apiFormat: 'chat-completions', baseUrl: '', model: '', timeoutMs: 15000, maxInputChars: 16000, automaticClassification: false, summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' });
   let apiKey = $state('');
   let clearApiKey = $state(false);
   let loading = $state(false);
@@ -57,6 +57,8 @@
       {#if !response.canSave}<p role="status" class="text-sm">{t('aiSettings.unavailable')}</p>{/if}
       <form class="space-y-4" onsubmit={save}>
         <Switch id="ai-settings-enabled" label={t('aiSettings.enabled')} checked={settings.enabled} disabled={!response.canSave || saving} onchange={(checked) => settings.enabled = checked} />
+        <Switch id="ai-settings-classification" label={t('aiSettings.automaticClassification')} checked={settings.automaticClassification} disabled={!response.canSave || saving || !settings.enabled} onchange={(checked) => settings.automaticClassification = checked} />
+        <p class="text-xs text-[var(--fm-text-muted)]">{t('aiSettings.classificationConsent')}</p>
         <div class="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
           <TextField id="ai-settings-base" label={t('aiSettings.baseUrl')} type="url" value={settings.baseUrl} placeholder="https://api.openai.com/v1" maxlength={2048} disabled={saving || !response.canSave} hint={t('aiSettings.endpointHint')} oninput={(event) => settings.baseUrl = event.currentTarget.value} />
           <TextField id="ai-settings-model" label={t('aiSettings.model')} value={settings.model} maxlength={128} disabled={saving || !response.canSave} oninput={(event) => settings.model = event.currentTarget.value} />

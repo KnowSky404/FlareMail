@@ -71,12 +71,12 @@ describe('inbox category API', () => {
 
   test('updates the selected inbox message and can restore automatic classification', async () => {
     const { db, env } = fixture();
-    const response = await PATCH(event(env, { ids: ['email:inbound-a'], category: 'social', scope }));
+    const response = await PATCH(event(env, { ids: ['email:inbound-a'], category: 'updates', scope }));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ data: {
-      summaries: [{ id: 'email:inbound-a', inboxCategory: 'social', inboxCategoryOverride: 'social' }], scope
+      summaries: [{ id: 'email:inbound-a', inboxCategory: 'updates', inboxCategoryOverride: 'updates' }], scope
     } });
-    expect(db.query(`SELECT inbox_category FROM email_messages WHERE id = 'inbound-b'`).get()).toEqual({ inbox_category: null });
+    expect(db.query(`SELECT inbox_category_v2 FROM email_messages WHERE id = 'inbound-b'`).get()).toEqual({ inbox_category_v2: null });
     const restored = await PATCH(event(env, { ids: ['email:inbound-a'], category: null, scope }));
     expect(restored.status).toBe(200);
     expect(await restored.json()).toMatchObject({ data: {
@@ -95,14 +95,14 @@ describe('inbox category API', () => {
       { ids: Array.from({ length: 101 }, (_, index) => `email:${index}`), category: 'primary', scope },
       { ids: [123], category: 'primary', scope }
     ]) expect((await PATCH(event(env, body))).status).toBe(400);
-    expect(db.query(`SELECT COUNT(*) AS count FROM email_messages WHERE inbox_category IS NOT NULL`).get()).toEqual({ count: 0 });
+    expect(db.query(`SELECT COUNT(*) AS count FROM email_messages WHERE inbox_category_v2 IS NOT NULL`).get()).toEqual({ count: 0 });
   });
 
   test('rejects a mixed out-of-address selection without a partial update', async () => {
     const { db, env } = fixture();
     const response = await PATCH(event(env, { ids: ['email:inbound-a', 'email:inbound-b'], category: 'primary', scope }));
     expect(response.status).toBe(404);
-    expect(db.query(`SELECT COUNT(*) AS count FROM email_messages WHERE inbox_category IS NOT NULL`).get()).toEqual({ count: 0 });
+    expect(db.query(`SELECT COUNT(*) AS count FROM email_messages WHERE inbox_category_v2 IS NOT NULL`).get()).toEqual({ count: 0 });
   });
 
   test('requires an authenticated workspace session', async () => {
@@ -120,21 +120,30 @@ test('AI conditional category application preserves concurrent manual edits for 
   const scope = { section: 'inbox', identityFilter: null, category: 'all' };
   const batch = env.DB.batch.bind(env.DB);
   env.DB.batch = async (statements) => {
-    db.exec("UPDATE email_messages SET inbox_category = 'social'; UPDATE workspace_messages SET inbox_category = 'forums'");
+    db.exec("UPDATE email_messages SET inbox_category_v2 = 'updates'; UPDATE workspace_messages SET inbox_category_v2 = 'updates'");
     return batch(statements);
   };
   const response = await PATCH(event(env, { ids: ['email:inbound-a', 'workspace'], category: 'updates', onlyIfAutomatic: true, scope }));
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ data: { summaries: expect.arrayContaining([
-    expect.objectContaining({ id: 'email:inbound-a', inboxCategoryOverride: 'social' }),
-    expect.objectContaining({ id: 'workspace', inboxCategoryOverride: 'forums' })
+    expect.objectContaining({ id: 'email:inbound-a', inboxCategoryOverride: 'updates' }),
+    expect.objectContaining({ id: 'workspace', inboxCategoryOverride: 'updates' })
   ]) } });
   env.DB.batch = batch;
-  db.exec('UPDATE email_messages SET inbox_category = NULL; UPDATE workspace_messages SET inbox_category = NULL');
+  db.exec('UPDATE email_messages SET inbox_category_v2 = NULL; UPDATE workspace_messages SET inbox_category_v2 = NULL');
   const applied = await PATCH(event(env, { ids: ['email:inbound-a', 'workspace'], category: 'updates', onlyIfAutomatic: true, scope }));
   expect(await applied.json()).toMatchObject({ data: { summaries: expect.arrayContaining([
     expect.objectContaining({ id: 'email:inbound-a', inboxCategoryOverride: 'updates' }),
     expect.objectContaining({ id: 'workspace', inboxCategoryOverride: 'updates' })
   ]) } });
   expect((await PATCH(event(env, { ids: ['workspace'], category: 'updates', onlyIfAutomatic: 'yes', scope }))).status).toBe(400);
+});
+
+test.each(['transactions', 'security', 'subscriptions', 'social', 'forums'])('category PATCH accepts %s and reports a canonical manual choice', async (category) => {
+  const { env } = fixture();
+  const response = await PATCH(event(env, { ids: ['email:inbound-a'], category,
+    scope: { section: 'inbox', identityFilter: null, category: 'all' } }));
+  expect(response.status).toBe(200);
+  const expected = category === 'social' || category === 'forums' ? 'updates' : category;
+  expect(await response.json()).toMatchObject({ data: { summaries: [{ id: 'email:inbound-a', inboxCategory: expected, inboxCategoryOverride: expected }] } });
 });

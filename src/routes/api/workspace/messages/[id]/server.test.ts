@@ -88,10 +88,10 @@ test('returns body-free workspace inbox/sent metadata for deep links and preserv
   const { db, env } = fixture();
   db.query(`INSERT INTO workspace_messages
     (id, user_id, folder, from_name, from_email, to_name, to_email, subject, preview, body, sent_at,
-      labels_json, sender_address_id, recipient_address_id, inbox_category)
+      labels_json, sender_address_id, recipient_address_id, inbox_category_v2)
     VALUES ('workspace-deep', 'user-1', 'inbox', 'Sender', 'sender@example.test', 'Owner', 'owner@example.test',
       'Deep workspace target', 'Preview', 'canonical private body must not be included', '2026-09-09T12:00:00.000Z',
-      '[]', NULL, 'address-owner', 'forums'),
+      '[]', NULL, 'address-owner', 'updates'),
       ('workspace-sent', 'user-1', 'sent', 'Owner', 'owner@example.test', 'Reader', 'reader@example.test',
       'Sent target', 'Sent preview', 'private sent body', '2026-09-09T13:00:00.000Z',
       '[]', 'address-sender', NULL, NULL)`).run();
@@ -100,7 +100,7 @@ test('returns body-free workspace inbox/sent metadata for deep links and preserv
   const inboxPayload = await inbox.json();
   expect(inboxPayload).toMatchObject({ data: { message: {
     id: 'workspace-deep', source: 'workspace', folder: 'inbox', body: '',
-    fromEmail: 'sender@example.test', recipientAddressId: 'address-owner', inboxCategory: 'forums', inboxCategoryOverride: 'forums'
+    fromEmail: 'sender@example.test', recipientAddressId: 'address-owner', inboxCategory: 'updates', inboxCategoryOverride: 'updates'
   } } });
   expect(JSON.stringify(inboxPayload)).not.toContain('canonical private body');
   const sent = await GET(event(env, 'user-1', 'workspace-sent'));
@@ -131,7 +131,7 @@ describe('mailbox metrics and partial flags API', () => {
       INSERT INTO mail_addresses (id, owner_user_id, domain_id, email, local_part)
       VALUES ('address-owner', 'user-1', 'domain-owner', 'mail@owner.test', 'mail'),
         ('address-other', 'user-2', 'domain-other', 'mail@other.test', 'mail');
-      UPDATE email_messages SET mail_address_id = 'address-owner', mail_domain_id = 'domain-owner', inbox_category = 'updates';`);
+      UPDATE email_messages SET mail_address_id = 'address-owner', mail_domain_id = 'domain-owner', inbox_category_v2 = 'updates';`);
   }
   function apiEvent(env: { DB: D1 }, path: string, body?: unknown, authenticated = true) {
     const value = event(env, 'user-1', 'email:email-deep') as unknown as Record<string, unknown>;

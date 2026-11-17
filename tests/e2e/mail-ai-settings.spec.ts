@@ -4,10 +4,10 @@ import { test, expect, login, assertNoHorizontalOverflow, assertNoConsoleErrors 
 import type { MailAiSettingsView } from '../../src/lib/domain/mail/ai';
 
 test('AI settings accessible Owner form saves both API formats, keeps secrets blank and persists configuration', async ({ page, consoleErrors }, info) => {
-  let state: MailAiSettingsView = { settings: { enabled: false, baseUrl: '', model: '', apiFormat: 'chat-completions', timeoutMs: 15000, maxInputChars: 16000, summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' }, hasApiKey: false, canSave: true, revision: '', source: 'server' };
+  let state: MailAiSettingsView = { settings: { enabled: false, baseUrl: '', model: '', apiFormat: 'chat-completions', timeoutMs: 15000, maxInputChars: 16000, automaticClassification: false, summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' }, hasApiKey: false, canSave: true, revision: '', source: 'server' };
   let saves = 0;
   let analysisCalls = 0;
-  await page.route('**/api/workspace/messages/*/ai*', async (route) => { analysisCalls++; await route.abort(); });
+  await page.route('**/api/workspace/messages/*/ai*', async (route) => { if (route.request().method() === 'POST') analysisCalls++; await route.fulfill({ json: { ok: true, data: { status: 'disabled', analysis: null } } }); });
   await page.route('**/api/workspace/ai/settings', async (route) => {
     if (route.request().method() === 'PATCH') {
       const body = route.request().postDataJSON();
@@ -17,7 +17,7 @@ test('AI settings accessible Owner form saves both API formats, keeps secrets bl
       if (saves === 0) expect(body.apiKey).toBe('synthetic-provider-key');
       else expect(body.apiKey).toBeUndefined();
       saves++;
-      state = { settings: { enabled: body.enabled, baseUrl: body.baseUrl, model: body.model, apiFormat: body.apiFormat, timeoutMs: body.timeoutMs, maxInputChars: body.maxInputChars, summaryLanguage: body.summaryLanguage, backgroundLanguage: body.backgroundLanguage }, hasApiKey: body.clearApiKey ? false : Boolean(body.apiKey) || state.hasApiKey, canSave: true, revision: String(saves), source: 'workspace' };
+      state = { settings: { enabled: body.enabled, baseUrl: body.baseUrl, model: body.model, apiFormat: body.apiFormat, timeoutMs: body.timeoutMs, maxInputChars: body.maxInputChars, automaticClassification: body.automaticClassification, summaryLanguage: body.summaryLanguage, backgroundLanguage: body.backgroundLanguage }, hasApiKey: body.clearApiKey ? false : Boolean(body.apiKey) || state.hasApiKey, canSave: true, revision: String(saves), source: 'workspace' };
     }
     await route.fulfill({ json: { ok: true, data: state, requestId: 'ai-settings-fixture' } });
   });
@@ -37,11 +37,14 @@ test('AI settings accessible Owner form saves both API formats, keeps secrets bl
   await panel.getByRole('combobox', { name: '接口格式', exact: true }).selectOption('responses');
   await panel.getByLabel(/^API Key/u).fill('synthetic-provider-key');
   await panel.getByRole('switch', { name: '启用 AI 邮件辅助', exact: true }).click();
+  await panel.getByRole('switch', { name: '自动分类新邮件', exact: true }).click();
   await panel.getByRole('button', { name: '保存', exact: true }).click();
   await expect(panel.getByRole('status')).toContainText('已保存');
   await expect(panel.getByLabel(/^API Key/u)).toHaveValue('');
   await expect(panel.getByText('已配置 Key', { exact: false })).toBeVisible();
   expect(saves).toBe(1); expect(analysisCalls).toBe(0);
+  expect(state.settings.automaticClassification).toBe(true);
+  await expect(panel.getByRole('switch', { name: '自动分类新邮件', exact: true })).toHaveAttribute('aria-checked', 'true');
   await expect(panel.getByRole('textbox', { name: /^语言代码/u })).toHaveValue('zh-TW');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(panel.getByLabel('模型名称')).toHaveValue('fixture-model');
@@ -71,7 +74,7 @@ test('AI settings fail closed until one-time encryption initialization', async (
   let writes = 0;
   await page.route('**/api/workspace/ai/settings', async (route) => {
     if (route.request().method() !== 'GET') writes++;
-    await route.fulfill({ json: { ok: true, data: { settings: { enabled: false, baseUrl: '', model: '', apiFormat: 'chat-completions', timeoutMs: 15000, maxInputChars: 16000, summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' }, hasApiKey: false, canSave: false, revision: '', source: 'server' }, requestId: 'ai-settings-fixture' } });
+    await route.fulfill({ json: { ok: true, data: { settings: { enabled: false, baseUrl: '', model: '', apiFormat: 'chat-completions', timeoutMs: 15000, maxInputChars: 16000, automaticClassification: false, summaryLanguage: 'auto', backgroundLanguage: 'zh-CN' }, hasApiKey: false, canSave: false, revision: '', source: 'server' }, requestId: 'ai-settings-fixture' } });
   });
   await login(page); await page.goto('/?folder=settings&tab=ai', { waitUntil: 'domcontentloaded' });
   const panel = page.getByRole('tabpanel', { name: 'AI 设置', exact: true });
@@ -142,7 +145,7 @@ test('AI settings persist the effective interface language for background follow
       backgroundLanguage = body.backgroundLanguage; saves++;
     }
     await route.fulfill({ json: { ok: true, data: {
-      settings: { enabled: false, baseUrl: '', model: '', apiFormat: 'chat-completions', timeoutMs: 15000, maxInputChars: 16000, summaryLanguage: 'auto', backgroundLanguage },
+      settings: { enabled: false, baseUrl: '', model: '', apiFormat: 'chat-completions', timeoutMs: 15000, maxInputChars: 16000, automaticClassification: false, summaryLanguage: 'auto', backgroundLanguage },
       hasApiKey: false, canSave: true, revision: String(saves), source: 'workspace'
     } } });
   });

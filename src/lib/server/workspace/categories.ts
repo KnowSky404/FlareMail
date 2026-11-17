@@ -2,6 +2,7 @@ import {
   fromInboundMessageId,
   isInboxCategoryFilter,
   isInboundMessageId,
+  normalizeInboxCategory,
   isMailInboxCategory,
   resolveInboxCategory,
   type MailboxCategoryMutationRequest,
@@ -19,6 +20,10 @@ export async function changeMailboxCategories(
   workspace: WorkspaceContext,
   input: MailboxCategoryMutationRequest
 ): Promise<MailboxCategoryMutationResult> {
+  if (input && typeof input === 'object') {
+    input = { ...input, category: normalizeInboxCategory(input.category) as typeof input.category,
+      ...(input.scope ? { scope: { ...input.scope, category: normalizeInboxCategory(input.scope.category) as typeof input.scope.category } } : {}) };
+  }
   if (input?.onlyIfAutomatic !== undefined && typeof input.onlyIfAutomatic !== 'boolean') {
     throw new ApiError(400, 'INVALID_INBOX_CATEGORY', 'Invalid category condition.');
   }
@@ -64,13 +69,13 @@ export async function changeMailboxCategories(
       const placeholders = chunk.map(() => '?').join(', ');
       if (source === 'workspace') {
         const clause = workspaceScopeSql('m', scope);
-        statements.push(env.DB.prepare(`UPDATE workspace_messages AS m SET inbox_category = ?, updated_at = ?
-          WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.id IN (${placeholders})${clause.sql}${input.onlyIfAutomatic ? ' AND m.inbox_category IS NULL' : ''}`)
+        statements.push(env.DB.prepare(`UPDATE workspace_messages AS m SET inbox_category_v2 = ?, updated_at = ?
+          WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.id IN (${placeholders})${clause.sql}${input.onlyIfAutomatic ? ' AND m.inbox_category_v2 IS NULL' : ''}`)
           .bind(input.category, timestamp, workspace.userId, ...chunk, ...clause.bindings));
       } else {
         const clause = inboundScopeSql('e', 'state', scope);
-        statements.push(env.DB.prepare(`UPDATE email_messages SET inbox_category = ?
-          WHERE owner_user_id = ?${input.onlyIfAutomatic ? ' AND inbox_category IS NULL' : ''} AND id IN (
+        statements.push(env.DB.prepare(`UPDATE email_messages SET inbox_category_v2 = ?
+          WHERE owner_user_id = ?${input.onlyIfAutomatic ? ' AND inbox_category_v2 IS NULL' : ''} AND id IN (
             SELECT e.id FROM email_messages AS e
             LEFT JOIN workspace_email_states AS state ON state.user_id = e.owner_user_id AND state.email_message_id = e.id
             WHERE e.owner_user_id = ? AND state.deleted_at IS NULL AND e.id IN (${placeholders})${clause.sql}
@@ -85,18 +90,18 @@ export async function changeMailboxCategories(
   for (const [source, selectedIds] of [['workspace', workspaceIds], ['inbound', inboundIds]] as const) {
     if (!selectedIds.length) continue;
     const sql = source === 'workspace'
-      ? `SELECT id, from_email AS sender, subject, inbox_category FROM workspace_messages WHERE user_id = ?`
-      : `SELECT 'email:' || id AS id, "from" AS sender, subject, inbox_category FROM email_messages WHERE owner_user_id = ?`;
+      ? `SELECT id, from_email AS sender, subject, inbox_category_v2, ai_inbox_category FROM workspace_messages WHERE user_id = ?`
+      : `SELECT 'email:' || id AS id, "from" AS sender, subject, inbox_category_v2, ai_inbox_category FROM email_messages WHERE owner_user_id = ?`;
     for (let index = 0; index < selectedIds.length; index += 80) {
       const chunk = selectedIds.slice(index, index + 80);
       const rows = await env.DB.prepare(`${sql} AND id IN (${chunk.map(() => '?').join(', ')})`)
         .bind(workspace.userId, ...chunk).all<{
-          id: string; sender: string; subject: string; inbox_category: typeof input.category;
+          id: string; sender: string; subject: string; inbox_category_v2: typeof input.category; ai_inbox_category: typeof input.category;
         }>();
       summaries.push(...(rows.results ?? []).map((row) => ({
         id: row.id,
-        inboxCategory: resolveInboxCategory(row.sender, row.subject, row.inbox_category),
-        inboxCategoryOverride: row.inbox_category
+        inboxCategory: resolveInboxCategory(row.sender, row.subject, row.inbox_category_v2, row.ai_inbox_category),
+        inboxCategoryOverride: row.inbox_category_v2
       })));
     }
   }

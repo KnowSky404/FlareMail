@@ -1,3 +1,4 @@
+import { isInboxCategoryFilter, normalizeInboxCategory } from '$lib/domain/mail';
 import { readSettingsTab, type SettingsTab } from './settings-tabs';
 import type { MailboxIdentityFilter, MailboxSection, InboxCategoryFilter } from '$lib/domain/mail';
 import type { MailFilter, WorkspaceSection } from './mailbox-controller';
@@ -41,7 +42,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
   const folder = url.searchParams.get('folder');
   const section = folder === 'sent' || folder === 'drafts' || folder === 'archive' || folder === 'starred' || folder === 'label' || folder === 'trash' ? folder : folder === 'settings' ? 'profile' : 'inbox';
   const filter = url.searchParams.get('filter');
-  const category = url.searchParams.get('category');
+  const category = normalizeInboxCategory(url.searchParams.get('category'));
   const view = url.searchParams.get('view');
   const managementDomainId = url.searchParams.get('domain');
   const identity = url.searchParams.get('identity');
@@ -54,7 +55,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
       ? managementDomainId : null,
     query: section === 'trash' || section === 'profile' ? '' : url.searchParams.get('q')?.slice(0, 200) ?? '',
     filter: section !== 'trash' && section !== 'profile' && (filter === 'unread' || filter === 'starred') ? filter : 'all',
-    category: section === 'inbox' && ['primary', 'promotions', 'social', 'updates', 'forums'].includes(category ?? '') ? category as InboxCategoryFilter : 'all',
+    category: section === 'inbox' && isInboxCategoryFilter(category) ? category : 'all',
     identityFilter: section !== 'trash' && section !== 'profile' && identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
     messageId: section === 'profile' ? null : url.searchParams.get('message'),
     labelId: section === 'label' && /^[A-Za-z0-9:._-]{1,128}$/u.test(url.searchParams.get('label') ?? '') ? url.searchParams.get('label') : null

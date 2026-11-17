@@ -4,10 +4,10 @@ export interface MailAiKey { owner: string; kind: 'inbound' | 'workspace'; id: s
 export interface MailAiRow {
   fingerprint: string; model: string; schema_version: number;
   status: 'processing' | 'ready' | 'failed'; result_json: string | null;
-  lease_until: number; created_at: number; updated_at: number;
+  lease_until: number; created_at: number; updated_at: number; result_updated_at: number;
 }
 export function readMailAi(db: D1Database, key: MailAiKey) {
-  return db.prepare(`SELECT fingerprint, model, schema_version, status, result_json, lease_until, created_at, updated_at
+  return db.prepare(`SELECT fingerprint, model, schema_version, status, result_json, lease_until, created_at, updated_at, result_updated_at
     FROM mail_ai_analyses WHERE owner_user_id = ? AND message_kind = ? AND message_id = ?`)
     .bind(key.owner, key.kind, key.id).first<MailAiRow>();
 }
@@ -29,7 +29,10 @@ export async function claimMailAi(db: D1Database, key: MailAiKey, fingerprint: s
     SELECT ?, ?, ?, ?, ?, ?, 'processing', NULL, ?, ?, ?, ? WHERE EXISTS (${exists})
     ON CONFLICT(owner_user_id, message_kind, message_id) DO UPDATE SET
       fingerprint = excluded.fingerprint, model = excluded.model, schema_version = excluded.schema_version,
-      status = 'processing', result_json = NULL, claim_token = excluded.claim_token,
+      status = 'processing',
+      result_json = CASE WHEN mail_ai_analyses.fingerprint = excluded.fingerprint THEN mail_ai_analyses.result_json ELSE NULL END,
+      result_updated_at = CASE WHEN mail_ai_analyses.fingerprint = excluded.fingerprint THEN mail_ai_analyses.result_updated_at ELSE 0 END,
+      claim_token = excluded.claim_token,
       lease_until = excluded.lease_until, updated_at = excluded.updated_at
     WHERE mail_ai_analyses.lease_until <= ? AND mail_ai_analyses.updated_at <= ?
       AND (? OR mail_ai_analyses.fingerprint <> excluded.fingerprint OR mail_ai_analyses.status <> 'ready')
@@ -49,7 +52,29 @@ export async function consumeMailAiQuota(db: D1Database, owner: string, now = Da
 }
 
 export function finishMailAi(db: D1Database, key: MailAiKey, token: string, result: string | null, now = Date.now()) {
-  return db.prepare(`UPDATE mail_ai_analyses SET status = ?, result_json = ?, lease_until = 0, updated_at = ?
+  return db.prepare(`UPDATE mail_ai_analyses SET
+    status = CASE WHEN COALESCE(?, result_json) IS NULL THEN 'failed' ELSE 'ready' END,
+    result_json = COALESCE(?, result_json),
+    result_updated_at = CASE WHEN ? IS NOT NULL THEN ? ELSE result_updated_at END,
+    lease_until = 0, updated_at = ?
     WHERE owner_user_id = ? AND message_kind = ? AND message_id = ? AND claim_token = ? AND status = 'processing'`)
-    .bind(result === null ? 'failed' : 'ready', result, now, key.owner, key.kind, key.id, token).run();
+    .bind(result, result, result, now, now, key.owner, key.kind, key.id, token).run();
+}
+
+/** Explicit analysis may update automatic classification, never a manual override. */
+export async function applyMailAiCategory(db: D1Database, key: MailAiKey, category: import('$lib/domain/mail').MailInboxCategory, consent: string) {
+  const table = key.kind === 'inbound' ? 'email_messages' : 'workspace_messages';
+  const ownerColumn = key.kind === 'inbound' ? 'owner_user_id' : 'user_id';
+  const visible = key.kind === 'inbound'
+    ? `NOT EXISTS (SELECT 1 FROM workspace_email_states state WHERE state.user_id = email_messages.owner_user_id
+        AND state.email_message_id = email_messages.id AND (state.deleted_at IS NOT NULL OR state.quarantined_at IS NOT NULL))`
+    : `folder = 'inbox' AND deleted_at IS NULL`;
+  const result = await db.prepare(`UPDATE ${table} SET ai_inbox_category = ?
+    WHERE ${ownerColumn} = ? AND id = ? AND inbox_category_v2 IS NULL AND ${visible}
+      AND EXISTS (SELECT 1 FROM workspace_settings WHERE user_id = ?
+        AND json_extract(settings_json, '$.mailAi.enabled') = 1
+        AND json_extract(settings_json, '$.mailAi.automaticClassification') = 1
+        AND json_extract(settings_json, '$.mailAi.classificationConsent') = ?)`)
+    .bind(category, key.owner, key.id, key.owner, consent).run();
+  return result.meta.changes ? category : undefined;
 }

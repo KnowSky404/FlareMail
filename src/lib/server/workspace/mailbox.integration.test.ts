@@ -76,7 +76,9 @@ function fixture(beforeBlocklistMigration?: (database: Database) => void) {
       database.exec(readFileSync(resolve(directory, file), 'utf8'));
     }
     beforeBlocklistMigration(database);
-    database.exec(readFileSync(resolve(directory, '0029_blocked_senders.sql'), 'utf8'));
+    for (const file of readdirSync(directory).filter((name) => /^\d{4}_.+\.sql$/.test(name) && name >= '0029_').sort()) {
+      database.exec(readFileSync(resolve(directory, file), 'utf8'));
+    }
   } else {
     database.exec(readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8'));
   }
@@ -1334,7 +1336,7 @@ describe('inbox category pages and manual overrides', () => {
     await expect(changeMailboxCategories(env, { ...workspace, userId: 'another-owner' }, { ids: ['inbox-z'], category: 'primary', scope })).rejects.toMatchObject({ status: 404 });
     for (const otherId of ['inbox-a', 'sent-1', 'draft-1', 'missing']) {
       await expect(changeMailboxCategories(env, workspace, { ids: ['inbox-z', otherId], category: 'primary', scope })).rejects.toMatchObject({ status: 404 });
-      expect(database.query(`SELECT inbox_category FROM workspace_messages WHERE id = 'inbox-z'`).get()).toEqual({ inbox_category: null });
+      expect(database.query(`SELECT inbox_category_v2 FROM workspace_messages WHERE id = 'inbox-z'`).get()).toEqual({ inbox_category_v2: null });
     }
   });
 
@@ -1357,14 +1359,14 @@ describe('inbox category pages and manual overrides', () => {
 
 test('category pagination keeps equal-timestamp ties deterministic across sources and excludes foreign mail', async () => {
   const { env, workspace, database } = fixture();
-  database.exec(`UPDATE email_messages SET inbox_category = 'social', "timestamp" = '2026-08-13T12:00:00.000Z';
-    UPDATE workspace_messages SET inbox_category = 'social' WHERE folder = 'inbox';
-    INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, inbox_category)
-    VALUES ('foreign-social', 'other-owner', 'notice@linkedin.com', 'other@example.test', 'Foreign', '2026-08-13T15:00:00.000Z', 'raw/foreign', 'social');`);
+  database.exec(`UPDATE email_messages SET inbox_category_v2 = 'updates', "timestamp" = '2026-08-13T12:00:00.000Z';
+    UPDATE workspace_messages SET inbox_category_v2 = 'updates' WHERE folder = 'inbox';
+    INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, inbox_category_v2)
+    VALUES ('foreign-social', 'other-owner', 'notice@linkedin.com', 'other@example.test', 'Foreign', '2026-08-13T15:00:00.000Z', 'raw/foreign', 'updates');`);
   const found: string[] = [];
   let cursor: string | null = null;
   do {
-    const params = new URLSearchParams({ category: 'social', limit: '1' });
+    const params = new URLSearchParams({ category: 'updates', limit: '1' });
     if (cursor) params.set('cursor', cursor);
     const page = await loadMailboxPage(env, workspace, parseMailboxQuery(params));
     found.push(...page.messages.map((message) => message.id));
@@ -1381,18 +1383,18 @@ test('category bulk changes support the 100-message limit with bounded D1 parame
   const ids = Array.from({ length: 100 }, (_, index) => `bulk-category-${index}`);
   for (const id of ids) insert.run(id);
   const result = await changeMailboxCategories(env, workspace, {
-    ids, category: 'forums', scope: { section: 'inbox', identityFilter: null, category: 'primary' }
+    ids, category: 'updates', scope: { section: 'inbox', identityFilter: null, category: 'primary' }
   });
   expect(result.summaries).toHaveLength(100);
-  expect(result.summaries.every((row) => row.inboxCategory === 'forums')).toBe(true);
+  expect(result.summaries.every((row) => row.inboxCategory === 'updates')).toBe(true);
   expect((env.DB as unknown as TestD1).queries.every((sql) => (sql.match(/\?/gu) ?? []).length <= 100)).toBe(true);
 });
 
 test('category changes and tab pages retain the selected address boundary', async () => {
   const { env, workspace, database } = fixture();
   insertCrossAddressThread(database);
-  database.exec(`UPDATE email_messages SET inbox_category = 'updates';
-    UPDATE workspace_messages SET inbox_category = 'updates' WHERE folder = 'inbox';`);
+  database.exec(`UPDATE email_messages SET inbox_category_v2 = 'updates';
+    UPDATE workspace_messages SET inbox_category_v2 = 'updates' WHERE folder = 'inbox';`);
   const page = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams('category=updates&identity=address:address-a')));
   expect(page.messages.map((message) => message.id)).toEqual(['email:incoming-1', 'email:incoming-a-read']);
   expect(page.searchTotal).toBe(2);
@@ -1400,7 +1402,7 @@ test('category changes and tab pages retain the selected address boundary', asyn
     ids: ['email:incoming-1', 'email:incoming-b'], category: 'primary',
     scope: { section: 'inbox', identityFilter: { kind: 'address', id: 'address-a' }, category: 'updates' }
   })).rejects.toMatchObject({ status: 404 });
-  expect(database.query(`SELECT inbox_category FROM email_messages WHERE id = 'incoming-1'`).get()).toEqual({ inbox_category: 'updates' });
+  expect(database.query(`SELECT inbox_category_v2 FROM email_messages WHERE id = 'incoming-1'`).get()).toEqual({ inbox_category_v2: 'updates' });
 });
 
 

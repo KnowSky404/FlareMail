@@ -1,5 +1,5 @@
 /** Inbox categories are organizational hints, never authentication or spam decisions. */
-export const mailInboxCategories = ['primary', 'promotions', 'social', 'updates', 'forums'] as const;
+export const mailInboxCategories = ['primary', 'transactions', 'security', 'updates', 'subscriptions', 'promotions'] as const;
 export type MailInboxCategory = typeof mailInboxCategories[number];
 export type InboxCategoryFilter = MailInboxCategory | 'all';
 
@@ -18,27 +18,25 @@ export const inboxCategoryRules: ReadonlyArray<{
   senderPrefixes?: readonly string[];
   subjectPhrases?: readonly string[];
 }> = [
-  {
-    category: 'forums',
-    senderDomains: ['groups.google.com', 'groups.io'],
-    senderPrefixes: ['forum@', 'forums@', 'discourse@', 'groups-noreply@'],
-    subjectPhrases: ['[forum]', '[discourse]', '回复了话题', '论坛回复']
-  },
-  {
-    category: 'social',
-    senderDomains: ['facebookmail.com', 'linkedin.com', 'twitter.com', 'x.com', 'instagram.com', 'pinterest.com', 'redditmail.com']
-  },
-  {
-    category: 'promotions',
-    senderPrefixes: ['newsletter@', 'newsletters@', 'offers@', 'promotions@', 'marketing@'],
-    subjectPhrases: ['special offer', 'limited time offer', 'flash sale', 'discount', 'coupon', '促销', '优惠', '折扣']
-  },
+  { category: 'security', subjectPhrases: ['verification code', 'one time password', 'password reset', 'security alert', 'sign-in', '验证码', '密码重置', '重置密码', '安全提醒', '登录提醒'] },
+  { category: 'transactions', subjectPhrases: ['invoice', 'receipt', 'order confirmation', 'refund', 'shipment', 'delivery notification', '账单', '发票', '收据', '订单', '退款', '物流', '发货'] },
+  { category: 'promotions', subjectPhrases: ['special offer', 'limited time offer', 'flash sale', 'discount', 'coupon', '促销', '优惠', '折扣'] },
+  { category: 'subscriptions', senderPrefixes: ['newsletter@', 'newsletters@'], subjectPhrases: ['newsletter', 'weekly digest', '周报', '新闻简报'] },
+  { category: 'security', senderPrefixes: ['security@'] },
+  { category: 'transactions', senderPrefixes: ['billing@', 'receipts@'] },
+  { category: 'promotions', senderPrefixes: ['offers@', 'promotions@', 'marketing@'] },
   {
     category: 'updates',
-    senderPrefixes: ['noreply@', 'no-reply@', 'notifications@', 'notification@', 'billing@', 'receipts@'],
-    subjectPhrases: ['invoice', 'receipt', 'order confirmation', 'verification code', 'password reset', 'security alert', 'delivery notification', '验证码', '账单', '收据', '订单确认', '安全提醒', '物流通知']
+    senderDomains: ['groups.google.com', 'groups.io', 'facebookmail.com', 'linkedin.com', 'twitter.com', 'x.com', 'instagram.com', 'pinterest.com', 'redditmail.com'],
+    senderPrefixes: ['noreply@', 'no-reply@', 'notifications@', 'notification@', 'forum@', 'forums@', 'discourse@', 'groups-noreply@'],
+    subjectPhrases: ['[forum]', '[discourse]', '回复了话题', '论坛回复']
   }
 ];
+
+/** Preserve links and clients using the two retired category IDs. */
+export function normalizeInboxCategory(value: unknown): unknown {
+  return value === 'social' || value === 'forums' ? 'updates' : value;
+}
 
 // SQLite lower() folds ASCII only. Use the same transformation for exact parity.
 const lowerAscii = (value: string) => value.replace(/[A-Z]/gu, (character) => character.toLowerCase());
@@ -63,6 +61,6 @@ export function classifyInboxCategory(from: string, subject: string): MailInboxC
   return 'primary';
 }
 
-export function resolveInboxCategory(from: string, subject: string, override?: MailInboxCategory | null): MailInboxCategory {
-  return isMailInboxCategory(override) ? override : classifyInboxCategory(from, subject);
+export function resolveInboxCategory(from: string, subject: string, override?: MailInboxCategory | null, automatic?: MailInboxCategory | null): MailInboxCategory {
+  return isMailInboxCategory(override) ? override : isMailInboxCategory(automatic) ? automatic : classifyInboxCategory(from, subject);
 }

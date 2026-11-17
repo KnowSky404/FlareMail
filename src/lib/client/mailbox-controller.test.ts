@@ -338,7 +338,7 @@ test('category scopes refresh and pagination and ignores stale tab responses', a
 });
 
 test('does not merge a message from another inbox category into the active tab', () => {
-  const incoming = { ...message('incoming', 'inbox', '2026-08-14T02:00:00.000Z'), inboxCategory: 'social' as const };
+  const incoming = { ...message('incoming', 'inbox', '2026-08-14T02:00:00.000Z'), inboxCategory: 'subscriptions' as const };
   const page = { ...makePage('inbox', []), category: 'updates' as const };
   const result = mergeMessageDelta({ mailbox: cloneMailbox(), mailboxPages: { inbox: page }, metrics }, delta(incoming), deltaOptions());
   expect(result.messageApplied).toBe(false);
