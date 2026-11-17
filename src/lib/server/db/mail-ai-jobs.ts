@@ -1,4 +1,4 @@
-import type { MailInboxCategory } from '$lib/domain/mail';
+import type { MailAiAnalysis } from '$lib/domain/mail/ai';
 
 export interface MailAiJob {
   owner_user_id: string;
@@ -61,9 +61,12 @@ export function finishMailAiJob(db: D1Database, job: MailAiJob, status: 'pending
     .bind(status, nextAttemptAt, resetAttempt ? 1 : 0, job.owner_user_id, job.message_id, job.claim_token).run();
 }
 
-export function applyMailAiJobCategory(db: D1Database, job: MailAiJob, category: MailInboxCategory) {
+export function applyMailAiJobCategory(db: D1Database, job: MailAiJob, analysis: MailAiAnalysis) {
   return db.prepare(`UPDATE email_messages SET ai_inbox_category = ? WHERE owner_user_id = ? AND id = ?
+    AND EXISTS (SELECT 1 FROM mail_ai_analyses WHERE owner_user_id = ? AND message_kind = 'inbound'
+      AND message_id = ? AND result_json = ?)
     AND inbox_category_v2 IS NULL AND EXISTS (SELECT 1 FROM mail_ai_jobs
       WHERE owner_user_id = ? AND message_id = ? AND claim_token = ? AND status = 'processing' AND ${authorized})`)
-    .bind(category, job.owner_user_id, job.message_id, job.owner_user_id, job.message_id, job.claim_token).run();
+    .bind(analysis.suggestion!.category, job.owner_user_id, job.message_id, job.owner_user_id, job.message_id,
+      JSON.stringify(analysis), job.owner_user_id, job.message_id, job.claim_token).run();
 }
