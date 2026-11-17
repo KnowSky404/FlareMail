@@ -9,6 +9,7 @@ import { mapUserRowToProfile, type WorkspaceContext, type WorkspaceUserRow } fro
 import { readMailAiSettings, saveMailAiSettings } from './settings';
 import { dispatchMailAiJobs } from './dispatcher';
 import type { MailAiProvider } from './provider';
+import { ApiError } from '$lib/server/http/api';
 
 class Statement {
   values: SQLQueryBindings[] = [];
@@ -109,6 +110,36 @@ test('quota exhaustion defers unattempted work; concurrent dispatchers share a s
   f.sqlite.exec('DELETE FROM mail_ai_rate_limits; UPDATE mail_ai_jobs SET next_attempt_at=0; UPDATE mail_ai_analyses SET updated_at=0');
   await Promise.all([dispatchMailAiJobs(f.env, { provider: f.provider }), dispatchMailAiJobs(f.env, { provider: f.provider })]);
   expect(f.calls()).toBe(1); expect(f.job().status).toBe('done');
+});
+
+test('budget exhaustion during reservation defers without consuming the generation attempt', async () => {
+  const f = await fixture(); await f.save({ automaticClassification: true }); await f.enqueue();
+  const prepare = f.env.DB.prepare.bind(f.env.DB);
+  f.env.DB.prepare = ((sql: string) => {
+    const statement = prepare(sql);
+    if (sql.startsWith('UPDATE mail_ai_jobs SET attempted = 1')) {
+      const first = statement.first.bind(statement);
+      statement.first = (async () => { const row = await first(); await Bun.sleep(300); return row; }) as typeof statement.first;
+    }
+    return statement;
+  }) as typeof f.env.DB.prepare;
+  await dispatchMailAiJobs(f.env, { provider: f.provider, timeBudgetMs: 250 });
+  expect(f.calls()).toBe(0);
+  expect(f.job()).toMatchObject({ status: 'pending', attempted: 0 });
+  expect(f.job().next_attempt_at).toBeGreaterThan(Date.now());
+  f.env.DB.prepare = prepare;
+  f.sqlite.exec('UPDATE mail_ai_jobs SET next_attempt_at=0; UPDATE mail_ai_analyses SET updated_at=0');
+  expect((await dispatchMailAiJobs(f.env, { provider: f.provider })).classified).toBe(1);
+  expect(f.calls()).toBe(1); expect(f.job()).toMatchObject({ status: 'done', attempted: 1 });
+});
+
+test('a timeout after invoking the provider remains attempted and is never automatically retried', async () => {
+  const f = await fixture(); await f.save({ automaticClassification: true }); await f.enqueue();
+  let calls = 0;
+  const provider: MailAiProvider = { analyze: async () => { calls++; throw new ApiError(503, 'AI_TIMEOUT', 'AI analysis timed out.'); } };
+  await dispatchMailAiJobs(f.env, { provider });
+  await dispatchMailAiJobs(f.env, { provider });
+  expect(calls).toBe(1); expect(f.job()).toMatchObject({ status: 'failed', attempted: 1 });
 });
 
 test('last-moment revocation prevents reserving the billable attempt and deletion cleans up work', async () => {
