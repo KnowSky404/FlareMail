@@ -1,4 +1,4 @@
-import { MAIL_AI_VERSION } from '$lib/domain/mail/ai';
+import { MAIL_AI_VERSION, type MailAiAnalysis } from '$lib/domain/mail/ai';
 
 export interface MailAiKey { owner: string; kind: 'inbound' | 'workspace'; id: string }
 export interface MailAiRow {
@@ -62,7 +62,8 @@ export function finishMailAi(db: D1Database, key: MailAiKey, token: string, resu
 }
 
 /** Explicit analysis may update automatic classification, never a manual override. */
-export async function applyMailAiCategory(db: D1Database, key: MailAiKey, category: import('$lib/domain/mail').MailInboxCategory, consent: string) {
+export async function applyMailAiCategory(db: D1Database, key: MailAiKey, analysis: MailAiAnalysis, consent: string) {
+  const category = analysis.suggestion!.category;
   const table = key.kind === 'inbound' ? 'email_messages' : 'workspace_messages';
   const ownerColumn = key.kind === 'inbound' ? 'owner_user_id' : 'user_id';
   const visible = key.kind === 'inbound'
@@ -71,10 +72,11 @@ export async function applyMailAiCategory(db: D1Database, key: MailAiKey, catego
     : `folder = 'inbox' AND deleted_at IS NULL`;
   const result = await db.prepare(`UPDATE ${table} SET ai_inbox_category = ?
     WHERE ${ownerColumn} = ? AND id = ? AND inbox_category_v2 IS NULL AND ${visible}
+      AND EXISTS (SELECT 1 FROM mail_ai_analyses WHERE owner_user_id = ? AND message_kind = ? AND message_id = ? AND result_json = ?)
       AND EXISTS (SELECT 1 FROM workspace_settings WHERE user_id = ?
         AND json_extract(settings_json, '$.mailAi.enabled') = 1
         AND json_extract(settings_json, '$.mailAi.automaticClassification') = 1
         AND json_extract(settings_json, '$.mailAi.classificationConsent') = ?)`)
-    .bind(category, key.owner, key.id, key.owner, consent).run();
+    .bind(category, key.owner, key.id, key.owner, key.kind, key.id, JSON.stringify(analysis), key.owner, consent).run();
   return result.meta.changes ? category : undefined;
 }

@@ -36,8 +36,11 @@ export async function dispatchMailAiJobs(env: CloudflareEnv, options: { provider
           beforeAnalyze: () => reserveMailAiJobAttempt(env.DB, job) }, options.provider);
       }
       if (view.analysis?.suggestion) {
-        const applied = await applyMailAiJobCategory(env.DB, job, view.analysis.suggestion.category);
-        if (applied.meta.changes) result.classified++;
+        const applied = await applyMailAiJobCategory(env.DB, job, view.analysis);
+        if (!applied.meta.changes) {
+          await finishMailAiJob(env.DB, job, 'pending', Date.now() + 60_000); continue;
+        }
+        result.classified++;
       }
       await finishMailAiJob(env.DB, job, 'done');
     } catch (error) {

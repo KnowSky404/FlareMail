@@ -77,7 +77,7 @@ export async function workspaceMailAi(
   const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, `${config.baseUrl}#${config.apiFormat}`, MAIL_AI_VERSION);
   async function applyCategory(analysis: MailAiAnalysis) {
     if (options.analyze && !options.beforeAnalyze && configuration.automaticClassification && configuration.classificationConsent && analysis.suggestion) {
-      return applyMailAiCategory(env.DB, key, analysis.suggestion.category, configuration.classificationConsent);
+      return applyMailAiCategory(env.DB, key, analysis, configuration.classificationConsent);
     }
   }
   const cached = await readMailAi(env.DB, key);

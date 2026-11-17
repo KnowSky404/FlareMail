@@ -68,6 +68,41 @@ test('a completed Telegram-style background analysis is reused without spending 
   expect(f.job()).toMatchObject({ status: 'done', attempted: 0 }); expect(f.calls()).toBe(1);
 });
 
+test.each(['background', 'explicit'] as const)('a delayed %s category write cannot overwrite a newer regenerated result', async (caller) => {
+  const f = await fixture(); await f.save({ automaticClassification: true }); await f.enqueue();
+  await workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true, beforeAnalyze: async () => true }, f.provider);
+  f.sqlite.exec('UPDATE mail_ai_analyses SET updated_at=0');
+  let entered!: () => void; let release!: () => void;
+  const waiting = new Promise<void>((resolve) => { entered = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const prepare = f.env.DB.prepare.bind(f.env.DB);
+  let pause = true;
+  f.env.DB.prepare = ((sql: string) => {
+    const statement = prepare(sql);
+    if (sql.startsWith('UPDATE email_messages SET ai_inbox_category')) {
+      const run = statement.run.bind(statement);
+      statement.run = (async () => { if (pause) { pause = false; entered(); await blocked; } return run(); }) as typeof statement.run;
+    }
+    return statement;
+  }) as typeof f.env.DB.prepare;
+  const older = caller === 'background' ? dispatchMailAiJobs(f.env, { provider: f.provider })
+    : workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true }, f.provider);
+  await waiting;
+  const newer: MailAiProvider = { analyze: async (input) => ({ ...await f.provider.analyze(input),
+    suggestion: { category: 'security', confidence: 0.9, reason: 'Account security' } }) };
+  await workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true, regenerate: true }, newer);
+  release(); await older;
+  expect(f.sqlite.query('SELECT ai_inbox_category FROM email_messages').get()).toEqual({ ai_inbox_category: 'security' });
+  if (caller === 'background') {
+    expect(f.job()).toMatchObject({ status: 'pending', attempted: 0 });
+    f.sqlite.exec('UPDATE mail_ai_jobs SET next_attempt_at=0');
+    expect((await dispatchMailAiJobs(f.env, { provider: f.provider })).classified).toBe(1);
+    expect(f.job().status).toBe('done');
+  }
+  expect((await workspaceMailAi(f.env, f.session, 'email:mail', {})).analysis?.suggestion?.category).toBe('security');
+  expect(f.calls()).toBe(2);
+});
+
 test.each(['disabled', 'reenabled', 'manual', 'quarantined', 'blocked'] as const)('queued work respects %s before any provider call', async (change) => {
   const f = await fixture(); await f.save({ automaticClassification: true }); await f.enqueue();
   if (change === 'disabled' || change === 'reenabled') await f.save({ automaticClassification: false });
