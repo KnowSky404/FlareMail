@@ -63,7 +63,7 @@ export function finishMailAi(db: D1Database, key: MailAiKey, token: string, resu
 
 /** Explicit analysis may update automatic classification, never a manual override. */
 export async function applyMailAiCategory(db: D1Database, key: MailAiKey, analysis: MailAiAnalysis, consent: string) {
-  const category = analysis.suggestion!.category;
+  const category = analysis.suggestion?.category ?? null;
   const table = key.kind === 'inbound' ? 'email_messages' : 'workspace_messages';
   const ownerColumn = key.kind === 'inbound' ? 'owner_user_id' : 'user_id';
   const visible = key.kind === 'inbound'

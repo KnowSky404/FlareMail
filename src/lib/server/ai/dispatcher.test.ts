@@ -68,7 +68,7 @@ test('a completed Telegram-style background analysis is reused without spending 
   expect(f.job()).toMatchObject({ status: 'done', attempted: 0 }); expect(f.calls()).toBe(1);
 });
 
-test.each(['background', 'explicit'] as const)('a delayed %s category write cannot overwrite a newer regenerated result', async (caller) => {
+test.each([['background', false], ['explicit', false], ['background', true], ['explicit', true]] as const)('a delayed %s category write cannot overwrite a newer result (uncertain=%s)', async (caller, uncertain) => {
   const f = await fixture(); await f.save({ automaticClassification: true }); await f.enqueue();
   await workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true, beforeAnalyze: async () => true }, f.provider);
   f.sqlite.exec('UPDATE mail_ai_analyses SET updated_at=0');
@@ -89,17 +89,42 @@ test.each(['background', 'explicit'] as const)('a delayed %s category write cann
     : workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true }, f.provider);
   await waiting;
   const newer: MailAiProvider = { analyze: async (input) => ({ ...await f.provider.analyze(input),
-    suggestion: { category: 'security', confidence: 0.9, reason: 'Account security' } }) };
+    suggestion: uncertain ? null : { category: 'security', confidence: 0.9, reason: 'Account security' } }) };
   await workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true, regenerate: true }, newer);
   release(); await older;
-  expect(f.sqlite.query('SELECT ai_inbox_category FROM email_messages').get()).toEqual({ ai_inbox_category: 'security' });
+  expect(f.sqlite.query('SELECT ai_inbox_category FROM email_messages').get()).toEqual({ ai_inbox_category: uncertain ? null : 'security' });
   if (caller === 'background') {
     expect(f.job()).toMatchObject({ status: 'pending', attempted: 0 });
     f.sqlite.exec('UPDATE mail_ai_jobs SET next_attempt_at=0');
     expect((await dispatchMailAiJobs(f.env, { provider: f.provider })).classified).toBe(1);
     expect(f.job().status).toBe('done');
   }
-  expect((await workspaceMailAi(f.env, f.session, 'email:mail', {})).analysis?.suggestion?.category).toBe('security');
+  expect((await workspaceMailAi(f.env, f.session, 'email:mail', {})).analysis?.suggestion?.category ?? null).toBe(uncertain ? null : 'security');
+  expect(f.calls()).toBe(2);
+});
+
+test.each(['explicit', 'background', 'manual', 'revoked'] as const)('successful uncertain analysis clears only authorized automatic categories (%s)', async (mode) => {
+  const f = await fixture(); await f.save({ automaticClassification: true }); await f.enqueue();
+  await workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true }, f.provider);
+  f.sqlite.exec("UPDATE email_messages SET ai_inbox_category='security'; UPDATE mail_ai_analyses SET updated_at=0");
+  if (mode === 'manual') f.sqlite.exec("UPDATE email_messages SET inbox_category_v2='primary'");
+  if (mode === 'revoked') await f.save({ automaticClassification: false });
+  const provider: MailAiProvider = { analyze: async (input) => ({ ...await f.provider.analyze(input), suggestion: null }) };
+  const view = await workspaceMailAi(f.env, f.session, 'email:mail', { analyze: true, regenerate: true,
+    ...(mode === 'background' ? { beforeAnalyze: async () => true } : {}) }, provider);
+  expect(view.analysis?.suggestion).toBeNull();
+  if (mode === 'background') {
+    await workspaceMailAi(f.env, f.session, 'email:mail', {});
+    expect(f.sqlite.query('SELECT ai_inbox_category FROM email_messages').get()).toEqual({ ai_inbox_category: 'security' });
+    expect((await dispatchMailAiJobs(f.env, { provider })).classified).toBe(1);
+    expect(f.job().status).toBe('done');
+  }
+  const row = f.sqlite.query('SELECT inbox_category_v2, ai_inbox_category FROM email_messages').get() as { inbox_category_v2: null | 'primary'; ai_inbox_category: null | 'security' };
+  const preserved = mode === 'manual' || mode === 'revoked';
+  expect(row.ai_inbox_category).toBe(preserved ? 'security' : null);
+  expect(resolveInboxCategory('sender@example.test', 'Invoice', row.inbox_category_v2, row.ai_inbox_category))
+    .toBe(mode === 'manual' ? 'primary' : mode === 'revoked' ? 'security' : 'transactions');
+  expect(view.appliedCategory).toBe(mode === 'explicit' ? 'transactions' : undefined);
   expect(f.calls()).toBe(2);
 });
 

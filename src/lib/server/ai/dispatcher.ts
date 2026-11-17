@@ -35,7 +35,7 @@ export async function dispatchMailAiJobs(env: CloudflareEnv, options: { provider
         view = await workspaceMailAi(env, session, id, { analyze: true, timeoutMs: Math.max(1, deadline - Date.now()),
           beforeAnalyze: () => reserveMailAiJobAttempt(env.DB, job) }, options.provider);
       }
-      if (view.analysis?.suggestion) {
+      if (view.analysis) {
         const applied = await applyMailAiJobCategory(env.DB, job, view.analysis);
         if (!applied.meta.changes) {
           await finishMailAiJob(env.DB, job, 'pending', Date.now() + 60_000); continue;

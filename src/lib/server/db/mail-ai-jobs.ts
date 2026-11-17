@@ -67,6 +67,6 @@ export function applyMailAiJobCategory(db: D1Database, job: MailAiJob, analysis:
       AND message_id = ? AND result_json = ?)
     AND inbox_category_v2 IS NULL AND EXISTS (SELECT 1 FROM mail_ai_jobs
       WHERE owner_user_id = ? AND message_id = ? AND claim_token = ? AND status = 'processing' AND ${authorized})`)
-    .bind(analysis.suggestion!.category, job.owner_user_id, job.message_id, job.owner_user_id, job.message_id,
+    .bind(analysis.suggestion?.category ?? null, job.owner_user_id, job.message_id, job.owner_user_id, job.message_id,
       JSON.stringify(analysis), job.owner_user_id, job.message_id, job.claim_token).run();
 }

@@ -7,7 +7,7 @@ import { applyMailAiCategory, claimMailAi, consumeMailAiQuota, finishMailAi, rea
 import { resolveWorkspaceMailAiConfiguration } from '$lib/server/ai/settings';
 import { mailAiFingerprint, prepareMailAiInput } from '$lib/server/ai/input';
 import { createMailAiProvider, validateMailAiAnalysis, type MailAiProvider } from '$lib/server/ai/provider';
-import { categorySenderAddress } from '$lib/domain/mail/categories';
+import { categorySenderAddress, classifyInboxCategory } from '$lib/domain/mail/categories';
 import { isSupportedLocale, type Locale } from '$lib/i18n/locale';
 import { ApiError } from '$lib/server/http/api';
 import { readWorkspaceMessage } from './reader';
@@ -45,7 +45,7 @@ async function loadInput(env: CloudflareEnv, session: WorkspaceContext, id: stri
   const input = prepareMailAiInput(message.subject, message.fromEmail, text, html, language, limit);
   // Include the full canonical body in the cache identity, including the omitted tail.
   const contentHash = await mailAiFingerprint({ ...input, body: bodyFingerprint ?? JSON.stringify([text, html]) }, '', '', MAIL_AI_VERSION);
-  return { key, input, contentHash };
+  return { key, input, contentHash, fallbackCategory: classifyInboxCategory(message.fromEmail, message.subject) };
 }
 
 export async function workspaceMailAi(
@@ -76,8 +76,9 @@ export async function workspaceMailAi(
   const { key, input, contentHash } = loaded;
   const fingerprint = await mailAiFingerprint({ ...input, body: JSON.stringify([input.body, contentHash]) }, config.model, `${config.baseUrl}#${config.apiFormat}`, MAIL_AI_VERSION);
   async function applyCategory(analysis: MailAiAnalysis) {
-    if (options.analyze && !options.beforeAnalyze && configuration.automaticClassification && configuration.classificationConsent && analysis.suggestion) {
-      return applyMailAiCategory(env.DB, key, analysis, configuration.classificationConsent);
+    if (options.analyze && !options.beforeAnalyze && configuration.automaticClassification && configuration.classificationConsent) {
+      const applied = await applyMailAiCategory(env.DB, key, analysis, configuration.classificationConsent);
+      return applied === null ? loaded.fallbackCategory : applied;
     }
   }
   const cached = await readMailAi(env.DB, key);
