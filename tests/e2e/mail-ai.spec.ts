@@ -278,7 +278,28 @@ for (const reader of ['workspace', 'standalone']) {
           await labels.getByRole('button', { name: '关闭', exact: true }).click();
           await manageLabels.click();
           await expect(checkbox).not.toBeChecked();
-          await labels.getByRole('button', { name: '关闭', exact: true }).click();
+          const newLabel = labels.getByRole('button', { name: '新建标签', exact: true });
+          const editor = page.getByRole('dialog', { name: '新建标签', exact: true });
+          await newLabel.press('Enter');
+          await editor.getByRole('button', { name: '取消', exact: true }).press('Enter');
+          await expect(manageLabels).toBeFocused();
+          await manageLabels.press('Enter');
+          await newLabel.press('Enter');
+          const addedName = `${labelName} New`;
+          await editor.getByRole('textbox', { name: '标签名称', exact: true }).fill(addedName);
+          const created = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/api/workspace/labels'));
+          await editor.getByRole('button', { name: '保存', exact: true }).press('Enter');
+          const added = await created;
+          expect(added.status()).toBe(201);
+          const { data: { label: { id: addedId } } } = await added.json();
+          try {
+            await expect(manageLabels).toBeFocused();
+            await manageLabels.press('Enter');
+            await expect(labels.getByRole('checkbox', { name: addedName, exact: true })).toBeChecked();
+            await page.keyboard.press('Escape');
+          } finally {
+            expect((await page.request.delete(`/api/workspace/labels/${addedId}`, { headers })).status()).toBe(200);
+          }
           await focused.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
         } finally {
           expect((await page.request.delete(labelPath, { headers })).status()).toBe(200);
