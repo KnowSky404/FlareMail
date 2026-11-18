@@ -166,7 +166,9 @@
   >
     {#snippet bodyControls()}
       {#if message && hasHtml}
-        <MessageViewControls messageId={message.id} view={activeBodyView} onViewChange={changeBodyView} onReportIssue={() => message && onReportHtmlIssue?.(message)} />
+        {#key message.id}
+          <MessageViewControls messageId={message.id} view={activeBodyView} onViewChange={changeBodyView} onReportIssue={() => message && onReportHtmlIssue?.(message)} />
+        {/key}
       {/if}
     {/snippet}
   </MessageHeader>
