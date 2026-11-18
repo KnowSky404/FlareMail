@@ -268,7 +268,7 @@
   let viewportWidth = $state(0);
   let density = $state<DisplayDensity>('comfortable');
   let readingLayout = $state<ReadingLayout>('list');
-  const splitReaderVisible = $derived(readingLayout === 'split' && viewportWidth >= 901);
+  const messageReaderVisible = $derived(readerOpen || mobileDetailOpen || (readingLayout === 'split' && viewportWidth >= 901));
   let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
   let unsafeHtmlMessageId = $state<string | null>(null);
   let shortcutHelpOpen = $state(false);
@@ -1539,7 +1539,7 @@
 
   function retainCategoryChange(summary: Pick<MailMessage, 'id' | 'inboxCategory' | 'inboxCategoryOverride'> | undefined) {
     const current = selectedMessage;
-    if (!summary || current?.id !== summary.id || activeSection !== 'inbox') return;
+    if (!summary || current?.id !== summary.id || activeSection !== 'inbox' || !messageReaderVisible) return;
     if (deepLinkedMessage?.id !== summary.id && (inboxCategory === 'all' || inboxCategory === summary.inboxCategory)) return;
     deepLinkedMessage = { ...current, ...summary };
     selectedMessageId = summary.id;
@@ -1824,7 +1824,7 @@
     const previousInbox = mailboxPages?.inbox;
     const sameInboxScope = previousInbox && previousInbox.query === page.query && previousInbox.filter === page.filter &&
       (previousInbox.category ?? 'all') === (page.category ?? 'all') && sameIdentityScope(previousInbox.identityFilter, page.identityFilter);
-    const keepReader = readerOpen || ((mobileDetailOpen || splitReaderVisible) && !turningPage && sameInboxScope);
+    const keepReader = messageReaderVisible && (readerOpen || (!turningPage && sameInboxScope));
     const openMessage = keepReader && !pending && activeSection === 'inbox' && page.folder === 'inbox' ? selectedMessage : null;
     page = { ...page, messages: page.messages.map((message) => flagController.overlay(message)), ...(flagController.busy ? { metrics: undefined } : {}) };
     const merged = mergeMailboxPage({ mailbox, mailboxPages, metrics }, page, append);
@@ -2506,8 +2506,7 @@
   }
 
   $effect(() => {
-    const visible = authenticated && !authExpired && activeSection !== 'trash' && activeSection !== 'profile' &&
-      (mobileDetailOpen || readerOpen || splitReaderVisible);
+    const visible = authenticated && !authExpired && activeSection !== 'trash' && activeSection !== 'profile' && messageReaderVisible;
     const message = visible ? selectedMessage : null;
     untrack(() => {
       if (readActivation.activate(message) && message) {
