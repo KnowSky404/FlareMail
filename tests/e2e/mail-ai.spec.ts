@@ -905,6 +905,32 @@ test('cached summary opens automatically, shows its date and survives failed reg
   await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*503/u.test(text)));
 });
 
+test('AI details open above the toolbar when the viewport is short', async ({ page }) => {
+  await page.route(`**${path}*`, (route) => route.fulfill({ json: { ok: true, data: {
+    status: 'ready', updatedAt: Date.UTC(2026, 10, 15, 12), analysis: {
+      summary: 'Cached analysis in a short viewport', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN', suggestion: null
+    }
+  } } }));
+  await login(page);
+  await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
+  const panel = page.getByRole('region', { name: title });
+  const details = panel.getByRole('button', { name: '关于 AI 分析' });
+  const regenerate = panel.getByRole('button', { name: '同意重新生成' });
+  await expect(regenerate).toBeVisible();
+  const bounds = (await details.boundingBox())!;
+  await page.setViewportSize({ width: page.viewportSize()!.width, height: Math.ceil(bounds.y + bounds.height + 12) });
+  await details.focus();
+  const tooltip = panel.getByRole('tooltip');
+  await expect(tooltip).toBeVisible();
+  await expect.poll(async () => {
+    const hint = (await tooltip.boundingBox())!;
+    const trigger = (await details.boundingBox())!;
+    return Math.abs(hint.y + hint.height - trigger.y) <= 1;
+  }).toBe(true);
+  await regenerate.click();
+  await expect(page.getByRole('dialog', { name: '关于 AI 分析' })).toBeVisible();
+});
+
 test('six purpose categories support keyboard navigation and retired deep links', async ({ page, consoleErrors }, info) => {
   await login(page);
   const tabs = page.getByRole('tablist', { name: '收件箱分类', exact: true });
