@@ -390,7 +390,7 @@ test('AI English output, regeneration and system light/dark themes in standalone
   await assertNoHorizontalOverflow(page);
   expect((await new AxeBuilder({ page }).include('.message-content').analyze()).violations).toEqual([]);
   await mkdir('/tmp/flaremail-ai-evidence', { recursive: true });
-  await page.screenshot({ path: `/tmp/flaremail-ai-evidence/${info.project.name}-english-dark.png` });
+  await panel.screenshot({ path: `/tmp/flaremail-ai-evidence/${info.project.name}-english-dark.png` });
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(panel.getByText('Meeting summary 2')).toBeVisible();
