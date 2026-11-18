@@ -1656,6 +1656,7 @@
       }
       return;
     }
+    const retainedId = deepLinkedMessage?.id;
     const refreshed = await mailboxController.refresh(
       activeSection === 'profile' ? 'inbox' : activeSection,
       searchQuery,
@@ -1668,7 +1669,7 @@
       runtimeOperationError = false;
       if (announce) {
         const current = selectedMessage;
-        if (current) await refreshDeepLinkedMessage(current);
+        if (current && current.id === retainedId) await refreshDeepLinkedMessage(current);
         notify(t('notify.mailboxRefreshed'), 'success');
       }
     }
