@@ -41,6 +41,7 @@ for (const reader of ['workspace', 'standalone']) {
     let generated = false;
     let removeAutomaticallyCategorizedRow = false;
     let metadataStarred = false;
+    let delayUpdatesRefresh: Promise<void> | undefined;
     const refreshedCategory = Promise.withResolvers<void>();
     const split = reader === 'workspace' && (page.viewportSize()?.width ?? 0) > 900;
     await page.route(`**${path}*`, async (route) => {
@@ -63,7 +64,13 @@ for (const reader of ['workspace', 'standalone']) {
       await route.fulfill({ response, json: body });
     });
     if (reader === 'workspace') await page.route('**/api/workspace/mailbox?**', async (route) => {
-      if (!removeAutomaticallyCategorizedRow || new URL(route.request().url()).searchParams.get('category') !== 'primary') return route.continue();
+      const category = new URL(route.request().url()).searchParams.get('category');
+      if (delayUpdatesRefresh && category === 'updates') {
+        const delayed = delayUpdatesRefresh;
+        delayUpdatesRefresh = undefined;
+        await delayed;
+      }
+      if (!removeAutomaticallyCategorizedRow || category !== 'primary') return route.continue();
       const response = await route.fetch();
       const body = await response.json();
       if (response.ok()) body.data.page.messages = body.data.page.messages.filter((message: { id: string }) => message.id !== 'e2e-inbox-message');
@@ -136,7 +143,7 @@ for (const reader of ['workspace', 'standalone']) {
       expect(archive.status()).toBe(200);
       expect(archive.request().postDataJSON()).toMatchObject({
         action: 'archive', ids: ['e2e-inbox-message'],
-        scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } }
+        scope: { section: 'inbox', category: 'updates', identityFilter: { kind: 'address', id: addressId } }
       });
       if (split) {
         await expect(detail.getByRole('button', { name: '加星', exact: true })).toBeVisible();
@@ -158,11 +165,20 @@ for (const reader of ['workspace', 'standalone']) {
         await expect(panel.getByText('已有手动分类，保留当前设置。')).toBeVisible();
         await row.getByLabel('选择E2E Inbox Welcome').check();
         await page.getByRole('button', { name: '更改收件分类' }).click();
-        await page.getByRole('menuitem', { name: '恢复自动分类', exact: true }).click();
-        await expect(apply).toBeVisible();
-        await expect(row).toHaveCount(0);
-
-        await detail.getByRole('button', { name: '归档', exact: true }).click();
+        const refreshGate = Promise.withResolvers<void>();
+        delayUpdatesRefresh = refreshGate.promise;
+        try {
+          await page.getByRole('menuitem', { name: '恢复自动分类', exact: true }).click();
+          await expect(apply).toBeVisible();
+          await expect(row).toBeVisible();
+          const archiveRestored = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate'));
+          await detail.getByRole('button', { name: '归档', exact: true }).click();
+          const result = await archiveRestored;
+          expect(result.status()).toBe(200);
+          expect(result.request().postDataJSON().scope).toMatchObject({ category: 'primary', identityFilter: { kind: 'address', id: addressId } });
+        } finally {
+          refreshGate.resolve();
+        }
         await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
         const archiveUrl = `/?folder=archive&q=unmatched&message=e2e-inbox-message&identity=address%3A${addressId}`;
         await page.goto(archiveUrl);

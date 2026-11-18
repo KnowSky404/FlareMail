@@ -1597,10 +1597,8 @@
     try {
       let section = activeSection;
       if (section === 'inbox' || section === 'archive') section = message.archivedAt ? 'archive' : 'inbox';
-      const retainedOutsideCategory = deepLinkedMessage?.id === message.id && inboxCategory !== 'all' &&
-        message.inboxCategory && message.inboxCategory !== inboxCategory &&
-        !visibleThreads.some((thread) => thread.messages.some((item) => item.id === message.id));
-      const category = retainedOutsideCategory ? 'all' : inboxCategory;
+      const category = inboxCategory !== 'all' && deepLinkedMessage?.id === message.id
+        ? message.inboxCategory ?? inboxCategory : inboxCategory;
       const { result } = await mutateMailbox(message.archivedAt ? 'unarchive' : 'archive', [message.id], [], {
         section: section as MailboxMutationScope['section'], identityFilter: mailIdentityFilter,
         threadScope: 'selected', ...(section === 'inbox' ? { category } : {}),
