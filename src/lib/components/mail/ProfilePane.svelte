@@ -304,8 +304,7 @@
 
 <style>
   .settings-layout {
-    width: min(100%, 920px);
-    margin: 0 auto;
+    width: 100%;
   }
 
   .settings-header {
@@ -491,7 +490,7 @@
   @media (min-width: 1024px) {
     .settings-layout {
       display: grid;
-      grid-template-columns: minmax(10rem, 0.28fr) minmax(0, 1fr);
+      grid-template-columns: clamp(10rem, 19%, 13rem) minmax(0, 1fr);
       column-gap: var(--space-6);
       align-items: start;
     }

@@ -70,6 +70,7 @@ test('keeps English settings tabs inside their touch targets at 320px', async ({
 
 test('settings tabs preserve drafts, save only the active fields, and support deep links and keyboard navigation', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
+  if (page.viewportSize()!.width >= 1024) await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto('/?folder=settings#settings-notifications');
   await expect(page).toHaveURL(/tab=notifications/u);
   const tabs = page.getByRole('tablist', { name: '设置分区' });
@@ -85,6 +86,12 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   });
   const details = page.locator('#settings-profile summary');
   await expect(page.getByLabel('职位角色')).toBeHidden();
+  const unusedWidth = await page.locator('.settings-layout').evaluate((layout) => {
+    const container = layout.parentElement!;
+    const style = getComputedStyle(container);
+    return container.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - layout.getBoundingClientRect().width;
+  });
+  expect(Math.abs(unusedWidth)).toBeLessThanOrEqual(1);
   await page.screenshot({
     path: join(tmpdir(), `flaremail-settings-profile-${testInfo.project.name}.png`),
     mask: [page.locator('#profile-email')], maskColor: '#cbd5e1'

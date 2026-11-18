@@ -3213,7 +3213,7 @@
 
           <main class:settings-main={activeSection === 'profile'} class="fm-workspace-main" aria-label={t('shell.mailWorkspace')}>
             {#if activeSection === 'profile'}
-              <div class="h-full overflow-y-auto bg-fm-surface p-6 lg:p-8">
+              <div class={`h-full overflow-y-auto bg-fm-surface ${managementView === 'settings' ? 'p-4 sm:p-6' : 'p-6'} lg:p-8`}>
                 {#if managementView === 'settings' && ProfilePane}
                   <ProfilePane
                     tab={urlState.settingsTab}
@@ -3259,7 +3259,7 @@
                   </p>
                 {:else}
                   <div
-                    class={`mx-auto grid gap-5 ${managementView === 'settings' ? 'max-w-[920px]' : 'max-w-[72rem]'}`}
+                    class={`grid gap-5 ${managementView === 'settings' ? '' : 'mx-auto max-w-[72rem]'}`}
                     role="status"
                     data-management-loading
                   >
