@@ -85,7 +85,10 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   });
   const details = page.locator('#settings-profile summary');
   await expect(page.getByLabel('职位角色')).toBeHidden();
-  await page.screenshot({ path: join(tmpdir(), `flaremail-settings-profile-${testInfo.project.name}.png`) });
+  await page.screenshot({
+    path: join(tmpdir(), `flaremail-settings-profile-${testInfo.project.name}.png`),
+    mask: [page.locator('#profile-email')], maskColor: '#cbd5e1'
+  });
   await details.press('Enter');
   await expect(page.getByLabel('职位角色')).toHaveValue(baseline.role);
   await details.press('Enter');
