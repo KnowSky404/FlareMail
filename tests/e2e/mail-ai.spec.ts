@@ -56,7 +56,9 @@ for (const reader of ['workspace', 'standalone']) {
     await page.route('**/api/workspace/messages/e2e-inbox-message', async (route) => {
       if (route.request().method() !== 'GET') return route.continue();
       const response = await route.fetch(); const body = await response.json();
-      if (response.ok() && generated && !body.data.message.inboxCategoryOverride) body.data.message.inboxCategory = 'updates';
+      if (response.ok() && generated && (reader === 'standalone' || removeAutomaticallyCategorizedRow) && !body.data.message.inboxCategoryOverride) {
+        body.data.message.inboxCategory = 'updates';
+      }
       if (response.ok() && reader === 'workspace') body.data.message.starred = metadataStarred;
       await route.fulfill({ response, json: body });
     });
@@ -126,6 +128,7 @@ for (const reader of ['workspace', 'standalone']) {
       await expect(detail.getByRole('button', { name: '取消星标', exact: true })).toBeVisible();
 
       metadataStarred = false;
+      if (!split) await page.evaluate(() => { window.location.hash = 'archive-check'; });
       const [archive] = await Promise.all([
         page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate')),
         detail.getByRole('button', { name: '归档', exact: true }).click()
@@ -157,6 +160,7 @@ for (const reader of ['workspace', 'standalone']) {
         await page.getByRole('button', { name: '更改收件分类' }).click();
         await page.getByRole('menuitem', { name: '恢复自动分类', exact: true }).click();
         await expect(apply).toBeVisible();
+        await expect(row).toHaveCount(0);
 
         await detail.getByRole('button', { name: '归档', exact: true }).click();
         await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
@@ -289,6 +293,9 @@ for (const reader of ['workspace', 'standalone']) {
         await detail.getByRole('button', { name: '移回收件箱', exact: true }).click();
         await expect(detail.getByRole('button', { name: '归档', exact: true })).toBeVisible();
       } else {
+        await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
+        await page.goBack();
+        await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
         const unarchive = await page.request.post('/api/workspace/mailbox/mutate', {
           headers: { origin: new URL(page.url()).origin },
           data: { action: 'unarchive', ids: ['e2e-inbox-message'], threadKeys: [], scope: { section: 'archive', identityFilter: null, threadScope: 'selected' } }
@@ -343,6 +350,42 @@ for (const change of ['refresh', 'bulk reclassification']) {
     await assertNoConsoleErrors(consoleErrors);
   });
 }
+
+categoryConfirmationTest('archiving a visible row respects the inbox category after a flag change', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) <= 900, 'The split view must show the list next to the reader.');
+  await login(page);
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  const messageId = 'e2e-inbox-message';
+  await page.goto(`/?folder=inbox&category=primary&message=${messageId}`);
+  await expect(page.getByRole('listitem').getByRole('button', { name: /E2E Inbox Welcome/u })).toBeVisible();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const flagsPath = `/api/workspace/messages/${messageId}/flags`;
+  const gate = Promise.withResolvers<void>();
+  await page.route(`**${flagsPath}`, async (route) => {
+    if ('starred' in route.request().postDataJSON()) await gate.promise;
+    await route.continue();
+  });
+  const headers = { origin: new URL(page.url()).origin };
+  const { data: { message } } = await (await page.request.get(`/api/workspace/messages/${messageId}`)).json();
+  try {
+    const flag = page.waitForRequest((request) => request.url().endsWith(flagsPath) && 'starred' in request.postDataJSON());
+    await detail.getByRole('button', { name: message.starred ? '取消星标' : '加星', exact: true }).click();
+    await flag;
+    const reclassified = await page.request.patch('/api/workspace/mailbox/categories', { headers,
+      data: { ids: [messageId], category: 'updates', scope: { section: 'inbox', identityFilter: null, category: 'primary' } } });
+    expect(reclassified.status()).toBe(200);
+    const archived = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate'));
+    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    const response = await archived;
+    expect(response.request().postDataJSON().scope.category).toBe('primary');
+    expect(response.status()).toBe(404);
+    expect((await response.json()).error.code).toBe('MAILBOX_MESSAGE_NOT_FOUND');
+  } finally {
+    gate.resolve();
+    await page.unrouteAll({ behavior: 'wait' });
+    await page.request.patch(flagsPath, { headers, data: { starred: message.starred } });
+  }
+});
 
 test('bulk refresh invalidates a retained message before navigating Back', async ({ page }) => {
   test.skip((page.viewportSize()?.width ?? 0) <= 900, 'The split view must show the list next to the retained message.');
