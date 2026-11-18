@@ -34,7 +34,7 @@
   }
 </script>
 
-<div class="message-view-controls flex min-w-0 items-center gap-0.5">
+<div class="message-view-controls flex min-w-0 flex-wrap items-center gap-0.5">
   <div class="view-segments inline-flex items-center" role="group" aria-label={t('mail.bodyTitle')}>
     <button type="button" aria-pressed={view === 'text'} onclick={() => onViewChange('text')}>{t('mail.plainText')}</button>
     <button type="button" class:remote-active={view === 'unsafe'} aria-pressed={view !== 'text'}

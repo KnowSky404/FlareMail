@@ -207,6 +207,38 @@ test('limits unsafe HTML to the selected message and preserves its view in focus
   )));
 });
 
+test('keeps remote image controls reachable in the English standalone reader at 320px', async ({ page, baseURL }) => {
+  expect(new URL(baseURL!).hostname).toBe('127.0.0.1');
+  await page.route('https://tracker.example/**', (route) => route.fulfill({ status: 204 }));
+  await login(page);
+  await page.evaluate(() => {
+    localStorage.setItem('flaremail-locale', 'en');
+    document.cookie = 'flaremail-locale=en; Path=/';
+  });
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto('/messages/email%3Ae2e-html-inbox-message?folder=inbox');
+
+  const options = page.getByRole('button', { name: 'Display options', exact: true });
+  await options.click();
+  await page.getByRole('menuitem', { name: 'Load HTTPS images for this email', exact: true }).click();
+  const activeView = page.getByRole('button', { name: 'HTML with images', exact: true });
+  await expect(activeView).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('.view-segments button').evaluateAll((buttons) => {
+    for (const button of buttons) button.style.fontSize = '18px';
+  });
+  await expect(activeView).toHaveCSS('font-size', '18px');
+  const fits = await options.evaluate((button) => {
+    const bounds = button.getBoundingClientRect();
+    const toolbar = button.closest('.message-view-controls')!.getBoundingClientRect();
+    return bounds.left >= toolbar.left && bounds.right <= Math.min(toolbar.right, innerWidth) && bounds.width >= 44 && bounds.height >= 44;
+  });
+  expect(fits).toBe(true);
+  await assertNoHorizontalOverflow(page);
+  await options.click();
+  await page.getByRole('menuitem', { name: 'Block remote images', exact: true }).click();
+  await expect(page.locator('iframe[title="Safe HTML message body"]')).toHaveAttribute('src', /mode=safe$/u);
+});
+
 test('keeps compact HTML controls accessible in narrow desktop split panes', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The Chromium desktop project drives split-pane geometry.');
   await login(page);
