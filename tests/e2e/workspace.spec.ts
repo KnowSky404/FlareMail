@@ -862,7 +862,11 @@ test('keeps settings tabs reachable and the save action visible', async ({ page,
   const notificationBounds = await page.locator('#settings-notifications').boundingBox();
   const appbarBounds = await page.getByRole('banner').first().boundingBox();
   expect(navBounds!.y).toBeGreaterThanOrEqual(appbarBounds!.y + appbarBounds!.height - 1);
-  expect(notificationBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+  if (await sections.getAttribute('aria-orientation') === 'vertical') {
+    expect(notificationBounds!.x).toBeGreaterThanOrEqual(navBounds!.x + navBounds!.width - 1);
+  } else {
+    expect(notificationBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+  }
   if (testInfo.project.name === 'mobile') await expect(page.getByRole('button', { name: '打开导航' })).toBeInViewport();
   const toast = page.locator('.toast-region .toast');
   if (await toast.count()) {
@@ -1557,7 +1561,8 @@ test('reads three email views with explicit unsafe HTML and a private display re
   expect(bodyMetrics.iframeHeight).toBeLessThanOrEqual(896);
 
   await expect(detail.getByRole('button', { name: /加载本邮件 HTTPS 图片|撤销远程图片权限/u })).toHaveCount(0);
-  await detail.getByRole('button', { name: '不安全 HTML', exact: true }).click();
+  await detail.getByRole('button', { name: '显示选项', exact: true }).click();
+  await detail.getByRole('menuitem', { name: '加载本邮件 HTTPS 图片', exact: true }).click();
   const unsafeFrame = page.frameLocator('iframe[title="不安全 HTML 邮件正文"]');
   await expect(unsafeFrame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
   await expect.poll(() => remoteRequests.length).toBe(1);

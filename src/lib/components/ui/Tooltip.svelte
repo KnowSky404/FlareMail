@@ -10,19 +10,21 @@
     id,
     side = 'top',
     floating = false,
+    hoverable = false,
     disabled = false,
     containEscape = false,
     class: className = ''
   }: {
     content: string;
-    /** Render the real focusable trigger and receive the stable described-by id. */
-    trigger?: Snippet<[string]>;
+    /** Receive the described-by id and a callback for explicit activation. */
+    trigger?: Snippet<[string, () => void]>;
     /** Legacy fallback for non-interactive content. Prefer `trigger` for controls. */
     children?: Snippet;
     id?: string;
     side?: 'top' | 'right' | 'bottom' | 'left';
     /** Escape an ancestor's scroll clipping without moving the trigger. */
     floating?: boolean;
+    hoverable?: boolean;
     disabled?: boolean;
     /** Keep Escape within an explanatory control instead of closing its reader. */
     containEscape?: boolean;
@@ -37,19 +39,24 @@
   let floatingLeft = $state(0);
   let showTimer: ReturnType<typeof setTimeout> | undefined;
   let listening = false;
+  let hovered = false;
+  let focused = false;
   const runtimeId = $props.id();
   const stableId = $derived(id ?? `tooltip-${runtimeId}`);
   const positions = {
-    top: 'bottom-full left-1/2 mb-2 -translate-x-1/2',
-    right: 'left-full top-1/2 ml-2 -translate-y-1/2',
-    bottom: 'left-1/2 top-full mt-2 -translate-x-1/2',
-    left: 'right-full top-1/2 mr-2 -translate-y-1/2'
+    top: 'bottom-full left-1/2 -translate-x-1/2',
+    right: 'left-full top-1/2 -translate-y-1/2',
+    bottom: 'left-1/2 top-full -translate-x-1/2',
+    left: 'right-full top-1/2 -translate-y-1/2'
   };
+  const margins = { top: 'mb-2', right: 'ml-2', bottom: 'mt-2', left: 'mr-2' };
+  // A transparent border keeps the space before the text inside the hover target.
+  const hoverBorders = { top: 'border-b-8', right: 'border-l-8', bottom: 'border-t-8', left: 'border-r-8' };
 
   onMount(() => {
     return () => {
       if (showTimer !== undefined) clearTimeout(showTimer);
-      removeViewportListeners();
+      removeTooltipListeners();
       releaseTooltip(hide);
     };
   });
@@ -65,22 +72,24 @@
     showTimer = setTimeout(() => {
       showTimer = undefined;
       visible = true;
-      addViewportListeners();
+      addTooltipListeners();
       void keepWithinViewport();
     }, 250);
   }
 
-  function addViewportListeners() {
+  function addTooltipListeners() {
     if (listening) return;
     window.addEventListener('resize', keepWithinViewport);
     if (floating) window.addEventListener('scroll', handleScroll, true);
+    if (hoverable) window.addEventListener('keydown', handleKeydown, true);
     listening = true;
   }
 
-  function removeViewportListeners() {
+  function removeTooltipListeners() {
     if (!listening) return;
     window.removeEventListener('resize', keepWithinViewport);
     if (floating) window.removeEventListener('scroll', handleScroll, true);
+    if (hoverable) window.removeEventListener('keydown', handleKeydown, true);
     listening = false;
   }
 
@@ -89,7 +98,7 @@
     showTimer = undefined;
     visible = false;
     horizontalShift = 0;
-    removeViewportListeners();
+    removeTooltipListeners();
     releaseTooltip(hide);
   }
 
@@ -123,11 +132,12 @@
     const bounds = tooltipElement.getBoundingClientRect();
     if (floating && triggerElement) {
       const triggerBounds = triggerElement.getBoundingClientRect();
-      const left = side === 'right' ? triggerBounds.right + 8
-        : side === 'left' ? triggerBounds.left - bounds.width - 8
+      const gap = hoverable ? 0 : 8;
+      const left = side === 'right' ? triggerBounds.right + gap
+        : side === 'left' ? triggerBounds.left - bounds.width - gap
           : triggerBounds.left + (triggerBounds.width - bounds.width) / 2;
-      const top = side === 'bottom' ? triggerBounds.bottom + 8
-        : side === 'top' ? triggerBounds.top - bounds.height - 8
+      const top = side === 'bottom' ? triggerBounds.bottom + gap
+        : side === 'top' ? triggerBounds.top - bounds.height - gap
           : triggerBounds.top + (triggerBounds.height - bounds.height) / 2;
       floatingLeft = Math.max(8, Math.min(window.innerWidth - bounds.width - 8, left));
       floatingTop = Math.max(8, Math.min(window.innerHeight - bounds.height - 8, top));
@@ -138,11 +148,13 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && visible) {
-      event.preventDefault();
-      if (containEscape) event.stopPropagation();
-      hide();
-    }
+    if (event.key !== 'Escape' || !visible) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const dialog = target?.closest('[role="dialog"][aria-modal="true"]');
+    hide();
+    if (target?.closest('[role="menu"]') || (dialog && !dialog.contains(triggerElement ?? null))) return;
+    event.preventDefault();
+    if (containEscape) event.stopPropagation();
   }
 </script>
 
@@ -150,20 +162,22 @@
   bind:this={triggerElement}
   role="presentation"
   class={cn('relative inline-flex min-w-0', className)}
-  onpointerenter={show}
-  onpointerleave={hide}
-  onfocusin={show}
+  onpointerenter={() => { hovered = true; show(); }}
+  onpointerleave={() => { hovered = false; if (!hoverable || !focused) hide(); }}
+  onfocusin={() => { focused = true; show(); }}
   onfocusout={(event) => {
-    if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) hide();
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    focused = false;
+    if (!hoverable || !hovered) hide();
   }}
   onkeydown={handleKeydown}
 >
   {#if trigger}
-    {@render trigger(stableId)}
+    {@render trigger(stableId, show)}
   {:else if children}
     <span>{@render children()}</span>
   {/if}
-  <span bind:this={tooltipElement} id={stableId} role="tooltip" hidden={!visible} style:top={floating ? `${floatingTop}px` : undefined} style:left={floating ? `${floatingLeft}px` : undefined} style:margin-left={horizontalShift ? `${horizontalShift}px` : undefined} class={cn('pointer-events-none z-50 w-max max-w-[min(20rem,calc(100vw-1rem))] break-words rounded-[var(--radius-sm)] bg-[var(--fm-text)] px-2 py-1 text-[11px] leading-4 text-[var(--fm-text-inverse)] shadow-lg', floating ? 'fixed' : `absolute ${positions[side]}`)}>
+  <span bind:this={tooltipElement} id={stableId} role="tooltip" hidden={!visible} style:top={floating ? `${floatingTop}px` : undefined} style:left={floating ? `${floatingLeft}px` : undefined} style:margin-left={horizontalShift ? `${horizontalShift}px` : undefined} class={cn('z-50 w-max max-w-[min(20rem,calc(100vw-1rem))] break-words rounded-[var(--radius-sm)] bg-[var(--fm-text)] px-2 py-1 text-[11px] leading-4 text-[var(--fm-text-inverse)] shadow-lg', hoverable ? 'pointer-events-auto border-transparent bg-clip-padding' : 'pointer-events-none', hoverable && hoverBorders[side], floating ? 'fixed' : `absolute ${positions[side]}`, !floating && !hoverable && margins[side])}>
     {content}
   </span>
 </span>

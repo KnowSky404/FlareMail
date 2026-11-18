@@ -74,9 +74,12 @@ test('preserves email layout while switching between safe and unsafe HTML in the
   await iframe.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(tmpdir(), `flaremail-html-preview-${testInfo.project.name}.png`) });
   expect(remoteRequests).toEqual([]);
-  const unsafeToggle = detail.getByRole('button', { name: '不安全 HTML', exact: true });
-  await unsafeToggle.press('Enter');
-  await expect(unsafeToggle).toHaveAttribute('aria-pressed', 'true');
+  await detail.getByRole('button', { name: '显示选项', exact: true }).press('ArrowDown');
+  const loadImages = detail.getByRole('menuitem', { name: '加载本邮件 HTTPS 图片', exact: true });
+  await expect(loadImages).toBeFocused();
+  await expect(loadImages).toHaveAccessibleDescription(/暴露.*IP.*打开时间/u);
+  await loadImages.press('Enter');
+  await expect(detail.getByRole('button', { name: '已加载远程图片', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const unsafeIframe = detail.locator('iframe[title="不安全 HTML 邮件正文"]');
   await expect(unsafeIframe).toHaveAttribute('src', /\?mode=unsafe$/u);
   await expect(unsafeIframe).toHaveAttribute('sandbox', 'allow-popups allow-popups-to-escape-sandbox');
@@ -88,7 +91,8 @@ test('preserves email layout while switching between safe and unsafe HTML in the
   else await info.click();
   await expect(detail.getByRole('tooltip').filter({ hasText: /远程|跟踪/u })).toBeVisible();
   await info.press('Escape');
-  await toggle.press('Enter');
+  await detail.getByRole('button', { name: '显示选项', exact: true }).click();
+  await detail.getByRole('menuitem', { name: '阻止远程图片', exact: true }).click();
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
   await detail.getByRole('button', { name: '纯文本', exact: true }).press('Enter');
   await expect(iframe).toHaveCount(0);
@@ -174,13 +178,14 @@ test('limits unsafe HTML to the selected message and preserves its view in focus
   await page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
     .getByRole('button', { name: /E2E HTML Safety/u }).first().click();
   const detail = page.getByRole('region', { name: '邮件详情' });
-  await detail.getByRole('button', { name: '不安全 HTML', exact: true }).click();
+  await detail.getByRole('button', { name: '显示选项', exact: true }).click();
+  await detail.getByRole('menuitem', { name: '加载本邮件 HTTPS 图片', exact: true }).click();
   await expect(detail.locator('iframe')).toHaveAttribute('src', /mode=unsafe/u);
   const readerTrigger = detail.getByRole('button', { name: '展开专注阅读', exact: true });
   if (await readerTrigger.isVisible()) {
     await readerTrigger.click();
     const reader = page.getByRole('dialog', { name: 'E2E HTML Safety', exact: true });
-    await expect(reader.getByRole('button', { name: '不安全 HTML', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(reader.getByRole('button', { name: '已加载远程图片', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(reader.locator('iframe')).toHaveAttribute('src', /mode=unsafe/u);
     await reader.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
     await expect(reader).toBeHidden();
@@ -216,7 +221,7 @@ test('keeps compact HTML controls accessible in narrow desktop split panes', asy
     await page.setViewportSize({ width, height: 900 });
     await expect(detail.getByRole('button', { name: '纯文本', exact: true })).toBeInViewport();
     await expect(detail.getByRole('button', { name: '安全 HTML', exact: true })).toBeInViewport();
-    await expect(detail.getByRole('button', { name: '不安全 HTML', exact: true })).toBeInViewport();
+    await expect(detail.getByRole('button', { name: '显示选项', exact: true })).toBeInViewport();
     const geometry = await detail.evaluate((element) => {
       const area = element.getBoundingClientRect();
       const buttons = [...element.querySelectorAll<HTMLButtonElement>('header button')]
@@ -300,13 +305,23 @@ test('keeps expanded mail information accessible in short viewports and after re
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('keeps display options inside narrow and short reader viewports', async ({ page, consoleErrors }) => {
+test('keeps display options inside narrow and short reader viewports', async ({ page, consoleErrors }, info) => {
   await login(page);
   await page.getByRole('listitem').filter({ hasText: 'E2E HTML Safety' })
     .getByRole('button', { name: /E2E HTML Safety/u }).first().click();
   const detail = page.getByRole('region', { name: '邮件详情' });
   const trigger = detail.getByRole('button', { name: '显示选项', exact: true });
   const menu = detail.getByRole('menu');
+  if (info.project.name === 'desktop') {
+    await trigger.press('Enter');
+    await expect(menu.getByRole('menuitem').first()).toBeFocused();
+    const ai = detail.getByRole('region', { name: 'AI 摘要与分类建议' });
+    await ai.getByRole('button', { name: '关于 AI 分析' }).hover();
+    await expect(ai.getByRole('tooltip')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+    await expect(ai.getByRole('tooltip')).toBeHidden();
+  }
   for (const viewport of [{ width: 320, height: 720 }, { width: 390, height: 500 }, { width: 844, height: 390 }]) {
     await page.setViewportSize(viewport);
     await trigger.press('Enter');
@@ -318,7 +333,7 @@ test('keeps display options inside narrow and short reader viewports', async ({ 
     })).toBe(true);
     await expect(menu.getByRole('menuitem', { name: '打印视图', exact: true })).toBeInViewport();
     await expect(menu.getByRole('menuitem', { name: '下载显示问题报告', exact: true })).toBeInViewport();
-    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('End');
     await expect(menu.getByRole('menuitem').last()).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(menu).toBeHidden();

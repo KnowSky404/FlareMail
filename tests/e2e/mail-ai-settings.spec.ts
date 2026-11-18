@@ -65,7 +65,8 @@ test('AI settings accessible Owner form saves both API formats, keeps secrets bl
   await panel.getByRole('switch', { name: '删除已保存的 API Key', exact: true }).click();
   await panel.getByRole('button', { name: '保存', exact: true }).click();
   await expect(panel.getByText('尚未配置 Key', { exact: false })).toBeVisible(); expect(saves).toBe(3); expect(analysisCalls).toBe(0);
-  await tab.focus(); await page.keyboard.press('ArrowLeft');
+  const tabs = page.getByRole('tablist', { name: '设置分区' });
+  await tab.press(await tabs.getAttribute('aria-orientation') === 'vertical' ? 'ArrowUp' : 'ArrowLeft');
   await expect(page.getByRole('tab', { name: '黑名单', exact: false })).toBeFocused();
   await assertNoConsoleErrors(consoleErrors);
 });

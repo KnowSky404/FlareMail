@@ -101,6 +101,7 @@
   <div class="fixed inset-0 z-[80] bg-[var(--fm-overlay)] p-0 sm:p-3" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
     <div
       bind:this={readerElement}
+      data-reader-dialog
       class={cn('flex h-full max-h-full w-full flex-col overflow-hidden bg-[var(--fm-surface)] shadow-[var(--fm-shadow-overlay)] sm:rounded-[var(--radius-lg)] sm:border sm:border-[var(--fm-border)]', className)}
       role="dialog"
       aria-modal="true"

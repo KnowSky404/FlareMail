@@ -334,15 +334,15 @@ test('keeps plain text safe while exercising HTML, CID, unsafe opt-in, and repor
   expect(remoteRequests).toEqual([]);
 
   await expect(detail.getByRole('button', { name: /加载本邮件 HTTPS 图片|撤销远程图片权限/u })).toHaveCount(0);
-  const unsafeToggle = detail.getByRole('button', { name: '不安全 HTML', exact: true });
-  await pressHeadlessControl(unsafeToggle);
-  await expect(unsafeToggle).toHaveAttribute('aria-pressed', 'true');
+  await clickHeadlessControl(detail.getByRole('button', { name: '显示选项', exact: true }));
+  await clickHeadlessControl(detail.getByRole('menuitem', { name: '加载本邮件 HTTPS 图片', exact: true }));
   const unsafeHtmlFrame = page.locator('iframe[title="不安全 HTML 邮件正文"]');
   await expect(unsafeHtmlFrame).toHaveAttribute('src', /mode=unsafe/u);
   const unsafeFrame = page.frameLocator('iframe[title="不安全 HTML 邮件正文"]');
   await expect(unsafeFrame.locator('img[src^="https://tracker.example/"]')).toHaveCount(1);
   await expect.poll(() => remoteRequests.length).toBe(1);
-  await pressHeadlessControl(detail.getByRole('button', { name: '安全 HTML', exact: true }));
+  await clickHeadlessControl(detail.getByRole('button', { name: '显示选项', exact: true }));
+  await pressHeadlessControl(detail.getByRole('menuitem', { name: '阻止远程图片', exact: true }));
   await expect(htmlFrame).toHaveAttribute('src', /mode=safe/u);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
@@ -592,7 +592,11 @@ test('keeps settings sections and save action reachable in WebKit', async ({ pag
   await expect(page.getByRole('button', { name: '保存设置' })).toBeInViewport();
   const navBounds = await sections.boundingBox();
   const sectionBounds = await notification.boundingBox();
-  expect(sectionBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+  if (await sections.getAttribute('aria-orientation') === 'vertical') {
+    expect(sectionBounds!.x).toBeGreaterThanOrEqual(navBounds!.x + navBounds!.width - 1);
+  } else {
+    expect(sectionBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+  }
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: join(tmpdir(), `flaremail-settings-webkit-${testInfo.project.name}.png`), fullPage: false });
 
