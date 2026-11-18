@@ -74,6 +74,8 @@ return stored inbound, sent, or draft bodies. Inbound text is loaded through
 the owned message detail route. Workspace sent text is loaded through
 `GET /api/workspace/messages/:id/body`; the response never contains raw HTML.
 Ownership is checked on every list and detail path.
+`GET /api/workspace/messages/:id` returns reader metadata, including the
+current Owner's applied labels in `message.userLabels`.
 
 Inbound `email_messages."to"` is the Cloudflare Email Routing envelope
 recipient. MIME `To` and `Cc` remain separate parsed headers, and raw
