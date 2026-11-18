@@ -1802,15 +1802,14 @@
     metricsCache.clear();
     if (event.id) invalidateMessageCaches(event.id);
     const current = event.id && selectedMessage?.id === event.id ? selectedMessage : null;
-    const cached = event.id && deepLinkedMessage?.id === event.id ? deepLinkedMessage : null;
+    const cached = deepLinkedMessage && (!event.id || deepLinkedMessage.id === event.id) ? deepLinkedMessage : null;
     if (event.id && event.id === urlMessageId && !cached) {
       targetMessageRequest.cancel();
       targetMessageRevision++;
     }
-    if (cached && !current) clearRetainedMessage(cached.id);
-    if (current && cached) refreshDeepLinkedMessage(current);
-    if (!event.id && deepLinkedMessage && deepLinkedMessage.id === selectedMessage?.id) {
-      void refreshDeepLinkedMessage(deepLinkedMessage);
+    if (cached) {
+      if (cached.id === selectedMessage?.id) void refreshDeepLinkedMessage(cached);
+      else clearRetainedMessage(cached.id);
     }
     if (current) {
       if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
