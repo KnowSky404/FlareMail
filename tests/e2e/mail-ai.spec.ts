@@ -40,6 +40,7 @@ for (const reader of ['workspace', 'standalone']) {
   categoryConfirmationTest(`AI category confirmation retains the address boundary after reclassification (${reader})`, async ({ page, consoleErrors }) => {
     let generated = false;
     let removeAutomaticallyCategorizedRow = false;
+    let metadataStarred = false;
     const refreshedCategory = Promise.withResolvers<void>();
     const split = reader === 'workspace' && (page.viewportSize()?.width ?? 0) > 900;
     await page.route(`**${path}*`, async (route) => {
@@ -56,6 +57,7 @@ for (const reader of ['workspace', 'standalone']) {
       if (route.request().method() !== 'GET') return route.continue();
       const response = await route.fetch(); const body = await response.json();
       if (response.ok() && generated && !body.data.message.inboxCategoryOverride) body.data.message.inboxCategory = 'updates';
+      if (response.ok() && reader === 'workspace') body.data.message.starred = metadataStarred;
       await route.fulfill({ response, json: body });
     });
     if (reader === 'workspace') await page.route('**/api/workspace/mailbox?**', async (route) => {
@@ -98,6 +100,8 @@ for (const reader of ['workspace', 'standalone']) {
       await expect(page).not.toHaveURL(/message=/u);
     }
     await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
+    const detail = page.getByRole('region', { name: '邮件详情', exact: true });
+    metadataStarred = true;
     const [request] = await Promise.all([
       page.waitForRequest((request) => request.method() === 'PATCH' && request.url().endsWith('/api/workspace/mailbox/categories')),
       panel.getByRole('button', { name: '确认应用此分类' }).click()
@@ -105,6 +109,7 @@ for (const reader of ['workspace', 'standalone']) {
     expect(request.postDataJSON()).toMatchObject({ ids: ['e2e-inbox-message'], onlyIfAutomatic: true,
       scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } } });
     await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+    if (reader === 'workspace') await expect(detail.getByRole('button', { name: '取消星标', exact: true })).toBeVisible();
     removeAutomaticallyCategorizedRow = false;
     expect((await restore()).status()).toBe(200);
 
@@ -118,8 +123,9 @@ for (const reader of ['workspace', 'standalone']) {
       await expect(apply).toBeVisible();
       await apply.click();
       await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+      await expect(detail.getByRole('button', { name: '取消星标', exact: true })).toBeVisible();
 
-      const detail = page.getByRole('region', { name: '邮件详情', exact: true });
+      metadataStarred = false;
       const [archive] = await Promise.all([
         page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate')),
         detail.getByRole('button', { name: '归档', exact: true }).click()
@@ -130,6 +136,7 @@ for (const reader of ['workspace', 'standalone']) {
         scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } }
       });
       if (split) {
+        await expect(detail.getByRole('button', { name: '加星', exact: true })).toBeVisible();
         const [unarchive] = await Promise.all([
           page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate')),
           detail.getByRole('button', { name: '移回收件箱', exact: true }).click()
