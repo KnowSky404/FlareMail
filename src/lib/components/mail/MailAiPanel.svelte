@@ -128,7 +128,7 @@
           {/snippet}
         </Tooltip>
         {#if generation}
-          <Button variant="ghost" size="sm" class="ai-generate" disabled={busy || applying || (result?.refreshing && !error)} onclick={(event) => {
+          <Button variant="ghost" size="sm" class="ai-generate" disabled={busy || applying || result?.refreshing} onclick={(event) => {
             (event.currentTarget as HTMLButtonElement).focus();
             confirmation = generation;
           }}>

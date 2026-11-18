@@ -344,6 +344,33 @@ for (const change of ['refresh', 'bulk reclassification']) {
   });
 }
 
+test('bulk refresh invalidates a retained message before navigating Back', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) <= 900, 'The split view must show the list next to the retained message.');
+  await login(page);
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  const metadataPath = '/api/workspace/messages/e2e-inbox-message';
+  const search = encodeURIComponent('subject:"E2E HTML Safety"');
+  await page.goto(`/?folder=inbox&q=${search}&message=e2e-inbox-message`);
+  await expect(page.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeVisible();
+  await page.getByRole('listitem').getByRole('button', { name: /E2E HTML Safety/u }).click();
+  await expect(page.getByRole('heading', { name: 'E2E HTML Safety', exact: true })).toBeVisible();
+  await page.route(`**${metadataPath}`, (route) => route.fulfill({ status: 404, json: {
+    ok: false, error: { code: 'MESSAGE_NOT_FOUND', message: 'Removed by a bulk action' }, requestId: 'fake-removed-message'
+  } }));
+  const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace/mailbox');
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh' });
+    channel.close();
+  });
+  await refreshed;
+  const rechecked = page.waitForResponse((response) => new URL(response.url()).pathname === metadataPath && response.status() === 404);
+  await page.goBack();
+  await rechecked;
+  await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
+  await expect(page.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeHidden();
+});
+
 test('AI accessible summary, explicit category application and cached refresh', async ({ page, consoleErrors }, info) => {
   let generations = 0;
   let cached = false;
@@ -470,6 +497,32 @@ test('AI accessible error recovery requires consent and prevents duplicate gener
   await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
   await expect(panel.getByText('没有可靠的分类建议。')).toBeVisible();
   await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*(?:409|503)/u.test(text)));
+});
+
+test('failed AI status refresh keeps regeneration disabled while a cached analysis is refreshing', async ({ page }) => {
+  let reads = 0;
+  await page.route(`**${path}*`, async (route) => {
+    expect(route.request().method()).toBe('GET');
+    if (++reads === 2) {
+      await route.fulfill({ status: 503, json: { ok: false, error: { code: 'AI_PROVIDER_UNAVAILABLE', message: 'Unavailable' }, requestId: 'fake-ai' } });
+      return;
+    }
+    await route.fulfill({ json: { ok: true, data: { status: 'ready', refreshing: reads === 1, analysis: {
+      summary: 'Cached analysis during regeneration', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN', suggestion: null
+    } }, requestId: 'fake-ai' } });
+  });
+  await login(page);
+  await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
+  const panel = page.getByRole('region', { name: title });
+  const regenerate = panel.getByRole('button', { name: '同意重新生成' });
+  const refresh = panel.getByRole('button', { name: '刷新分析状态' });
+  await expect(regenerate).toBeDisabled();
+  await refresh.click();
+  await expect(panel.getByRole('alert')).toContainText('AI_PROVIDER_UNAVAILABLE');
+  await expect(regenerate).toBeDisabled();
+  await expect(panel.getByText('Cached analysis during regeneration')).toBeVisible();
+  await refresh.click();
+  await expect(regenerate).toBeEnabled();
 });
 
 test('AI English output, regeneration and system light/dark themes in standalone reader', async ({ page, consoleErrors }, info) => {
