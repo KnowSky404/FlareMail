@@ -37,6 +37,8 @@
   let horizontalShift = $state(0);
   let floatingTop = $state(0);
   let floatingLeft = $state(0);
+  let floatingSide = $state<'top' | 'bottom' | null>(null);
+  let floatingMaxHeight = $state<number | undefined>();
   let showTimer: ReturnType<typeof setTimeout> | undefined;
   let listening = false;
   let hovered = false;
@@ -136,9 +138,18 @@
       const left = side === 'right' ? triggerBounds.right + gap
         : side === 'left' ? triggerBounds.left - bounds.width - gap
           : triggerBounds.left + (triggerBounds.width - bounds.width) / 2;
-      const top = side === 'bottom' ? triggerBounds.bottom + gap
-        : side === 'top' ? triggerBounds.top - bounds.height - gap
-          : triggerBounds.top + (triggerBounds.height - bounds.height) / 2;
+      let top = triggerBounds.top + (triggerBounds.height - bounds.height) / 2;
+      floatingSide = null;
+      floatingMaxHeight = undefined;
+      if (side === 'top' || side === 'bottom') {
+        const above = triggerBounds.top - gap - 8;
+        const below = window.innerHeight - triggerBounds.bottom - gap - 8;
+        const height = bounds.height + Math.max(0, tooltipElement.scrollHeight - tooltipElement.clientHeight);
+        const placeAbove = side === 'top' ? height <= above || above >= below : height > below && above > below;
+        floatingSide = placeAbove ? 'top' : 'bottom';
+        if (hoverable) floatingMaxHeight = Math.max(0, placeAbove ? above : below);
+        top = placeAbove ? triggerBounds.top - gap - Math.min(height, floatingMaxHeight ?? height) : triggerBounds.bottom + gap;
+      }
       floatingLeft = Math.max(8, Math.min(window.innerWidth - bounds.width - 8, left));
       floatingTop = Math.max(8, Math.min(window.innerHeight - bounds.height - 8, top));
       return;
@@ -177,7 +188,7 @@
   {:else if children}
     <span>{@render children()}</span>
   {/if}
-  <span bind:this={tooltipElement} id={stableId} role="tooltip" hidden={!visible} style:top={floating ? `${floatingTop}px` : undefined} style:left={floating ? `${floatingLeft}px` : undefined} style:margin-left={horizontalShift ? `${horizontalShift}px` : undefined} class={cn('z-50 w-max max-w-[min(20rem,calc(100vw-1rem))] break-words rounded-[var(--radius-sm)] bg-[var(--fm-text)] px-2 py-1 text-[11px] leading-4 text-[var(--fm-text-inverse)] shadow-lg', hoverable ? 'pointer-events-auto border-transparent bg-clip-padding' : 'pointer-events-none', hoverable && hoverBorders[side], floating ? 'fixed' : `absolute ${positions[side]}`, !floating && !hoverable && margins[side])}>
+  <span bind:this={tooltipElement} id={stableId} role="tooltip" hidden={!visible} style:top={floating ? `${floatingTop}px` : undefined} style:left={floating ? `${floatingLeft}px` : undefined} style:max-height={floating && floatingMaxHeight !== undefined ? `${floatingMaxHeight}px` : undefined} style:margin-left={horizontalShift ? `${horizontalShift}px` : undefined} class={cn('z-50 w-max max-w-[min(20rem,calc(100vw-1rem))] break-words rounded-[var(--radius-sm)] bg-[var(--fm-text)] px-2 py-1 text-[11px] leading-4 text-[var(--fm-text-inverse)] shadow-lg', hoverable ? 'pointer-events-auto overflow-y-auto border-transparent bg-clip-padding' : 'pointer-events-none', hoverable && hoverBorders[floating && floatingSide ? floatingSide : side], floating ? 'fixed' : `absolute ${positions[side]}`, !floating && !hoverable && margins[side])}>
     {content}
   </span>
 </span>
