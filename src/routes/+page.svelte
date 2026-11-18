@@ -3671,7 +3671,7 @@
 
     <AboutDialog open={aboutOpen} version={data.projectVersion} restoreFocusElement={aboutRestoreFocusElement} onClose={() => (aboutOpen = false)} />
 
-    <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} backdropClass={readerOpen ? 'z-[90]' : ''} onClose={closeLabelEditor}>
+    <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} restoreFocusElement={labelCreateTarget ? document.getElementById('fm-manage-message-labels') : null} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} backdropClass={readerOpen ? 'z-[90]' : ''} onClose={closeLabelEditor}>
       <form onsubmit={(event) => { event.preventDefault(); void saveLabel(); }}>
         {#if labelEditorInterrupted}<Banner variant="warning" class="mb-3">{t('label.interrupted')}</Banner>{/if}
         <TextField id="mail-label-name" label={t('label.name')} bind:value={labelEditorName} maxlength={48} required disabled={labelActionPending} />

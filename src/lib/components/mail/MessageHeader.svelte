@@ -239,7 +239,7 @@
           </IconButton>
         {/if}
         {#if !trashMode && onManageLabels}
-          <IconButton ariaLabel={t('label.apply')} title={t('label.apply')} size="sm" onclick={() => onManageLabels?.(message)} disabled={pending}>
+          <IconButton id="fm-manage-message-labels" ariaLabel={t('label.apply')} title={t('label.apply')} size="sm" onclick={() => onManageLabels?.(message)} disabled={pending}>
             <Tag class="size-4" aria-hidden="true" />
           </IconButton>
         {/if}
