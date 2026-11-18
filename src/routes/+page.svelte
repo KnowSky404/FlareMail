@@ -1597,13 +1597,17 @@
     try {
       let section = activeSection;
       if (section === 'inbox' || section === 'archive') section = message.archivedAt ? 'archive' : 'inbox';
-      const category = deepLinkedMessage?.id === message.id ? 'all' : inboxCategory;
+      const retainedOutsideCategory = deepLinkedMessage?.id === message.id && inboxCategory !== 'all' &&
+        message.inboxCategory && message.inboxCategory !== inboxCategory &&
+        !visibleThreads.some((thread) => thread.messages.some((item) => item.id === message.id));
+      const category = retainedOutsideCategory ? 'all' : inboxCategory;
       const { result } = await mutateMailbox(message.archivedAt ? 'unarchive' : 'archive', [message.id], [], {
         section: section as MailboxMutationScope['section'], identityFilter: mailIdentityFilter,
         threadScope: 'selected', ...(section === 'inbox' ? { category } : {}),
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
       if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
+        clearRetainedMessage(message.id);
         await closeMobileDetail();
       } else {
         updateRetainedArchive(result.summaries);
