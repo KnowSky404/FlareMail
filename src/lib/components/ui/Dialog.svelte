@@ -23,6 +23,7 @@
     restoreFocusElement,
     fallbackFocus,
     size = 'md',
+    backdropClass = '',
     class: className = ''
   }: {
     open?: boolean;
@@ -41,6 +42,7 @@
     /** Focus this control when the restore target is gone or no longer usable. */
     fallbackFocus?: FocusTarget;
     size?: 'sm' | 'md' | 'lg' | 'xl';
+    backdropClass?: string;
     class?: string;
   } = $props();
   const { t } = useLocale();
@@ -133,7 +135,7 @@
 </script>
 
 {#if open}
-  <div class="fixed inset-0 z-50 grid place-items-center bg-[var(--fm-overlay)] p-2 sm:p-4" role="presentation" onclick={(event) => { if (closeOnBackdrop && event.target === event.currentTarget) onClose?.(); }}>
+  <div class={cn('fixed inset-0 z-50 grid place-items-center bg-[var(--fm-overlay)] p-2 sm:p-4', backdropClass)} role="presentation" onclick={(event) => { if (closeOnBackdrop && event.target === event.currentTarget) onClose?.(); }}>
     <div id={dialogId} bind:this={dialogElement} tabindex="-1" class={cn('flex max-h-[min(94dvh,48rem)] w-full flex-col overflow-hidden rounded-[var(--radius-lg)] border border-[var(--fm-border)] bg-[var(--fm-surface)] shadow-[var(--fm-shadow-overlay)]', sizeClasses[size], className)} role="dialog" aria-modal="true" aria-labelledby={`${dialogId}-title`} aria-describedby={description ? `${dialogId}-description` : undefined}>
       <div class="flex min-w-0 flex-none items-start justify-between gap-3 border-b border-[var(--fm-border)] px-4 py-3 sm:gap-4 sm:px-5 sm:py-4">
         <div class="min-w-0 [overflow-wrap:anywhere]"><h2 id={`${dialogId}-title`} class="break-words text-base font-semibold text-[var(--fm-text)]">{title}</h2>{#if description}<p id={`${dialogId}-description`} class="mt-1 break-words text-sm text-[var(--fm-text-muted)]">{description}</p>{/if}</div>

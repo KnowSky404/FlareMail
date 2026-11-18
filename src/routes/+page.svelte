@@ -1371,6 +1371,10 @@
     const update = (items: MailMessage[]) => items.map((item) => item.id === message.id ? { ...item, userLabels: result.labels } : item);
     mailbox = { inbox: update(mailbox.inbox), sent: update(mailbox.sent), drafts: update(mailbox.drafts) };
     if (mailboxPages) mailboxPages = Object.fromEntries(Object.entries(mailboxPages).map(([section, page]) => [section, page ? { ...page, messages: update(page.messages) } : page])) as typeof mailboxPages;
+    if (deepLinkedMessage?.id === message.id) {
+      syncMessageRequest.cancel();
+      deepLinkedMessage = { ...deepLinkedMessage, userLabels: result.labels };
+    }
     if (labelTargetMessage?.id === message.id) labelTargetMessage = { ...message, userLabels: result.labels };
     if (activeSection === 'label') void refreshWorkspace(false);
   }
@@ -3647,7 +3651,7 @@
 
     <AboutDialog open={aboutOpen} version={data.projectVersion} restoreFocusElement={aboutRestoreFocusElement} onClose={() => (aboutOpen = false)} />
 
-    <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} onClose={closeLabelEditor}>
+    <Dialog id="label-editor" open={labelEditorMode !== null} title={labelEditorMode === 'rename' ? t('label.rename') : t('label.create')} dismissible={!labelActionPending} closeOnBackdrop={!labelActionPending} backdropClass={readerOpen ? 'z-[90]' : ''} onClose={closeLabelEditor}>
       <form onsubmit={(event) => { event.preventDefault(); void saveLabel(); }}>
         {#if labelEditorInterrupted}<Banner variant="warning" class="mb-3">{t('label.interrupted')}</Banner>{/if}
         <TextField id="mail-label-name" label={t('label.name')} bind:value={labelEditorName} maxlength={48} required disabled={labelActionPending} />
@@ -3658,7 +3662,7 @@
       </form>
     </Dialog>
 
-    <Dialog id="message-labels" open={labelTargetMessage !== null} title={t('label.apply')} onClose={() => (labelTargetMessage = null)}>
+    <Dialog id="message-labels" open={labelTargetMessage !== null} title={t('label.apply')} backdropClass={readerOpen ? 'z-[90]' : ''} onClose={() => (labelTargetMessage = null)}>
       {#if labelTargetMessage}
         <p class="mb-3 truncate text-xs text-[var(--fm-text-muted)]">{labelTargetMessage.subject || t('mail.noSubject')}</p>
         {#if userLabels.length === 0}<p class="text-sm text-[var(--fm-text-muted)]">{t('label.empty')}</p>{/if}

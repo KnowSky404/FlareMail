@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
 import { getMailboxMetrics } from '$lib/server/db/mailbox';
+import { attachMailLabels } from '$lib/server/db/labels';
 import { readWorkspaceMessage } from '$lib/server/workspace/reader';
 import { ApiError, apiSuccess, requirePathParam, withApiHandler } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
@@ -12,9 +13,13 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   if (!env?.DB) throw new ApiError(503, 'WORKSPACE_UNAVAILABLE', '工作区存储暂不可用。');
   const message = await readWorkspaceMessage(env, session, routeMessageId);
   if (!message) throw new ApiError(404, 'MESSAGE_NOT_FOUND', '邮件不存在。');
+  const [metrics] = await Promise.all([
+    getMailboxMetrics(env.DB, session.userId),
+    attachMailLabels(env.DB, session.userId, [message])
+  ]);
   return apiSuccess(event, {
     message,
-    metrics: await getMailboxMetrics(env.DB, session.userId),
+    metrics,
     metricsScope: { identityFilter: null }
   });
 });

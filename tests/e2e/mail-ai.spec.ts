@@ -131,21 +131,46 @@ for (const reader of ['workspace', 'standalone']) {
           expect((await restore()).status()).toBe(200);
         }
 
-        await page.goto(`/?${query}&message=e2e-inbox-message`);
-        await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
-        await focused.getByRole('tab', { name: '分类建议', exact: true }).click();
-        const externalCategory = await page.request.patch('/api/workspace/mailbox/categories', {
-          headers: { origin: new URL(page.url()).origin },
-          data: { ids: ['e2e-inbox-message'], category: 'updates', scope: { section: 'inbox', identityFilter: null, category: 'all' } }
-        });
-        expect(externalCategory.status()).toBe(200);
-        await page.evaluate(() => {
-          const channel = new BroadcastChannel('flaremail-workspace-v1');
-          channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
-          channel.close();
-        });
-        await expect(focused.getByText('已有手动分类，保留当前设置。')).toBeVisible();
-        await focused.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
+        const headers = { origin: new URL(page.url()).origin };
+        const labelName = `E2E Retained Reader ${crypto.randomUUID().slice(0, 8)}`;
+        const createdLabel = await page.request.post('/api/workspace/labels', { headers, data: { name: labelName } });
+        expect(createdLabel.status()).toBe(201);
+        const { data: { label: { id: labelId } } } = await createdLabel.json();
+        const labelPath = `/api/workspace/labels/${labelId}`;
+        try {
+          const applied = await page.request.put(`${labelPath}/messages`, {
+            headers, data: { kind: 'workspace', id: 'e2e-inbox-message' }
+          });
+          expect(applied.status()).toBe(200);
+          await page.goto(`/?${query}&message=e2e-inbox-message`);
+          await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
+          await focused.getByRole('tab', { name: '分类建议', exact: true }).click();
+          const externalCategory = await page.request.patch('/api/workspace/mailbox/categories', {
+            headers,
+            data: { ids: ['e2e-inbox-message'], category: 'updates', scope: { section: 'inbox', identityFilter: null, category: 'all' } }
+          });
+          expect(externalCategory.status()).toBe(200);
+          await page.evaluate(() => {
+            const channel = new BroadcastChannel('flaremail-workspace-v1');
+            channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
+            channel.close();
+          });
+          await expect(focused.getByText('已有手动分类，保留当前设置。')).toBeVisible();
+          const manageLabels = focused.getByRole('button', { name: '管理标签', exact: true });
+          const labels = page.getByRole('dialog', { name: '管理标签', exact: true });
+          const checkbox = labels.getByRole('checkbox', { name: labelName, exact: true });
+          await manageLabels.click();
+          await expect(checkbox).toBeChecked();
+          await checkbox.uncheck();
+          await expect(checkbox).not.toBeChecked();
+          await labels.getByRole('button', { name: '关闭', exact: true }).click();
+          await manageLabels.click();
+          await expect(checkbox).not.toBeChecked();
+          await labels.getByRole('button', { name: '关闭', exact: true }).click();
+          await focused.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
+        } finally {
+          expect((await page.request.delete(labelPath, { headers })).status()).toBe(200);
+        }
 
         const externalArchive = await page.request.post('/api/workspace/mailbox/mutate', {
           headers: { origin: new URL(page.url()).origin },
