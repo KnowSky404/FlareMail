@@ -270,20 +270,29 @@ test('closes display options when keyboard navigation selects another cached HTM
   await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
   await page.getByLabel('搜索邮件').fill('E2E');
   const detail = page.getByRole('region', { name: '邮件详情' });
-  const options = detail.getByRole('button', { name: '显示选项', exact: true });
   await page.getByRole('listitem').getByRole('button', { name: /E2E Deep Link Target/u }).first().click();
-  await expect(options).toBeVisible();
-  await page.getByRole('listitem').getByRole('button', { name: /E2E HTML Safety/u }).first().click();
-  await options.click();
-  await detail.getByRole('menuitem', { name: '加载本邮件 HTTPS 图片', exact: true }).click();
-  await options.press('ArrowDown');
-  await expect(detail.getByRole('menuitem', { name: '阻止远程图片', exact: true })).toBeFocused();
+  await expect(detail.getByRole('button', { name: '显示选项', exact: true })).toBeVisible();
+  for (const focused of [false, true]) {
+    await page.getByRole('listitem').getByRole('button', { name: /E2E HTML Safety/u }).first().click();
+    if (focused) await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
+    const reader = focused ? page.getByRole('dialog', { name: /^(E2E HTML Safety|E2E Deep Link Target)$/u }) : detail;
+    const options = reader.getByRole('button', { name: '显示选项', exact: true });
+    await options.click();
+    await reader.getByRole('menuitem', { name: '加载本邮件 HTTPS 图片', exact: true }).click();
+    await options.press('ArrowDown');
+    await expect(reader.getByRole('menuitem', { name: '阻止远程图片', exact: true })).toBeFocused();
 
-  await page.keyboard.press('j');
-  await expect(detail.getByRole('heading', { name: 'E2E Deep Link Target' })).toBeVisible();
-  await expect(options).toHaveAttribute('aria-expanded', 'false');
-  await page.keyboard.press('Enter');
-  await expect(detail.getByRole('button', { name: '纯文本', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('j');
+    await expect(reader.getByRole('heading', { name: 'E2E Deep Link Target', level: 1 })).toBeFocused();
+    await expect(options).toHaveAttribute('aria-expanded', 'false');
+    await page.keyboard.press('Enter');
+    await expect(reader.getByRole('button', { name: '纯文本', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    if (focused) {
+      await page.keyboard.press('Escape');
+      await expect(reader).toBeHidden();
+      await expect(detail.getByRole('heading', { name: 'E2E Deep Link Target' })).toBeVisible();
+    }
+  }
   expect(nextUnsafeRequested).toBe(false);
 });
 

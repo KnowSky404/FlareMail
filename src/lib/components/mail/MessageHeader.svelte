@@ -281,7 +281,7 @@
 
     <div class="message-subject min-w-0 flex-1">
       <div class="flex min-w-0 items-center gap-2">
-        <h1 class:subject-collapsed={longSubject && !subjectExpanded} class="min-w-0 flex-1 text-base font-semibold text-[var(--fm-text)] sm:text-lg" title={message.subject || t('mail.noSubject')}>{message.subject || t('mail.noSubject')}</h1>
+        <h1 tabindex="-1" class:subject-collapsed={longSubject && !subjectExpanded} class="min-w-0 flex-1 text-base font-semibold text-[var(--fm-text)] sm:text-lg" title={message.subject || t('mail.noSubject')}>{message.subject || t('mail.noSubject')}</h1>
         {#if longSubject}
           <button class="subject-toggle fm-touch-target shrink-0" type="button" aria-expanded={subjectExpanded} onclick={() => (subjectExpanded = !subjectExpanded)}>
             {subjectExpanded ? t('mail.collapseSubject') : t('mail.expandSubject')}

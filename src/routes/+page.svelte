@@ -2940,7 +2940,12 @@
       selectedMessageId,
       direction
     );
-    if (next) void handleSelectMessage(next);
+    if (!next) return;
+    if (next.id !== selectedMessageId) {
+      const displayControls = document.activeElement?.closest('.message-view-controls');
+      displayControls?.closest('.fm-detail-shell')?.querySelector('h1')?.focus({ preventScroll: true });
+    }
+    void handleSelectMessage(next);
   }
 
   $effect(() => {
