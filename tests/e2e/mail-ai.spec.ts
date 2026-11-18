@@ -905,7 +905,7 @@ test('cached summary opens automatically, shows its date and survives failed reg
   await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*503/u.test(text)));
 });
 
-test('AI details open above the toolbar when the viewport is short', async ({ page }) => {
+test('AI details keep the toolbar reachable in short viewports', async ({ page }) => {
   await page.route(`**${path}*`, (route) => route.fulfill({ json: { ok: true, data: {
     status: 'ready', updatedAt: Date.UTC(2026, 10, 15, 12), analysis: {
       summary: 'Cached analysis in a short viewport', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN', suggestion: null
@@ -928,7 +928,24 @@ test('AI details open above the toolbar when the viewport is short', async ({ pa
     return Math.abs(hint.y + hint.height - trigger.y) <= 1;
   }).toBe(true);
   await regenerate.click();
-  await expect(page.getByRole('dialog', { name: '关于 AI 分析' })).toBeVisible();
+  const confirmation = page.getByRole('dialog', { name: '关于 AI 分析' });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole('button', { name: '取消', exact: true }).click();
+
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.addStyleTag({ content: '.ai-panel [role="tooltip"] { font-size: 36px; line-height: 2; }' });
+  const tallHintTrigger = (await details.boundingBox())!;
+  const shortHeight = Math.ceil(2 * tallHintTrigger.y + tallHintTrigger.height + 24);
+  await page.setViewportSize({ width: 320, height: shortHeight });
+  await details.focus();
+  await expect.poll(async () => {
+    const hint = await tooltip.boundingBox();
+    const trigger = (await details.boundingBox())!;
+    return Boolean(hint && Math.abs(hint.y - trigger.y - trigger.height) <= 1 && hint.y + hint.height <= shortHeight - 7);
+  }).toBe(true);
+  expect(await tooltip.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await regenerate.click();
+  await expect(confirmation).toBeVisible();
 });
 
 test('six purpose categories support keyboard navigation and retired deep links', async ({ page, consoleErrors }, info) => {

@@ -138,20 +138,22 @@
       const left = side === 'right' ? triggerBounds.right + gap
         : side === 'left' ? triggerBounds.left - bounds.width - gap
           : triggerBounds.left + (triggerBounds.width - bounds.width) / 2;
+      let height = bounds.height;
       let top = triggerBounds.top + (triggerBounds.height - bounds.height) / 2;
       floatingSide = null;
       floatingMaxHeight = undefined;
       if (side === 'top' || side === 'bottom') {
         const above = triggerBounds.top - gap - 8;
         const below = window.innerHeight - triggerBounds.bottom - gap - 8;
-        const height = bounds.height + Math.max(0, tooltipElement.scrollHeight - tooltipElement.clientHeight);
-        const placeAbove = side === 'top' ? height <= above || above >= below : height > below && above > below;
+        const fullHeight = bounds.height + Math.max(0, tooltipElement.scrollHeight - tooltipElement.clientHeight);
+        const placeAbove = side === 'top' ? fullHeight <= above || above >= below : fullHeight > below && above > below;
         floatingSide = placeAbove ? 'top' : 'bottom';
         if (hoverable) floatingMaxHeight = Math.max(0, placeAbove ? above : below);
-        top = placeAbove ? triggerBounds.top - gap - Math.min(height, floatingMaxHeight ?? height) : triggerBounds.bottom + gap;
+        height = Math.min(fullHeight, floatingMaxHeight ?? fullHeight);
+        top = placeAbove ? triggerBounds.top - gap - height : triggerBounds.bottom + gap;
       }
       floatingLeft = Math.max(8, Math.min(window.innerWidth - bounds.width - 8, left));
-      floatingTop = Math.max(8, Math.min(window.innerHeight - bounds.height - 8, top));
+      floatingTop = Math.max(8, Math.min(window.innerHeight - height - 8, top));
       return;
     }
     if (side !== 'top' && side !== 'bottom') return;
