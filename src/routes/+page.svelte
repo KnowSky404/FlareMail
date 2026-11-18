@@ -1909,6 +1909,8 @@
         if (removed.some((message) => message.id === selectedMessageId)) await closeMobileDetail();
       } else if (action === 'archive' || action === 'unarchive') {
         updateRetainedArchive(result.result.summaries);
+      } else if (deepLinkedMessage && result.result.summaries.some(({ id }) => id === deepLinkedMessage?.id)) {
+        await refreshDeepLinkedMessage(deepLinkedMessage);
       }
       selectedMessageIds = [];
       bulkThreadScope = 'selected';
