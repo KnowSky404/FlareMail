@@ -1592,7 +1592,8 @@
     if (pending || message.folder !== 'inbox') return;
     pending = true;
     try {
-      const section = message.archivedAt && activeSection === 'inbox' ? 'archive' : activeSection;
+      let section = activeSection;
+      if (section === 'inbox' || section === 'archive') section = message.archivedAt ? 'archive' : 'inbox';
       const category = deepLinkedMessage?.id === message.id ? 'all' : inboxCategory;
       const { result } = await mutateMailbox(message.archivedAt ? 'unarchive' : 'archive', [message.id], [], {
         section: section as MailboxMutationScope['section'], identityFilter: mailIdentityFilter,
