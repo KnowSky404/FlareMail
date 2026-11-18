@@ -239,6 +239,54 @@ test('keeps remote image controls reachable in the English standalone reader at 
   await expect(page.locator('iframe[title="Safe HTML message body"]')).toHaveAttribute('src', /mode=safe$/u);
 });
 
+test('closes display options when keyboard navigation selects another cached HTML message', async ({ page, baseURL }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Uses the desktop split reader to cache both messages.');
+  expect(new URL(baseURL!).hostname).toBe('127.0.0.1');
+  await page.route('https://tracker.example/**', (route) => route.fulfill({ status: 204 }));
+  const nextId = 'email:e2e-deep-inbound-message';
+  await page.route('**/api/workspace/mailbox?**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('q') !== 'E2E') return route.continue();
+    url.searchParams.set('limit', '100');
+    const response = await route.fetch({ url: url.href });
+    const body = await response.json();
+    body.data.page.messages = body.data.page.messages.filter((message: { id: string }) =>
+      message.id === 'email:e2e-html-inbox-message' || message.id === nextId);
+    await route.fulfill({ response, json: body });
+  });
+  await page.route(`**/api/workspace/messages/${encodeURIComponent(nextId)}/detail`, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.data.detail.hasHtml = true;
+    await route.fulfill({ response, json: body });
+  });
+  let nextUnsafeRequested = false;
+  await page.route(`**/api/workspace/messages/${encodeURIComponent(nextId)}/html?mode=unsafe`, (route) => {
+    nextUnsafeRequested = true;
+    return route.abort();
+  });
+
+  await login(page);
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  await page.getByLabel('搜索邮件').fill('E2E');
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const options = detail.getByRole('button', { name: '显示选项', exact: true });
+  await page.getByRole('listitem').getByRole('button', { name: /E2E Deep Link Target/u }).first().click();
+  await expect(options).toBeVisible();
+  await page.getByRole('listitem').getByRole('button', { name: /E2E HTML Safety/u }).first().click();
+  await options.click();
+  await detail.getByRole('menuitem', { name: '加载本邮件 HTTPS 图片', exact: true }).click();
+  await options.press('ArrowDown');
+  await expect(detail.getByRole('menuitem', { name: '阻止远程图片', exact: true })).toBeFocused();
+
+  await page.keyboard.press('j');
+  await expect(detail.getByRole('heading', { name: 'E2E Deep Link Target' })).toBeVisible();
+  await expect(options).toHaveAttribute('aria-expanded', 'false');
+  await page.keyboard.press('Enter');
+  await expect(detail.getByRole('button', { name: '纯文本', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(nextUnsafeRequested).toBe(false);
+});
+
 test('keeps compact HTML controls accessible in narrow desktop split panes', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The Chromium desktop project drives split-pane geometry.');
   await login(page);
