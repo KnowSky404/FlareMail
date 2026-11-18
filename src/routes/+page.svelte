@@ -1541,17 +1541,17 @@
     const current = selectedMessage;
     if (!summary || current?.id !== summary.id || activeSection !== 'inbox') return;
     if (deepLinkedMessage?.id !== summary.id && (inboxCategory === 'all' || inboxCategory === summary.inboxCategory)) return;
-    syncMessageRequest.cancel();
     deepLinkedMessage = { ...current, ...summary };
     selectedMessageId = summary.id;
+    void refreshDeepLinkedMessage(deepLinkedMessage);
   }
 
   function updateRetainedArchive(summaries: readonly Pick<MailMessage, 'id' | 'archivedAt'>[]) {
     const retained = deepLinkedMessage;
     const updated = retained && summaries.find((item) => item.id === retained.id);
     if (!retained || !updated) return;
-    syncMessageRequest.cancel();
     deepLinkedMessage = { ...retained, archivedAt: updated.archivedAt };
+    void refreshDeepLinkedMessage(deepLinkedMessage);
   }
 
   function clearRetainedMessage(id: string) {
