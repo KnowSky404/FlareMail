@@ -297,6 +297,38 @@ for (const reader of ['workspace', 'standalone']) {
   });
 }
 
+test('inbox refresh does not retain an unopened split preview at mobile width', async ({ page, consoleErrors }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => {
+    localStorage.setItem('flaremail-layout-v1', JSON.stringify({ readingLayout: 'split' }));
+  });
+  let removed = false;
+  await page.route('**/api/workspace/mailbox?**', async (route) => {
+    if (!removed || !new URL(route.request().url()).searchParams.get('q')) return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    body.data.page.messages = [];
+    body.data.page.searchTotal = 0;
+    await route.fulfill({ response, json: body });
+  });
+  await login(page);
+  await page.goto(`/?folder=inbox&q=${encodeURIComponent('subject:"E2E Inbox Welcome"')}`);
+  const row = page.getByRole('listitem').getByRole('button', { name: /E2E Inbox Welcome/u });
+  await expect(row).toBeVisible();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail).toBeHidden();
+  removed = true;
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh' });
+    channel.close();
+  });
+  await expect(row).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(detail.getByText('选择一封邮件开始阅读')).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('AI accessible summary, explicit category application and cached refresh', async ({ page, consoleErrors }, info) => {
   let generations = 0;
   let cached = false;
