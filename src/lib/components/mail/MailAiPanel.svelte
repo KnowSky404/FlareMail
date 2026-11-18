@@ -51,7 +51,7 @@
   ].filter(Boolean).join(' '));
 
   function moveTab(event: KeyboardEvent, index: number) {
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.key === 'ArrowUp' || event.key === 'ArrowDown') return;
     const next = nextRadioIndex(event.key, index, views.length);
     if (next === null) return;
     event.preventDefault();
