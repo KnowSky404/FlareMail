@@ -1537,9 +1537,12 @@
     updateWorkspaceUrl({ category, messageId: null });
   }
 
-  function retainCategoryChange(summary: Pick<MailMessage, 'id' | 'inboxCategory' | 'inboxCategoryOverride'> | undefined) {
-    const current = selectedMessage;
-    if (!summary || current?.id !== summary.id || activeSection !== 'inbox' || !messageReaderVisible) return;
+  function retainCategoryChanges(summaries: readonly Pick<MailMessage, 'id' | 'inboxCategory' | 'inboxCategoryOverride'>[]) {
+    const current = activeSection === 'inbox' && messageReaderVisible ? selectedMessage : null;
+    const retained = deepLinkedMessage;
+    if (retained && retained.id !== current?.id && summaries.some((item) => item.id === retained.id)) clearRetainedMessage(retained.id);
+    const summary = current && summaries.find((item) => item.id === current.id);
+    if (!current || !summary) return;
     if (deepLinkedMessage?.id !== summary.id && (inboxCategory === 'all' || inboxCategory === summary.inboxCategory)) return;
     deepLinkedMessage = { ...current, ...summary };
     selectedMessageId = summary.id;
@@ -1567,7 +1570,7 @@
     try {
       const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: 'all' }, true);
       const summary = changed.summaries.find((item) => item.id === message.id);
-      retainCategoryChange(summary);
+      retainCategoryChanges(changed.summaries);
       await refreshWorkspace(false);
       if (!summary) await refreshDeepLinkedMessage(message);
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
@@ -1581,7 +1584,7 @@
     const ids = bulkSelectedMessages.map((message) => message.id);
     try {
       const changed = await setInboxCategory(ids, category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory });
-      retainCategoryChange(changed.summaries.find((item) => item.id === selectedMessageId));
+      retainCategoryChanges(changed.summaries);
       selectedMessageIds = selectedMessageIds.filter((id) => !ids.includes(id));
       await refreshWorkspace(false);
       workspaceSync?.publish({ type: 'mailbox-refresh' });
