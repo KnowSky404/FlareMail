@@ -1819,7 +1819,11 @@
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {
-    const openMessage = readerOpen && activeSection === 'inbox' && page.folder === 'inbox' ? selectedMessage : null;
+    const previousInbox = mailboxPages?.inbox;
+    const sameInboxScope = previousInbox && previousInbox.query === page.query && previousInbox.filter === page.filter &&
+      (previousInbox.category ?? 'all') === (page.category ?? 'all') && sameIdentityScope(previousInbox.identityFilter, page.identityFilter);
+    const keepReader = readerOpen || (readingLayout === 'split' && !turningPage && sameInboxScope);
+    const openMessage = keepReader && activeSection === 'inbox' && page.folder === 'inbox' ? selectedMessage : null;
     page = { ...page, messages: page.messages.map((message) => flagController.overlay(message)), ...(flagController.busy ? { metrics: undefined } : {}) };
     const merged = mergeMailboxPage({ mailbox, mailboxPages, metrics }, page, append);
     mailbox = merged.mailbox;

@@ -16,8 +16,13 @@ async function confirmAnalysis(page: Page, action: Locator, name: string) {
 for (const reader of ['workspace', 'standalone']) {
   test(`AI category confirmation retains the address boundary after reclassification (${reader})`, async ({ page, consoleErrors }) => {
     let generated = false;
+    let removeAutomaticallyCategorizedRow = false;
+    const split = reader === 'workspace' && (page.viewportSize()?.width ?? 0) > 900;
     await page.route(`**${path}*`, async (route) => {
-      if (route.request().method() === 'POST') generated = true;
+      if (route.request().method() === 'POST') {
+        generated = true;
+        removeAutomaticallyCategorizedRow = split;
+      }
       await route.fulfill({ json: { ok: true, data: generated ? { status: 'ready', appliedCategory: 'updates', analysis: {
         summary: 'Synthetic reclassification', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN',
         suggestion: { category: 'updates', confidence: 0.9, reason: 'Service update' }
@@ -29,8 +34,14 @@ for (const reader of ['workspace', 'standalone']) {
       if (response.ok() && generated && !body.data.message.inboxCategoryOverride) body.data.message.inboxCategory = 'updates';
       await route.fulfill({ response, json: body });
     });
+    if (split) await page.route('**/api/workspace/mailbox?**', async (route) => {
+      if (!removeAutomaticallyCategorizedRow || new URL(route.request().url()).searchParams.get('category') !== 'primary') return route.continue();
+      const response = await route.fetch();
+      const body = await response.json();
+      if (response.ok()) body.data.page.messages = body.data.page.messages.filter((message: { id: string }) => message.id !== 'e2e-inbox-message');
+      await route.fulfill({ response, json: body });
+    });
     await login(page);
-    const split = reader === 'workspace' && (page.viewportSize()?.width ?? 0) > 900;
     if (split) await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
     const addressId = '00000000-0000-4000-8000-000000000021';
     const restore = () => page.request.patch('/api/workspace/mailbox/categories', { headers: { origin: new URL(page.url()).origin },
@@ -50,7 +61,11 @@ for (const reader of ['workspace', 'standalone']) {
     await confirmAnalysis(page, panel.getByRole('button', { name: '同意并生成分析', exact: true }), '同意并生成分析');
     await expect(panel.getByText('Synthetic reclassification')).toBeVisible();
     await expect(page).toHaveURL(/category=primary/u);
-    if (split) await expect(page).not.toHaveURL(/message=/u);
+    if (split) {
+      await expect(page.getByRole('listitem').getByRole('button', { name: /E2E Inbox Welcome/u })).toHaveCount(0);
+      await expect(panel.getByText('Synthetic reclassification')).toBeVisible();
+      await expect(page).not.toHaveURL(/message=/u);
+    }
     await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
     const [request] = await Promise.all([
       page.waitForRequest((request) => request.method() === 'PATCH' && request.url().endsWith('/api/workspace/mailbox/categories')),
@@ -59,6 +74,7 @@ for (const reader of ['workspace', 'standalone']) {
     expect(request.postDataJSON()).toMatchObject({ ids: ['e2e-inbox-message'], onlyIfAutomatic: true,
       scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } } });
     await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+    removeAutomaticallyCategorizedRow = false;
     expect((await restore()).status()).toBe(200);
 
     if (reader === 'workspace') {
