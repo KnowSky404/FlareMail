@@ -424,6 +424,44 @@ categoryConfirmationTest('archiving a visible row respects the inbox category af
   }
 });
 
+categoryConfirmationTest('Back reloads a category saved after selecting another email', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) <= 900, 'The split view must show the list next to the reader.');
+  await page.route(`**${path}*`, (route) => route.fulfill({ json: { ok: true, data: { status: 'ready', analysis: {
+    summary: 'Category change in progress', keyPoints: [], actionItems: [], dates: [], language: 'zh-CN',
+    suggestion: { category: 'updates', confidence: 0.9, reason: 'Service update' }
+  } } } }));
+  await login(page);
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  const search = encodeURIComponent('subject:"E2E HTML Safety"');
+  await page.goto(`/?folder=inbox&q=${search}&message=e2e-inbox-message`);
+  const panel = page.getByRole('region', { name: title });
+  await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
+  const stored = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  await page.route('**/api/workspace/mailbox/categories', async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    stored.resolve();
+    await release.promise;
+    await route.fulfill({ response });
+  });
+  try {
+    await panel.getByRole('button', { name: '确认应用此分类' }).click();
+    await stored.promise;
+    await page.getByRole('listitem').getByRole('button', { name: /E2E HTML Safety/u }).click();
+    await expect(page.getByRole('heading', { name: 'E2E HTML Safety', exact: true })).toBeVisible();
+    const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace/mailbox');
+    release.resolve();
+    await refreshed;
+    await page.goBack();
+    await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
+    await expect(panel.getByText('已有手动分类，保留当前设置。')).toBeVisible();
+  } finally {
+    release.resolve();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
+});
+
 test('bulk refresh invalidates a retained message before navigating Back', async ({ page }) => {
   test.skip((page.viewportSize()?.width ?? 0) <= 900, 'The split view must show the list next to the retained message.');
   await login(page);
