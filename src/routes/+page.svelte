@@ -1973,11 +1973,11 @@
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
     draftOpenRequest.cancel();
+    if (readerOpen) void closeReader();
     if (composeOpen) {
       window.dispatchEvent(new Event('flaremail:restore-compose'));
       return;
     }
-    if (readerOpen) void closeReader();
     toastController.dismissPassive();
     const senderAddressId = selectInitialComposeSenderAddressId(
       mailIdentityOptions.addresses,

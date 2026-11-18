@@ -1816,6 +1816,16 @@ test('moves, resizes, minimizes, and maximizes the desktop compose window', asyn
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: /^草稿箱(?:\s|$)/u }).click();
   await restore.click();
   await expect(composeDialog.getByRole('textbox', { name: '主题', exact: true })).toHaveValue('E2E floating compose');
+  await composeDialog.getByRole('button', { name: '最小化写信窗口' }).click();
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: /^收件箱(?:\s|$)/u }).click();
+  await page.getByRole('listitem').getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
+  const reader = page.getByRole('dialog', { name: 'E2E Inbox Welcome', exact: true });
+  await reader.getByRole('button', { name: '回复', exact: true }).click();
+  await expect(reader).toBeHidden();
+  await expect(composeDialog.locator('#compose-to')).toBeFocused();
+  await expect(composeDialog.getByRole('textbox', { name: '主题', exact: true })).toHaveValue('E2E floating compose');
   expect((await new AxeBuilder({ page }).include('.compose-dialog').analyze()).violations).toEqual([]);
   await composeDialog.getByRole('button', { name: '关闭' }).click();
   const unsavedDialog = page.getByRole('dialog', { name: '未保存的改动' });
