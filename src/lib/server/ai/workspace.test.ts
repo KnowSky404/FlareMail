@@ -94,8 +94,24 @@ describe('mail AI persistence and ownership', () => {
   });
   test('two concurrent requests make one billable call and leases recover after interruption', async () => {
     const f = setup();
-    const settled = await Promise.allSettled([f.analyze(), f.analyze()]);
-    expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1); expect(f.calls()).toBe(1);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const active = workspaceMailAi(f.env, session(), 'email:mail', { language: 'en', analyze: true }, {
+      analyze: async (...args) => {
+        entered.resolve();
+        await release.promise;
+        return f.provider.analyze(...args);
+      }
+    });
+    try {
+      await Promise.race([entered.promise, active]);
+      await expect(f.analyze()).rejects.toMatchObject({ code: 'AI_BUSY' });
+    } finally {
+      release.resolve();
+      await active;
+    }
+    expect((await active).status).toBe('ready');
+    expect(f.calls()).toBe(1);
     f.cooldown();
     const token = await claimMailAi(f.db, f.key, 'new', 'model', true, 100000);
     expect(token).not.toBeNull();
