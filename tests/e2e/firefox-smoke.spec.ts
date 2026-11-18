@@ -126,9 +126,12 @@ test('persists a created label on a message through Firefox reload and rename', 
   await expect(page.getByRole('heading', { name: 'Firefox Follow Up' })).toBeVisible();
   await page.getByRole('button', { name: '重命名标签' }).click();
   const rename = page.getByRole('dialog', { name: '重命名标签' });
-  await rename.getByLabel('标签名称').fill('Firefox Resolved');
+  const name = rename.getByLabel('标签名称');
+  await name.fill('');
+  await name.pressSequentially('Firefox/Resolved');
+  await expect(name).toHaveValue('Firefox/Resolved');
   await rename.getByRole('button', { name: '保存' }).click();
-  await expect(page.getByRole('heading', { name: 'Firefox Resolved' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Firefox/Resolved' })).toBeVisible();
   await assertNoConsoleErrors(consoleErrors);
 });
 
@@ -441,7 +444,11 @@ test('keeps settings navigation and save action usable across Firefox viewports'
     await expect(save).toBeInViewport();
     const navBounds = await sections.boundingBox();
     const sectionBounds = await notification.boundingBox();
-    expect(sectionBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+    if (await sections.getAttribute('aria-orientation') === 'vertical') {
+      expect(sectionBounds!.x).toBeGreaterThanOrEqual(navBounds!.x + navBounds!.width - 1);
+    } else {
+      expect(sectionBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height - 1);
+    }
     await assertNoHorizontalOverflow(page);
     if (width === 1366 || width === 390) {
       await page.screenshot({ path: join(tmpdir(), `flaremail-settings-firefox-${width}.png`), fullPage: false });

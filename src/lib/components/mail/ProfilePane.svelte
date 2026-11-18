@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
+  import { Activity, Ban, Bell, ChevronRight, Send, Sparkles, UserRound } from '@lucide/svelte';
+  import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
   import Panel from '$lib/components/ui/Panel.svelte';
@@ -81,6 +83,15 @@
   const { t } = i18n;
   let telegramVisited = $state(false);
   let blockedVisited = $state(false);
+  let verticalNav = $state(false);
+  const tabIcons = { profile: UserRound, notifications: Bell, telegram: Send, blocked: Ban, ai: Sparkles, diagnostics: Activity };
+  onMount(() => {
+    const layout = matchMedia('(min-width: 1024px)');
+    const syncLayout = () => verticalNav = layout.matches;
+    syncLayout();
+    layout.addEventListener('change', syncLayout);
+    return () => layout.removeEventListener('change', syncLayout);
+  });
   let focusedTab = $state<SettingsTab>('profile');
   let feedback = $state<Partial<Record<EditableSettingsTab, { message: string; error: boolean }>>>({});
   $effect(() => {
@@ -95,7 +106,8 @@
   const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title'), blocked: t('blocked.title'), ai: t('aiSettings.title') });
 
   function moveTab(event: KeyboardEvent, index: number) {
-    const next = event.key === 'ArrowRight' ? (index + 1) % settingsTabs.length : event.key === 'ArrowLeft' ? (index - 1 + settingsTabs.length) % settingsTabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? settingsTabs.length - 1 : null;
+    if (verticalNav ? ['ArrowLeft', 'ArrowRight'].includes(event.key) : ['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    const next = nextRadioIndex(event.key, index, settingsTabs.length);
     if (next === null) return;
     event.preventDefault();
     focusedTab = settingsTabs[next];
@@ -130,26 +142,37 @@
   }
 </script>
 
-<div class="settings-layout">
-  <header class="settings-header">
-    <div><h1>{t('settings.title')}</h1>
-    <p>{t('settings.description')}</p></div>
+{#snippet save()}
+  <div class="save-row">
+    {#if (tab === 'profile' || tab === 'notifications') && feedback[tab]?.message}
+      <p role="status" class:error={feedback[tab]?.error}>{feedback[tab]?.message}</p>
+    {/if}
+    <Button type="submit" loading={pending}>{pending ? t('settings.saving') : t('settings.save')}</Button>
+  </div>
+{/snippet}
 
+<div class="settings-layout">
+  <header class="settings-header max-[900px]:sr-only">
+    <h1>{t('settings.title')}</h1>
   </header>
 
-  <div class="settings-section-nav" role="tablist" aria-label={t('settings.sectionNavigation')}>
+  <div class="settings-section-nav" role="tablist" aria-label={t('settings.sectionNavigation')} aria-orientation={verticalNav ? 'vertical' : 'horizontal'}>
     {#each settingsTabs as value, index (value)}
+      {@const Icon = tabIcons[value]}
       <button type="button" id={`settings-tab-${value}`} role="tab" aria-selected={tab === value}
-        aria-controls={`settings-panel-${value}`} tabindex={focusedTab === value ? 0 : -1}
+        aria-controls={tab === value ? `settings-panel-${value}` : undefined} tabindex={focusedTab === value ? 0 : -1}
         onfocus={() => focusedTab = value} onkeydown={(event) => moveTab(event, index)}
-        onclick={() => onTabChange?.(value)}>{tabLabels[value]}</button>
+        onclick={() => onTabChange?.(value)}>
+        <Icon size={17} aria-hidden="true" />
+        {tabLabels[value]}
+      </button>
     {/each}
   </div>
 
   <div id={tab === 'telegram' || tab === 'blocked' || tab === 'ai' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram' || tab === 'blocked' || tab === 'ai'}>
   <form onsubmit={submit}>
     {#if tab === 'profile'}
-    <Panel id="settings-profile" class="scroll-mt-[5.25rem]" title={t('settings.profile')} description={t('settings.profileDescription')}>
+    <Panel id="settings-profile" contentClass="profile-fields">
       <div class="field-grid">
         <TextField
           id="profile-name"
@@ -160,39 +183,6 @@
           oninput={(event) => (nextProfile.name = event.currentTarget.value)}
         />
         <TextField
-          id="profile-role"
-          label={t('settings.role')}
-          value={nextProfile.role}
-          disabled={pending}
-          oninput={(event) => (nextProfile.role = event.currentTarget.value)}
-        />
-        <TextField
-          id="profile-company"
-          label={t('settings.company')}
-          value={nextProfile.company}
-          disabled={pending}
-          oninput={(event) => (nextProfile.company = event.currentTarget.value)}
-        />
-        <TextField
-          id="profile-timezone"
-          label={t('settings.timezone')}
-          value={nextProfile.timezone}
-          disabled={pending}
-          oninput={(event) => (nextProfile.timezone = event.currentTarget.value)}
-        />
-        <TextField
-          id="profile-location"
-          label={t('settings.location')}
-          value={nextProfile.location}
-          disabled={pending}
-          oninput={(event) => (nextProfile.location = event.currentTarget.value)}
-        />
-      </div>
-    </Panel>
-
-    <Panel title={t('settings.workspaceIdentity')} description={t('settings.workspaceIdentityDescription')}>
-      <div class="identity-grid">
-        <TextField
           id="profile-email"
           label={t('settings.displayEmail')}
           type="email"
@@ -201,24 +191,51 @@
           disabled={pending}
           oninput={(event) => (nextProfile.email = event.currentTarget.value)}
         />
-        <TextArea
-          id="profile-signature"
-          label={t('settings.signature')}
-          value={nextProfile.signature}
-          rows={4}
-          disabled={pending}
-          placeholder={t('settings.signaturePlaceholder')}
-          oninput={(event) => (nextProfile.signature = event.currentTarget.value)}
-        />
       </div>
-      {#if diagnostics}<p class="section-note">{t('settings.currentChannel')}：<Badge>{diagnostics.outboundMode}</Badge> · {t('settings.senderAddress')}{diagnostics.senderConfigured ? t('settings.configured') : t('settings.missing')}</p>{/if}
-    </Panel>
-
-    <Panel title={t('settings.autoReply')} description={t('settings.autoReplyDescription')}>
-      <div class="configuration-row">
-        <div><strong>{t('settings.inboundAutoReply')}</strong><p>{t('settings.autoReplyDetails')}</p></div>
-        <Badge>{diagnostics?.autoReplyEnabled ? t('settings.enabled') : t('settings.disabled')}</Badge>
-      </div>
+      <TextArea
+        id="profile-signature"
+        label={t('settings.signature')}
+        hint={t('settings.signatureHint')}
+        value={nextProfile.signature}
+        rows={4}
+        disabled={pending}
+        placeholder={t('settings.signaturePlaceholder')}
+        oninput={(event) => (nextProfile.signature = event.currentTarget.value)}
+      />
+      <details class="settings-disclosure">
+        <summary><ChevronRight size={16} aria-hidden="true" />{t('settings.additionalDetails')}</summary>
+        <div class="field-grid disclosure-content">
+          <TextField
+            id="profile-role"
+            label={t('settings.role')}
+            value={nextProfile.role}
+            disabled={pending}
+            oninput={(event) => (nextProfile.role = event.currentTarget.value)}
+          />
+          <TextField
+            id="profile-company"
+            label={t('settings.company')}
+            value={nextProfile.company}
+            disabled={pending}
+            oninput={(event) => (nextProfile.company = event.currentTarget.value)}
+          />
+          <TextField
+            id="profile-timezone"
+            label={t('settings.timezone')}
+            value={nextProfile.timezone}
+            disabled={pending}
+            oninput={(event) => (nextProfile.timezone = event.currentTarget.value)}
+          />
+          <TextField
+            id="profile-location"
+            label={t('settings.location')}
+            value={nextProfile.location}
+            disabled={pending}
+            oninput={(event) => (nextProfile.location = event.currentTarget.value)}
+          />
+        </div>
+      </details>
+      {#snippet footer()}{@render save()}{/snippet}
     </Panel>
 
     {/if}
@@ -233,6 +250,7 @@
         onchange={(checked) => (nextProfile.forwardingEnabled = checked)}
       />
       <p class="section-note">{t('settings.systemNotifications')}：{diagnostics?.notificationEnabled ? t('settings.runtimeEnabled') : t('settings.runtimeDisabled')}。{t('settings.notificationAddressHidden')}</p>
+      {#snippet footer()}{@render save()}{/snippet}
     </Panel>
 
     {/if}
@@ -240,17 +258,25 @@
     <Panel id="settings-diagnostics" class="scroll-mt-[5.25rem]" title={t('settings.diagnostics')} description={t('settings.diagnosticsDescription')}>
       {#if diagnostics}
         <dl class="diagnostic-grid">
-          <div><dt>{t('settings.runtime')}</dt><dd><Badge>{diagnostics.environment}</Badge></dd></div>
-          <div><dt>D1</dt><dd>{diagnostics.d1Configured ? t('settings.configured') : t('settings.missing')}</dd></div>
-          <div><dt>R2</dt><dd>{diagnostics.r2Configured ? t('settings.configured') : t('settings.missing')}</dd></div>
-          <div><dt>{t('settings.outboundGateway')}</dt><dd>{diagnostics.outboundConfigured ? t('settings.configured') : t('settings.missing')}</dd></div>
-          <div><dt>Webhook {t('settings.signatureVerification')}</dt><dd>{diagnostics.webhookConfigured ? t('settings.configured') : t('settings.missing')}</dd></div>
           <div><dt>{t('settings.globalDelivery')}</dt><dd><Badge class={serviceDegraded ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-success)]'}>{serviceDegraded ? t('settings.needsAttention') : t('settings.normal')}</Badge></dd></div>
-          <div><dt>Telegram {t('settings.notifications')}</dt><dd>{diagnostics.telegramEnabled ? (diagnostics.telegramConfigured ? t('settings.configured') : t('settings.needsConfiguration')) : t('settings.disabled')}</dd></div>
           <div><dt>{t('settings.queuedDelayed')}</dt><dd>{formatNumber(metrics.queuedCount, i18n.locale)} / {formatNumber(metrics.delayedCount, i18n.locale)}</dd></div>
           <div><dt>{t('settings.failedBouncedComplained')}</dt><dd>{formatNumber(metrics.failedCount, i18n.locale)} / {formatNumber(metrics.bouncedCount, i18n.locale)} / {formatNumber(metrics.complainedCount, i18n.locale)}</dd></div>
           <div><dt>{t('settings.staleSubmitting')}</dt><dd>{formatNumber(metrics.staleDeliveryCount, i18n.locale)}</dd></div>
         </dl>
+        <details class="settings-disclosure diagnostics-disclosure">
+          <summary><ChevronRight size={16} aria-hidden="true" />{t('settings.runtime')}</summary>
+          <dl class="diagnostic-grid disclosure-content">
+            <div><dt>{t('settings.runtime')}</dt><dd><Badge>{diagnostics.environment}</Badge></dd></div>
+            <div><dt>D1</dt><dd>{diagnostics.d1Configured ? t('settings.configured') : t('settings.missing')}</dd></div>
+            <div><dt>R2</dt><dd>{diagnostics.r2Configured ? t('settings.configured') : t('settings.missing')}</dd></div>
+            <div><dt>{t('settings.outboundGateway')}</dt><dd>{diagnostics.outboundConfigured ? t('settings.configured') : t('settings.missing')}</dd></div>
+            <div><dt>Webhook {t('settings.signatureVerification')}</dt><dd>{diagnostics.webhookConfigured ? t('settings.configured') : t('settings.missing')}</dd></div>
+            <div><dt>Telegram {t('settings.notifications')}</dt><dd>{diagnostics.telegramEnabled ? (diagnostics.telegramConfigured ? t('settings.configured') : t('settings.needsConfiguration')) : t('settings.disabled')}</dd></div>
+            <div><dt>{t('settings.currentChannel')}</dt><dd>{diagnostics.outboundMode}</dd></div>
+            <div><dt>{t('settings.senderAddress')}</dt><dd>{diagnostics.senderConfigured ? t('settings.configured') : t('settings.missing')}</dd></div>
+            <div><dt>{t('settings.inboundAutoReply')}</dt><dd>{diagnostics.autoReplyEnabled ? t('settings.enabled') : t('settings.disabled')}</dd></div>
+          </dl>
+        </details>
       {:else}
         <p class="section-note">{t('settings.diagnosticsUnavailable')}</p>
       {/if}
@@ -262,14 +288,6 @@
         <Button variant="secondary" onclick={onOpenAddresses}>{t('shell.addresses')}</Button>
       </div>
     </Panel>
-    {/if}
-    {#if tab === 'profile' || tab === 'notifications'}
-    <div class="save-row">
-      <Button type="submit" loading={pending}>{pending ? t('settings.saving') : t('settings.save')}</Button>
-      {#if feedback[tab]?.message}
-        <p role="status" aria-live="polite" class:error={feedback[tab]?.error}>{feedback[tab]?.message}</p>
-      {/if}
-    </div>
     {/if}
   </form>
   </div>
@@ -290,41 +308,23 @@
     margin: 0 auto;
   }
 
-  header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-4);
-    margin-bottom: var(--space-6);
-  }
-
-  header > div {
-    min-width: 0;
+  .settings-header {
+    margin-bottom: var(--space-4);
   }
 
   h1 {
     margin: 0;
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 650;
     letter-spacing: -0.025em;
   }
 
-  header p {
-    margin: var(--space-1) 0 0;
-    color: var(--fm-text-muted);
-  }
-
   .settings-section-nav {
-    position: sticky;
-    top: calc(-1 * var(--space-6));
-    z-index: 5;
     display: flex;
     gap: var(--space-1);
-    max-width: 100%;
-    margin-bottom: var(--space-5);
-    padding: var(--space-2) 0;
+    margin-bottom: var(--space-4);
+    padding: 2px;
     overflow-x: auto;
-    background: var(--fm-surface);
     border-bottom: 1px solid var(--fm-border);
     scrollbar-width: thin;
   }
@@ -334,15 +334,14 @@
     min-height: 44px;
     display: inline-flex;
     align-items: center;
+    gap: var(--space-2);
     padding: 0 var(--space-3);
     border-radius: var(--radius-md);
     color: var(--fm-text-secondary);
     font-size: 13px;
     font-weight: 600;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
     white-space: nowrap;
+    transition: background-color 150ms, color 150ms;
   }
 
   .settings-section-nav button:hover {
@@ -368,12 +367,35 @@
     gap: var(--space-4);
   }
 
-  .identity-grid {
+  :global(.profile-fields) {
     display: grid;
     gap: var(--space-4);
   }
 
-  .configuration-row,
+  .settings-disclosure {
+    border: 1px solid var(--fm-border);
+    border-radius: var(--radius-md);
+    background: var(--fm-surface-subtle);
+  }
+
+  .settings-disclosure summary {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+    border-radius: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .settings-disclosure summary::-webkit-details-marker { display: none; }
+  .settings-disclosure summary:hover { background: var(--fm-surface-hover); }
+  .settings-disclosure[open] summary :global(svg) { transform: rotate(90deg); }
+  .disclosure-content { padding: 0 var(--space-3) var(--space-3); }
+  .diagnostics-disclosure { margin-top: var(--space-3); }
+
   .diagnostic-grid > div {
     display: flex;
     min-height: 44px;
@@ -382,20 +404,17 @@
     gap: var(--space-4);
   }
 
-  .configuration-row strong,
   .diagnostic-grid dt {
     color: var(--fm-text);
     font-size: 14px;
     font-weight: 600;
   }
 
-  .configuration-row > div,
   .diagnostic-grid dt,
   .diagnostic-grid dd {
     min-width: 0;
   }
 
-  .configuration-row p,
   .section-note {
     margin: var(--space-1) 0 0;
     color: var(--fm-text-muted);
@@ -420,18 +439,13 @@
   }
 
   .save-row {
-    position: sticky;
-    bottom: 0;
-    z-index: 4;
     display: flex;
-    min-height: 44px;
     align-items: center;
-    gap: var(--space-4);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--fm-border);
-    border-radius: var(--radius-md);
-    background: var(--fm-surface);
+    justify-content: space-between;
+    gap: var(--space-3);
   }
+
+  .save-row :global(button) { margin-inline-start: auto; flex-shrink: 0; }
 
   .save-row p {
     min-width: 0;
@@ -451,9 +465,50 @@
     }
   }
 
-  @media (min-width: 1024px) {
+  @media (max-width: 520px) {
     .settings-section-nav {
-      top: calc(-1 * var(--space-8));
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      overflow: visible;
     }
+
+    .settings-section-nav button {
+      min-width: 0;
+      flex-direction: column;
+      justify-content: center;
+      gap: var(--space-1);
+      padding: var(--space-1);
+      font-size: 12px;
+      line-height: 1.25;
+      text-align: center;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .settings-section-nav button :global(svg) { flex-shrink: 0; }
+  }
+
+  @media (min-width: 1024px) {
+    .settings-layout {
+      display: grid;
+      grid-template-columns: minmax(10rem, 0.28fr) minmax(0, 1fr);
+      column-gap: var(--space-6);
+      align-items: start;
+    }
+
+    .settings-header { grid-column: 1 / -1; }
+    .settings-layout > [role='tabpanel'] { grid-column: 2; grid-row: 2; min-width: 0; }
+    .settings-section-nav {
+      grid-column: 1;
+      grid-row: 2;
+      flex-direction: column;
+      margin: 0;
+      border-bottom: 0;
+      overflow: visible;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-section-nav button { transition: none; }
   }
 </style>

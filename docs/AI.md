@@ -110,9 +110,9 @@ Reference: [Responses](https://developers.openai.com/api/reference/resources/res
 
 ## Use / 使用
 
-The shared AI panel in the mailbox, focused reader and standalone reader opens automatically and GETs the owned cache. A ready analysis displays its summary and successful generation time. With no valid cache, select **Agree and generate analysis**; opening mail never starts a provider request. Summary, key points, action items, verbatim dates and classification suggestion share one result. **Agree and regenerate** explicitly requests another result; a failed refresh of identical input retains the previous successful analysis, including after a page reload.
+The shared AI panel in the mailbox, focused reader and standalone reader opens automatically and reads the owned cache. Switch between the **Summary** and **Category suggestion** tabs, or collapse the panel to make room for the original email. **About AI analysis** shows the provider disclosure, generation time and accuracy reminder on hover, focus or tap. Use **Agree and generate analysis** or **Agree and regenerate** in the panel header, then confirm the privacy notice to send a request. Opening the reader only reads the cache. A failed regeneration of identical input retains the previous successful analysis, including after a page reload.
 
-在邮箱、专注阅读或独立阅读中打开邮件，AI 面板自动读取并展示有效摘要和生成时间。没有有效缓存时点击「同意并生成分析」；打开邮件本身不调用模型。摘要、要点、待办、日期与分类建议共用结果。点击「同意重新生成」才重新请求；相同输入重新生成失败时保留上次成功结果，刷新后仍可查看。
+在邮箱、专注阅读或独立阅读中打开邮件，AI 面板默认展开并读取缓存。可在「摘要」和「分类建议」页签间切换，也可折叠面板腾出正文空间。悬停、聚焦或点击「关于 AI 分析」可查看外部处理说明、生成时间和准确性提醒。点击面板右上角的「同意并生成分析」或「同意重新生成」并确认隐私提示后，才会发出生成请求。打开邮件只读取缓存。相同输入重新生成失败时保留上次成功结果，刷新后仍可查看。
 
 Manual application uses **Confirm and apply category** and the existing inbox PATCH API; it records a manual choice. Existing manual choices, including concurrent changes in another tab, take priority. Restore automatic classification in the inbox controls to remove that override. The cache is invalidated by changes to the effective output language, model, endpoint, API format, input limit, prompt/schema or canonical body. Permanent deletion cleans up analysis and pending jobs.
 

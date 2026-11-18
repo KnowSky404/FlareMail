@@ -1,9 +1,17 @@
 import AxeBuilder from '@axe-core/playwright';
+import type { Locator, Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { test, expect, login, assertNoHorizontalOverflow, assertNoConsoleErrors } from './fixtures';
 
 const title = 'AI 摘要与分类建议';
 const path = '/api/workspace/messages/e2e-inbox-message/ai';
+
+async function confirmAnalysis(page: Page, action: Locator, name: string) {
+  await action.click();
+  const dialog = page.getByRole('dialog', { name: /关于 AI 分析|About AI analysis/u });
+  await expect(dialog).toContainText(/外部模型|external model provider/u);
+  await dialog.getByRole('button', { name, exact: true }).press('Enter');
+}
 
 for (const reader of ['workspace', 'standalone']) {
   test(`AI category confirmation retains the address boundary after reclassification (${reader})`, async ({ page, consoleErrors }) => {
@@ -16,11 +24,14 @@ for (const reader of ['workspace', 'standalone']) {
       } } : { status: 'empty', analysis: null }, requestId: 'fake-reclassification' } });
     });
     await page.route('**/api/workspace/messages/e2e-inbox-message', async (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
       const response = await route.fetch(); const body = await response.json();
-      if (generated && !body.data.message.inboxCategoryOverride) body.data.message.inboxCategory = 'updates';
+      if (response.ok() && generated && !body.data.message.inboxCategoryOverride) body.data.message.inboxCategory = 'updates';
       await route.fulfill({ response, json: body });
     });
     await login(page);
+    const split = reader === 'workspace' && (page.viewportSize()?.width ?? 0) > 900;
+    if (split) await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
     const addressId = '00000000-0000-4000-8000-000000000021';
     const restore = () => page.request.patch('/api/workspace/mailbox/categories', { headers: { origin: new URL(page.url()).origin },
       data: { ids: ['e2e-inbox-message'], category: null, scope: { section: 'inbox', identityFilter: null, category: 'all' } } });
@@ -28,10 +39,10 @@ for (const reader of ['workspace', 'standalone']) {
     const query = `folder=inbox&category=primary&identity=address%3A${addressId}`;
     await page.goto(reader === 'workspace' ? `/?${query}&message=e2e-inbox-message` : `/messages/e2e-inbox-message?${query}`, { waitUntil: 'domcontentloaded' });
     const panel = page.getByRole('region', { name: title });
-    await panel.getByRole('button', { name: '同意并生成分析' }).click();
+    await confirmAnalysis(page, panel.getByRole('button', { name: '同意并生成分析', exact: true }), '同意并生成分析');
     await expect(panel.getByText('Synthetic reclassification')).toBeVisible();
     await expect(page).toHaveURL(/category=primary/u);
-    await panel.getByRole('button', { name: '分类建议', exact: true }).click();
+    await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
     const [request] = await Promise.all([
       page.waitForRequest((request) => request.method() === 'PATCH' && request.url().endsWith('/api/workspace/mailbox/categories')),
       panel.getByRole('button', { name: '确认应用此分类' }).click()
@@ -39,8 +50,123 @@ for (const reader of ['workspace', 'standalone']) {
     expect(request.postDataJSON()).toMatchObject({ ids: ['e2e-inbox-message'], onlyIfAutomatic: true,
       scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } } });
     await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
-    await assertNoHorizontalOverflow(page); await assertNoConsoleErrors(consoleErrors);
     expect((await restore()).status()).toBe(200);
+
+    if (reader === 'workspace') {
+      await page.evaluate(() => {
+        const channel = new BroadcastChannel('flaremail-workspace-v1');
+        channel.postMessage({ type: 'mailbox-refresh' });
+        channel.close();
+      });
+      const apply = panel.getByRole('button', { name: '确认应用此分类' });
+      await expect(apply).toBeVisible();
+      await apply.click();
+      await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+
+      const detail = page.getByRole('region', { name: '邮件详情', exact: true });
+      const [archive] = await Promise.all([
+        page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate')),
+        detail.getByRole('button', { name: '归档', exact: true }).click()
+      ]);
+      expect(archive.status()).toBe(200);
+      expect(archive.request().postDataJSON()).toMatchObject({
+        action: 'archive', ids: ['e2e-inbox-message'],
+        scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } }
+      });
+      if (split) {
+        const [unarchive] = await Promise.all([
+          page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate')),
+          detail.getByRole('button', { name: '移回收件箱', exact: true }).click()
+        ]);
+        expect(unarchive.status()).toBe(200);
+        expect(unarchive.request().postDataJSON()).toMatchObject({
+          action: 'unarchive', ids: ['e2e-inbox-message'],
+          scope: { section: 'archive', identityFilter: { kind: 'address', id: addressId } }
+        });
+        await expect(detail.getByRole('button', { name: '归档', exact: true })).toBeVisible();
+
+        await page.getByRole('tab', { name: '服务通知', exact: true }).click();
+        const row = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+        await row.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
+        await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
+        await expect(panel.getByText('已有手动分类，保留当前设置。')).toBeVisible();
+        await row.getByLabel('选择E2E Inbox Welcome').check();
+        await page.getByRole('button', { name: '更改收件分类' }).click();
+        await page.getByRole('menuitem', { name: '恢复自动分类', exact: true }).click();
+        await expect(apply).toBeVisible();
+
+        await detail.getByRole('button', { name: '归档', exact: true }).click();
+        await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
+        await page.goto(`/?folder=archive&q=unmatched&message=e2e-inbox-message&identity=address%3A${addressId}`);
+        await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
+        const focused = page.getByRole('dialog', { name: 'E2E Inbox Welcome', exact: true });
+        await focused.getByRole('button', { name: '移回收件箱', exact: true }).click();
+        await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
+        await expect(focused).toBeHidden();
+        await expect(detail.getByText('选择一封邮件开始阅读')).toBeVisible();
+        const subject = detail.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true });
+
+        for (const external of [true, false]) {
+          await page.goto(`/?${query}&message=e2e-inbox-message`);
+          await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
+          await apply.click();
+          await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
+          const headers = { origin: new URL(page.url()).origin };
+          if (external) {
+            const trashed = await page.request.delete('/api/workspace/messages/e2e-inbox-message', { headers });
+            expect(trashed.status()).toBe(200);
+            await page.evaluate(() => {
+              const channel = new BroadcastChannel('flaremail-workspace-v1');
+              channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
+              channel.close();
+            });
+          } else {
+            await detail.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+            const confirm = page.getByRole('dialog', { name: '移入垃圾箱？', exact: true });
+            await confirm.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+          }
+          await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
+          await expect(subject).toBeHidden();
+          expect((await page.request.post('/api/workspace/trash/e2e-inbox-message', { headers })).status()).toBe(200);
+          expect((await restore()).status()).toBe(200);
+        }
+
+        await page.goto(`/?${query}&message=e2e-inbox-message`);
+        await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
+        await focused.getByRole('tab', { name: '分类建议', exact: true }).click();
+        const externalCategory = await page.request.patch('/api/workspace/mailbox/categories', {
+          headers: { origin: new URL(page.url()).origin },
+          data: { ids: ['e2e-inbox-message'], category: 'updates', scope: { section: 'inbox', identityFilter: null, category: 'all' } }
+        });
+        expect(externalCategory.status()).toBe(200);
+        await page.evaluate(() => {
+          const channel = new BroadcastChannel('flaremail-workspace-v1');
+          channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
+          channel.close();
+        });
+        await expect(focused.getByText('已有手动分类，保留当前设置。')).toBeVisible();
+        await focused.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
+
+        const externalArchive = await page.request.post('/api/workspace/mailbox/mutate', {
+          headers: { origin: new URL(page.url()).origin },
+          data: { action: 'archive', ids: ['e2e-inbox-message'], threadKeys: [], scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' } }
+        });
+        expect(externalArchive.status()).toBe(200);
+        await page.getByRole('button', { name: '刷新邮件列表', exact: true }).click();
+        await detail.getByRole('button', { name: '移回收件箱', exact: true }).click();
+        await expect(detail.getByRole('button', { name: '归档', exact: true })).toBeVisible();
+      } else {
+        const unarchive = await page.request.post('/api/workspace/mailbox/mutate', {
+          headers: { origin: new URL(page.url()).origin },
+          data: { action: 'unarchive', ids: ['e2e-inbox-message'], threadKeys: [], scope: { section: 'archive', identityFilter: null, threadScope: 'selected' } }
+        });
+        expect(unarchive.status()).toBe(200);
+      }
+      expect((await restore()).status()).toBe(200);
+    }
+
+    await assertNoHorizontalOverflow(page);
+    await assertNoConsoleErrors(split ? consoleErrors.filter((text) => !/Failed to load resource.*404/u.test(text)) : consoleErrors);
     await page.unrouteAll({ behavior: 'wait' });
   });
 }
@@ -64,17 +190,37 @@ test('AI accessible summary, explicit category application and cached refresh', 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.locator('.mail-list-panel').getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
   const panel = page.getByRole('region', { name: title });
-  const toggle = panel.getByRole('button', { name: title, exact: true }).first();
+  const toggle = panel.getByRole('button', { name: 'AI 摘要', exact: true });
   await expect(panel.getByRole('button', { name: '同意并生成分析' })).toBeVisible();
   await toggle.focus(); await page.keyboard.press('Enter');
   await expect(panel.getByRole('button', { name: '同意并生成分析' })).toBeHidden();
   await page.keyboard.press('Enter');
   await expect(panel.getByRole('button', { name: '同意并生成分析' })).toBeVisible();
   expect(generations).toBe(0);
-  await panel.getByRole('button', { name: '同意并生成分析' }).click();
+  const generate = panel.getByRole('button', { name: '同意并生成分析' });
+  if (!info.project.use.isMobile) {
+    await panel.getByRole('button', { name: '关于 AI 分析' }).hover();
+    await expect(panel.getByRole('tooltip')).toBeVisible();
+    await generate.press('Enter');
+  } else {
+    await generate.click();
+  }
+  const consent = page.getByRole('dialog', { name: '关于 AI 分析' });
+  await expect(consent.getByRole('button', { name: '关闭' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(consent).toBeHidden();
+  await expect(generate).toBeFocused();
+  await expect(page).toHaveURL(/message=e2e-inbox-message/u);
+  expect(generations).toBe(0);
+  await confirmAnalysis(page, panel.getByRole('button', { name: '同意并生成分析', exact: true }), '同意并生成分析');
+  await expect(toggle).toBeFocused();
   await expect(panel.getByText('会议邀请：', { exact: false })).toBeVisible();
   expect(await page.evaluate(() => 'aiInjected' in window)).toBe(false);
-  await panel.getByRole('button', { name: '分类建议', exact: true }).click();
+  const summaryTab = panel.getByRole('tab', { name: '摘要', exact: true });
+  await expect(summaryTab).toHaveAttribute('aria-selected', 'true');
+  await summaryTab.press('ArrowRight');
+  await expect(panel.getByRole('tab', { name: '分类建议', exact: true })).toBeFocused();
+  await expect(panel.getByRole('tabpanel', { name: '分类建议', exact: true })).toBeVisible();
   expect(generations).toBe(1);
   await panel.getByRole('button', { name: '确认应用此分类' }).click();
   await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
@@ -116,10 +262,15 @@ test('AI disabled state does not generate and standalone reader shares the panel
 
 test('AI accessible error recovery requires consent and prevents duplicate generation while loading', async ({ page, consoleErrors }) => {
   let posts = 0;
+  let reads = 0;
   let release: (() => void) | undefined;
   const gate = new Promise<void>((resolve) => release = resolve);
   await page.route(`**${path}*`, async (route) => {
     if (route.request().method() === 'GET') {
+      if (reads++ === 0) {
+        await route.fulfill({ json: { ok: true, data: { status: 'processing', analysis: null }, requestId: 'fake-ai' } });
+        return;
+      }
       await route.fulfill({ status: 409, json: { ok: false, error: { code: 'AI_CACHE_INVALID', message: 'Invalid cache' }, requestId: 'fake-ai' } }); return;
     }
     posts++;
@@ -133,15 +284,17 @@ test('AI accessible error recovery requires consent and prevents duplicate gener
   await login(page);
   await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
   const panel = page.getByRole('region', { name: title });
+  await panel.getByRole('button', { name: '刷新分析状态', exact: true }).press('Enter');
+  await expect(panel.getByRole('button', { name: 'AI 摘要', exact: true })).toBeFocused();
   await expect(panel.getByRole('alert')).toContainText('AI_CACHE_INVALID'); expect(posts).toBe(0);
   const regenerate = panel.getByRole('button', { name: '同意重新生成' });
-  await regenerate.click();
+  await confirmAnalysis(page, regenerate, '同意重新生成');
   await expect(panel.getByRole('status')).toContainText('正在读取或生成');
-  await expect(regenerate).toHaveCount(0); expect(posts).toBe(1);
+  await expect(regenerate).toBeDisabled(); expect(posts).toBe(1);
   release?.();
   await expect(panel.getByRole('alert')).toContainText('AI_PROVIDER_UNAVAILABLE');
-  await regenerate.click(); await expect(panel.getByText('已恢复分析')).toBeVisible(); expect(posts).toBe(2);
-  await panel.getByRole('button', { name: '分类建议', exact: true }).click();
+  await confirmAnalysis(page, regenerate, '同意重新生成'); await expect(panel.getByText('已恢复分析')).toBeVisible(); expect(posts).toBe(2);
+  await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
   await expect(panel.getByText('没有可靠的分类建议。')).toBeVisible();
   await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*(?:409|503)/u.test(text)));
 });
@@ -163,9 +316,26 @@ test('AI English output, regeneration and system light/dark themes in standalone
   await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   const panel = page.getByRole('region', { name: 'AI summary and category suggestion' });
-  await panel.getByRole('button', { name: 'Agree and generate analysis' }).click();
+  await confirmAnalysis(page, panel.getByRole('button', { name: 'Agree and generate analysis', exact: true }), 'Agree and generate analysis');
   await expect(panel.getByText('Meeting summary 1')).toBeVisible();
-  await panel.getByRole('button', { name: 'Agree and regenerate' }).click();
+  const controlBounds = await panel.locator('.ai-header button').evaluateAll((buttons) => buttons.map((button) => {
+    const range = document.createRange();
+    range.selectNodeContents(button);
+    const rects = [button.getBoundingClientRect(), ...range.getClientRects()].filter((rect) => rect.width && rect.height);
+    return {
+      left: Math.min(...rects.map((rect) => rect.left)), right: Math.max(...rects.map((rect) => rect.right)),
+      top: Math.min(...rects.map((rect) => rect.top)), bottom: Math.max(...rects.map((rect) => rect.bottom))
+    };
+  }));
+  expect(controlBounds).toHaveLength(3);
+  for (const [index, control] of controlBounds.entries()) {
+    for (const next of controlBounds.slice(index + 1)) {
+      const horizontal = Math.min(control.right, next.right) - Math.max(control.left, next.left);
+      const vertical = Math.min(control.bottom, next.bottom) - Math.max(control.top, next.top);
+      expect(horizontal <= 1 || vertical <= 1).toBe(true);
+    }
+  }
+  await confirmAnalysis(page, panel.getByRole('button', { name: 'Agree and regenerate', exact: true }), 'Agree and regenerate');
   await expect(panel.getByText('Meeting summary 2')).toBeVisible(); expect(posts).toBe(2);
   await assertNoHorizontalOverflow(page);
   expect((await new AxeBuilder({ page }).include('.message-content').analyze()).violations).toEqual([]);
@@ -187,13 +357,77 @@ test('AI focused reader uses the shared cached analysis without another generati
   await login(page);
   await page.locator('.mail-list-panel').getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
   await page.locator('#fm-open-reader-trigger').click();
-  const dialog = page.getByRole('dialog'); await expect(dialog).toBeVisible();
-  await expect(dialog.getByText('专注阅读缓存')).toBeVisible(); expect(posts).toBe(0);
+  const dialog = page.getByRole('dialog', { name: 'E2E Inbox Welcome', exact: true });
+  await expect(dialog.getByText('专注阅读缓存')).toBeVisible();
+  expect(posts).toBe(0);
   await expect(page.getByRole('region', { name: title })).toHaveCount(1);
+
+  const toggle = dialog.getByRole('button', { name: 'AI 摘要', exact: true });
+  await toggle.press('r');
+  const reply = page.getByRole('dialog', { name: '回复邮件', exact: true });
+  await expect(reply).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await reply.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(reply).toBeHidden();
+  await page.locator('#fm-open-reader-trigger').click();
+  await dialog.getByRole('button', { name: '同意重新生成', exact: true }).click();
+  const consent = page.getByRole('dialog', { name: '关于 AI 分析', exact: true });
+  const closeConsent = consent.getByRole('button', { name: '关闭', exact: true });
+  await closeConsent.press('f');
+  const forward = page.getByRole('dialog', { name: '转发邮件', exact: true });
+  await expect(forward).toHaveCount(0);
+  await closeConsent.press('Escape');
+  await expect(consent).toBeHidden();
+  await toggle.press('f');
+  await expect(forward).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await forward.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(forward).toBeHidden();
+  expect(posts).toBe(0);
+  await page.locator('#fm-open-reader-trigger').click();
   await dialog.getByRole('button', { name: '关闭专注阅读', exact: true }).click();
   await expect(dialog).toBeHidden();
 });
 
+
+test('keeps the focused reader open when a refresh returns a row with a pending flag change', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', 'Focused reader toggle is a desktop control.');
+  await login(page);
+  const flagsPath = '/api/workspace/messages/e2e-inbox-message/flags';
+  const headers = { origin: new URL(page.url()).origin };
+  expect((await page.request.patch(flagsPath, { headers, data: { read: true, starred: true } })).status()).toBe(200);
+  await page.goto('/?folder=inbox&filter=starred&message=e2e-inbox-message');
+  await page.locator('#fm-open-reader-trigger').click();
+  const focused = page.getByRole('dialog', { name: 'E2E Inbox Welcome', exact: true });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**${flagsPath}`, async (route) => {
+    await gate;
+    await route.continue();
+  });
+  try {
+    const started = page.waitForRequest((request) => new URL(request.url()).pathname === flagsPath);
+    await focused.getByRole('button', { name: '取消星标', exact: true }).click();
+    await started;
+    const list = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace/mailbox' && response.ok());
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mailbox-refresh' });
+      channel.close();
+    });
+    await (await list).finished();
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(focused).toBeVisible();
+    await expect(focused.getByRole('button', { name: '加星', exact: true })).toBeVisible();
+    const finished = page.waitForResponse((response) => new URL(response.url()).pathname === flagsPath && response.ok());
+    release();
+    await finished;
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: 'wait' });
+    await page.request.patch(flagsPath, { headers, data: { starred: false } });
+  }
+});
 
 test('explicit theme survives OS changes when browser storage writes fail', async ({ page, consoleErrors }, info) => {
   test.skip(info.project.name !== 'desktop', 'Desktop preference controls exercise the shared theme listener.');
@@ -222,17 +456,21 @@ test('OpenAI quota errors explain Platform billing without exposing provider mes
       await route.fulfill({ json: { ok: true, data: { status: 'empty', analysis: null }, requestId: 'fake-openai-error' } });
     } else {
       calls++;
+      expect(route.request().postDataJSON()).toMatchObject({ regenerate: false });
       await route.fulfill({ status: 429, json: { ok: false, error: { code: 'AI_PROVIDER_QUOTA', message: 'provider-secret-do-not-render' }, requestId: 'fake-openai-error' } });
     }
   });
   await login(page);
   await page.goto('/messages/e2e-inbox-message?folder=inbox', { waitUntil: 'domcontentloaded' });
   const panel = page.getByRole('region', { name: title });
-  await panel.getByRole('button', { name: '同意并生成分析' }).click();
+  await confirmAnalysis(page, panel.getByRole('button', { name: '同意并生成分析', exact: true }), '同意并生成分析');
   await expect(panel.getByRole('alert')).toContainText('AI_PROVIDER_QUOTA');
   await expect(panel.getByRole('alert')).toContainText('OpenAI Platform');
   await expect(panel).not.toContainText('provider-secret-do-not-render');
   expect(calls).toBe(1);
+  await confirmAnalysis(page, panel.getByRole('button', { name: '同意并生成分析', exact: true }), '同意并生成分析');
+  await expect(panel.getByRole('alert')).toContainText('AI_PROVIDER_QUOTA');
+  expect(calls).toBe(2);
   await assertNoConsoleErrors(consoleErrors.filter((text) => !/Failed to load resource.*429/u.test(text)));
 });
 
@@ -291,7 +529,7 @@ test('AI accessible generation and completed result survive same-message flag up
   await login(page);
   await page.locator('.mail-list-panel').getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' }).getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
   const panel = page.getByRole('region', { name: title });
-  await panel.getByRole('button', { name: '同意并生成分析' }).click();
+  await confirmAnalysis(page, panel.getByRole('button', { name: '同意并生成分析', exact: true }), '同意并生成分析');
   await expect.poll(() => posts).toBe(1);
   const star = page.getByRole('region', { name: '邮件详情', exact: true }).getByRole('button', { name: /^(?:加星|取消星标)$/u });
   const initialStarred = await star.getAttribute('aria-pressed') === 'true';
@@ -329,9 +567,43 @@ test('cached summary opens automatically, shows its date and survives failed reg
   await login(page); await page.goto('/messages/e2e-inbox-message?folder=inbox');
   const panel = page.getByRole('region', { name: title });
   await expect(panel.getByText('Telegram 与网页共用的缓存摘要', { exact: true })).toBeVisible();
-  await expect(panel.locator('time')).toHaveAttribute('datetime', '2026-11-15T12:00:00.000Z');
+  const details = panel.getByRole('button', { name: '关于 AI 分析' });
+  const tooltip = panel.getByRole('tooltip');
+  await expect(tooltip).toBeHidden();
+  if (!info.project.use.isMobile) {
+    await details.hover();
+    await expect(tooltip).toBeVisible();
+    const button = (await details.boundingBox())!;
+    const hint = (await tooltip.boundingBox())!;
+    const x = button.x + button.width / 2;
+    await page.mouse.move(x, button.y + button.height + 4, { steps: 8 });
+    await expect(tooltip).toBeVisible();
+    await page.mouse.move(x, hint.y + hint.height / 2, { steps: 8 });
+    await expect(tooltip).toBeVisible();
+    const summaryTab = panel.getByRole('tab', { name: '摘要', exact: true });
+    await details.focus();
+    await summaryTab.focus();
+    await expect(tooltip).toBeVisible();
+    await details.focus();
+    await page.mouse.move(0, 0);
+    await expect(tooltip).toBeVisible();
+    await summaryTab.focus();
+    await expect(tooltip).toBeHidden();
+    await details.hover();
+    await expect(tooltip).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(tooltip).toBeHidden();
+  }
+  await details.click();
+  await expect(tooltip).toContainText(/生成时间.*2026.*AI 结果可能有误/u);
+  await details.press('Escape');
+  await expect(tooltip).toBeHidden();
+  await details.press('Enter');
+  await expect(tooltip).toBeVisible();
+  await details.press('Escape');
+  await expect(tooltip).toBeHidden();
   expect(reads).toBeGreaterThan(0); expect(posts).toBe(0);
-  await panel.getByRole('button', { name: '同意重新生成', exact: true }).click();
+  await confirmAnalysis(page, panel.getByRole('button', { name: '同意重新生成', exact: true }), '同意重新生成');
   await expect(panel.getByRole('alert')).toContainText('AI_PROVIDER_UNAVAILABLE');
   await expect(panel.getByText('Telegram 与网页共用的缓存摘要', { exact: true })).toBeVisible();
   await page.reload();

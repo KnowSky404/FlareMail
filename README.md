@@ -57,13 +57,13 @@ version 3 or (at your option) any later version (`AGPL-3.0-or-later`).
 
 ## HTML message rendering
 
-The reader offers Plain text, Safe HTML and Unsafe HTML in a compact toolbar.
+The reader switches between Plain text and Safe HTML using a segmented control.
 Safe HTML preserves common email typography, colors, table layouts and responsive
-width rules on an isolated light canvas while blocking remote images. Selecting
-Unsafe HTML allows HTTPS images for the current message; switching messages resets
-the selection. Both HTML modes sanitize content and block scripts, forms, frames
-and CSS resource loads. Mode explanations live behind the toolbar's information
-icon, with hover, keyboard and touch access. Sender, delivery and technical details
+width rules on an isolated light canvas while blocking remote images. Open Display
+options to load HTTPS images for the current message or block them again. Switching
+messages resets the selection. Both HTML modes sanitize content and block scripts,
+forms, frames and CSS resource loads. Mode explanations live behind the toolbar's
+information icon, with hover, keyboard and touch access. Sender, delivery and technical details
 open from a compact control in the message header, leaving more room for the body.
 See the [HTML safety boundary](docs/API.md#html-safety-boundary).
 

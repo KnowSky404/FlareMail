@@ -95,7 +95,7 @@
     setMailMessageLabel,
     setManyMailMessageLabels
   } from '$lib/client/workspace-api';
-  import { WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
+  import { isEditableShortcutTarget, WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
   import { TrashController } from '$lib/client/trash-controller';
   import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl, type WorkspaceUrlState } from '$lib/client/workspace-url-controller';
@@ -1531,15 +1531,40 @@
     updateWorkspaceUrl({ category, messageId: null });
   }
 
+  function retainCategoryChange(summary: Pick<MailMessage, 'id' | 'inboxCategory' | 'inboxCategoryOverride'> | undefined) {
+    const current = selectedMessage;
+    if (!summary || current?.id !== summary.id || selectedMessageId !== summary.id || activeSection !== 'inbox') return;
+    if (deepLinkedMessage?.id !== summary.id && (inboxCategory === 'all' || inboxCategory === summary.inboxCategory)) return;
+    syncMessageRequest.cancel();
+    deepLinkedMessage = { ...current, ...summary };
+  }
+
+  function updateRetainedArchive(summaries: readonly Pick<MailMessage, 'id' | 'archivedAt'>[]) {
+    const retained = deepLinkedMessage;
+    const updated = retained && summaries.find((item) => item.id === retained.id);
+    if (!retained || !updated) return;
+    syncMessageRequest.cancel();
+    deepLinkedMessage = { ...retained, archivedAt: updated.archivedAt };
+  }
+
+  function clearRetainedMessage(id: string) {
+    if (deepLinkedMessage?.id !== id) return;
+    syncMessageRequest.cancel();
+    deepLinkedMessage = null;
+    if (deepLinkedRefreshError === id) deepLinkedRefreshError = null;
+  }
+
   async function applyAiCategory(message: MailMessage, category: MailInboxCategory) {
     if (categoryPending || pending || activeSection !== 'inbox' || message.inboxCategoryOverride) throw new Error('Category unavailable');
     categoryPending = true;
     try {
       const changed = await setInboxCategory([message.id], category, { section: 'inbox', identityFilter: mailIdentityFilter, category: 'all' }, true);
+      const summary = changed.summaries.find((item) => item.id === message.id);
+      retainCategoryChange(summary);
       await refreshWorkspace(false);
-      await refreshDeepLinkedMessage(message);
+      if (!summary) await refreshDeepLinkedMessage(message);
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
-      if (!changed.summaries.some((item) => item.id === message.id && item.inboxCategoryOverride === category)) throw new Error('Category changed');
+      if (summary?.inboxCategoryOverride !== category) throw new Error('Category changed');
     } finally { categoryPending = false; }
   }
 
@@ -1549,6 +1574,7 @@
     const ids = bulkSelectedMessages.map((message) => message.id);
     try {
       const changed = await setInboxCategory(ids, category, { section: 'inbox', identityFilter: mailIdentityFilter, category: inboxCategory });
+      retainCategoryChange(changed.summaries.find((item) => item.id === selectedMessageId));
       selectedMessageIds = selectedMessageIds.filter((id) => !ids.includes(id));
       await refreshWorkspace(false);
       workspaceSync?.publish({ type: 'mailbox-refresh' });
@@ -1562,12 +1588,18 @@
     if (pending || message.folder !== 'inbox') return;
     pending = true;
     try {
-      await mutateMailbox(message.archivedAt ? 'unarchive' : 'archive', [message.id], [], {
-        section: activeSection as MailboxMutationScope['section'], identityFilter: mailIdentityFilter,
-        threadScope: 'selected', ...(activeSection === 'inbox' ? { category: inboxCategory } : {}),
-        ...(activeSection === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
+      const section = message.archivedAt && activeSection === 'inbox' ? 'archive' : activeSection;
+      const category = deepLinkedMessage?.id === message.id ? 'all' : inboxCategory;
+      const { result } = await mutateMailbox(message.archivedAt ? 'unarchive' : 'archive', [message.id], [], {
+        section: section as MailboxMutationScope['section'], identityFilter: mailIdentityFilter,
+        threadScope: 'selected', ...(section === 'inbox' ? { category } : {}),
+        ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
-      if (selectedMessageId === message.id && readingLayout === 'list') closeMobileDetail();
+      if (selectedMessageId === message.id && (readingLayout === 'list' || activeSection === 'archive')) {
+        await closeMobileDetail();
+      } else {
+        updateRetainedArchive(result.summaries);
+      }
       await refreshWorkspace(false);
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
@@ -1629,7 +1661,11 @@
     );
     if (refreshed) {
       runtimeOperationError = false;
-      if (announce) notify(t('notify.mailboxRefreshed'), 'success');
+      if (announce) {
+        const current = selectedMessage;
+        if (current) await refreshDeepLinkedMessage(current);
+        notify(t('notify.mailboxRefreshed'), 'success');
+      }
     }
   }
 
@@ -1696,7 +1732,7 @@
   }
 
   function refreshDeepLinkedMessage(current: MailMessage) {
-    if (!authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
+    if (!authenticated || authExpired || current.folder === 'drafts' || deepLinkedMessage?.id !== current.id) return;
     const section = activeSection;
     const flagRevision = deepLinkedFlagRevisions.get(current.id) ?? { read: 0, starred: 0 };
     const request = syncMessageRequest.begin();
@@ -1715,10 +1751,15 @@
         starred: (latestRevision?.starred ?? 0) === flagRevision.starred ? refreshed.starred : deepLinkedMessage.starred
       };
       if (deepLinkedRefreshError === current.id) deepLinkedRefreshError = null;
-    }).catch(() => {
-      if (request.isCurrent() && !request.signal.aborted && authenticated && !authExpired && deepLinkedMessage?.id === current.id) {
-        deepLinkedRefreshError = current.id;
+    }).catch((error) => {
+      if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id ||
+        activeSection !== section || selectedMessageId !== current.id) return;
+      if (error instanceof ClientApiError && error.status === 404) {
+        clearRetainedMessage(current.id);
+        void closeMobileDetail();
+        return;
       }
+      deepLinkedRefreshError = current.id;
     });
   }
 
@@ -1757,11 +1798,11 @@
       targetMessageRequest.cancel();
       targetMessageRevision++;
     }
-    if (cached && !current) {
-      deepLinkedMessage = null;
-      if (deepLinkedRefreshError === cached.id) deepLinkedRefreshError = null;
-    }
+    if (cached && !current) clearRetainedMessage(cached.id);
     if (current && cached) refreshDeepLinkedMessage(current);
+    if (!event.id && deepLinkedMessage && deepLinkedMessage.id === selectedMessage?.id) {
+      void refreshDeepLinkedMessage(deepLinkedMessage);
+    }
     if (current) {
       if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
       else void loadWorkspaceBody(current, true);
@@ -1771,6 +1812,7 @@
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {
+    const openMessage = readerOpen && activeSection === 'inbox' && page.folder === 'inbox' ? selectedMessage : null;
     page = { ...page, messages: page.messages.map((message) => flagController.overlay(message)), ...(flagController.busy ? { metrics: undefined } : {}) };
     const merged = mergeMailboxPage({ mailbox, mailboxPages, metrics }, page, append);
     mailbox = merged.mailbox;
@@ -1780,6 +1822,16 @@
     mailboxError = '';
     const currentMessages = merged.mailboxPages?.[page.folder]?.messages ?? [];
     if (activeSection === page.folder) {
+      const selectable = (id: string) => page.folder === 'inbox' || page.folder === 'sent' || page.folder === 'archive'
+        ? visibleThreads.some((thread) => thread.messages.some((message) => message.id === id))
+        : visibleMessages.some((message) => message.id === id);
+      const retained = deepLinkedMessage;
+      if (retained && selectable(retained.id)) clearRetainedMessage(retained.id);
+      if (openMessage && deepLinkedMessage?.id !== openMessage.id && !selectable(openMessage.id)) {
+        selectedMessageId = openMessage.id;
+        deepLinkedMessage = openMessage;
+        void refreshDeepLinkedMessage(openMessage);
+      }
       selectedMessageIds = reconcileBulkSelection(selectedMessageIds, currentMessages);
       if (selectedMessageIds.length === 0) bulkThreadScope = 'selected';
     }
@@ -1842,7 +1894,16 @@
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
         acceptMetrics(result.result.metrics, metricsScope);
       }
-      if (action === 'trash') { trashController.invalidate(); trashLoaded = false; }
+      if (action === 'trash') {
+        trashController.invalidate();
+        trashLoaded = false;
+        const removed = result.result.summaries;
+        const retained = deepLinkedMessage;
+        if (retained && removed.some((message) => message.id === retained.id)) clearRetainedMessage(retained.id);
+        if (removed.some((message) => message.id === selectedMessageId)) await closeMobileDetail();
+      } else if (action === 'archive' || action === 'unarchive') {
+        updateRetainedArchive(result.result.summaries);
+      }
       selectedMessageIds = [];
       bulkThreadScope = 'selected';
       await refreshWorkspace(false);
@@ -1908,6 +1969,7 @@
       window.dispatchEvent(new Event('flaremail:restore-compose'));
       return;
     }
+    if (readerOpen) void closeReader();
     toastController.dismissPassive();
     const senderAddressId = selectInitialComposeSenderAddressId(
       mailIdentityOptions.addresses,
@@ -2492,6 +2554,7 @@
   }
 
   async function closeMobileDetail() {
+    readerOpen = false;
     mobileDetailOpen = false;
     selectedMessageId = null;
     updateWorkspaceUrl({ messageId: null }, true);
@@ -2623,6 +2686,11 @@
 
     try {
       const result = await deleteMessage(message.id);
+      if (deepLinkedMessage?.id === result.removedId && selectedMessageId === result.removedId) {
+        targetMessageRequest.cancel();
+        await closeMobileDetail();
+      }
+      clearRetainedMessage(result.removedId);
       await acceptMutationMetrics(result.metrics, result.metricsScope.identityFilter);
 
       const removed = removeMessage(
@@ -2974,10 +3042,11 @@
     else if (authenticated) authSessionSync.publish({ type: 'authenticated' });
 
     const handleShortcut = (event: KeyboardEvent) => {
-      if (!authenticated || composeOpen) return;
-      if (aboutOpen) {
+      if (!authenticated || composeOpen || event.defaultPrevented) return;
+      const dialog = event.target instanceof Element ? event.target.closest('[role="dialog"][aria-modal="true"]') : null;
+      if (aboutOpen || (dialog && (!dialog.hasAttribute('data-reader-dialog') || event.key === 'Escape'))) {
         // Firefox's unmodified "/" quick-find would take focus from the modal.
-        if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault();
+        if (event.key === '/' && !isEditableShortcutTarget(event.target) && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault();
         return;
       }
       const action = shortcuts.handle(event, {

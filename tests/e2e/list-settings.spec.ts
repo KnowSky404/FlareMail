@@ -47,12 +47,33 @@ test('trash replaces record pages, retains a failed page, and returns to the fir
   await assertNoConsoleErrors(consoleErrors.filter((entry) => !/^Failed to load resource: the server responded with a status of 503/u.test(entry)));
 });
 
+test('keeps English settings tabs inside their touch targets at 320px', async ({ page, consoleErrors }) => {
+  await login(page);
+  await page.evaluate(() => {
+    localStorage.setItem('flaremail-locale', 'en');
+    document.cookie = 'flaremail-locale=en; Path=/';
+  });
+  await page.setViewportSize({ width: 320, height: 720 });
+  await page.goto('/?folder=settings');
+  const tabs = page.getByRole('tablist', { name: 'Settings sections' });
+  await expect(tabs.getByRole('tab', { name: 'Notifications', exact: true })).toBeVisible();
+  const overflowing = await tabs.getByRole('tab').evaluateAll((buttons) => buttons.filter((button) => {
+    const bounds = button.getBoundingClientRect();
+    const label = document.createRange();
+    label.selectNodeContents(button);
+    return [...label.getClientRects()].some((rect) => rect.left < bounds.left - 1 || rect.right > bounds.right + 1);
+  }).map((button) => button.textContent?.trim()));
+  expect(overflowing).toEqual([]);
+  await assertNoHorizontalOverflow(page);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('settings tabs preserve drafts, save only the active fields, and support deep links and keyboard navigation', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   await page.goto('/?folder=settings#settings-notifications');
   await expect(page).toHaveURL(/tab=notifications/u);
   const tabs = page.getByRole('tablist', { name: '设置分区' });
-  await expect(tabs.getByRole('tab')).toHaveText(['个人资料', '通知', '诊断', 'Telegram 通知', '黑名单', 'AI 设置']);
+  await expect(tabs.getByRole('tab')).toHaveText(['个人资料', '通知', 'Telegram 通知', '黑名单', 'AI 设置', '诊断']);
   await expect(page.getByRole('tabpanel')).toHaveCount(1);
   await tabs.getByRole('tab', { name: '个人资料', exact: true }).click();
   const original = await (await page.request.get('/api/workspace/profile')).json();
@@ -62,6 +83,13 @@ test('settings tabs preserve drafts, save only the active fields, and support de
     if (route.request().method() === 'PUT') submissions.push(route.request().postDataJSON());
     await route.continue();
   });
+  const details = page.locator('#settings-profile summary');
+  await expect(page.getByLabel('职位角色')).toBeHidden();
+  await page.screenshot({ path: join(tmpdir(), `flaremail-settings-profile-${testInfo.project.name}.png`) });
+  await details.press('Enter');
+  await expect(page.getByLabel('职位角色')).toHaveValue(baseline.role);
+  await details.press('Enter');
+  await expect(page.getByLabel('职位角色')).toBeHidden();
   await page.getByLabel('显示姓名').fill('  Separate tab draft  ');
   await page.getByLabel('显示邮箱').fill('invalid');
   await tabs.getByRole('tab', { name: '通知', exact: true }).click();
@@ -82,13 +110,13 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   expect(submissions[1]).toMatchObject({ forwardingEnabled: !baseline.forwardingEnabled });
   await expect(page.getByLabel('显示姓名')).toHaveValue('Separate tab draft');
   await tabs.getByRole('tab', { name: '个人资料', exact: true }).focus();
-  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press(await tabs.getAttribute('aria-orientation') === 'vertical' ? 'ArrowDown' : 'ArrowRight');
   await expect(tabs.getByRole('tab', { name: '通知', exact: true })).toBeFocused();
   await expect(tabs.getByRole('tab', { name: '个人资料', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Enter');
   await expect(page.locator('#profile-forwarding')).toHaveAttribute('aria-checked', String(baseline.forwardingEnabled));
   await expect(page.getByLabel('显示姓名')).toHaveCount(0);
-  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('End');
   await expect(tabs.getByRole('tab', { name: '诊断', exact: true })).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: '保存设置', exact: true })).toHaveCount(0);
@@ -301,10 +329,7 @@ test('blocked sender quarantine keeps mail until an explicit release', async ({ 
   await page.goto('/?folder=settings&tab=blocked');
   const tabs = page.getByRole('tablist', { name: '设置分区' });
   await expect(tabs.getByRole('tab', { name: '黑名单' })).toHaveAttribute('aria-selected', 'true');
-  await tabs.getByRole('tab', { name: '个人资料' }).focus();
-  await page.keyboard.press('End');
-  await expect(tabs.getByRole('tab', { name: 'AI 设置' })).toBeFocused();
-  await page.keyboard.press('ArrowLeft');
+  await tabs.getByRole('tab', { name: 'AI 设置' }).press(await tabs.getAttribute('aria-orientation') === 'vertical' ? 'ArrowUp' : 'ArrowLeft');
   await expect(tabs.getByRole('tab', { name: '黑名单' })).toBeFocused();
   const sender = `blocked-${testInfo.project.name}@sender.test`;
   const subject = `Quarantine regression ${testInfo.project.name}`;

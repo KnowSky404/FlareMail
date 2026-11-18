@@ -21,7 +21,7 @@ export type WorkspaceShortcutContext = {
   canForward: boolean;
 };
 
-function editableTarget(target: EventTarget | null) {
+export function isEditableShortcutTarget(target: EventTarget | null) {
   return (
     (typeof HTMLInputElement !== 'undefined' && target instanceof HTMLInputElement) ||
     (typeof HTMLTextAreaElement !== 'undefined' && target instanceof HTMLTextAreaElement) ||
@@ -38,7 +38,7 @@ export class WorkspaceShortcutController {
     let action: WorkspaceShortcutAction | null = null;
     if (event.key === 'Escape') {
       action = context.helpOpen ? 'close-help' : context.mobileDetailOpen ? 'close-mobile-detail' : null;
-    } else if (!editableTarget(event.target) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    } else if (!isEditableShortcutTarget(event.target) && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const key = event.key.toLocaleLowerCase('en-US');
       if (this.prefix === 'g' && (key === 'i' || key === 's' || key === 'd')) {
         this.clearPrefix();
