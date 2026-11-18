@@ -130,23 +130,31 @@ for (const reader of ['workspace', 'standalone']) {
           await apply.click();
           await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
           const headers = { origin: new URL(page.url()).origin };
-          if (external) {
-            const trashed = await page.request.delete('/api/workspace/messages/e2e-inbox-message', { headers });
-            expect(trashed.status()).toBe(200);
-            await page.evaluate(() => {
-              const channel = new BroadcastChannel('flaremail-workspace-v1');
-              channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
-              channel.close();
-            });
-          } else {
-            await detail.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
-            const confirm = page.getByRole('dialog', { name: '移入垃圾箱？', exact: true });
-            await confirm.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+          try {
+            if (external) {
+              const trashed = await page.request.delete('/api/workspace/messages/e2e-inbox-message', { headers });
+              expect(trashed.status()).toBe(200);
+              await page.evaluate(() => {
+                const channel = new BroadcastChannel('flaremail-workspace-v1');
+                channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
+                channel.close();
+              });
+            } else {
+              await detail.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+              const confirm = page.getByRole('dialog', { name: '移入垃圾箱？', exact: true });
+              await confirm.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+            }
+            await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
+            await expect(subject).toBeHidden();
+          } finally {
+            const restored = await page.request.post('/api/workspace/trash/e2e-inbox-message', { headers });
+            if (restored.status() === 404) {
+              expect((await page.request.get('/api/workspace/messages/e2e-inbox-message')).status()).toBe(200);
+            } else {
+              expect(restored.status()).toBe(200);
+            }
+            expect((await restore()).status()).toBe(200);
           }
-          await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
-          await expect(subject).toBeHidden();
-          expect((await page.request.post('/api/workspace/trash/e2e-inbox-message', { headers })).status()).toBe(200);
-          expect((await restore()).status()).toBe(200);
         }
 
         const headers = { origin: new URL(page.url()).origin };
