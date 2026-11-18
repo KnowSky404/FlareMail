@@ -1372,8 +1372,8 @@
     mailbox = { inbox: update(mailbox.inbox), sent: update(mailbox.sent), drafts: update(mailbox.drafts) };
     if (mailboxPages) mailboxPages = Object.fromEntries(Object.entries(mailboxPages).map(([section, page]) => [section, page ? { ...page, messages: update(page.messages) } : page])) as typeof mailboxPages;
     if (deepLinkedMessage?.id === message.id) {
-      syncMessageRequest.cancel();
       deepLinkedMessage = { ...deepLinkedMessage, userLabels: result.labels };
+      void refreshDeepLinkedMessage(deepLinkedMessage);
     }
     if (labelTargetMessage?.id === message.id) labelTargetMessage = { ...message, userLabels: result.labels };
     if (activeSection === 'label') void refreshWorkspace(false);
@@ -1600,7 +1600,7 @@
         threadScope: 'selected', ...(section === 'inbox' ? { category } : {}),
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
-      if (selectedMessageId === message.id && (readingLayout === 'list' || activeSection === 'archive')) {
+      if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
         await closeMobileDetail();
       } else {
         updateRetainedArchive(result.summaries);

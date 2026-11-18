@@ -114,8 +114,8 @@ for (const reader of ['workspace', 'standalone']) {
         expect(rearchived.request().postDataJSON()).toMatchObject({
           action: 'archive', scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } }
         });
-
-        await page.goto(archiveUrl);
+        await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
+        await expect(page).toHaveURL(/message=e2e-inbox-message/u);
         await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
         const focused = page.getByRole('dialog', { name: 'E2E Inbox Welcome', exact: true });
         await focused.getByRole('button', { name: '移回收件箱', exact: true }).click();
@@ -179,7 +179,14 @@ for (const reader of ['workspace', 'standalone']) {
           const checkbox = labels.getByRole('checkbox', { name: labelName, exact: true });
           await manageLabels.click();
           await expect(checkbox).toBeChecked();
-          await checkbox.uncheck();
+          const [labelRefresh] = await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'GET' && response.url().endsWith('/api/workspace/messages/e2e-inbox-message')),
+            checkbox.uncheck()
+          ]);
+          expect(labelRefresh.status()).toBe(200);
+          const { data: { message: refreshed } } = await labelRefresh.json();
+          expect(refreshed.inboxCategoryOverride).toBe('updates');
+          expect(refreshed.userLabels).not.toContainEqual({ id: labelId, name: labelName });
           await expect(checkbox).not.toBeChecked();
           await labels.getByRole('button', { name: '关闭', exact: true }).click();
           await manageLabels.click();
