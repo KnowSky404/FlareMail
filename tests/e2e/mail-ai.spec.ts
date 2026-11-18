@@ -37,11 +37,20 @@ for (const reader of ['workspace', 'standalone']) {
       data: { ids: ['e2e-inbox-message'], category: null, scope: { section: 'inbox', identityFilter: null, category: 'all' } } });
     expect((await restore()).status()).toBe(200);
     const query = `folder=inbox&category=primary&identity=address%3A${addressId}`;
-    await page.goto(reader === 'workspace' ? `/?${query}&message=e2e-inbox-message` : `/messages/e2e-inbox-message?${query}`, { waitUntil: 'domcontentloaded' });
+    let workspaceUrl = `/?${query}&message=e2e-inbox-message`;
+    if (split) {
+      const read = await page.request.patch('/api/workspace/messages/e2e-inbox-message/flags', {
+        headers: { origin: new URL(page.url()).origin }, data: { read: true }
+      });
+      expect(read.status()).toBe(200);
+      workspaceUrl = `/?${query}&q=${encodeURIComponent('subject:"E2E Inbox Welcome"')}`;
+    }
+    await page.goto(reader === 'workspace' ? workspaceUrl : `/messages/e2e-inbox-message?${query}`, { waitUntil: 'domcontentloaded' });
     const panel = page.getByRole('region', { name: title });
     await confirmAnalysis(page, panel.getByRole('button', { name: '同意并生成分析', exact: true }), '同意并生成分析');
     await expect(panel.getByText('Synthetic reclassification')).toBeVisible();
     await expect(page).toHaveURL(/category=primary/u);
+    if (split) await expect(page).not.toHaveURL(/message=/u);
     await panel.getByRole('tab', { name: '分类建议', exact: true }).click();
     const [request] = await Promise.all([
       page.waitForRequest((request) => request.method() === 'PATCH' && request.url().endsWith('/api/workspace/mailbox/categories')),
@@ -130,15 +139,26 @@ for (const reader of ['workspace', 'standalone']) {
           await apply.click();
           await expect(panel.getByText(/已有手动分类|已应用分类/u)).toBeVisible();
           const headers = { origin: new URL(page.url()).origin };
+          const metadataPath = '/api/workspace/messages/e2e-inbox-message';
+          const ignoreTrashedMetadataError = (message: import('@playwright/test').ConsoleMessage) => {
+            if (message.type() !== 'error' || !/Failed to load resource.*404/u.test(message.text()) ||
+              !message.location().url.endsWith(metadataPath)) return;
+            const index = consoleErrors.lastIndexOf(message.text());
+            if (index >= 0) consoleErrors.splice(index, 1);
+          };
+          if (external) page.on('console', ignoreTrashedMetadataError);
           try {
             if (external) {
-              const trashed = await page.request.delete('/api/workspace/messages/e2e-inbox-message', { headers });
+              const trashed = await page.request.delete(metadataPath, { headers });
               expect(trashed.status()).toBe(200);
+              const missing = page.waitForResponse((response) => response.request().method() === 'GET' &&
+                response.url().endsWith(metadataPath) && response.status() === 404);
               await page.evaluate(() => {
                 const channel = new BroadcastChannel('flaremail-workspace-v1');
                 channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-inbox-message' });
                 channel.close();
               });
+              await missing;
             } else {
               await detail.getByRole('button', { name: '移入垃圾箱', exact: true }).click();
               const confirm = page.getByRole('dialog', { name: '移入垃圾箱？', exact: true });
@@ -147,6 +167,7 @@ for (const reader of ['workspace', 'standalone']) {
             await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
             await expect(subject).toBeHidden();
           } finally {
+            if (external) page.off('console', ignoreTrashedMetadataError);
             const restored = await page.request.post('/api/workspace/trash/e2e-inbox-message', { headers });
             if (restored.status() === 404) {
               expect((await page.request.get('/api/workspace/messages/e2e-inbox-message')).status()).toBe(200);
@@ -224,7 +245,7 @@ for (const reader of ['workspace', 'standalone']) {
     }
 
     await assertNoHorizontalOverflow(page);
-    await assertNoConsoleErrors(split ? consoleErrors.filter((text) => !/Failed to load resource.*404/u.test(text)) : consoleErrors);
+    await assertNoConsoleErrors(consoleErrors);
     await page.unrouteAll({ behavior: 'wait' });
   });
 }

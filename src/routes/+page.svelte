@@ -1537,10 +1537,11 @@
 
   function retainCategoryChange(summary: Pick<MailMessage, 'id' | 'inboxCategory' | 'inboxCategoryOverride'> | undefined) {
     const current = selectedMessage;
-    if (!summary || current?.id !== summary.id || selectedMessageId !== summary.id || activeSection !== 'inbox') return;
+    if (!summary || current?.id !== summary.id || activeSection !== 'inbox') return;
     if (deepLinkedMessage?.id !== summary.id && (inboxCategory === 'all' || inboxCategory === summary.inboxCategory)) return;
     syncMessageRequest.cancel();
     deepLinkedMessage = { ...current, ...summary };
+    selectedMessageId = summary.id;
   }
 
   function updateRetainedArchive(summaries: readonly Pick<MailMessage, 'id' | 'archivedAt'>[]) {
