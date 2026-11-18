@@ -169,6 +169,26 @@
     event.preventDefault();
     if (containEscape) event.stopPropagation();
   }
+
+  function handleTriggerKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      handleKeydown(event);
+      return;
+    }
+    const element = tooltipElement;
+    if (!visible || !hoverable || !element || element.scrollHeight <= element.clientHeight ||
+      event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const offsets: Record<string, number> = {
+      ArrowUp: -32, ArrowDown: 32,
+      PageUp: -element.clientHeight, PageDown: element.clientHeight,
+      Home: -element.scrollHeight, End: element.scrollHeight
+    };
+    const offset = offsets[event.key];
+    if (typeof offset !== 'number') return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.scrollTop += offset;
+  }
 </script>
 
 <span
@@ -183,7 +203,7 @@
     focused = false;
     if (!hoverable || !hovered) hide();
   }}
-  onkeydown={handleKeydown}
+  onkeydown={handleTriggerKeydown}
 >
   {#if trigger}
     {@render trigger(stableId, show)}

@@ -944,6 +944,11 @@ test('AI details keep the toolbar reachable in short viewports', async ({ page }
     return Boolean(hint && Math.abs(hint.y - trigger.y - trigger.height) <= 1 && hint.y + hint.height <= shortHeight - 7);
   }).toBe(true);
   expect(await tooltip.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await details.press('End');
+  await expect.poll(() => tooltip.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThanOrEqual(1);
+  await expect(details).toBeFocused();
+  await details.press('Home');
+  await expect.poll(() => tooltip.evaluate((element) => element.scrollTop)).toBe(0);
   await regenerate.click();
   await expect(confirmation).toBeVisible();
 });
