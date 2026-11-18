@@ -13,8 +13,31 @@ async function confirmAnalysis(page: Page, action: Locator, name: string) {
   await dialog.getByRole('button', { name, exact: true }).press('Enter');
 }
 
+const categoryConfirmationTest = test.extend<{ restoreInboxFixture: void }>({
+  restoreInboxFixture: [async ({ page }, use) => {
+    await use();
+    const messageId = 'e2e-inbox-message';
+    const metadata = await page.request.get(`/api/workspace/messages/${messageId}`);
+    if (!metadata.ok()) return;
+    const { data: { message } } = await metadata.json();
+    const headers = { origin: new URL(page.url()).origin };
+    const scope = { identityFilter: null, section: 'inbox' };
+    if (message.archivedAt) {
+      const unarchive = await page.request.post('/api/workspace/mailbox/mutate', {
+        headers,
+        data: { action: 'unarchive', ids: [messageId], threadKeys: [], scope: { ...scope, section: 'archive', threadScope: 'selected' } }
+      });
+      expect(unarchive.status()).toBe(200);
+    }
+    const reset = await page.request.patch('/api/workspace/mailbox/categories', {
+      headers, data: { ids: [messageId], category: null, scope: { ...scope, category: 'all' } }
+    });
+    expect(reset.status()).toBe(200);
+  }, { auto: true }]
+});
+
 for (const reader of ['workspace', 'standalone']) {
-  test(`AI category confirmation retains the address boundary after reclassification (${reader})`, async ({ page, consoleErrors }) => {
+  categoryConfirmationTest(`AI category confirmation retains the address boundary after reclassification (${reader})`, async ({ page, consoleErrors }) => {
     let generated = false;
     let removeAutomaticallyCategorizedRow = false;
     const split = reader === 'workspace' && (page.viewportSize()?.width ?? 0) > 900;
