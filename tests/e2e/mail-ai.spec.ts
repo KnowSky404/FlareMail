@@ -462,32 +462,62 @@ categoryConfirmationTest('Back reloads a category saved after selecting another 
   }
 });
 
-test('bulk refresh invalidates a retained message before navigating Back', async ({ page }) => {
-  test.skip((page.viewportSize()?.width ?? 0) <= 900, 'The split view must show the list next to the retained message.');
-  await login(page);
-  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
-  const metadataPath = '/api/workspace/messages/e2e-inbox-message';
-  const search = encodeURIComponent('subject:"E2E HTML Safety"');
-  await page.goto(`/?folder=inbox&q=${search}&message=e2e-inbox-message`);
-  await expect(page.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeVisible();
-  await page.getByRole('listitem').getByRole('button', { name: /E2E HTML Safety/u }).click();
-  await expect(page.getByRole('heading', { name: 'E2E HTML Safety', exact: true })).toBeVisible();
-  await page.route(`**${metadataPath}`, (route) => route.fulfill({ status: 404, json: {
-    ok: false, error: { code: 'MESSAGE_NOT_FOUND', message: 'Removed by a bulk action' }, requestId: 'fake-removed-message'
-  } }));
-  const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace/mailbox');
-  await page.evaluate(() => {
-    const channel = new BroadcastChannel('flaremail-workspace-v1');
-    channel.postMessage({ type: 'mailbox-refresh' });
-    channel.close();
+for (const change of ['bulk refresh', 'late not-found response']) {
+  test(`Back rechecks a retained message after a ${change}`, async ({ page }) => {
+    test.skip((page.viewportSize()?.width ?? 0) <= 900, 'The split view must show the list next to the retained message.');
+    await login(page);
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    const messageId = 'e2e-inbox-message';
+    const metadataPath = `/api/workspace/messages/${messageId}`;
+    const search = encodeURIComponent('subject:"E2E HTML Safety"');
+    await page.goto(`/?folder=inbox&q=${search}&message=${messageId}`);
+    await expect(page.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeVisible();
+    const announce = (id?: string) => page.evaluate((messageId) => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mailbox-refresh', id: messageId });
+      channel.close();
+    }, id);
+    const missing = () => page.waitForResponse((response) => new URL(response.url()).pathname === metadataPath && response.status() === 404);
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let delay = change === 'late not-found response';
+    await page.route(`**${metadataPath}`, async (route) => {
+      if (delay) {
+        delay = false;
+        started.resolve();
+        await release.promise;
+      }
+      await route.fulfill({ status: 404, json: {
+        ok: false, error: { code: 'MESSAGE_NOT_FOUND', message: 'Removed in another tab' }, requestId: 'fake-removed-message'
+      } });
+    });
+
+    try {
+      if (change === 'late not-found response') {
+        await announce(messageId);
+        await started.promise;
+      }
+      await page.getByRole('listitem').getByRole('button', { name: /E2E HTML Safety/u }).click();
+      const currentHeading = page.getByRole('heading', { name: 'E2E HTML Safety', exact: true });
+      await expect(currentHeading).toBeVisible();
+      if (change === 'bulk refresh') {
+        const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/workspace/mailbox');
+        await announce();
+        await refreshed;
+      } else {
+        const refresh = missing();
+        release.resolve();
+        await (await refresh).finished();
+      }
+      await expect(currentHeading).toBeVisible();
+      const rechecked = missing();
+      await page.goBack();
+      await rechecked;
+      await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
+      await expect(page.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeHidden();
+    } finally { release.resolve(); }
   });
-  await refreshed;
-  const rechecked = page.waitForResponse((response) => new URL(response.url()).pathname === metadataPath && response.status() === 404);
-  await page.goBack();
-  await rechecked;
-  await expect(page).not.toHaveURL(/message=e2e-inbox-message/u);
-  await expect(page.getByRole('heading', { name: 'E2E Inbox Welcome', exact: true })).toBeHidden();
-});
+}
 
 test('AI accessible summary, explicit category application and cached refresh', async ({ page, consoleErrors }, info) => {
   let generations = 0;

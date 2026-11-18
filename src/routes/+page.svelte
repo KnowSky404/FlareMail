@@ -1766,14 +1766,14 @@
       };
       if (deepLinkedRefreshError === current.id) deepLinkedRefreshError = null;
     }).catch((error) => {
-      if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id ||
-        activeSection !== section || selectedMessageId !== current.id) return;
+      if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
+      const stillSelected = activeSection === section && selectedMessageId === current.id;
       if (error instanceof ClientApiError && error.status === 404) {
         clearRetainedMessage(current.id);
-        void closeMobileDetail();
+        if (stillSelected) void closeMobileDetail();
         return;
       }
-      deepLinkedRefreshError = current.id;
+      if (stillSelected) deepLinkedRefreshError = current.id;
     });
   }
 
