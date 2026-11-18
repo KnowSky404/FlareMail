@@ -86,6 +86,7 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   });
   const details = page.locator('#settings-profile summary');
   await expect(page.getByLabel('职位角色')).toBeHidden();
+  await expect(page.getByRole('textbox', { name: '资料签名', exact: true })).toHaveAccessibleDescription(/发信签名请在「邮箱地址」中编辑/u);
   const unusedWidth = await page.locator('.settings-layout').evaluate((layout) => {
     const container = layout.parentElement!;
     const style = getComputedStyle(container);

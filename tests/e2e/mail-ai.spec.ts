@@ -536,6 +536,11 @@ test('AI accessible summary, explicit category application and cached refresh', 
   expect(await page.evaluate(() => 'aiInjected' in window)).toBe(false);
   const summaryTab = panel.getByRole('tab', { name: '摘要', exact: true });
   await expect(summaryTab).toHaveAttribute('aria-selected', 'true');
+  await summaryTab.focus();
+  const shortcutsAllowed = await summaryTab.evaluate((tab) => ['ArrowLeft', 'ArrowRight'].every((key) =>
+    tab.dispatchEvent(new KeyboardEvent('keydown', { key, altKey: true, bubbles: true, cancelable: true }))));
+  expect(shortcutsAllowed).toBe(true);
+  await expect(summaryTab).toHaveAttribute('aria-selected', 'true');
   await summaryTab.press('ArrowRight');
   await expect(panel.getByRole('tab', { name: '分类建议', exact: true })).toBeFocused();
   await expect(panel.getByRole('tabpanel', { name: '分类建议', exact: true })).toBeVisible();
