@@ -97,7 +97,25 @@ for (const reader of ['workspace', 'standalone']) {
 
         await detail.getByRole('button', { name: '归档', exact: true }).click();
         await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
-        await page.goto(`/?folder=archive&q=unmatched&message=e2e-inbox-message&identity=address%3A${addressId}`);
+        const archiveUrl = `/?folder=archive&q=unmatched&message=e2e-inbox-message&identity=address%3A${addressId}`;
+        await page.goto(archiveUrl);
+        await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
+        const unarchivedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+          headers: { origin: new URL(page.url()).origin },
+          data: { action: 'unarchive', ids: ['e2e-inbox-message'], threadKeys: [], scope: { section: 'archive', identityFilter: { kind: 'address', id: addressId }, threadScope: 'selected' } }
+        });
+        expect(unarchivedElsewhere.status()).toBe(200);
+        await page.getByRole('button', { name: '刷新邮件列表', exact: true }).click();
+        const [rearchived] = await Promise.all([
+          page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate')),
+          detail.getByRole('button', { name: '归档', exact: true }).click()
+        ]);
+        expect(rearchived.status()).toBe(200);
+        expect(rearchived.request().postDataJSON()).toMatchObject({
+          action: 'archive', scope: { section: 'inbox', category: 'all', identityFilter: { kind: 'address', id: addressId } }
+        });
+
+        await page.goto(archiveUrl);
         await detail.getByRole('button', { name: '展开专注阅读', exact: true }).click();
         const focused = page.getByRole('dialog', { name: 'E2E Inbox Welcome', exact: true });
         await focused.getByRole('button', { name: '移回收件箱', exact: true }).click();
