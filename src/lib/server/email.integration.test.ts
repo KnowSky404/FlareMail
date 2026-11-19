@@ -485,7 +485,7 @@ describe('shared PRE and production inbound routing', () => {
   test('allows PRE to manage the exact legacy reservation and blocks its tagged variants', async () => {
     const { pre, email, DB, preview } = sharedInbound();
     const PRE_INBOUND_SETTINGS = { recipient: 'reserved@example.test', enabled: false };
-    const previewSettings = { ...pre, PRE_INBOUND_SETTINGS: { ...PRE_INBOUND_SETTINGS, previewApp: true as const } };
+    const previewSettings = { ...pre, PRE_INBOUND_SETTINGS };
     for (const env of [previewSettings, { ...email, PRE_INBOUND_SETTINGS }]) {
       await expect(createManagedMailAddress(env, 'user-1', { domainId: 'domain-1', address: 'reserved+tag' }))
         .rejects.toMatchObject({ code: 'MAIL_ROUTING_OWNERSHIP_CONFLICT' });

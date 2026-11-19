@@ -7,7 +7,33 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertSharedInboundProduction, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
+import { assertProductionReleaseSource, assertSharedInboundProduction, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
+
+test('production source must match the exact PRE acceptance tree', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
+  const git = (...args: string[]) => {
+    const result = Bun.spawnSync(['git', '-c', 'user.name=Release Test', '-c', 'user.email=release@example.test', ...args], { cwd: directory });
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+    return result.stdout.toString().trim();
+  };
+  try {
+    git('init', '--quiet');
+    await writeFile(join(directory, 'source.txt'), 'accepted\n');
+    git('add', 'source.txt');
+    git('commit', '--quiet', '-m', 'PRE acceptance');
+    const acceptedPreviewCommit = git('rev-parse', 'HEAD');
+    const equivalent = git('commit-tree', 'HEAD^{tree}', '-m', 'rebase result');
+    git('checkout', '--quiet', '--detach', equivalent);
+    expect(() => assertProductionReleaseSource(directory, { releaseCommit: equivalent, acceptedPreviewCommit })).not.toThrow();
+    await writeFile(join(directory, 'source.txt'), 'differs\n');
+    git('add', 'source.txt');
+    git('commit', '--quiet', '-m', 'unaccepted edit');
+    expect(() => assertProductionReleaseSource(directory, { releaseCommit: git('rev-parse', 'HEAD'), acceptedPreviewCommit }))
+      .toThrow('INBOUND_PRODUCTION_RELEASE_DIFFERS_FROM_PRE_ACCEPTANCE');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('production activation requires the reviewed PRE and an active, paused protection deployment', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-shared-prod-'));
@@ -32,7 +58,9 @@ test('production activation requires the reviewed PRE and an active, paused prot
   try {
     await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
     await writeFile(proof, JSON.stringify({ ...evidence, phase: 'protect', targetHash: sharedInboundPreviewTargetHash(candidate) }), { mode: 0o600 });
-    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toBe(evidence.releaseCommit);
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({
+      releaseCommit: evidence.releaseCommit, acceptedPreviewCommit: evidence.acceptedPreviewCommit
+    });
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_RELEASE_SOURCE_NOT_VERIFIED');
 
     const active = { ...candidate, vars: { ...candidate.vars, PRE_INBOUND_ENABLED: 'true' } };
@@ -42,7 +70,7 @@ test('production activation requires the reviewed PRE and an active, paused prot
     await writeFile(proof, JSON.stringify({ ...activation, protectionActive: false }));
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
     await writeFile(proof, JSON.stringify(activation));
-    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toBe(evidence.releaseCommit);
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ releaseCommit: evidence.releaseCommit });
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
@@ -114,6 +142,7 @@ describe('global cf commands', () => {
     const environment = { CLOUDFLARE_API_TOKEN: 'test-placeholder', PATH: '/global/bin' };
     expect(createDeployInvocation('deploy', environment)).toEqual({ command: 'cf', args: ['deploy', '--mode', 'production', '--provision=false'], env: environment });
     expect(createDeployInvocation('dry-run', environment).args).toEqual(['deploy', '--prebuilt', '--dry-run', '--provision=false']);
+    expect(() => normalizeDeployArguments(['--profile', 'other-account'])).toThrow('controlled by this script');
   });
   test('fails closed for unsupported modes and missing private targets', () => {
     expect(() => parseDeployMode('preview')).toThrow('Unsupported deploy mode');

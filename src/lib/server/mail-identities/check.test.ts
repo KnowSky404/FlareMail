@@ -273,6 +273,22 @@ describe('managed mail domain checks', () => {
     fixture.sqlite.close();
   });
 
+  test('the production protection phase checks provider health without reconciling mailboxes', async () => {
+    const fixture = createFixture();
+    const env = {
+      ...fixture.env, INBOUND_ROUTING_SCOPE: { environment: 'production' as const, readOnly: true as const },
+      INBOUND_ROUTING_DB: { prepare() { throw new Error('mailbox ownership reads are not needed in the protection phase'); } } as unknown as D1Database
+    };
+    const address = 'address-managed-0000000000000001';
+    const before = fixture.selectAddress(address);
+    const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([
+      rule('rule-managed', 'managed@mail.example.test', { name: 'FlareMail managed address ' + address })
+    ]));
+    expect(result.cloudflare).toMatchObject({ state: 'ready', addresses: [] });
+    expect(fixture.selectAddress(address)).toEqual(before);
+    fixture.sqlite.close();
+  });
+
   test('keeps a deleted tombstone terminal across repeated checks when its managed route is absent', async () => {
     const fixture = createFixture();
     const deps = dependencies([]);
