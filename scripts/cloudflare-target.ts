@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { normalizePreInboundRecipient, PRE_INBOUND_BINDING_NAMES, readPreInboundConfig } from '../src/lib/server/inbound/pre-inbound.ts';
+
+interface PreInboundStorage {
+  databaseId: string;
+  databaseName: string;
+  bucket: string;
+}
 
 export interface CloudflareTarget {
   name: string;
@@ -10,6 +17,7 @@ export interface CloudflareTarget {
   databaseId: string;
   databaseName: string;
   bucket: string;
+  preInbound?: PreInboundStorage;
   cron: string[];
   secrets?: string[];
   observability?: { enabled: boolean };
@@ -18,6 +26,10 @@ export interface CloudflareTarget {
 export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const defaultStatePath = resolve(projectRoot, '.cloudflare/state');
 export const localDatabaseId = '00000000-0000-4000-8000-000000000001';
+const databaseIdPattern = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu;
+
+const isRemoteDatabaseId = (id: string) =>
+  databaseIdPattern.test(id) && id !== localDatabaseId && !/^[0-]*$/u.test(id);
 
 export function parseCloudflareTarget(source: string): CloudflareTarget {
   const value = JSON.parse(source) as CloudflareTarget;
@@ -31,6 +43,25 @@ export function parseCloudflareTarget(source: string): CloudflareTarget {
       (value.secrets !== undefined && (!Array.isArray(value.secrets) || !value.secrets.every((name) => typeof name === 'string' && /^[A-Z][A-Z0-9_]*$/u.test(name))))) {
     throw new Error('Invalid Cloudflare target configuration.');
   }
+  const { PRE_INBOUND_RECIPIENT, PRE_INBOUND_ENABLED } = value.vars;
+  const pre = value.preInbound;
+  const hasPreStorage = pre !== undefined;
+  if (hasPreStorage && (!pre || typeof pre !== 'object' || typeof pre.databaseId !== 'string' ||
+      !databaseIdPattern.test(pre.databaseId) || typeof pre.databaseName !== 'string' || !pre.databaseName.trim() ||
+      typeof pre.bucket !== 'string' || !pre.bucket.trim() || pre.bucket !== pre.bucket.trim() ||
+      pre.databaseId.toLowerCase() === value.databaseId.toLowerCase() || pre.bucket.toLowerCase() === value.bucket.toLowerCase())) {
+    throw new Error('PRE_INBOUND_STORAGE_CONFIGURATION_INVALID');
+  }
+  if (value.secrets?.some((name) => [...PRE_INBOUND_BINDING_NAMES, 'PRE_INBOUND_RECIPIENT', 'PRE_INBOUND_ENABLED'].includes(name)) ||
+      PRE_INBOUND_BINDING_NAMES.some((name) => Object.hasOwn(value.vars, name))) {
+    throw new Error('PRE_INBOUND_CONFIGURATION_INVALID');
+  }
+  if (value.vars.APP_ENV === 'preview') {
+    if (hasPreStorage || PRE_INBOUND_ENABLED !== undefined) throw new Error('PRE_INBOUND_CONFIGURATION_INVALID');
+    if (PRE_INBOUND_RECIPIENT !== undefined) normalizePreInboundRecipient(PRE_INBOUND_RECIPIENT);
+  } else {
+    readPreInboundConfig({ PRE_INBOUND_RECIPIENT, PRE_INBOUND_ENABLED }, hasPreStorage, hasPreStorage);
+  }
   return value;
 }
 
@@ -38,12 +69,18 @@ export function readCloudflareTarget(config = process.env.FLAREMAIL_CF_CONFIG ??
   const target = parseCloudflareTarget(readFileSync(resolve(projectRoot, config), 'utf8'));
   const local = ['development', 'test'].includes(target.vars.APP_ENV);
   if (remote) {
-    if (!['production', 'preview'].includes(target.vars.APP_ENV) || local || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu.test(target.databaseId) ||
-        target.databaseId === localDatabaseId || /^[0-]*$/u.test(target.databaseId) || /replace|placeholder/iu.test(target.bucket)) {
+    if (!['production', 'preview'].includes(target.vars.APP_ENV) || !isRemoteDatabaseId(target.databaseId) ||
+        /replace|placeholder/iu.test(target.bucket) || (target.preInbound &&
+        (!isRemoteDatabaseId(target.preInbound.databaseId) || /replace|placeholder/iu.test(target.preInbound.bucket)))) {
       throw new Error('Remote commands require an explicit target with real D1/R2 bindings.');
     }
   } else if (!local) throw new Error('Local commands require an APP_ENV=development or test target.');
   return target;
+}
+
+export function checkPreInboundRelease(target: CloudflareTarget) {
+  // shortcut: reservation targets are local-only until identity and live deployment guards are implemented.
+  if (target.vars.PRE_INBOUND_RECIPIENT !== undefined) throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
 }
 
 export function localStateArgs(persistTo?: string) {

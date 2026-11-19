@@ -1,7 +1,7 @@
 import { createDeployInvocation, normalizeDeployArguments } from './deploy-command';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { defaultStatePath, localStateArgs, projectRoot, readCloudflareTarget } from './cloudflare-target';
+import { checkPreInboundRelease, defaultStatePath, localStateArgs, projectRoot, readCloudflareTarget } from './cloudflare-target';
 
 const [command, ...args] = process.argv.slice(2);
 const cwd = command === 'build' || command === 'preview' || command === 'deploy' || command === 'pre' || command === 'dry-run' ? join(projectRoot, 'worker') : projectRoot;
@@ -46,7 +46,8 @@ if (command === 'typegen') {
   await run([invocation.command, ...invocation.args]);
 } else if (command === 'deploy' || command === 'pre') {
   const forwardedArgs = normalizeDeployArguments(args);
-  readCloudflareTarget(process.env.FLAREMAIL_CF_CONFIG ?? (command === 'deploy' ? 'cloudflare.deploy.json' : 'cloudflare.preview.json'), true);
+  const target = readCloudflareTarget(process.env.FLAREMAIL_CF_CONFIG ?? (command === 'deploy' ? 'cloudflare.deploy.json' : 'cloudflare.preview.json'), true);
+  checkPreInboundRelease(target);
   const invocation = createDeployInvocation('deploy', environment, args);
   await run(command === 'deploy' ? [invocation.command, ...invocation.args] : ['cf', 'previews', 'deploy', '--mode', mode, ...forwardedArgs]);
 } else throw new Error('Usage: bun scripts/cloudflare.ts <build|preview|typegen|migrate|dry-run|deploy|pre>');

@@ -11,7 +11,7 @@ cf auth login
 bun install --frozen-lockfile
 ```
 
-The verified migration baseline is cf `1.0.0-beta.25`. cf and its native Vite integration are beta; check command help before changing the global version. Project libraries remain locked in `bun.lock`. The official SvelteKit Cloudflare adapter still has an upstream Wrangler peer dependency and receives a generated, ignored compatibility config during the Svelte build. It is not the project's CLI or deployment configuration.
+The verified local build uses cf `1.0.0-rc.1` with the Vite plugin locked at `2.0.0-rc.0`. Use the same compatible cf version for builds, type generation and release preflight. The SvelteKit Cloudflare adapter receives a generated, ignored compatibility config during the Svelte build.
 
 ## Build and local validation
 
@@ -52,7 +52,7 @@ Follow the Preview guide before opening a functional PR. The current native PRE 
 
 ```sh
 # Authorized PRE only; uses private cloudflare.preview.json
-bun run deploy:pre -- <preview-name>
+bun run deploy:pre -- --preview-name mail-ai
 ```
 
 Run local `/review` before each push and separately before PR creation. Wait for the current head's Codex Code Review and Security Review; resolve feedback before rebase merge. Record the accepted commit, Preview URL/ID and business acceptance. See [repository workflow](AGENTS.md) and [production checklist](docs/PRODUCTION_CHECKLIST.md).
@@ -83,7 +83,7 @@ With single-Worker PRE inbound configured, verify the running production email h
 
 统一使用全局 `cf`，不再直接调用 Wrangler。先安装 Node.js ≥ 22.18 和 `bun add --global cf`，用 `cf auth login` 登录。依赖、构建和测试仍通过 Bun 项目脚本执行。
 
-`bun run build` 会先构建 SvelteKit，再由全局 `cf` 原生打包 Worker；`bun run preview` 是本地预览，`bun run deploy:pre -- <名称>` 是授权后的远程 PRE，`bun run deploy` 是需单独授权的生产发布。私有配置分别为 `cloudflare.preview.json` 和 `cloudflare.deploy.json`，由对应公开示例填写，禁止提交真实资源标识或密钥。
+`bun run build` 会先构建 SvelteKit，再由全局 `cf` 原生打包 Worker。`bun run preview` 用于本地预览，`bun run deploy:pre -- --preview-name mail-ai` 用于授权后的远程 PRE，`bun run deploy` 用于另行授权的生产发布。私有配置分别为 `cloudflare.preview.json` 和 `cloudflare.deploy.json`，由对应公开示例填写，禁止提交真实资源标识或密钥。
 
 当前原生 PRE 使用独立 D1、R2 和 Owner 映射，默认只读验收。本地测试使用独立 `.cloudflare/state`。普通功能改动先完成对应提交的本地检查、PRE 业务验收、本地 `/review` 和当前 head 的两项机器人审查，再合并主分支。生产发布另行授权。参见 [Preview 指南](docs/PREVIEW.md)。
 

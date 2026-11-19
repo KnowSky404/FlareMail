@@ -7,8 +7,9 @@ import { isBlockedSender } from '$lib/server/db/blocked-senders';
 import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
 import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 import { hasTelegramTables, insertTelegramDeliveryIfEligible } from '$lib/server/db/telegram';
-import { findUserInboundNotificationSettings } from '$lib/server/db/users';
+import { findUserInboundNotificationSettings, findWorkspaceOwnerId } from '$lib/server/db/users';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
+import { readPreInboundBindings, resolvePreInboundMatch } from '$lib/server/inbound/pre-inbound';
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 import { isInboundNotificationEnabled } from './workspace/profile';
 import { BodyCanonicalLimitError, prepareBodyObject, projectBody, putBodyObject } from '$lib/server/body';
@@ -131,10 +132,6 @@ async function removeObjects(bucket: R2Bucket, keys: string[]) {
   return { attempted: keys.length, failed: results.filter((result) => result.status === 'rejected').length };
 }
 
-function safeLog(event: string, detail: Record<string, string | number | boolean | null>) {
-  console.log(JSON.stringify({ event, ...detail }));
-}
-
 const RUNTIME_CORRELATION_PATTERN = /^flaremail-rc1-[a-z0-9-]{1,96}$/u;
 
 export function resolveInboundCorrelationId(headers: Headers | null | undefined, appEnv?: string) {
@@ -158,8 +155,45 @@ export async function handleInboundEmail(
   env: CloudflareEnv,
   ctx?: ExecutionContext
 ) {
+  const pre = readPreInboundBindings(
+    env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function', typeof env.PRE_INBOUND_BUCKET?.put === 'function'
+  );
+  const match = pre ? resolvePreInboundMatch(pre.recipient, message.to) : null;
+  if (!pre || !match) return storeInboundEmail(message, env, 'production', ctx);
+  if (!pre.enabled || match === 'subaddress') {
+    console.log(JSON.stringify({
+      event: 'inbound_rejected',
+      environment: 'preview',
+      correlationId: resolveInboundCorrelationId(message.headers, env.APP_ENV),
+      code: 'INBOUND_RECIPIENT_REJECTED',
+      reason: match === 'subaddress' ? 'reserved_subaddress' : 'preview_paused'
+    }));
+    message.setReject('The recipient address is not enabled.');
+    return;
+  }
+  if (!env.PRE_INBOUND_DB || !env.PRE_INBOUND_BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
+  return storeInboundEmail(message, {
+    DB: env.PRE_INBOUND_DB,
+    BUCKET: env.PRE_INBOUND_BUCKET,
+    APP_ENV: env.APP_ENV,
+    INBOUND_MAX_RAW_BYTES: env.INBOUND_MAX_RAW_BYTES,
+    INBOUND_MAX_ATTACHMENT_COUNT: env.INBOUND_MAX_ATTACHMENT_COUNT,
+    INBOUND_MAX_ATTACHMENT_BYTES: env.INBOUND_MAX_ATTACHMENT_BYTES,
+    INBOUND_MAX_ATTACHMENT_TOTAL_BYTES: env.INBOUND_MAX_ATTACHMENT_TOTAL_BYTES
+  }, 'preview', ctx);
+}
+
+async function storeInboundEmail(
+  message: ForwardableEmailMessage,
+  env: CloudflareEnv,
+  environment: 'production' | 'preview',
+  ctx?: ExecutionContext
+) {
   const startedAt = Date.now();
   const correlationId = resolveInboundCorrelationId(message.headers, env.APP_ENV);
+  const safeLog = (event: string, detail: Record<string, string | number | boolean | null>) => {
+    console.log(JSON.stringify({ event, environment, ...detail }));
+  };
   if (!env.DB) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
   const recipientRoute = await resolveInboundRecipient(env.DB, message.to);
   if (!recipientRoute.accepted) {
@@ -178,6 +212,16 @@ export async function handleInboundEmail(
     });
     message.setReject(rejectionReasons[recipientRoute.reason]);
     return;
+  }
+  if (environment === 'preview') {
+    if (recipientRoute.recipientStatus !== 'managed') {
+      safeLog('inbound_rejected', { correlationId, code: 'INBOUND_RECIPIENT_REJECTED', reason: 'preview_identity_required' });
+      message.setReject('The recipient address is not enabled.');
+      return;
+    }
+    if (await findWorkspaceOwnerId(env.DB) !== recipientRoute.ownerUserId) {
+      throw new Error('INBOUND_OWNER_MAPPING_UNAVAILABLE');
+    }
   }
   if (!env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
 
@@ -264,8 +308,8 @@ export async function handleInboundEmail(
   const rawKey = `inbound/${date.slice(0, 10)}/${storageId}/message.eml`;
   const ownerUserId = recipientRoute.ownerUserId;
   let telegramOwnerUserId: string | null = null;
-  const telegramConfig = resolveTelegramConfig(env);
-  if (telegramConfig.ready && !quarantined) {
+  const telegramConfig = environment === 'production' ? resolveTelegramConfig(env) : null;
+  if (telegramConfig?.ready && !quarantined) {
     try {
       if (await hasTelegramTables(env.DB)) telegramOwnerUserId = recipientRoute.ownerUserId;
     } catch {
@@ -373,7 +417,8 @@ export async function handleInboundEmail(
       nextAttemptAt: new Date().toISOString(),
       now: new Date().toISOString()
     }) : null;
-    const aiStatement = ownerUserId && !quarantined ? insertMailAiJobIfEligible(env.DB, ownerUserId, storageId) : null;
+    const aiStatement = environment === 'production' && ownerUserId && !quarantined
+      ? insertMailAiJobIfEligible(env.DB, ownerUserId, storageId) : null;
     const statements = [...coreStatements, ...(telegramStatement ? [telegramStatement] : []), ...(aiStatement ? [aiStatement] : [])];
     const d1StartedAt = Date.now();
     try {
@@ -415,7 +460,7 @@ export async function handleInboundEmail(
     throw error;
   }
 
-  const followUpTasks = quarantined ? [] : [
+  const followUpTasks = environment === 'preview' || quarantined ? [] : [
     (async () => {
       // The owner is resolved from the addressed recipient and is checked
       // again before dispatch. An unowned message never inherits another
@@ -429,7 +474,7 @@ export async function handleInboundEmail(
       safeLog('inbound_notification_failed', { correlationId, messageId: storageId });
       return null;
     }),
-    ...(telegramOwnerUserId && telegramConfig.ready ? [dispatchTelegramOutbox(env, { limit: 1, timeBudgetMs: 2_000 }).catch(() => {
+    ...(telegramOwnerUserId && telegramConfig?.ready ? [dispatchTelegramOutbox(env, { limit: 1, timeBudgetMs: 2_000 }).catch(() => {
       safeLog('telegram_dispatch_quick_failed', { correlationId, messageId: storageId });
       return null;
     })] : []),

@@ -2,6 +2,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createInboundDedupeKey, handleInboundEmail } from './email';
+import { readPreInboundBindings } from './inbound/pre-inbound';
 import { parseAddress } from './workspace/shared';
 import { FLAREMAIL_SCHEMA_VERSION } from './db/schema-version';
 import { addBlockedSender, listBlockedSenders, listQuarantinedMail, releaseQuarantinedMail, removeBlockedSender } from './db/blocked-senders';
@@ -236,6 +237,141 @@ const captureTelegram = async <T>(action: () => Promise<T>) => {
     globalThis.fetch = previousFetch;
   }
 };
+
+describe('single Worker PRE inbound', () => {
+  function isolatedInbound() {
+    const production = notificationEnvironment();
+    const preview = telegramEnvironment();
+    addManagedAddress(preview.database, 'address-pre', 'pre@example.test');
+    const env = {
+      ...production.env,
+      AUTO_REPLY_ENABLED: 'true',
+      TELEGRAM_ENABLED: preview.env.TELEGRAM_ENABLED,
+      TELEGRAM_BOT_TOKEN: preview.env.TELEGRAM_BOT_TOKEN,
+      TELEGRAM_BOT_USERNAME: preview.env.TELEGRAM_BOT_USERNAME,
+      APP_BASE_URL: preview.env.APP_BASE_URL,
+      PRE_INBOUND_SETTINGS: { recipient: 'pre@example.test', enabled: true },
+      PRE_INBOUND_DB: preview.env.DB,
+      PRE_INBOUND_BUCKET: preview.env.BUCKET
+    };
+    return { production, preview, env };
+  }
+
+  test('stores by SMTP recipient exactly once and skips production providers and preview queues', async () => {
+    const { production, preview, env } = isolatedInbound();
+    preview.database.query("UPDATE workspace_users SET forwarding_enabled = 1 WHERE id = 'user-1'").run();
+    preview.database.query("INSERT INTO workspace_settings (user_id, settings_json) VALUES ('user-1', ?)").run(
+      JSON.stringify({ mailAi: { enabled: true, automaticClassification: true, classificationConsent: crypto.randomUUID() } })
+    );
+    const { requests } = await captureResend(async () => {
+      for (let i = 0; i < 2; i++) {
+        const inbound = message(fixtureBytes(), ' PRE@EXAMPLE.TEST ');
+        inbound.value.headers.set('to', 'owner@example.test');
+        await handleInboundEmail(inbound.value, env);
+        expect(inbound.rejected()).toBe('');
+      }
+    });
+    expect(requests).toHaveLength(0);
+    expect(production.DB.batches).toHaveLength(0);
+    expect(production.BUCKET.objects.size).toBe(0);
+    expect(preview.database.query('SELECT "to", mail_address_id FROM email_messages').all())
+      .toEqual([{ to: 'pre@example.test', mail_address_id: 'address-pre' }]);
+    const raw = [...preview.BUCKET.objects.entries()].filter(([key]) => key.endsWith('/message.eml'));
+    expect(raw.map(([, bytes]) => bytes)).toEqual([fixtureBytes()]);
+    expect(preview.database.query('SELECT id FROM workspace_telegram_deliveries').all()).toEqual([]);
+    expect(preview.database.query('SELECT message_id FROM mail_ai_jobs').all()).toEqual([]);
+  });
+
+  test('retains the local test marker while ignoring injected secret bindings', async () => {
+    const { production, env } = isolatedInbound();
+    const inbound = message(fixtureBytes(), 'pre@example.test');
+    const marker = 'flaremail-rc1-pre-smoke';
+    inbound.value.headers.set('x-flaremail-runtime-correlation', marker);
+    const logs = spyOn(console, 'log');
+    try {
+      await handleInboundEmail(inbound.value, env);
+      expect(logs.mock.calls.some(([line]) => String(line).includes(marker))).toBe(true);
+    } finally {
+      logs.mockRestore();
+    }
+    const ordinary = message();
+    await handleInboundEmail(ordinary.value, {
+      ...production.env,
+      PRE_INBOUND_SETTINGS: '{"recipient":"pre@example.test","enabled":true}',
+      PRE_INBOUND_DB: 'ignored',
+      PRE_INBOUND_BUCKET: 'ignored'
+    } as unknown as typeof env);
+    expect(ordinary.rejected()).toBe('');
+    expect(production.database.query('SELECT "to" FROM email_messages').all()).toEqual([{ to: 'owner@example.test' }]);
+  });
+
+  test('rejects paused, subaddress, disabled and unregistered recipients before writing', async () => {
+    const { production, preview, env } = isolatedInbound();
+    addManagedAddress(production.database, 'address-production-conflict', 'pre+tag@example.test');
+    const reject = async (to: string, enabled = true) => {
+      const inbound = message(fixtureBytes(), to);
+      await handleInboundEmail(inbound.value, { ...env, PRE_INBOUND_SETTINGS: { ...env.PRE_INBOUND_SETTINGS, enabled } });
+      expect(inbound.rejected()).toBe('The recipient address is not enabled.');
+    };
+    await reject('pre@example.test', false);
+    await reject('PRE+tag@EXAMPLE.TEST');
+    preview.database.query("UPDATE mail_addresses SET receive_enabled = 0 WHERE id = 'address-pre'").run();
+    await reject('pre@example.test');
+    preview.database.query("UPDATE mail_addresses SET receive_enabled = 1, owner_user_id = 'different-owner' WHERE id = 'address-pre'").run();
+    const wrongOwner = message(fixtureBytes(), 'pre@example.test');
+    await handleInboundEmail(wrongOwner.value, env);
+    expect(wrongOwner.rejected()).toBe('The recipient address is not managed by this domain.');
+    preview.database.query("DELETE FROM mail_addresses WHERE id = 'address-pre'").run();
+    preview.database.query(`UPDATE mail_domains SET unknown_recipient_policy = 'collect', catch_all_target = 'this_worker',
+      catch_all_checked_at = ?`).run(new Date().toISOString());
+    await reject('pre@example.test');
+    for (const storage of [production, preview]) {
+      expect(storage.database.query('SELECT storage_id FROM workspace_inbound_ingest_claims').all()).toEqual([]);
+      expect(storage.BUCKET.objects.size).toBe(0);
+    }
+  });
+
+  test('fails closed on partial config, invalid address, missing Owner and storage failures', async () => {
+    const { production, preview, env } = isolatedInbound();
+    expect(() => readPreInboundBindings([], false, false)).toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    expect(() => readPreInboundBindings({ recipient: 'pre@example.test' }, true, true)).toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    for (const invalid of [
+      { PRE_INBOUND_SETTINGS: undefined },
+      ...['pre..test@example.test', 'pre', 'pre+tag@example.test', 'pre@example.test.'].map((recipient) =>
+        ({ PRE_INBOUND_SETTINGS: { recipient, enabled: true } })),
+      { PRE_INBOUND_BUCKET: undefined }
+    ]) {
+      await expect(handleInboundEmail(message().value, { ...env, ...invalid })).rejects.toThrow('PRE_INBOUND_');
+    }
+    const deliver = () => handleInboundEmail(message(fixtureBytes(), 'pre@example.test').value, env);
+    preview.database.query('DELETE FROM workspace_owner').run();
+    await expect(deliver()).rejects.toThrow('INBOUND_OWNER_MAPPING_UNAVAILABLE');
+    preview.database.query("INSERT INTO workspace_owner (singleton, user_id) VALUES (1, 'user-1')").run();
+    preview.database.query("UPDATE workspace_users SET id = 'orphaned' WHERE id = 'user-1'").run();
+    await expect(deliver()).rejects.toThrow('INBOUND_OWNER_MAPPING_UNAVAILABLE');
+    preview.database.query("UPDATE workspace_users SET id = 'user-1' WHERE id = 'orphaned'").run();
+    preview.BUCKET.failPuts = true;
+    await expect(deliver()).rejects.toThrow('simulated r2 write failure');
+    const prepare = spyOn(preview.DB, 'prepare').mockImplementation(() => { throw new Error('PRE D1 unavailable'); });
+    try {
+      await expect(deliver()).rejects.toThrow('PRE D1 unavailable');
+      expect(production.DB.batches).toHaveLength(0);
+      expect(production.BUCKET.objects.size).toBe(0);
+      const put = spyOn(preview.BUCKET, 'put');
+      const normal = message(fixtureBytes(), 'owner+tag@example.test');
+      normal.value.headers.set('to', 'pre@example.test');
+      const count = prepare.mock.calls.length;
+      await handleInboundEmail(normal.value, { ...env, AUTO_REPLY_ENABLED: 'false' });
+      expect(normal.rejected()).toBe('');
+      expect(prepare).toHaveBeenCalledTimes(count);
+      expect(put).not.toHaveBeenCalled();
+      put.mockRestore();
+      expect(production.database.query('SELECT "to" FROM email_messages').all()).toEqual([{ to: 'owner+tag@example.test' }]);
+    } finally {
+      prepare.mockRestore();
+    }
+  });
+});
 
 describe('blocked senders', () => {
   test('matches the visible From, stores attachments, suppresses notifications and keeps a released duplicate released', async () => {
