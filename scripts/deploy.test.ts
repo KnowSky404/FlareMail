@@ -81,14 +81,17 @@ test('production activation requires the reviewed PRE and an active, paused prot
   const file = join(directory, 'target.json');
   const proof = join(directory, 'proof.json');
   const env = { FLAREMAIL_CF_CONFIG: file, FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT: proof, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) };
+  const recipient = 'legacy-pre@example.test';
+  const reservation = fixedReservationHash(recipient);
   const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
-  const production = { databaseId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', bucket: 'prod-bucket', deploymentId: 'current-prod' };
-  const preview = { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', bucket: 'pre-bucket', deploymentId: 'accepted-pre', buildLabel: 'preview+' + 'c'.repeat(7) };
+  const production = { databaseId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', bucket: 'prod-bucket', deploymentId: 'current-prod', fixedReservationHash: reservation };
+  const preview = { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', bucket: 'pre-bucket', deploymentId: 'accepted-pre', buildLabel: 'preview+' + 'c'.repeat(7), fixedReservationHash: reservation };
   const candidate = {
     ...localTarget, databaseId: production.databaseId, bucket: production.bucket,
     preInbound: { databaseId: preview.databaseId, databaseName: 'pre', bucket: preview.bucket },
     inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const },
-    vars: { ...localTarget.vars, APP_ENV: 'production', APP_VERSION: 'production+' + 'e'.repeat(7), PRE_INBOUND_ENABLED: 'false' }
+    vars: { ...localTarget.vars, APP_ENV: 'production', APP_VERSION: 'production+' + 'e'.repeat(7),
+      PRE_INBOUND_ENABLED: 'false', PRE_INBOUND_RECIPIENT: recipient }
   };
   const evidence = {
     checkedAt: new Date().toISOString(), accountId: env.CLOUDFLARE_ACCOUNT_ID, previewName: 'mail-ai', workerName: candidate.name,
@@ -98,7 +101,10 @@ test('production activation requires the reviewed PRE and an active, paused prot
   Object.assign(process.env, env);
   try {
     await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
-    await writeFile(proof, JSON.stringify({ ...evidence, phase: 'protect', targetHash: sharedInboundPreviewTargetHash(candidate) }), { mode: 0o600 });
+    const protect = { ...evidence, phase: 'protect', targetHash: sharedInboundPreviewTargetHash(candidate) };
+    await writeFile(proof, JSON.stringify({ ...protect, production: { ...production, fixedReservationHash: null } }), { mode: 0o600 });
+    expect(() => assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
+    await writeFile(proof, JSON.stringify(protect));
     expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({
       releaseCommit: evidence.releaseCommit, acceptedPreviewCommit: evidence.acceptedPreviewCommit
     });
