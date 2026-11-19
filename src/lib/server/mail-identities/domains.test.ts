@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { CloudflareEmailRoutingError } from '$lib/server/cloudflare-email-routing';
+import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 import { domainOnboardingConfiguration, enrollMailDomain, updateMailDomain } from './domains';
 
 const databases: Database[] = [];
@@ -73,6 +74,24 @@ describe('domain enrollment and settings', () => {
       .rejects.toMatchObject({ code: 'MAIL_DOMAIN_ALREADY_CONFIGURED' });
     await expect(updateMailDomain(env, 'other-owner', first.domain.id, { enabled: false }))
       .rejects.toMatchObject({ code: 'MAIL_DOMAIN_NOT_FOUND' });
+  });
+
+  test('starting PRE collection schedules production verification before catch-all delivery', async () => {
+    const { db, env, client } = fixture();
+    const { domain } = await enrollMailDomain(env, owner, { domainName: 'example.com', zoneId }, client);
+    db.query('INSERT INTO workspace_users (id, name, role) VALUES (?, ?, ?)').run(owner, 'Owner', 'owner');
+    db.query('INSERT INTO workspace_owner (singleton, user_id) VALUES (1, ?)').run(owner);
+    const registry = new Database(':memory:');
+    databases.push(registry);
+    registry.exec(readFileSync(new URL('../../../../routing-migrations/0001_ownership.sql', import.meta.url), 'utf8'));
+    env.INBOUND_ROUTING_SCOPE = { environment: 'preview' };
+    env.INBOUND_ROUTING_DB = { prepare: (sql: string) => new Statement(registry, sql) } as unknown as D1Database;
+    db.query(`UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?, cloudflare_next_check_at = ?
+      WHERE id = ?`).run(new Date().toISOString(), new Date(Date.now() + 16 * 60 * 60_000).toISOString(), domain.id);
+    expect(await updateMailDomain(env, owner, domain.id, { unknownRecipientPolicy: 'collect' })).toMatchObject({
+      unknown_recipient_policy: 'collect', catch_all_checked_at: null, cloudflare_next_check_at: null
+    });
+    expect(await resolveInboundRecipient(env.DB, 'unlisted@example.com')).toMatchObject({ accepted: false });
   });
 
   test('gates collect on fresh verified catch-all and preserves addresses while disabling a domain', async () => {
