@@ -244,6 +244,19 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     await writeFile(receiptPath, JSON.stringify({ ...receipt, targetHash: sharedInboundPreviewTargetHash(fixed),
       fixedReservationHash: fixedReservationHash('  PRE@EXAMPLE.TEST ') }));
     expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({ previewCommit });
+    const oldFixed = {
+      ...receipt, targetHash: sharedInboundPreviewTargetHash(fixed), fixedReservationHash: fixedReservationHash('pre@example.test'),
+      production: { ...receipt.production, previewDelivery: {
+        databaseId: fixed.databaseId, bucket: fixed.bucket, routingDatabaseId: null,
+        fixedReservationHash: fixedReservationHash('pre@example.test')
+      } }
+    };
+    await writeFile(receiptPath, JSON.stringify(oldFixed));
+    expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({
+      expectsDelivery: true, legacyFixedDelivery: true, managementEnabled: false
+    });
+    await writeFile(receiptPath, JSON.stringify({ ...oldFixed, previewManagementAuthorized: true }));
+    expect(() => assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
