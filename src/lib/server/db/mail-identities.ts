@@ -3,7 +3,7 @@ import {
   isMailHealthFresh,
   MAIL_HEALTH_MAX_AGE_MS,
   MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS,
-  PREVIEW_CATCH_ALL_ERROR_PREFIX,
+  previewCatchAllError,
   TRANSIENT_CLOUDFLARE_HEALTH_ERRORS
 } from '$lib/domain/mail/health';
 import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
@@ -110,9 +110,9 @@ export async function resolveInboundRecipient(
   }
 
   const checkedAt = row.catch_all_checked_at ? Date.parse(row.catch_all_checked_at) : Number.NaN;
-  const catchAllError = row.last_error_code?.startsWith(PREVIEW_CATCH_ALL_ERROR_PREFIX) ? row.last_error_code : null;
-  const errorCode = catchAllError ? catchAllError.slice(PREVIEW_CATCH_ALL_ERROR_PREFIX.length) : row.cloudflare_error_code;
-  const errorAt = Date.parse((catchAllError ? row.last_error_at : row.cloudflare_error_at) ?? '');
+  const catchAllError = previewCatchAllError(row.last_error_code, row.last_error_at);
+  const errorCode = catchAllError?.code ?? row.cloudflare_error_code;
+  const errorAt = Date.parse((catchAllError ? catchAllError.at : row.cloudflare_error_at) ?? '');
   const catchAllWasRecentlyVerified = isMailHealthFresh(row.catch_all_checked_at, now);
   const transientFailureGrace = Number.isFinite(checkedAt) && checkedAt <= now &&
     now - checkedAt <= MAIL_HEALTH_MAX_AGE_MS + MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS &&

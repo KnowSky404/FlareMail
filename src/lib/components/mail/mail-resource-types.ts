@@ -7,6 +7,8 @@ export type MailDomain = {
   unknown_recipient_policy: 'reject' | 'collect';
   catch_all_target: 'unknown' | 'this_worker' | 'external' | 'drop' | 'none';
   catch_all_checked_at: string | null;
+  last_error_code?: string | null;
+  last_error_at?: string | null;
   resend_status: 'unknown' | 'pending' | 'verified' | 'failed';
   resend_sending_status: 'unknown' | 'enabled' | 'disabled';
   resend_checked_at: string | null;
