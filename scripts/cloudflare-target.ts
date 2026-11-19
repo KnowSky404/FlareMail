@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  assertLegacyProductionHasNoActiveInboundProtection, assertProductionReleaseSource,
+  assertActiveProductionForPreview, assertActiveProductionForRelease, assertLegacyProductionHasNoActiveInboundProtection, assertProductionReleaseSource, assertReleaseCheckout,
   assertSharedInboundPreview, assertSharedInboundProduction
 } from './shared-inbound-preview.ts';
 import { normalizePreInboundRecipient, PRE_INBOUND_BINDING_NAMES, readPreInboundConfig } from '../src/lib/server/inbound/pre-inbound.ts';
@@ -121,12 +121,15 @@ export function checkPreInboundRelease(target: CloudflareTarget, nativePreview =
     return;
   }
   if (nativePreview && target.vars.APP_ENV === 'preview' && target.inboundRouting && process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT) {
-    assertSharedInboundPreview(target, process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT);
+    const source = assertSharedInboundPreview(target, process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT);
+    assertReleaseCheckout(projectRoot, source.previewCommit, 'INBOUND_PREVIEW_RELEASE_SOURCE_NOT_VERIFIED');
+    assertActiveProductionForPreview(target, source);
     return;
   }
   if (!nativePreview && target.vars.APP_ENV === 'production' && target.inboundRouting && process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT) {
     const source = assertSharedInboundProduction(target, process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT);
     assertProductionReleaseSource(projectRoot, source);
+    assertActiveProductionForRelease(target, source);
     return;
   }
   throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
