@@ -106,7 +106,8 @@ export async function updateMailDomain(
   // Production Cron verifies the catch-all after PRE starts collecting.
   const result = await env.DB.prepare(`UPDATE mail_domains SET
     enabled = COALESCE(?, enabled), unknown_recipient_policy = COALESCE(?, unknown_recipient_policy),
-    ${startsPreviewCollection ? 'catch_all_checked_at = NULL, cloudflare_next_check_at = NULL,' : ''}
+    ${startsPreviewCollection ? `catch_all_checked_at = NULL, cloudflare_next_check_at = NULL,
+      cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL,` : ''}
     updated_at = ? WHERE id = ? AND owner_user_id = ? AND updated_at = ?`)
     .bind(input.enabled === undefined ? null : Number(input.enabled), input.unknownRecipientPolicy ?? null,
       new Date().toISOString(), domainId, ownerUserId, domain.updated_at).run();
