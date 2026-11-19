@@ -230,7 +230,7 @@ export async function checkManagedMailDomain(
   const domain = await getManagedMailDomain(env.DB, ownerUserId, domainId);
   if (!domain) throw new Error('MAIL_DOMAIN_NOT_FOUND');
   const now = dependencies?.now ?? isoNow;
-  const preserveCatchAllObservation = hasProductionCatchAllObserver(env, domain.unknown_recipient_policy);
+  const preserveCatchAllObservation = hasProductionCatchAllObserver(env, domain);
   const result: ManagedMailDomainCheckResult = {
     domainId: domain.id,
     domainName: domain.domain_name,

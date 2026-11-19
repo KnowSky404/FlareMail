@@ -21,6 +21,7 @@ interface HealthDomainRow {
   cloudflare_zone_id: string;
   cloudflare_account_id: string | null;
   worker_name: string;
+  enabled: number;
   unknown_recipient_policy: 'reject' | 'collect';
   cloudflare_next_check_at: string | null;
   cloudflare_check_token: string | null;
@@ -212,7 +213,7 @@ function selectCandidates(db: D1Database, provider: ProviderName, now: string, c
   const stem = provider === 'cloudflare' ? 'cloudflare' : 'resend';
   return db.prepare(
     `SELECT id, owner_user_id, domain_name, cloudflare_zone_id, cloudflare_account_id, worker_name,
-            unknown_recipient_policy, cloudflare_next_check_at, cloudflare_check_token, cloudflare_check_expires_at,
+            enabled, unknown_recipient_policy, cloudflare_next_check_at, cloudflare_check_token, cloudflare_check_expires_at,
             cloudflare_failure_count, last_error_code, last_error_at, resend_next_check_at, resend_check_token, resend_check_expires_at,
             resend_failure_count
      FROM mail_domains
@@ -356,7 +357,7 @@ async function runProvider(
         });
       result = await checkCloudflareDomain(env, domain, client, nowMs(), catchAll?.workerName);
       await saveCloudflareResult(env.DB, domain, token, result, nowMs(), Boolean(catchAll),
-        hasProductionCatchAllObserver(env, domain.unknown_recipient_policy));
+        hasProductionCatchAllObserver(env, domain));
     } else {
       result = await checkResendDomain(
         domain,
