@@ -110,6 +110,9 @@ test('activation requires PRE catch-all observations produced after the protecti
     Object.assign(domain, { last_error_code: 'preview_catch_all_cron_verified', last_error_at: domain.catch_all_checked_at });
     mockRequests();
     await expect(assertProductionCatchAllActivation(target, active, projectRoot)).resolves.toBeUndefined();
+    mockRequests();
+    await expect(assertProductionCatchAllActivation(target, { ...active, routingReadOnly: false, deployedAt: Date.now() }, projectRoot))
+      .resolves.toBeUndefined();
   } finally {
     fetch.mockRestore();
     for (const [key, value] of Object.entries(previous)) {

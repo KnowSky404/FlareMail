@@ -151,6 +151,23 @@ describe('scheduled mail domain health refresh', () => {
       cloudflare_checked_at: priorFullCheck, cloudflare_error_code: priorError, cloudflare_error_at: priorFullCheck,
       last_error_code: 'preview_catch_all_cron_verified', last_error_at: new Date(defaultNow).toISOString()
     });
+    const scheduledAt = pre.readDomain().cloudflare_next_check_at;
+    const preEnv = { ...pre.env, INBOUND_ROUTING_DB: env.INBOUND_ROUTING_DB, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const } };
+    expect(await refreshManagedMailDomainHealth(preEnv, ownerId, domainId, successDependencies(defaultNow + 10 * 60_000)))
+      .toMatchObject({ cloudflare: { checked: 1 } });
+    expect(pre.readDomain()).toMatchObject({
+      cloudflare_next_check_at: scheduledAt, last_error_code: 'preview_catch_all_cron_verified',
+      catch_all_checked_at: new Date(defaultNow).toISOString()
+    });
+    deps.cloudflareClientFactory = (...args) => ({
+      ...successfulFactory(...args), getZone: async (id) => ({ id, name: 'another.example.test', accountId: 'account-1' })
+    });
+    pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain()).toMatchObject({
+      catch_all_target: 'unknown', last_error_code: 'preview_catch_all:cloudflare_zone_mapping_conflict'
+    });
+    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: false });
     expect(prod.readDomain().catch_all_checked_at).toBeNull();
     expect(pre.sqlite.query("SELECT catch_all_checked_at FROM mail_domains WHERE id='unowned'").get()).toEqual({ catch_all_checked_at: null });
     pre.sqlite.close();
