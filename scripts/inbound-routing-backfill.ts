@@ -47,10 +47,11 @@ export function inboundRoutingBackfillSql(claims: Claim[]) {
       CASE WHEN inbound_routing_ownership.environment = excluded.environment THEN excluded.environment ELSE NULL END;`;
 }
 
-const identityClaimsSql = `
+export const identityClaimsSql = `
   SELECT 'mailbox' AS kind, email AS route_key FROM mail_addresses
   UNION ALL
-  SELECT 'catch_all' AS kind, domain_name AS route_key FROM mail_domains WHERE unknown_recipient_policy = 'collect'
+  SELECT 'catch_all' AS kind, domain_name AS route_key FROM mail_domains
+  WHERE enabled = 1 AND unknown_recipient_policy = 'collect'
 `;
 
 async function backfill() {
