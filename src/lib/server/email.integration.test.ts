@@ -500,6 +500,9 @@ describe('shared PRE and production inbound routing', () => {
   test('disabling a domain preserves its selection without claiming or transferring catch-all ownership', async () => {
     const { prod, DB, production } = sharedInbound();
     production.database.query("UPDATE mail_domains SET unknown_recipient_policy = 'collect'").run();
+    await expect(updateMailDomain(prod, 'user-1', 'domain-1', { unknownRecipientPolicy: 'collect' }))
+      .rejects.toMatchObject({ code: 'MAIL_DOMAIN_COLLECT_NOT_READY' });
+    expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBeNull();
     const update = (enabled: boolean) => updateMailDomain(prod, 'user-1', 'domain-1', { enabled, unknownRecipientPolicy: 'collect' });
     expect((await update(false))?.enabled).toBe(0);
     expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBeNull();

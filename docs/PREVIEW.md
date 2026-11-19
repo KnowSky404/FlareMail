@@ -26,7 +26,7 @@
 
 同时核对全部活动生产版本是否已有 PRE 入站绑定。无绑定时将 `production.previewDelivery` 设为 `null`。存在绑定时记录它的 `databaseId`、`bucket` 和 `routingDatabaseId`，三项都须与候选 PRE 目标一致。远程 PRE 需要明确设置 `CLOUDFLARE_ACCOUNT_ID`。省略共享归属的旧目标也会查询该账号的活动生产版本，在已有 PRE 收信保护时拒绝上传。
 
-保留旧固定收件地址时，先比对生产和 PRE 的私有候选配置及已发布绑定。记录规范化地址的小写 SHA-256 为 `fixedReservationHash`，活动生产配送的相同指纹放在 `production.previewDelivery.fixedReservationHash`。
+记录中填写干净工作树的完整 `previewCommit`，目标的 `APP_VERSION` 使用 `preview+<短 SHA>`。构建会核对源码与活动生产绑定。保留旧固定收件地址时，先比对生产和 PRE 的私有候选配置及已发布绑定。记录规范化地址的小写 SHA-256 为 `fixedReservationHash`，活动生产配送的相同指纹放在 `production.previewDelivery.fixedReservationHash`。
 
 该阶段只发布 `mail-ai`，以 Owner 会话访问只读域名、邮箱和 `/api/readiness`。就绪响应包含 `inboundRouting.environment=preview` 和 `inboundRouting.readOnly=true`。部署后重新核对 PRE 实际绑定和生产部署指针。预约的 SMTP 验收和生产规则切换按共享收信 SPEC 的后续环节执行。
 

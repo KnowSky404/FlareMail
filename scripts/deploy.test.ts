@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertProductionReleaseSource, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
+import { assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -66,7 +66,7 @@ test('production activation requires the reviewed PRE and an active, paused prot
     const active = { ...candidate, vars: { ...candidate.vars, PRE_INBOUND_ENABLED: 'true' } };
     await writeFile(file, JSON.stringify(active));
     const activation = { ...evidence, phase: 'activate', targetHash: sharedInboundPreviewTargetHash(active),
-      protectVersionId: 'guarded-rollback', protectionActive: true, mailRoutesAndMappingsVerified: true, preCatchAllsVerified: true };
+      protectVersionId: 'bbbbbbbb-1234-4123-8123-bbbbbbbbbbbb', protectionActive: true, mailRoutesAndMappingsVerified: true, preCatchAllsVerified: true };
     await writeFile(proof, JSON.stringify({ ...activation, protectionActive: false }));
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
     await writeFile(proof, JSON.stringify(activation));
@@ -84,15 +84,16 @@ test('allows only a verified, native read-only shared PRE build', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-shared-pre-'));
   const file = join(directory, 'target.json');
   const receiptPath = join(directory, 'receipt.json');
+  const previewCommit = 'c'.repeat(40);
   const env = { FLAREMAIL_CF_CONFIG: file, FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT: receiptPath, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) };
   const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   const candidate = {
     ...localTarget, databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', bucket: 'preview-bucket', cron: [],
-    vars: { ...localTarget.vars, APP_ENV: 'preview', AUTO_REPLY_ENABLED: 'false', INBOUND_NOTIFICATION_ENABLED: 'false', TELEGRAM_ENABLED: 'false' },
+    vars: { ...localTarget.vars, APP_ENV: 'preview', APP_VERSION: 'preview+' + previewCommit.slice(0, 7), AUTO_REPLY_ENABLED: 'false', INBOUND_NOTIFICATION_ENABLED: 'false', TELEGRAM_ENABLED: 'false' },
     inboundRouting: { databaseId: '33333333-3333-4333-8333-333333333333', databaseName: 'routing', environment: 'preview' as const }
   };
   const receipt = {
-    accountId: env.CLOUDFLARE_ACCOUNT_ID, workerName: candidate.name, previewName: 'mail-ai', checkedAt: new Date().toISOString(),
+    accountId: env.CLOUDFLARE_ACCOUNT_ID, workerName: candidate.name, previewName: 'mail-ai', previewCommit, checkedAt: new Date().toISOString(),
     targetHash: sharedInboundPreviewTargetHash(candidate), registryVerified: true, previewBaseVerified: true,
     routingDatabaseId: candidate.inboundRouting.databaseId,
     preview: { deploymentId: 'preview-version', databaseId: candidate.databaseId, bucket: candidate.bucket },
@@ -102,8 +103,8 @@ test('allows only a verified, native read-only shared PRE build', async () => {
   try {
     await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
     await writeFile(receiptPath, JSON.stringify(receipt), { mode: 0o600 });
-    const preview = await cloudflareConfig.worker({ mode: 'preview', isPreview: true });
-    expect(preview.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'preview', readOnly: true });
+    expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({ previewCommit });
+    await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_RELEASE_SOURCE_NOT_VERIFIED');
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: false })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
     await writeFile(receiptPath, JSON.stringify({ ...receipt, production: { ...receipt.production, databaseId: candidate.databaseId.toUpperCase() } }));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
@@ -119,8 +120,7 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
     await writeFile(receiptPath, JSON.stringify({ ...receipt, targetHash: sharedInboundPreviewTargetHash(fixed),
       fixedReservationHash: fixedReservationHash('  PRE@EXAMPLE.TEST ') }));
-    expect((await cloudflareConfig.worker({ mode: 'preview', isPreview: true })).env.PRE_INBOUND_SETTINGS?.value)
-      .toMatchObject({ recipient: 'pre@example.test', previewApp: true });
+    expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({ previewCommit });
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];

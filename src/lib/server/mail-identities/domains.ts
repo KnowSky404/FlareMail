@@ -93,8 +93,7 @@ export async function updateMailDomain(
   const cloudflareError = domain.cloudflare_error_code;
   const providerReady = domain.catch_all_target === 'this_worker' && isMailHealthFresh(domain.catch_all_checked_at) &&
     (!cloudflareError || cloudflareError === 'cloudflare_collect_catch_all_unassigned');
-  const reEnablingCollection = claimsCatchAll && !domain.enabled && input.enabled === true && !switchingToCollect;
-  const routing = reEnablingCollection && !providerReady ? readInboundRouting(env) : null;
+  const routing = claimsCatchAll && !providerReady ? readInboundRouting(env) : null;
   if (!providerReady && (switchingToCollect ||
       (routing && !await findInboundRoutingOwner(routing.db, 'catch_all', domain.domain_name)))) {
     throw new ApiError(409, 'MAIL_DOMAIN_COLLECT_NOT_READY', '请先检查域名，确认有效的 catch-all 指向本应用，再启用未知地址收集。', undefined, undefined, false);
