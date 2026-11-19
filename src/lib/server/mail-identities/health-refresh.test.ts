@@ -106,7 +106,7 @@ describe('scheduled mail domain health refresh', () => {
     const priorError = 'cloudflare_managed_route_needs_review';
     pre.sqlite.query(`UPDATE mail_domains SET catch_all_checked_at = ?, cloudflare_checked_at = ?, cloudflare_error_code = ?,
       cloudflare_error_at = ?, last_error_code = ?, last_error_at = ?, cloudflare_failure_count = 4`)
-      .run(previouslyVerified, priorFullCheck, priorError, priorFullCheck, priorError, priorFullCheck);
+      .run(previouslyVerified, priorFullCheck, priorError, priorFullCheck, 'preview_catch_all_cron_verified', previouslyVerified);
     pre.sqlite.query(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, unknown_recipient_policy)
       VALUES ('unowned', ?, 'excluded.example.test', ?, 'flaremail-worker', 'collect')`).run(ownerId, zoneId);
     const deps = successDependencies();
@@ -169,6 +169,14 @@ describe('scheduled mail domain health refresh', () => {
       catch_all_target: 'unknown', last_error_code: 'preview_catch_all:cloudflare_zone_mapping_conflict'
     });
     expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true })).toMatchObject({ accepted: false });
+    pre.sqlite.query(`UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?,
+      last_error_code = NULL, last_error_at = NULL, cloudflare_next_check_at = NULL WHERE id = ?`)
+      .run(new Date(defaultNow - 60_000).toISOString(), domainId);
+    deps.cloudflareClientFactory = (...args) => ({
+      ...successfulFactory(...args), getCatchAll: async () => { throw new CloudflareEmailRoutingError('timeout'); }
+    });
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain().catch_all_checked_at).toBeNull();
     expect(prod.readDomain().catch_all_checked_at).toBeNull();
     expect(pre.sqlite.query("SELECT catch_all_checked_at FROM mail_domains WHERE id='unowned'").get()).toEqual({ catch_all_checked_at: null });
     pre.sqlite.close();
