@@ -27,7 +27,7 @@
 
 需要复用生产既有 secrets 时，可使用已有且获准的独立测试 D1/R2 上传版本供 HTTP 验收。两项资源都须与生产和 `mail-ai` 的存储不同，缺少该测试目标时使用原生 PRE。为版本预览准备仓库外的私有目标，用 `FLAREMAIL_CF_CONFIG` 传入，保留 `APP_ENV=preview` 并关闭自动动作、Cron 和身份管理功能。先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。上传前核对已安装命令帮助、独立存储、可用 secrets 和版本域名。上传后核对实际版本的存储、权限及生产 deployment 指针，检查通过才访问预览 URL。仍使用旧存储的历史 URL 纳入对应环境的权限与存储清点。
 
-版本预览用于不依赖 Cloudflare 路由读取的 HTTP 验收，使用只声明已有且验收所需 secrets 的私有目标。路由状态验收使用拥有独立 `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` 的原生 PRE，以及已核对的实际绑定。若生产只有规则管理 Token，按原生 PRE 的流程单独配置读取权限。
+版本预览用于普通 HTTP 验收，私有目标只声明已有且验收所需 secrets。当前路由验收由管理员使用只读 `cf` 查询。单 Worker 的地址检查保护上线后，再在原生 PRE 配置独立 `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN`。
 
 本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
 
@@ -68,9 +68,9 @@ until a usable replacement is confirmed.
 
 当前 `mail-ai` 使用已保存的身份记录进行网页验收。全量「同步 Cloudflare 配置」会把读取 Token 可见、指向配置 Worker 的规则导入 PRE D1。共用入站方案完成前，当前 PRE 不执行全量同步，模板省略 `MAIL_IDENTITY_WORKER_NAME`。原生 PRE 的父级 Worker 名称继续由目标文件中的 `name` 指定。
 
-沿用旧私有配置时，先在独立授权的 PRE 发布中移除旧的 `MAIL_IDENTITY_WORKER_NAME`、`MAIL_IDENTITY_ACCOUNT_ID` 和规则管理 Token 绑定。对照实际部署与 Previews Base，逐个核对稳定 URL、部署专属 URL 和版本预览 URL 的 D1、R2、全量发现和远端规则管理能力。任何仍能访问生产存储、发现生产规则或更改远端规则的 PRE 入口，按授权关闭该入口或撤销确认只属于 PRE 的旧权限。共享生产权限的处理另行授权。每个继续可访问的 PRE 入口须通过存储隔离和权限核对，对已授权的 Owner 会话使用只读 GET 检查保存的邮箱及域名。
+沿用旧私有配置时，先在独立授权的 PRE 发布中移除旧的 `MAIL_IDENTITY_WORKER_NAME`、`MAIL_IDENTITY_ACCOUNT_ID` 和 Cloudflare 规则读取、管理 Token 绑定。对照实际部署与 Previews Base，逐个核对稳定 URL、部署专属 URL 和版本预览 URL 的 D1、R2 和邮件规则能力。仍绑定生产存储的入口按 PRE 授权关闭。仍能读取或更改远端规则的入口关闭，或撤销确认只属于 PRE 的旧权限并重新核对。共享生产权限的处理另行授权。每个继续可访问的 PRE 入口须通过存储隔离和权限核对，对已授权的 Owner 会话使用只读 GET 检查保存的邮箱及域名。
 
-验收范围包括已保存的域名、地址和本地路由状态。GET 返回上次保存的状态，当前记录也可能仍指向已删除的 Worker。实际 Cloudflare 规则需另用有授权的只读查询核对，真实入箱将按新方案单独验证。当前 PRE 模板只声明读取规则所需的 Cloudflare Token。名称、签名等本地设置的写入另行授权。全量发现、接入新域名、创建地址、恢复或删除远端规则属于下节的独立路由环境。
+验收范围包括已保存的域名、地址和本地路由状态。GET 返回上次保存的状态，当前记录也可能仍指向已删除的 Worker。实际 Cloudflare 规则需另用有授权的只读查询核对，真实入箱将按新方案单独验证。当前 PRE 模板省略 Cloudflare 路由 Token。名称、签名等本地设置的写入另行授权。全量发现、接入新域名、创建地址、恢复或删除远端规则属于下节的独立路由环境。
 
 ## 独立路由环境的邮箱身份接入
 

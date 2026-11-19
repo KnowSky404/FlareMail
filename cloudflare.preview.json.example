@@ -25,7 +25,6 @@
   "secrets": [
     "RESEND_API_KEY",
     "RESEND_WEBHOOK_SECRET",
-    "CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN",
     "AI_SETTINGS_KEY"
   ]
 }
