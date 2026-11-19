@@ -7,7 +7,7 @@ import { isBlockedSender } from '$lib/server/db/blocked-senders';
 import { claimInboundIngest, completeInboundIngestClaim, completeInboundIngestClaimForExistingMessage, findInboundByDedupeKey, insertInboundMessage, releaseInboundIngestClaim } from '$lib/server/db/inbound';
 import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 import { hasTelegramTables, insertTelegramDeliveryIfEligible } from '$lib/server/db/telegram';
-import { findUserInboundNotificationSettings, findWorkspaceOwnerId } from '$lib/server/db/users';
+import { findUserInboundNotificationSettings } from '$lib/server/db/users';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { readPreInboundBindings, resolvePreInboundMatch } from '$lib/server/inbound/pre-inbound';
 import { findInboundRoutingOwner, readInboundRouting, resolveInboundRoutingOwner } from '$lib/server/inbound/routing-ownership';
@@ -212,7 +212,7 @@ async function storeInboundEmail(
     console.log(JSON.stringify({ event, environment, ...detail }));
   };
   if (!env.DB) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
-  const recipientRoute = await resolveInboundRecipient(env.DB, message.to);
+  const recipientRoute = await resolveInboundRecipient(env.DB, message.to, startedAt, environment === 'preview' || Boolean(requiredStatus));
   if (!recipientRoute.accepted) {
     const rejectionReasons = {
       invalid_recipient: 'The envelope recipient is invalid.',
@@ -234,9 +234,6 @@ async function storeInboundEmail(
     safeLog('inbound_rejected', { correlationId, code: 'INBOUND_RECIPIENT_REJECTED', reason: 'routing_identity_mismatch' });
     message.setReject('The recipient address is not enabled.');
     return;
-  }
-  if ((environment === 'preview' || requiredStatus) && await findWorkspaceOwnerId(env.DB) !== recipientRoute.ownerUserId) {
-    throw new Error('INBOUND_OWNER_MAPPING_UNAVAILABLE');
   }
   if (!env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
 

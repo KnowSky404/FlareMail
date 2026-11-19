@@ -16,7 +16,7 @@ test('allows only a verified, native read-only shared PRE build', async () => {
   const env = { FLAREMAIL_CF_CONFIG: file, FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT: receiptPath, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) };
   const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   const candidate = {
-    ...localTarget, databaseId: '22222222-2222-4222-8222-222222222222', bucket: 'preview-bucket', cron: [],
+    ...localTarget, databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', bucket: 'preview-bucket', cron: [],
     vars: { ...localTarget.vars, APP_ENV: 'preview', AUTO_REPLY_ENABLED: 'false', INBOUND_NOTIFICATION_ENABLED: 'false', TELEGRAM_ENABLED: 'false' },
     inboundRouting: { databaseId: '33333333-3333-4333-8333-333333333333', databaseName: 'routing', environment: 'preview' as const }
   };
@@ -34,7 +34,7 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     const preview = await cloudflareConfig.worker({ mode: 'preview', isPreview: true });
     expect(preview.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'preview', readOnly: true });
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: false })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
-    await writeFile(receiptPath, JSON.stringify({ ...receipt, production: { ...receipt.production, databaseId: candidate.databaseId } }));
+    await writeFile(receiptPath, JSON.stringify({ ...receipt, production: { ...receipt.production, databaseId: candidate.databaseId.toUpperCase() } }));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
     await writeFile(receiptPath, JSON.stringify({ ...receipt, checkedAt: '2000-01-01T00:00:00.000Z' }));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
