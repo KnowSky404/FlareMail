@@ -8,6 +8,7 @@
 
 1. 在独立 worktree 从最新 `origin/main` 开发，完成 `bun run test`、`bun run check`、`bun run build`、相关浏览器 QA、`bun run deploy:dry-run`，创建干净原子提交。
 2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。使用现有生产 Worker 名称作为原生 Preview 的父级，沿用 `mail-ai` 的独立 D1 和 R2。发布前核对 PRE 的 D1 UUID 和 R2 桶名分别与生产不同。设置 `APP_ENV=preview`、实际 Provider/Auth 配置，关闭自动回复、通知和 Telegram，使用 `cron=[]`。资源创建、Owner 初始化和邮件规则调整各自独立授权。
+   在发布之前检查 Previews Base、现有 Preview secrets 与候选目标的合并结果。当前方案尚未实施时，确认将生成的部署既不继承 Cloudflare 路由读取或写入权限，也没有可用于全量发现的身份配置。无法确认就停止发布，先按下文「当前 mail-ai 的邮箱身份验收」核对旧配置及权限。
    如果沿用 PRE D1 并更换 R2，在部署前先于授权维护窗口暂停并排空所有访问 PRE D1/R2 的入口和任务，包括只读入口和旧预览 URL。再清点原信、独立正文、草稿、附件和待处理记录依赖的对象，核对新桶上的对象和完整性。没有相关对象时记录空清单。涉及复制、修复或删除时取得相应授权。
 3. `bun run deploy:pre -- <preview-name>` 先构建 Svelte 应用，再在 `worker/` 通过全局 `cf previews deploy --mode preview` 构建并上传原生 Preview，不切换生产流量。名称是合法稳定名称，不把 `/` 等分支字符直接拼进去。记录命令时间、提交 SHA、Preview URL 和部署/版本 ID。
 4. 上传后先按下文「当前 mail-ai 的邮箱身份验收」检查 Cloudflare 实际绑定、规则权限、仍可访问的旧 URL 和生产 deployment。隔离核对通过后，才验收登录、业务页面/API 和已认证 `/api/readiness`。`/api/health` 仅证明存活，HTTP 验收和 `email()`、Cron、真实投递各自需要证据。
@@ -25,7 +26,7 @@
 
 原生 Preview 不继承生产 secrets；新 Preview 从 Previews Base 获取 secrets。仅在 JSON 中声明 secret 名称不会复制其值，发布成功也不能证明密钥齐全。检查已安装 cf 帮助、Base 和实际部署绑定；不要为了缺少配置改用生产 `cf deploy`，也不要为验收重置密钥。
 
-需要复用生产既有 secrets 时，可使用已有且获准的独立测试 D1/R2 上传版本供 HTTP 验收。两项资源都须与生产和 `mail-ai` 的存储不同，缺少该测试目标时使用原生 PRE。为版本预览准备仓库外的私有目标，用 `FLAREMAIL_CF_CONFIG` 传入，保留 `APP_ENV=preview`，关闭自动动作和 Cron。目标省略邮件路由 Worker、账号和 Cloudflare 路由 Token，隔离测试数据的本地编辑另行授权。先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。上传前核对已安装命令帮助、独立存储、可用 secrets 和版本域名。上传后核对实际存储和生产 deployment 指针，并确认远端规则能力关闭，通过后才访问预览 URL。仍使用旧存储的历史 URL 纳入对应环境的权限与存储清点。
+需要复用生产既有 secrets 时，可使用已有且获准的独立测试 D1/R2 上传版本供 HTTP 验收。两项资源都须与生产和 `mail-ai` 的存储不同，缺少该测试目标时使用原生 PRE。为版本预览准备仓库外的私有目标，用 `FLAREMAIL_CF_CONFIG` 传入，保留 `APP_ENV=preview`，关闭自动动作和 Cron。目标省略邮件路由 Worker、账号和 Cloudflare 路由 Token，隔离测试数据的本地编辑另行授权。先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。上传前核对已安装命令帮助、独立存储、实际将继承的 secrets 和版本域名，确认远端规则能力关闭。上传后复核实际存储、权限和生产 deployment 指针，通过后才访问预览 URL。仍使用旧存储的历史 URL 纳入对应环境的权限与存储清点。
 
 版本预览用于普通 HTTP 验收，私有目标只声明已有且验收所需 secrets。当前路由验收由管理员使用只读 `cf` 查询。单 Worker 的地址检查保护上线后，再在原生 PRE 配置独立 `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN`。
 
