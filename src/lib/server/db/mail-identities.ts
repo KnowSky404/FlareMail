@@ -26,6 +26,7 @@ interface InboundRecipientRow {
   domain_id: string;
   owner_user_id: string;
   mapped_owner_id: string | null;
+  registered_owner_id: string | null;
   domain_enabled: number;
   unknown_recipient_policy: 'reject' | 'collect';
   catch_all_target: 'unknown' | 'this_worker' | 'external' | 'drop' | 'none';
@@ -40,7 +41,9 @@ interface InboundRecipientRow {
   routing_state: 'pending' | 'provisioning' | 'active' | 'deleting' | 'imported' | 'unknown' | 'error' | 'deleted' | null;
 }
 
-export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, rawRecipient: string, now = Date.now()): Promise<InboundRecipientResolution> {
+export async function resolveInboundRecipient(
+  db: Pick<D1Database, 'prepare'>, rawRecipient: string, now = Date.now(), requireRegisteredOwner = false
+): Promise<InboundRecipientResolution> {
   const parsed = parseInboundRecipient(rawRecipient);
   if (!parsed) return { accepted: false, reason: 'invalid_recipient' };
   const { recipient, base: baseRecipient, domain: domainName } = parsed;
@@ -49,6 +52,7 @@ export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, r
       d.id AS domain_id,
       d.owner_user_id,
       o.user_id AS mapped_owner_id,
+      u.id AS registered_owner_id,
       d.enabled AS domain_enabled,
       d.unknown_recipient_policy,
       d.catch_all_target,
@@ -63,6 +67,7 @@ export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, r
       a.routing_state
     FROM mail_domains AS d
     LEFT JOIN workspace_owner AS o ON o.singleton = 1
+    LEFT JOIN workspace_users AS u ON u.id = o.user_id
     LEFT JOIN mail_addresses AS a ON lower(a.email) IN (?, ?)
     WHERE lower(d.domain_name) = ?
     ORDER BY CASE WHEN lower(a.email) = ? THEN 0 ELSE 1 END
@@ -73,7 +78,8 @@ export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, r
   // precedence over the base address. Keep the actual recipient for storage.
 
   if (!row) return { accepted: false, reason: 'unknown_domain' };
-  if (!row.mapped_owner_id || row.mapped_owner_id !== row.owner_user_id) {
+  if (!row.mapped_owner_id || row.mapped_owner_id !== row.owner_user_id ||
+      (requireRegisteredOwner && row.registered_owner_id !== row.owner_user_id)) {
     throw new Error('INBOUND_OWNER_MAPPING_UNAVAILABLE');
   }
   if (!row.domain_enabled) return { accepted: false, reason: 'domain_disabled' };
