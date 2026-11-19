@@ -9,8 +9,11 @@ export type MailIdentityValidationCode =
   | 'signature_too_long';
 
 export class MailIdentityValidationError extends Error {
-  constructor(readonly code: MailIdentityValidationCode) {
+  readonly code: MailIdentityValidationCode;
+
+  constructor(code: MailIdentityValidationCode) {
     super(code);
+    this.code = code;
     this.name = 'MailIdentityValidationError';
   }
 }

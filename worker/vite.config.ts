@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
+import { defaultStatePath, projectRoot } from '../scripts/cloudflare-target.ts';
 import { prepareAssets } from '../scripts/prepare-assets.mjs';
 import { cloudflare } from '@cloudflare/vite-plugin';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +13,7 @@ export default defineConfig({
     { find: /^css-tree$/, replacement: 'css-tree/dist/csstree.esm' }
   ] },
   plugins: [cloudflare({
-    persistState: { path: resolve(fileURLToPath(new URL('../', import.meta.url)), process.env.FLAREMAIL_STATE_DIR ?? '.cloudflare/state') },
+    persistState: { path: resolve(projectRoot, process.env.FLAREMAIL_STATE_DIR ?? defaultStatePath) },
     inspectorPort: false,
     types: { generate: false }
   })],

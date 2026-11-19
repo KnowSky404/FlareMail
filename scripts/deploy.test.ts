@@ -4,9 +4,30 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalizeDeployArguments } from './deploy-command';
-import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, readCloudflareTarget } from './cloudflare-target';
+import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, readCloudflareTarget } from './cloudflare-target';
+import localTarget from '../cloudflare.local.json';
+import cloudflareConfig from '../cloudflare.config';
 
 describe('global cf commands', () => {
+  test('requires complete, isolated inbound storage and keeps deployment roles distinct', () => {
+    const vars = { ...localTarget.vars, PRE_INBOUND_RECIPIENT: 'pre@example.test', PRE_INBOUND_ENABLED: 'false' };
+    const preInbound = {
+      databaseId: '11111111-1111-4111-8111-111111111111',
+      databaseName: 'flaremail-pre',
+      bucket: 'flaremail-pre'
+    };
+    const parse = (value: unknown) => parseCloudflareTarget(JSON.stringify(value));
+    expect(parse({ ...localTarget, vars, preInbound }).preInbound).toEqual(preInbound);
+    expect(() => parse({ ...localTarget, vars })).toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    expect(() => parse({ ...localTarget, vars: { ...vars, PRE_INBOUND_ENABLED: 'yes' }, preInbound })).toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    expect(() => parse({ ...localTarget, secrets: ['PRE_INBOUND_SETTINGS'] })).toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    expect(() => parse({ ...localTarget, preInbound })).toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    expect(() => parse({ ...localTarget, vars, preInbound: { ...preInbound, bucket: localTarget.bucket } })).toThrow('PRE_INBOUND_STORAGE_CONFIGURATION_INVALID');
+    expect(() => parse({ ...localTarget, vars, preInbound: { ...preInbound, databaseId: localTarget.databaseId } })).toThrow('PRE_INBOUND_STORAGE_CONFIGURATION_INVALID');
+    expect(() => parse({ ...localTarget, vars: { ...vars, APP_ENV: 'preview' }, preInbound })).toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    const { PRE_INBOUND_ENABLED: _enabled, ...previewVars } = vars;
+    expect(parse({ ...localTarget, vars: { ...previewVars, APP_ENV: 'preview' } }).vars.PRE_INBOUND_RECIPIENT).toBe('pre@example.test');
+  });
   test('separates production uploads from an offline prebuilt dry run', () => {
     const environment = { CLOUDFLARE_API_TOKEN: 'test-placeholder', PATH: '/global/bin' };
     expect(createDeployInvocation('deploy', environment)).toEqual({ command: 'cf', args: ['deploy', '--mode', 'production', '--provision=false'], env: environment });
@@ -30,6 +51,38 @@ describe('global cf commands', () => {
     expect(normalizeD1Output([{ success: true, results: { columns: ['value'], rows: [[42]] }, meta: { changes: 1 } }])).toEqual([{ success: true, results: [{ value: 42 }], meta: { changes: 1 } }]);
     expect(normalizeD1Output({ result: [{ columns: ['name', 'count'], rows: [['fixture', 2], [null, 0]], meta: { changes: 1 } }] })).toEqual({ result: [{ columns: ['name', 'count'], rows: [['fixture', 2], [null, 0]], results: [{ name: 'fixture', count: 2 }, { name: null, count: 0 }], meta: { changes: 1 } }] });
   });
+});
+
+test('native remote builds reject PRE reservations while local builds keep both bindings', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-inbound-target-'));
+  const previous = process.env.FLAREMAIL_CF_CONFIG;
+  const vars = { ...localTarget.vars, PRE_INBOUND_RECIPIENT: 'pre@example.test', PRE_INBOUND_ENABLED: 'false' };
+  const target = {
+    ...localTarget,
+    databaseId: '11111111-1111-4111-8111-111111111111',
+    vars,
+    preInbound: { databaseId: '22222222-2222-4222-8222-222222222222', databaseName: 'flaremail-pre', bucket: 'flaremail-pre' }
+  };
+  const file = join(directory, 'target.json');
+  process.env.FLAREMAIL_CF_CONFIG = file;
+  try {
+    await writeFile(file, JSON.stringify(target), { mode: 0o600 });
+    const local = await cloudflareConfig.worker({ mode: 'development', isPreview: false });
+    expect(local.env.PRE_INBOUND_DB?.id).toBe(target.preInbound.databaseId);
+    expect(local.env.PRE_INBOUND_BUCKET?.name).toBe(target.preInbound.bucket);
+    await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+
+    await writeFile(file, JSON.stringify({ ...target, vars: { ...vars, APP_ENV: 'production' } }));
+    await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+
+    const { PRE_INBOUND_ENABLED: _enabled, ...previewVars } = vars;
+    await writeFile(file, JSON.stringify({ ...localTarget, ...target.preInbound, vars: { ...previewVars, APP_ENV: 'preview' } }));
+    await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+  } finally {
+    if (previous === undefined) delete process.env.FLAREMAIL_CF_CONFIG;
+    else process.env.FLAREMAIL_CF_CONFIG = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 
