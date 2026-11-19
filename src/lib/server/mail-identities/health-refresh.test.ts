@@ -152,12 +152,13 @@ describe('scheduled mail domain health refresh', () => {
       last_error_code: 'preview_catch_all_cron_verified', last_error_at: new Date(defaultNow).toISOString()
     });
     const scheduledAt = pre.readDomain().cloudflare_next_check_at;
+    pre.sqlite.query("UPDATE mail_domains SET catch_all_target = 'external' WHERE id = ?").run(domainId);
     const preEnv = { ...pre.env, INBOUND_ROUTING_DB: env.INBOUND_ROUTING_DB, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const } };
     expect(await refreshManagedMailDomainHealth(preEnv, ownerId, domainId, successDependencies(defaultNow + 10 * 60_000)))
       .toMatchObject({ cloudflare: { checked: 1 } });
     expect(pre.readDomain()).toMatchObject({
       cloudflare_next_check_at: scheduledAt, last_error_code: 'preview_catch_all_cron_verified',
-      catch_all_checked_at: new Date(defaultNow).toISOString()
+      catch_all_target: 'external', catch_all_checked_at: new Date(defaultNow).toISOString()
     });
     deps.cloudflareClientFactory = (...args) => ({
       ...successfulFactory(...args), getZone: async (id) => ({ id, name: 'another.example.test', accountId: 'account-1' })
