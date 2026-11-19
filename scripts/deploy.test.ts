@@ -171,6 +171,16 @@ test('production activation requires the reviewed PRE and an active, paused prot
     expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ releaseCommit: evidence.releaseCommit });
     await writeFile(proof, JSON.stringify({ ...evidence, phase: 'maintain', targetHash: sharedInboundPreviewTargetHash(active) }));
     expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ maintaining: true, protectVersionId: null });
+
+    const { PRE_INBOUND_RECIPIENT: _recipient, ...unreservedVars } = candidate.vars;
+    const unreserved = { ...candidate, vars: unreservedVars };
+    const unreservedProof = { ...protect, targetHash: sharedInboundPreviewTargetHash(unreserved),
+      production: { ...production, fixedReservationHash: null }, preview: { ...preview, fixedReservationHash: null } };
+    await writeFile(file, JSON.stringify(unreserved));
+    await writeFile(proof, JSON.stringify(unreservedProof));
+    expect(() => assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
+    await writeFile(proof, JSON.stringify({ ...unreservedProof, legacyFixedRecipientAbsent: true }));
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ protecting: true });
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
