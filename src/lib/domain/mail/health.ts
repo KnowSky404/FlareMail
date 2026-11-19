@@ -16,9 +16,10 @@ const configurationRetryDelayMs = 6 * 60 * 60 * 1000;
 export type MailHealthState = 'not_configured' | 'fresh' | 'stale' | 'refreshing' | 'degraded';
 
 export function previewCatchAllError(code: string | null | undefined, at: string | null | undefined) {
-  return code?.startsWith(PREVIEW_CATCH_ALL_ERROR_PREFIX)
-    ? { code: code.slice(PREVIEW_CATCH_ALL_ERROR_PREFIX.length), at: at ?? null }
-    : null;
+  if (!code?.startsWith(PREVIEW_CATCH_ALL_ERROR_PREFIX)) return null;
+  const detail = code.slice(PREVIEW_CATCH_ALL_ERROR_PREFIX.length);
+  const retry = /^(\d{1,4}):(.+)$/u.exec(detail);
+  return { code: retry?.[2] ?? detail, at: at ?? null, retryCount: retry ? Number(retry[1]) : 0 };
 }
 
 export function isMailHealthFresh(checkedAt: string | null | undefined, nowMs = Date.now()) {
