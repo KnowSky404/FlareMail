@@ -36,11 +36,9 @@ merged task worktree and branches. These Git steps have standing authorization
 for requested changes unless the user limits the task. Preview and production
 publication each require separate authorization. Ordinary development does not
 automatically deploy.
-The current `mail-ai` Preview has its existing independent D1 and shares
-production R2. Preserve its actual bindings; do not replace its D1 with the
-production target. Shared R2 writes still affect production. Use local state for
-development and read the [preview guide](./PREVIEW.md) before using a remote
-preview. Production uses Resend and rejects missing required bindings or secrets.
+The current `mail-ai` Preview uses dedicated D1 and R2. Preserve the deployed
+bindings and use local state for development. Production uses Resend and
+rejects missing required bindings or secrets. See [Preview guide](./PREVIEW.md).
 
 ## Worktree and PR workflow
 
@@ -301,7 +299,7 @@ Release preflight disables cf's `.env` loading for its child commands so private
 Publish the verified commit to remote Preview only when deployment is requested
 or already authorized, following [PREVIEW.md](./PREVIEW.md). Record the SHA, URL,
 deployment/version ID and relevant checks; confirm production traffic still
-points to its previous deployment. Shared Preview data is read-only for ordinary
+points to its previous deployment. Remote Preview data is read-only for ordinary
 acceptance checks; writes and real provider tests require authorization covering
 their production effects. Production publication follows the
 [production checklist](./PRODUCTION_CHECKLIST.md), with Preview evidence or a

@@ -70,8 +70,9 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
 ## Target, configuration and invariants
 
 - [ ] The target is explicitly recorded as production and uses production
-  application variables. Preview deliberately shares D1/R2 and the Owner under
-  [PREVIEW.md](./PREVIEW.md), but its code release does not switch production traffic.
+  application variables. Production and the current native Preview each use
+  their own D1, R2 and Owner mapping. Preview HTTP publication serves the
+  Preview URL under the production Worker. See [PREVIEW.md](./PREVIEW.md).
 - [ ] The private `cloudflare.deploy.json` was created from
   `cloudflare.deploy.json.example` and `git check-ignore cloudflare.deploy.json`
   confirms it is ignored.
@@ -80,7 +81,19 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
 - [ ] `OUTBOUND_PROVIDER=resend` and `RESEND_API_BASE_URL` is the official
   `https://api.resend.com` origin or is omitted to use the code default.
 - [ ] `DB`, `BUCKET` and `ASSETS` bindings point to the reviewed production
-  resources. A preview R2 bucket is not required by the production config.
+  resources. If a PRE recipient is reserved, both `PRE_INBOUND_DB` and
+  `PRE_INBOUND_BUCKET` are required even with PRE delivery paused. Verify each
+  PRE binding differs from its production counterpart and matches the actual
+  native PRE HTTP binding. Temporary mismatch is limited to an authorized
+  storage cutover after PRE requests and deliveries are paused and drained.
+  Recheck equality before either PRE entry point resumes. See [single-Worker PRE inbound SPEC](specs/single-worker-pre-inbound.md).
+- [ ] If a PRE recipient is reserved, every reachable version with access to
+  production identity or rule management enforces the same reserved address
+  guard. Verify version URLs and close incompatible entry points before
+  cutover, later releases and rollbacks.
+- [ ] Verify the reservation against the active Worker binding and the private
+  release record before publishing. Block a candidate that omits or changes
+  the established address, or whose baseline cannot be verified.
 - [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Worker
   secrets; record only presence, never values. Domain status checks require
   Full access under Resend's current key model; Sending access is send-only.
@@ -301,8 +314,12 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
 - [ ] If Telegram is enabled, a schema version supported by the checkout and
   Telegram migrations 0019-0022 are applied,
   including the account-delete cleanup trigger, challenge provenance, and privacy snapshot. `APP_BASE_URL` is a credential-free HTTPS origin, the Bot Token is present only as a secret, any webhook-secret override is also secret-only, and the one-Bot webhook is reviewed with `getMe`/`getWebhookInfo`.
-- [ ] Normal code rollback will deploy the previous Worker while preserving
-  append-only D1 schema, cleanup/delivery evidence and canonical R2 objects.
+- [ ] The rollback Worker version is verified against the active bindings
+  and append-only D1 schema and preserves cleanup/delivery evidence and
+  canonical R2 objects. If single-Worker PRE inbound is configured, the
+  rollback version keeps the guard for the reserved address and its
+  `+tag` variants with PRE delivery disabled. Verify this rollback target
+  before enabling SMTP. See [single-Worker PRE inbound SPEC](specs/single-worker-pre-inbound.md).
 - [ ] No older Worker rollback plan requires dropping new D1 columns or deleting
   raw mail, body or attachment objects.
 - [ ] Any D1 restore has a separate incident approval and a reviewed bookmark or

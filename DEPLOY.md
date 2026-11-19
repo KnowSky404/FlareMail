@@ -48,7 +48,7 @@ Keep production `APP_ENV=production`, the real provider (normally `resend`), the
 
 ## PRE, PR and production
 
-Follow the [Preview guide](docs/PREVIEW.md) before opening a functional PR. PRE code does not switch production traffic, but its D1/R2 and Owner are shared: default acceptance is read-only. Real mail, Telegram, data writes, remote migrations and routing/DNS changes require their own authorization.
+Follow the Preview guide before opening a functional PR. The current native PRE uses dedicated D1, R2 and Owner mapping. Default acceptance is read-only. Real mail, Telegram, data writes, remote migrations and routing/DNS changes require their own authorization. See [Preview guide](docs/PREVIEW.md).
 
 ```sh
 # Authorized PRE only; uses private cloudflare.preview.json
@@ -73,9 +73,11 @@ Discover resource commands using anonymous queries such as `cf cli search "list 
 
 Initialize the stable Owner once with the existing `auth:bootstrap:*` project scripts, only against the intended authorized target. Login credentials, profile email and managed mail identities remain separate. Do not bootstrap or reset an existing PRE/production Owner as part of validation.
 
-Configure Email Routing for managed receiving addresses and a Resend-verified sending domain; workspace messages use the selected managed sender. Keep the stable production Worker/account as the Email Routing destination during PRE. Enroll domains/addresses through the existing management UI. Do not point Email Routing at a Preview. Enable inbound routing only after Owner, storage, authentication and outbound-provider setup are verified.
+Configure Email Routing for managed receiving addresses and a Resend-verified sending domain. Workspace messages use the selected managed sender. Keep the stable production Worker/account as the Email Routing destination and follow the management UI procedure for environments with a dedicated route target. Current PRE identity acceptance uses saved records. Enable inbound routing after verifying Owner, storage, authentication and outbound-provider setup. See [Preview identity acceptance](docs/PREVIEW.md).
 
 After deployment, `/api/health` proves liveness. Authenticated `/api/readiness` checks bindings/schema. Verify login, mailbox, owned HTML/CID attachments and authorization errors. HTTP checks do not prove `email()`, scheduled handling or real provider delivery; record separate authorized evidence. Rollback must consider code and data compatibility together; never restore D1 without a reviewed recovery target and separate authorization.
+
+With single-Worker PRE inbound configured, verify the running production email handler as part of PRE storage changes. Select rollback code that keeps the reserved-address guard and pauses PRE delivery. See [Preview guide](docs/PREVIEW.md), [production checklist](docs/PRODUCTION_CHECKLIST.md) and [single-Worker PRE inbound SPEC](docs/specs/single-worker-pre-inbound.md).
 
 ## 中文操作说明
 
@@ -83,7 +85,9 @@ After deployment, `/api/health` proves liveness. Authenticated `/api/readiness` 
 
 `bun run build` 会先构建 SvelteKit，再由全局 `cf` 原生打包 Worker；`bun run preview` 是本地预览，`bun run deploy:pre -- <名称>` 是授权后的远程 PRE，`bun run deploy` 是需单独授权的生产发布。私有配置分别为 `cloudflare.preview.json` 和 `cloudflare.deploy.json`，由对应公开示例填写，禁止提交真实资源标识或密钥。
 
-PRE 共用生产数据和 Owner，默认只读验收。本地测试使用独立 `.cloudflare/state`，不会自动读取旧 `.wrangler` 状态。普通功能改动必须完成对应提交的本地检查、PRE 业务验收、本地 `/review` 及当前 head 的两项机器人审查，再合并主分支；合并不等于生产发布。
+当前原生 PRE 使用独立 D1、R2 和 Owner 映射，默认只读验收。本地测试使用独立 `.cloudflare/state`。普通功能改动先完成对应提交的本地检查、PRE 业务验收、本地 `/review` 和当前 head 的两项机器人审查，再合并主分支。生产发布另行授权。参见 [Preview 指南](docs/PREVIEW.md)。
+
+单 Worker 收信方案启用后，调整 PRE 存储须同时核对生产收信代码。生产回退使用保留地址拒收保护、且暂停 PRE 投递的版本。参见 [生产发布清单](docs/PRODUCTION_CHECKLIST.md)和[单 Worker SPEC](docs/specs/single-worker-pre-inbound.md)。
 
 本地与远程迁移脚本均支持 `-- --dry-run`，会透传给 cf，仅预检而不应用迁移；未知选项直接报错，避免拼错参数后意外执行写入。
 

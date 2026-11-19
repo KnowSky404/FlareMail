@@ -86,9 +86,8 @@ production before migration: its schema-30 Telegram gate suppresses new outbox
 rows, so notifications received during that gap would not be queued. A PRE-only deployment does not upgrade
 production handlers or prove that migration is safe for production.
 
-The current `mail-ai` Preview has an independent D1 and shared production R2.
-Its separately authorized migration does not upgrade production D1; preserve its
-actual binding rather than redirecting it to production for acceptance.
+The current `mail-ai` Preview uses dedicated D1 and R2. Authorized migrations
+run against the verified Preview D1. See [Preview guide](PREVIEW.md).
 
 中文：自动 AI 摘要需要独立授权，已有短摘要开关不会自动升级为外部 AI 同意。
 入队/当前授权取交集；隐私模式优先；失败退回原摘要；同一通知不因 Telegram 重试
