@@ -86,7 +86,10 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   PRE binding differs from its production counterpart and matches the actual
   native PRE HTTP binding. Temporary mismatch is limited to an authorized
   storage cutover after PRE requests and deliveries are paused and drained.
-  Recheck equality before either PRE entry point resumes. See [single-Worker PRE inbound SPEC](specs/single-worker-pre-inbound.md).
+  An emergency pause can run while PRE metadata is unavailable or drifted.
+  It keeps the verified production version, reservation and bindings and only
+  changes PRE delivery to disabled. Recheck equality before either PRE entry
+  point resumes. See [single-Worker PRE inbound SPEC](specs/single-worker-pre-inbound.md).
 - [ ] If a PRE recipient is reserved, every reachable version with access to
   production identity or rule management enforces the same reserved address
   guard. Verify version URLs and close incompatible entry points before
