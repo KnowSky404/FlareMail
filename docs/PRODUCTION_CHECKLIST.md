@@ -87,9 +87,9 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   native PRE HTTP binding. Temporary mismatch is limited to an authorized
   storage cutover after PRE requests and deliveries are paused and drained.
   An emergency pause can run while PRE metadata is unavailable or drifted.
-  It keeps the verified production version, reservation and bindings and only
-  changes PRE delivery to disabled. Recheck equality before either PRE entry
-  point resumes. See [single-Worker PRE inbound SPEC](specs/single-worker-pre-inbound.md).
+  Deploy a new version with verified guard code, the same reservation and
+  configuration, and PRE delivery set to disabled. Recheck equality before
+  either PRE entry point resumes. See [single-Worker PRE inbound SPEC](specs/single-worker-pre-inbound.md).
 - [ ] If a PRE recipient is reserved, every reachable version with access to
   production identity or rule management enforces the same reserved address
   guard. Verify version URLs and close incompatible entry points before
@@ -98,8 +98,9 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   release record before publishing. Block a candidate that omits or changes
   the established address, or whose baseline cannot be verified. Use one
   serialized window for production and PRE activation and recheck both
-  active versions immediately before activation. Repeat preflight if the
-  checked baseline changed.
+  active versions immediately before activation. For an emergency pause,
+  verify production and the reservation again even if PRE metadata remains
+  unavailable or drifted. Repeat preflight if the required baseline changed.
 - [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Worker
   secrets; record only presence, never values. Domain status checks require
   Full access under Resend's current key model; Sending access is send-only.
