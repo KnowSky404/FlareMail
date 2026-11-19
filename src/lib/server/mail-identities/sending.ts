@@ -8,6 +8,7 @@ import {
 import { isValidEmail } from '$lib/domain/mail';
 import { isMailHealthFresh } from '$lib/domain/mail/health';
 import { ApiError } from '$lib/server/http/api';
+import { requireMailRoutingOwnership } from './ownership';
 
 export type MailAddressSendingAction = 'enable_send' | 'disable_send' | 'make_default';
 
@@ -71,6 +72,7 @@ export async function updateManagedMailAddressSending(
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
   const address = await getManagedMailAddress(env.DB, ownerUserId, addressId);
   if (!address) throw new ApiError(404, 'MAIL_ADDRESS_NOT_FOUND', '邮件地址不存在。', undefined, undefined, false);
+  await requireMailRoutingOwnership(env, 'mailbox', address.email);
 
   if (action === 'disable_send') {
     await env.DB.prepare(

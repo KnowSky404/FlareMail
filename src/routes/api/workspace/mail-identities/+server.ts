@@ -3,6 +3,7 @@ import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/
 import { listManagedMailAddresses, listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { createManagedMailAddress } from '$lib/server/mail-identities/routing';
 import { domainOnboardingConfiguration } from '$lib/server/mail-identities/domains';
+import { isStandaloneFixedPreview } from '$lib/server/mail-identities/ownership';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
@@ -13,13 +14,14 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     listManagedMailDomains(env.DB, session.userId),
     listManagedMailAddresses(env.DB, session.userId)
   ]);
+  const fixedPreview = isStandaloneFixedPreview(env);
   return apiSuccess(event, {
     domains,
     addresses,
     domainOnboarding: domainOnboardingConfiguration(env),
     providerConfiguration: {
-      cloudflare: Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
-      cloudflareManagement: Boolean(env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
+      cloudflare: !fixedPreview && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
+      cloudflareManagement: !fixedPreview && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
       resend: Boolean(env.RESEND_API_KEY?.trim())
     }
   });

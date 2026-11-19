@@ -98,6 +98,38 @@ function successDependencies(nowMs = defaultNow): MailHealthRefreshDependencies 
 }
 
 describe('scheduled mail domain health refresh', () => {
+  test('ignores retained production records for PRE mailboxes', async () => {
+    const fixture = createFixture({ collect: true });
+    fixture.env.PRE_INBOUND_SETTINGS = { recipient: 'one@mail.example.test', enabled: false };
+    const deps = successDependencies();
+    const factory = deps.cloudflareClientFactory!;
+    deps.cloudflareClientFactory = (...args) => ({ ...factory(...args), listRules: async () => [] });
+    try {
+      await refreshMailDomainHealth(fixture.env, deps);
+      expect(fixture.readDomain()).toMatchObject({ catch_all_target: 'this_worker', cloudflare_error_code: null });
+    } finally {
+      fixture.sqlite.close();
+    }
+  });
+
+  test('scheduled health distinguishes current, unassigned and other-environment catch-all ownership', async () => {
+    for (const [owner, code] of [
+      ['production', null], ['preview', 'cloudflare_collect_catch_all_owned_elsewhere'], [null, 'cloudflare_collect_catch_all_unassigned']
+    ]) {
+      const fixture = createFixture({ collect: true });
+      fixture.env.INBOUND_ROUTING_SCOPE = { environment: 'production' };
+      fixture.env.INBOUND_ROUTING_DB = {
+        prepare: () => ({ bind: () => ({
+          first: async () => owner ? { environment: owner } : null,
+          all: async () => ({ results: [{ route_key: 'one@mail.example.test' }] })
+        }) })
+      } as unknown as D1Database;
+      await refreshMailDomainHealth(fixture.env, successDependencies());
+      expect(fixture.readDomain()).toMatchObject({ catch_all_target: 'this_worker', cloudflare_error_code: code });
+      fixture.sqlite.close();
+    }
+  });
+
   test('foreground refresh ignores the long schedule, preserves address intent, and deduplicates recent attempts', async () => {
     const fixture = createFixture({ due: false, checkedAt: new Date(defaultNow - 6 * 60_000).toISOString() });
     const before = fixture.sqlite.query('SELECT * FROM mail_addresses').all();

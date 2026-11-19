@@ -3,9 +3,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizePreInboundRecipient, PRE_INBOUND_BINDING_NAMES, readPreInboundConfig } from '../src/lib/server/inbound/pre-inbound.ts';
 
-interface PreInboundStorage {
+interface D1Target {
   databaseId: string;
   databaseName: string;
+}
+
+interface PreInboundStorage extends D1Target {
   bucket: string;
 }
 
@@ -18,6 +21,7 @@ export interface CloudflareTarget {
   databaseName: string;
   bucket: string;
   preInbound?: PreInboundStorage;
+  inboundRouting?: D1Target & { environment: 'production' | 'preview' };
   cron: string[];
   secrets?: string[];
   observability?: { enabled: boolean };
@@ -30,6 +34,21 @@ const databaseIdPattern = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu;
 
 const isRemoteDatabaseId = (id: string) =>
   databaseIdPattern.test(id) && id !== localDatabaseId && !/^[0-]*$/u.test(id);
+
+function isFixedPreviewApp(target: CloudflareTarget) {
+  return target.vars.APP_ENV !== 'production' && target.inboundRouting?.environment !== 'production' &&
+    !target.preInbound && target.vars.PRE_INBOUND_ENABLED === undefined && target.vars.PRE_INBOUND_RECIPIENT !== undefined;
+}
+
+export function cloudflarePreInboundSettings(target: CloudflareTarget) {
+  const previewApp = isFixedPreviewApp(target);
+  if (!target.preInbound && !previewApp) return null;
+  return {
+    recipient: Object.hasOwn(target.vars, 'PRE_INBOUND_RECIPIENT') ? target.vars.PRE_INBOUND_RECIPIENT : null,
+    enabled: target.vars.PRE_INBOUND_ENABLED === 'true',
+    ...(previewApp ? { previewApp: true as const } : {})
+  };
+}
 
 export function parseCloudflareTarget(source: string): CloudflareTarget {
   const value = JSON.parse(source) as CloudflareTarget;
@@ -45,6 +64,8 @@ export function parseCloudflareTarget(source: string): CloudflareTarget {
   }
   const { PRE_INBOUND_RECIPIENT, PRE_INBOUND_ENABLED } = value.vars;
   const pre = value.preInbound;
+  const routing = value.inboundRouting;
+  const appEnv = value.vars.APP_ENV;
   const hasPreStorage = pre !== undefined;
   if (hasPreStorage && (!pre || typeof pre !== 'object' || typeof pre.databaseId !== 'string' ||
       !databaseIdPattern.test(pre.databaseId) || typeof pre.databaseName !== 'string' || !pre.databaseName.trim() ||
@@ -52,15 +73,24 @@ export function parseCloudflareTarget(source: string): CloudflareTarget {
       pre.databaseId.toLowerCase() === value.databaseId.toLowerCase() || pre.bucket.toLowerCase() === value.bucket.toLowerCase())) {
     throw new Error('PRE_INBOUND_STORAGE_CONFIGURATION_INVALID');
   }
-  if (value.secrets?.some((name) => [...PRE_INBOUND_BINDING_NAMES, 'PRE_INBOUND_RECIPIENT', 'PRE_INBOUND_ENABLED'].includes(name)) ||
-      PRE_INBOUND_BINDING_NAMES.some((name) => Object.hasOwn(value.vars, name))) {
+  if (routing !== undefined && (!routing || typeof routing !== 'object' ||
+      typeof routing.databaseId !== 'string' || !databaseIdPattern.test(routing.databaseId) ||
+      typeof routing.databaseName !== 'string' || !routing.databaseName.trim() ||
+      (routing.environment !== 'production' && routing.environment !== 'preview') ||
+      (['production', 'preview'].includes(appEnv) && routing.environment !== appEnv) ||
+      [value.databaseId, pre?.databaseId].some((id) => id?.toLowerCase() === routing.databaseId.toLowerCase()))) {
+    throw new Error('INBOUND_ROUTING_CONFIGURATION_INVALID');
+  }
+  const bindingNames = [...PRE_INBOUND_BINDING_NAMES, 'INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE'];
+  if (value.secrets?.some((name) => [...bindingNames, 'PRE_INBOUND_RECIPIENT', 'PRE_INBOUND_ENABLED'].includes(name)) ||
+      bindingNames.some((name) => Object.hasOwn(value.vars, name))) {
     throw new Error('PRE_INBOUND_CONFIGURATION_INVALID');
   }
-  if (value.vars.APP_ENV === 'preview') {
+  if (appEnv === 'preview' || routing?.environment === 'preview' || isFixedPreviewApp(value)) {
     if (hasPreStorage || PRE_INBOUND_ENABLED !== undefined) throw new Error('PRE_INBOUND_CONFIGURATION_INVALID');
     if (PRE_INBOUND_RECIPIENT !== undefined) normalizePreInboundRecipient(PRE_INBOUND_RECIPIENT);
   } else {
-    readPreInboundConfig({ PRE_INBOUND_RECIPIENT, PRE_INBOUND_ENABLED }, hasPreStorage, hasPreStorage);
+    readPreInboundConfig({ PRE_INBOUND_RECIPIENT, PRE_INBOUND_ENABLED }, hasPreStorage, hasPreStorage, Boolean(routing));
   }
   return value;
 }
@@ -71,7 +101,8 @@ export function readCloudflareTarget(config = process.env.FLAREMAIL_CF_CONFIG ??
   if (remote) {
     if (!['production', 'preview'].includes(target.vars.APP_ENV) || !isRemoteDatabaseId(target.databaseId) ||
         /replace|placeholder/iu.test(target.bucket) || (target.preInbound &&
-        (!isRemoteDatabaseId(target.preInbound.databaseId) || /replace|placeholder/iu.test(target.preInbound.bucket)))) {
+        (!isRemoteDatabaseId(target.preInbound.databaseId) || /replace|placeholder/iu.test(target.preInbound.bucket))) ||
+        (target.inboundRouting && !isRemoteDatabaseId(target.inboundRouting.databaseId))) {
       throw new Error('Remote commands require an explicit target with real D1/R2 bindings.');
     }
   } else if (!local) throw new Error('Local commands require an APP_ENV=development or test target.');
@@ -80,19 +111,21 @@ export function readCloudflareTarget(config = process.env.FLAREMAIL_CF_CONFIG ??
 
 export function checkPreInboundRelease(target: CloudflareTarget) {
   // shortcut: reservation targets are local-only until identity and live deployment guards are implemented.
-  if (target.vars.PRE_INBOUND_RECIPIENT !== undefined) throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+  if (target.vars.PRE_INBOUND_RECIPIENT !== undefined || target.inboundRouting) throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
 }
 
 export function localStateArgs(persistTo?: string) {
   return ['--local', '--persist-to', resolve(projectRoot, persistTo ?? process.env.FLAREMAIL_STATE_DIR ?? defaultStatePath)];
 }
 
-export function createD1Command(options: { remote?: boolean; config?: string; database?: string; persistTo?: string }, sql: string | string[]) {
+export function createD1Command(options: { remote?: boolean; config?: string; database?: string; persistTo?: string; inboundRouting?: boolean }, sql: string | string[]) {
   const target = readCloudflareTarget(options.config, options.remote);
-  if (options.database && ![target.databaseId, target.databaseName, 'DB'].includes(options.database)) {
+  const binding = options.inboundRouting ? target.inboundRouting : target;
+  if (!binding || (options.inboundRouting && options.remote)) throw new Error('INBOUND_ROUTING_CONFIGURATION_INVALID');
+  if (options.database && ![binding.databaseId, binding.databaseName, options.inboundRouting ? 'INBOUND_ROUTING_DB' : 'DB'].includes(options.database)) {
     throw new Error('--database must match the selected target D1 binding.');
   }
-  return ['cf', 'd1', 'raw', target.databaseId, ...(Array.isArray(sql) ? ['--batch', JSON.stringify(sql.map((statement) => ({ sql: statement })))] : ['--sql', sql]),
+  return ['cf', 'd1', 'raw', binding.databaseId, ...(Array.isArray(sql) ? ['--batch', JSON.stringify(sql.map((statement) => ({ sql: statement })))] : ['--sql', sql]),
     ...(options.remote ? [] : localStateArgs(options.persistTo))];
 }
 

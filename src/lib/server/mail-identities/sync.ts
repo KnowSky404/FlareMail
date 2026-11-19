@@ -5,6 +5,7 @@ import {
 } from '$lib/server/cloudflare-email-routing';
 import { ApiError } from '$lib/server/http/api';
 import { domainOnboardingConfiguration, enrollMailDomain } from './domains';
+import { filterOwnedMailboxes, ownsMailRouting, requireMailRoutingWrites } from './ownership';
 import { normalizeCloudflareZoneId, normalizeMailDomain, normalizeManagedAddress } from './validation';
 
 type SyncClient = Pick<CloudflareEmailRoutingClient, 'listZones' | 'listRules' | 'getCatchAll'>;
@@ -24,6 +25,7 @@ function workerRecipient(rule: CloudflareEmailRoutingRule, workerName: string) {
 /** Discover provider-owned identities without creating, changing or claiming remote rules. */
 export async function syncCloudflareMailIdentities(env: CloudflareEnv, ownerUserId: string, client?: SyncClient) {
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂不可用。');
+  requireMailRoutingWrites(env);
   const configuration = domainOnboardingConfiguration(env);
   if (!configuration.available || !configuration.workerName) {
     throw new ApiError(503, 'MAIL_DOMAIN_ONBOARDING_NOT_CONFIGURED', '请先配置收信 Worker 和 Cloudflare Zone 读取权限。', undefined, undefined, false);
@@ -74,21 +76,25 @@ export async function syncCloudflareMailIdentities(env: CloudflareEnv, ownerUser
     const catchesForWorker = catchAll.enabled && catchAll.actions.length === 1 &&
       catchAll.actions[0]?.type === 'worker' && catchAll.actions[0]?.value.length === 1 &&
       catchAll.actions[0]?.value[0] === workerName;
-    const recipients = rules.flatMap((rule) => {
+    const collectForEnvironment = catchesForWorker && await ownsMailRouting(env, 'catch_all', zone.name);
+    const candidates = [];
+    for (const rule of rules) {
       const identity = workerRecipient(rule, workerName);
       if (!identity || !(identity.domainName === zone.name || identity.domainName.endsWith('.' + zone.name))) {
         result.skippedRules += 1;
-        return [];
+        continue;
       }
       // A competing exact recipient rule must not be promoted to an active mailbox.
       if (rules.filter((candidate) => isExactRecipientRule(candidate, identity.email)).length !== 1) {
         result.skippedRules += 1;
-        return [];
+        continue;
       }
-      return [{ ...identity, rule }];
-    });
+      candidates.push({ ...identity, rule });
+    }
+    const recipients = await filterOwnedMailboxes(env, candidates);
+    result.skippedRules += candidates.length - recipients.length;
     const domainNames = new Set(recipients.map(({ domainName }) => domainName));
-    if (catchesForWorker) domainNames.add(zone.name);
+    if (collectForEnvironment) domainNames.add(zone.name);
     for (const domainName of domainNames) {
       let domain;
       try {
@@ -104,7 +110,7 @@ export async function syncCloudflareMailIdentities(env: CloudflareEnv, ownerUser
             await env.DB.prepare(`UPDATE mail_domains SET catch_all_target = ?, catch_all_checked_at = ?,
               cloudflare_checked_at = ?, unknown_recipient_policy = ?, updated_at = ?
               WHERE id = ? AND owner_user_id = ? AND updated_at = ?`)
-              .bind(target, timestamp, timestamp, catchesForWorker ? 'collect' : 'reject', timestamp,
+              .bind(target, timestamp, timestamp, collectForEnvironment ? 'collect' : 'reject', timestamp,
                 domain.id, ownerUserId, domain.updated_at).run();
           }
         }

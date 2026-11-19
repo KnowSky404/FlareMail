@@ -1,4 +1,5 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { requireExistingMailboxOwnership, requireMailRoutingOwnership, reserveMailRoutingOwnership } from './ownership';
 import { getManagedMailAddress, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { isMailHealthFresh } from '$lib/domain/mail/health';
 import { ApiError } from '$lib/server/http/api';
@@ -205,6 +206,7 @@ export async function previewManagedMailAddressDeletion(
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
   const address = await getManagedMailAddress(env.DB, ownerUserId, addressId);
   if (!address) throw new ApiError(404, 'MAIL_ADDRESS_NOT_FOUND', '邮件地址不存在。', undefined, undefined, false);
+  await requireMailRoutingOwnership(env, 'mailbox', address.email);
   const domain = await getManagedMailDomain(env.DB, ownerUserId, address.domain_id);
   if (!domain) throw new ApiError(404, 'MAIL_DOMAIN_NOT_FOUND', '已配置的邮件域名不存在。', undefined, undefined, false);
   const now = currentTime(dependencies);
@@ -445,6 +447,7 @@ async function runRoutingOperation(
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
   const address = await getManagedMailAddress(env.DB, ownerUserId, addressId);
   if (!address) throw new ApiError(404, 'MAIL_ADDRESS_NOT_FOUND', '邮件地址不存在。', undefined, undefined, false);
+  if (!options.token) await requireMailRoutingOwnership(env, 'mailbox', address.email);
   if (address.lifecycle_status === 'deleted' && !options.restoring) {
     throw new ApiError(409, 'MAIL_ADDRESS_DELETED', '已删除的邮件地址必须显式恢复后才能启用。', undefined, undefined, false);
   }
@@ -537,6 +540,7 @@ export async function createManagedMailAddress(
     }
     throw new ApiError(409, 'MAIL_ADDRESS_ALREADY_EXISTS', '此邮件地址已经存在。', undefined, undefined, false);
   }
+  await reserveMailRoutingOwnership(env, 'mailbox', normalized.email);
   const id = (dependencies?.randomUUID ?? defaultDependencies.randomUUID)();
   const now = isoNow(dependencies);
   try {
@@ -570,6 +574,7 @@ export async function disableManagedMailAddress(
   dependencies?: MailIdentityRoutingDependencies
 ) {
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
+  await requireExistingMailboxOwnership(env, ownerUserId, addressId);
   const now = isoNow(dependencies);
   const result = await env.DB.prepare(
     "UPDATE mail_addresses SET lifecycle_status = 'disabled', receive_enabled = 0, send_enabled = 0, " +
@@ -597,6 +602,7 @@ export async function enableManagedMailAddress(
   dependencies?: MailIdentityRoutingDependencies
 ) {
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
+  await requireExistingMailboxOwnership(env, ownerUserId, addressId);
   const timestamp = currentTime(dependencies);
   const now = timestamp.toISOString();
   const token = (dependencies?.randomUUID ?? defaultDependencies.randomUUID)();
@@ -624,6 +630,7 @@ export async function restoreManagedMailAddress(
   dependencies?: MailIdentityRoutingDependencies
 ) {
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
+  await requireExistingMailboxOwnership(env, ownerUserId, addressId);
   const timestamp = currentTime(dependencies);
   const now = timestamp.toISOString();
   const token = (dependencies?.randomUUID ?? defaultDependencies.randomUUID)();
@@ -709,6 +716,7 @@ async function runDeleteOperation(
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
   const address = await getManagedMailAddress(env.DB, ownerUserId, addressId);
   if (!address) throw new ApiError(404, 'MAIL_ADDRESS_NOT_FOUND', '邮件地址不存在。', undefined, undefined, false);
+  await requireMailRoutingOwnership(env, 'mailbox', address.email);
   const policy = requestedPolicy ?? address.delete_route_policy ??
     (address.routing_owner === 'imported' ? 'preserve_imported_route' : 'remove_owned_route');
   if (address.routing_owner === 'imported' && policy !== 'preserve_imported_route') {
@@ -904,6 +912,7 @@ export async function importExistingWorkerRule(
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
   const address = await getManagedMailAddress(env.DB, ownerUserId, addressId);
   if (!address) throw new ApiError(404, 'MAIL_ADDRESS_NOT_FOUND', '邮件地址不存在。', undefined, undefined, false);
+  await requireMailRoutingOwnership(env, 'mailbox', address.email);
   if (address.lifecycle_status === 'deleted') throw new ApiError(409, 'MAIL_ADDRESS_DELETED', '已删除的邮件地址必须显式恢复。', undefined, undefined, false);
   const domain = await getManagedMailDomain(env.DB, ownerUserId, address.domain_id);
   if (!domain) throw new ApiError(404, 'MAIL_DOMAIN_NOT_FOUND', '已配置的邮件域名不存在。', undefined, undefined, false);

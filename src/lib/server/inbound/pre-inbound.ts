@@ -7,25 +7,25 @@ type PreInboundVars = {
 
 export const PRE_INBOUND_BINDING_NAMES = ['PRE_INBOUND_SETTINGS', 'PRE_INBOUND_DB', 'PRE_INBOUND_BUCKET'];
 
-export function readPreInboundConfig(vars: PreInboundVars, hasDatabase: boolean, hasBucket: boolean) {
+export function readPreInboundConfig(vars: PreInboundVars, hasDatabase: boolean, hasBucket: boolean, hasRouting = false) {
   const { PRE_INBOUND_RECIPIENT: recipient, PRE_INBOUND_ENABLED: enabled } = vars;
-  if (recipient === undefined && enabled === undefined && !hasDatabase && !hasBucket) return null;
-  if (!recipient || (enabled !== 'true' && enabled !== 'false') || !hasDatabase || !hasBucket) {
+  if (recipient === undefined && enabled === undefined && !hasDatabase && !hasBucket && !hasRouting) return null;
+  if ((recipient === undefined && !hasRouting) || (enabled !== 'true' && enabled !== 'false') || !hasDatabase || !hasBucket) {
     throw new Error('PRE_INBOUND_CONFIGURATION_INVALID');
   }
-  return { recipient: normalizePreInboundRecipient(recipient), enabled: enabled === 'true' };
+  return { recipient: recipient === undefined ? null : normalizePreInboundRecipient(recipient), enabled: enabled === 'true' };
 }
 
-export function readPreInboundBindings(settings: unknown, hasDatabase: boolean, hasBucket: boolean) {
+export function readPreInboundBindings(settings: unknown, hasDatabase: boolean, hasBucket: boolean, hasRouting = false) {
   // An inherited text or key secret cannot declare this JSON binding.
   const absentOrSecret = settings === undefined || typeof settings === 'string' || settings instanceof CryptoKey;
-  if (absentOrSecret && !hasDatabase && !hasBucket) return null;
-  if (absentOrSecret || !settings || typeof settings !== 'object' || Array.isArray(settings) ||
-      !('recipient' in settings) || typeof settings.recipient !== 'string' ||
+  if (absentOrSecret && !hasDatabase && !hasBucket && !hasRouting) return null;
+  if (absentOrSecret || !settings || typeof settings !== 'object' || Array.isArray(settings) || 'previewApp' in settings ||
+      !('recipient' in settings) || (typeof settings.recipient !== 'string' && !(hasRouting && settings.recipient === null)) ||
       !('enabled' in settings) || typeof settings.enabled !== 'boolean' || !hasDatabase || !hasBucket) {
     throw new Error('PRE_INBOUND_CONFIGURATION_INVALID');
   }
-  return { recipient: normalizePreInboundRecipient(settings.recipient), enabled: settings.enabled };
+  return { recipient: settings.recipient === null ? null : normalizePreInboundRecipient(settings.recipient), enabled: settings.enabled };
 }
 
 export function normalizePreInboundRecipient(input: string) {

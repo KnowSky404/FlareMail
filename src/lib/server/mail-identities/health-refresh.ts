@@ -2,6 +2,7 @@ import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRout
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { mailHealthNextCheckAt } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
+import { catchAllOwnershipError, filterOwnedMailboxes, isStandaloneFixedPreview } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
 import { ApiError } from '$lib/server/http/api';
 
@@ -111,28 +112,29 @@ function validateZone(domain: HealthDomainRow, zone: { id: string; name: string;
 }
 
 async function checkManagedRouteDrift(
-  db: D1Database,
+  env: CloudflareEnv,
   domain: HealthDomainRow,
   rules: CloudflareEmailRoutingRule[]
 ) {
-  const addresses = await db.prepare(
+  const addresses = await env.DB.prepare(
     `SELECT id, email, routing_rule_id FROM mail_addresses
      WHERE owner_user_id = ? AND domain_id = ? AND lifecycle_status <> 'deleted' AND routing_owner = 'flaremail'`
   ).bind(domain.owner_user_id, domain.id).all<{ id: string; email: string; routing_rule_id: string | null }>();
 
-  return (addresses.results ?? []).some((address) => {
+  for (const address of await filterOwnedMailboxes(env, addresses.results ?? [])) {
     const matches = rules.filter((rule) => isExactRecipientRule(rule, address.email));
-    return matches.length !== 1 || !isFlareMailManagedWorkerRule(matches[0]!, {
+    if (matches.length !== 1 || !isFlareMailManagedWorkerRule(matches[0]!, {
       addressId: address.id,
       email: address.email,
       workerName: domain.worker_name,
       ruleId: address.routing_rule_id
-    });
-  });
+    })) return true;
+  }
+  return false;
 }
 
 async function checkCloudflareDomain(
-  db: D1Database,
+  env: CloudflareEnv,
   domain: HealthDomainRow,
   client: CloudflareHealthClient,
   nowMs: number
@@ -155,10 +157,12 @@ async function checkCloudflareDomain(
   const catchAllObservedAt = isoAt(nowMs);
   try {
     const rules = await client.listRules(domain.cloudflare_zone_id);
-    const routeDrift = await checkManagedRouteDrift(db, domain, rules);
+    const routeDrift = await checkManagedRouteDrift(env, domain, rules);
+    const collectOwnershipError = domain.unknown_recipient_policy === 'collect'
+      ? await catchAllOwnershipError(env, domain.domain_name) : null;
     const collectMismatch = domain.unknown_recipient_policy === 'collect' && target !== 'this_worker';
     return {
-      errorCode: collectMismatch ? 'cloudflare_collect_catch_all_unavailable' : routeDrift ? 'cloudflare_managed_route_needs_review' : null,
+      errorCode: collectOwnershipError ?? (collectMismatch ? 'cloudflare_collect_catch_all_unavailable' : routeDrift ? 'cloudflare_managed_route_needs_review' : null),
       retryable: false,
       observedAt: isoAt(nowMs),
       catchAllTarget: target,
@@ -323,7 +327,7 @@ async function runProvider(
           maxRulePages: 10,
           deadlineAt: currentTime + 12_000
         });
-      result = await checkCloudflareDomain(env.DB, domain, client, nowMs());
+      result = await checkCloudflareDomain(env, domain, client, nowMs());
       await saveCloudflareResult(env.DB, domain, token, result, nowMs());
     } else {
       result = await checkResendDomain(
@@ -372,7 +376,7 @@ async function refreshProviders(
     runProvider(
       env,
       'cloudflare',
-      env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim(),
+      isStandaloneFixedPreview(env) ? undefined : env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim(),
       dependencies,
       foregroundDomain
     ),

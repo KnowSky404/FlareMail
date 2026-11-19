@@ -10,6 +10,7 @@ import { hasTelegramTables, insertTelegramDeliveryIfEligible } from '$lib/server
 import { findUserInboundNotificationSettings, findWorkspaceOwnerId } from '$lib/server/db/users';
 import { parseInboundMime, InboundMimeLimitError, InboundMimeParseError } from '$lib/server/inbound/parser';
 import { readPreInboundBindings, resolvePreInboundMatch } from '$lib/server/inbound/pre-inbound';
+import { findInboundRoutingOwner, readInboundRouting, resolveInboundRoutingOwner } from '$lib/server/inbound/routing-ownership';
 import { sendAutomaticReply, sendInboundNotification } from './outbound/system';
 import { isInboundNotificationEnabled } from './workspace/profile';
 import { BodyCanonicalLimitError, prepareBodyObject, projectBody, putBodyObject } from '$lib/server/body';
@@ -155,11 +156,22 @@ export async function handleInboundEmail(
   env: CloudflareEnv,
   ctx?: ExecutionContext
 ) {
+  const routing = readInboundRouting(env);
+  if (routing?.environment === 'preview') throw new Error('INBOUND_ROUTING_CONFIGURATION_INVALID');
   const pre = readPreInboundBindings(
-    env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function', typeof env.PRE_INBOUND_BUCKET?.put === 'function'
+    env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function', typeof env.PRE_INBOUND_BUCKET?.put === 'function', Boolean(routing)
   );
-  const match = pre ? resolvePreInboundMatch(pre.recipient, message.to) : null;
-  if (!pre || !match) return storeInboundEmail(message, env, 'production', ctx);
+  if (!pre) return storeInboundEmail(message, env, 'production', ctx);
+  const match = pre.recipient ? resolvePreInboundMatch(pre.recipient, message.to) : null;
+  const owner = !match && routing ? await resolveInboundRoutingOwner(routing.db, message.to) : null;
+  if (!match && routing && !owner) {
+    message.setReject('The recipient address is not enabled.');
+    return;
+  }
+  const requiredStatus = owner?.kind === 'catch_all' ? 'unregistered' : 'managed';
+  if (!match && owner?.environment !== 'preview') {
+    return storeInboundEmail(message, env, 'production', ctx, owner ? requiredStatus : undefined);
+  }
   if (!pre.enabled || match === 'subaddress') {
     console.log(JSON.stringify({
       event: 'inbound_rejected',
@@ -168,6 +180,10 @@ export async function handleInboundEmail(
       code: 'INBOUND_RECIPIENT_REJECTED',
       reason: match === 'subaddress' ? 'reserved_subaddress' : 'preview_paused'
     }));
+    message.setReject('The recipient address is not enabled.');
+    return;
+  }
+  if (match === 'exact' && routing && await findInboundRoutingOwner(routing.db, 'mailbox', message.to) !== 'preview') {
     message.setReject('The recipient address is not enabled.');
     return;
   }
@@ -180,14 +196,15 @@ export async function handleInboundEmail(
     INBOUND_MAX_ATTACHMENT_COUNT: env.INBOUND_MAX_ATTACHMENT_COUNT,
     INBOUND_MAX_ATTACHMENT_BYTES: env.INBOUND_MAX_ATTACHMENT_BYTES,
     INBOUND_MAX_ATTACHMENT_TOTAL_BYTES: env.INBOUND_MAX_ATTACHMENT_TOTAL_BYTES
-  }, 'preview', ctx);
+  }, 'preview', ctx, requiredStatus);
 }
 
 async function storeInboundEmail(
   message: ForwardableEmailMessage,
   env: CloudflareEnv,
   environment: 'production' | 'preview',
-  ctx?: ExecutionContext
+  ctx?: ExecutionContext,
+  requiredStatus?: 'managed' | 'unregistered'
 ) {
   const startedAt = Date.now();
   const correlationId = resolveInboundCorrelationId(message.headers, env.APP_ENV);
@@ -213,15 +230,13 @@ async function storeInboundEmail(
     message.setReject(rejectionReasons[recipientRoute.reason]);
     return;
   }
-  if (environment === 'preview') {
-    if (recipientRoute.recipientStatus !== 'managed') {
-      safeLog('inbound_rejected', { correlationId, code: 'INBOUND_RECIPIENT_REJECTED', reason: 'preview_identity_required' });
-      message.setReject('The recipient address is not enabled.');
-      return;
-    }
-    if (await findWorkspaceOwnerId(env.DB) !== recipientRoute.ownerUserId) {
-      throw new Error('INBOUND_OWNER_MAPPING_UNAVAILABLE');
-    }
+  if (requiredStatus && recipientRoute.recipientStatus !== requiredStatus) {
+    safeLog('inbound_rejected', { correlationId, code: 'INBOUND_RECIPIENT_REJECTED', reason: 'routing_identity_mismatch' });
+    message.setReject('The recipient address is not enabled.');
+    return;
+  }
+  if ((environment === 'preview' || requiredStatus) && await findWorkspaceOwnerId(env.DB) !== recipientRoute.ownerUserId) {
+    throw new Error('INBOUND_OWNER_MAPPING_UNAVAILABLE');
   }
   if (!env.BUCKET) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
 

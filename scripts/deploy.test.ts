@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalizeDeployArguments } from './deploy-command';
-import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, readCloudflareTarget } from './cloudflare-target';
+import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
 
@@ -78,6 +78,42 @@ test('native remote builds reject PRE reservations while local builds keep both 
     const { PRE_INBOUND_ENABLED: _enabled, ...previewVars } = vars;
     await writeFile(file, JSON.stringify({ ...localTarget, ...target.preInbound, vars: { ...previewVars, APP_ENV: 'preview' } }));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+
+    const inboundRouting = { databaseId: '33333333-3333-4333-8333-333333333333', databaseName: 'routing', environment: 'production' };
+    const dynamic = { ...target, vars: { ...localTarget.vars, PRE_INBOUND_ENABLED: 'true' }, inboundRouting };
+    await writeFile(file, JSON.stringify(dynamic));
+    const dynamicBuild = await cloudflareConfig.worker({ mode: 'development', isPreview: false });
+    expect(dynamicBuild.env.INBOUND_ROUTING_DB?.id).toBe(inboundRouting.databaseId);
+    expect(dynamicBuild.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: null, enabled: true });
+    await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+    const child = Bun.spawn(['cf', 'build', '--mode', 'development'], {
+      cwd: join(projectRoot, 'worker'),
+      env: { ...process.env, FLAREMAIL_CF_CONFIG: file },
+      stdout: 'ignore',
+      stderr: 'pipe'
+    });
+    const [exitCode, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    expect(exitCode).not.toBe(0);
+    expect(error).toContain('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+    expect(() => parseCloudflareTarget(JSON.stringify({
+      ...dynamic, inboundRouting: { ...inboundRouting, databaseId: target.preInbound.databaseId }
+    }))).toThrow('INBOUND_ROUTING_CONFIGURATION_INVALID');
+
+    await writeFile(file, JSON.stringify({ ...localTarget, ...target.preInbound, vars: previewVars,
+      inboundRouting: { ...inboundRouting, environment: 'preview' } }));
+    const previewApp = await cloudflareConfig.worker({ mode: 'development', isPreview: false });
+    expect(previewApp.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: 'pre@example.test', enabled: false, previewApp: true });
+    expect(previewApp.env.PRE_INBOUND_DB).toBeUndefined();
+    const adapter = JSON.parse(await readFile(adapterOptions(true).config, 'utf8'));
+    expect(adapter.vars.PRE_INBOUND_SETTINGS).toEqual(previewApp.env.PRE_INBOUND_SETTINGS?.value);
+
+    await writeFile(file, JSON.stringify({ ...localTarget, ...target.preInbound, vars: previewVars }));
+    const fixedApp = await cloudflareConfig.worker({ mode: 'development', isPreview: false });
+    expect(fixedApp.env.DB.id).toBe(target.preInbound.databaseId);
+    expect(fixedApp.env.INBOUND_ROUTING_DB).toBeUndefined();
+    expect(fixedApp.env.PRE_INBOUND_SETTINGS?.value).toEqual(previewApp.env.PRE_INBOUND_SETTINGS?.value);
+    expect(JSON.parse(await readFile(adapterOptions(true).config, 'utf8')).vars.PRE_INBOUND_SETTINGS)
+      .toEqual(fixedApp.env.PRE_INBOUND_SETTINGS?.value);
   } finally {
     if (previous === undefined) delete process.env.FLAREMAIL_CF_CONFIG;
     else process.env.FLAREMAIL_CF_CONFIG = previous;
@@ -123,6 +159,7 @@ test('the HMR adapter honors selected local targets while builds use the public 
     target.vars.OUTBOUND_FROM_NAME = 'Private local test';
     target.databaseId = '11111111-1111-4111-8111-111111111111';
     target.bucket = 'private-local-fixture';
+    target.inboundRouting = { databaseId: '33333333-3333-4333-8333-333333333333', databaseName: 'routing', environment: 'preview' };
     target.secrets = ['SYNTHETIC_LOCAL_SECRET'];
     const file = join(directory, 'local.json');
     await writeFile(file, JSON.stringify(target), { mode: 0o600 });
@@ -131,11 +168,14 @@ test('the HMR adapter honors selected local targets while builds use the public 
     const generated = JSON.parse(await readFile(development.config, 'utf8'));
     expect(generated.vars.OUTBOUND_FROM_NAME).toBe('Private local test');
     expect(generated.d1_databases[0].database_id).toBe(target.databaseId);
+    expect(generated.d1_databases[1]).toMatchObject({ binding: 'INBOUND_ROUTING_DB', database_id: target.inboundRouting.databaseId });
+    expect(generated.vars.INBOUND_ROUTING_SCOPE).toEqual({ environment: 'preview' });
     expect(generated.r2_buckets[0].bucket_name).toBe(target.bucket);
     expect(generated.secrets.required).toEqual(['SYNTHETIC_LOCAL_SECRET']);
     const build = adapterOptions(false);
     expect(JSON.parse(await readFile(build.config, 'utf8')).d1_databases[0].database_id).toBe(localDatabaseId);
     target.vars.APP_ENV = 'production';
+    delete target.inboundRouting;
     await writeFile(file, JSON.stringify(target), { mode: 0o600 });
     expect(() => adapterOptions(true)).toThrow('Local commands require');
   } finally {

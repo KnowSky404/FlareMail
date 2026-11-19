@@ -12,6 +12,7 @@ import type { MailAddressDeletePolicy } from '$lib/server/mail-identities/routin
 import { updateManagedMailAddressSending, type MailAddressSendingAction } from '$lib/server/mail-identities/sending';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 import { getManagedMailAddress } from '$lib/server/db/mail-identities';
+import { requireExistingMailboxOwnership } from '$lib/server/mail-identities/ownership';
 import { MailIdentityValidationError, normalizeDisplayName, normalizeAddressSignature } from '$lib/server/mail-identities/validation';
 
 type AddressAction = 'disable' | 'enable' | 'import' | 'restore' | 'retry' | MailAddressSendingAction;
@@ -84,6 +85,7 @@ export const PATCH: RequestHandler = withApiHandler(async (event) => {
     if (error instanceof MailIdentityValidationError) throw new ApiError(400, 'MAIL_ADDRESS_INPUT_INVALID', '名称或签名格式无效。', undefined, undefined, false);
     throw error;
   }
+  await requireExistingMailboxOwnership(env, session.userId, addressId);
   const result = await env.DB.prepare(`UPDATE mail_addresses SET display_name = ?, signature = ?, updated_at = ?
     WHERE id = ? AND owner_user_id = ? AND lifecycle_status <> 'deleted'`)
     .bind(displayName, signature, new Date().toISOString(), addressId, session.userId).run();

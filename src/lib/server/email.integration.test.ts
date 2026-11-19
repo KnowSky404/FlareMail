@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createInboundDedupeKey, handleInboundEmail } from './email';
 import { readPreInboundBindings } from './inbound/pre-inbound';
+import { claimInboundRoutingOwner, findInboundRoutingOwner } from './inbound/routing-ownership';
+import { updateMailDomain } from './mail-identities/domains';
+import { createManagedMailAddress, deleteManagedMailAddress, type MailIdentityRoutingDependencies } from './mail-identities/routing';
+import { syncCloudflareMailIdentities } from './mail-identities/sync';
 import { parseAddress } from './workspace/shared';
 import { FLAREMAIL_SCHEMA_VERSION } from './db/schema-version';
 import { addBlockedSender, listBlockedSenders, listQuarantinedMail, releaseQuarantinedMail, removeBlockedSender } from './db/blocked-senders';
@@ -370,6 +374,236 @@ describe('single Worker PRE inbound', () => {
     } finally {
       prepare.mockRestore();
     }
+  });
+});
+
+describe('shared PRE and production inbound routing', () => {
+  function sharedInbound() {
+    const production = environment();
+    const preview = environment();
+    const registry = new Database(':memory:');
+    registry.exec(readFileSync(new URL('../../../routing-migrations/0001_ownership.sql', import.meta.url), 'utf8'));
+    const binding = new TestD1(registry);
+    const DB = binding as unknown as D1Database;
+    const withRouting = (env: typeof production.env, environment: 'production' | 'preview') => ({
+      ...env,
+      INBOUND_ROUTING_DB: DB,
+      INBOUND_ROUTING_SCOPE: { environment }
+    });
+    const prod = withRouting(production.env, 'production');
+    const pre = withRouting(preview.env, 'preview');
+    const email = {
+      ...prod,
+      PRE_INBOUND_SETTINGS: { recipient: null, enabled: true },
+      PRE_INBOUND_DB: pre.DB,
+      PRE_INBOUND_BUCKET: pre.BUCKET
+    };
+    return { production, preview, binding, DB, prod, pre, email };
+  }
+
+  function readyCatchAll(database: Database) {
+    database.query(`UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?`)
+      .run(new Date().toISOString());
+  }
+
+  test('dispatches shared-domain and exclusive-domain recipients, keeps the two mail stores isolated', async () => {
+    const { production, preview, DB, prod, email } = sharedInbound();
+    addManagedAddress(preview.database, 'address-pre', 'pre@example.test');
+    preview.database.query(`INSERT INTO mail_domains
+      (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, unknown_recipient_policy, catch_all_target, catch_all_checked_at)
+      VALUES ('pre-domain', 'user-1', 'preview.test', 'zone-pre', 'flaremail', 'collect', 'this_worker', ?)`).run(new Date().toISOString());
+    readyCatchAll(production.database);
+    await updateMailDomain(prod, 'user-1', 'domain-1', { unknownRecipientPolicy: 'collect' });
+    await claimInboundRoutingOwner(DB, 'mailbox', 'pre@example.test', 'preview');
+    await claimInboundRoutingOwner(DB, 'mailbox', 'owner@example.test', 'production');
+    await claimInboundRoutingOwner(DB, 'catch_all', 'preview.test', 'preview');
+    const delivery = async (to: string, enabled = true) => {
+      const inbound = message(fixtureBytes(), to);
+      await handleInboundEmail(inbound.value, { ...email, PRE_INBOUND_SETTINGS: { recipient: null, enabled } });
+      return inbound.rejected();
+    };
+    for (const recipient of ['PRE+tag@EXAMPLE.TEST', 'unknown@preview.test', 'owner@example.test', 'unknown@example.test']) {
+      expect(await delivery(recipient)).toBe('');
+    }
+    expect(await delivery('outside@example.net')).not.toBe('');
+    expect(await delivery('pre@example.test', false)).not.toBe('');
+    preview.database.query(`UPDATE mail_addresses SET lifecycle_status = 'deleted', receive_enabled = 0 WHERE id = 'address-pre'`).run();
+    expect(await delivery('pre@example.test')).not.toBe('');
+    await claimInboundRoutingOwner(DB, 'mailbox', 'pending@example.test', 'preview');
+    expect(await delivery('pending@example.test')).not.toBe('');
+    const recipients = (db: Database) => db.query('SELECT "to" FROM email_messages ORDER BY "to"').all();
+    expect(recipients(production.database)).toEqual([{ to: 'owner@example.test' }, { to: 'unknown@example.test' }]);
+    expect(recipients(preview.database)).toEqual([{ to: 'pre+tag@example.test' }, { to: 'unknown@preview.test' }]);
+    expect([...production.BUCKET.objects.keys()].filter((key) => key.endsWith('/message.eml'))).toHaveLength(2);
+    expect([...preview.BUCKET.objects.keys()].filter((key) => key.endsWith('/message.eml'))).toHaveLength(2);
+  });
+
+  test('reserves one address family and one catch-all across concurrent configuration operations', async () => {
+    const { production, preview, DB, prod, pre } = sharedInbound();
+    await expect(createManagedMailAddress({
+      ...prod,
+      PRE_INBOUND_SETTINGS: { recipient: ' Reserved@EXAMPLE.TEST ', enabled: false }
+    }, 'user-1', { domainId: 'domain-1', address: 'reserved+tag' }))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_OWNERSHIP_CONFLICT' });
+    expect(await findInboundRoutingOwner(DB, 'mailbox', 'reserved@example.test')).toBeNull();
+    const attempts = await Promise.allSettled([
+      createManagedMailAddress(prod, 'user-1', { domainId: 'domain-1', address: 'Alias' }),
+      createManagedMailAddress(pre, 'user-1', { domainId: 'domain-1', address: 'ALIAS+test' })
+    ]);
+    // The successful reservation stays assigned even when the provider call fails.
+    const errors = attempts.map((attempt) => attempt.status === 'rejected' ? attempt.reason.code : null).sort();
+    expect(errors).toEqual(['CLOUDFLARE_ROUTING_NOT_CONFIGURED', 'MAIL_ROUTING_OWNERSHIP_CONFLICT']);
+    const owner = await findInboundRoutingOwner(DB, 'mailbox', 'alias@example.test');
+    expect(owner).not.toBeNull();
+    const wrongEnvironment = owner === 'production' ? 'preview' : 'production';
+    const databases = { production: production.database, preview: preview.database };
+    const losingDatabase = databases[wrongEnvironment];
+    expect(losingDatabase.query("SELECT COUNT(*) AS count FROM mail_addresses WHERE local_part LIKE 'alias%'").get()).toEqual({ count: 0 });
+
+    await claimInboundRoutingOwner(DB, 'mailbox', 'owner@example.test', 'preview');
+    const dependencies: MailIdentityRoutingDependencies = { cloudflareClient: () => ({
+      listRules: async () => { throw new Error('unowned mailbox must not query the provider'); },
+      createWorkerRule: async () => { throw new Error('unexpected provider write'); },
+      deleteRule: async () => { throw new Error('unexpected provider write'); }
+    }) };
+    await expect(deleteManagedMailAddress(prod, 'user-1', 'address-1', dependencies))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_OWNERSHIP_CONFLICT' });
+    expect(production.database.query("SELECT lifecycle_status FROM mail_addresses WHERE id = 'address-1'").get())
+      .toEqual({ lifecycle_status: 'active' });
+
+    readyCatchAll(production.database);
+    readyCatchAll(preview.database);
+    const collect = (env: typeof prod) => updateMailDomain(env, 'user-1', 'domain-1', { unknownRecipientPolicy: 'collect' });
+    const collectors = await Promise.allSettled([collect(prod), collect(pre)]);
+    expect(collectors.map(({ status }) => status).sort()).toEqual(['fulfilled', 'rejected']);
+    const catchAllOwner = await findInboundRoutingOwner(DB, 'catch_all', 'example.test');
+    const [winner, loser] = catchAllOwner === 'production' ? [prod, pre] : [pre, prod];
+    await updateMailDomain(winner, 'user-1', 'domain-1', { unknownRecipientPolicy: 'reject' });
+    await expect(collect(loser)).rejects.toMatchObject({ code: 'MAIL_ROUTING_OWNERSHIP_CONFLICT' });
+  });
+
+  test('allows PRE to manage the exact legacy reservation and blocks its tagged variants', async () => {
+    const { pre, email, DB, preview } = sharedInbound();
+    const PRE_INBOUND_SETTINGS = { recipient: 'reserved@example.test', enabled: false };
+    const previewSettings = { ...pre, PRE_INBOUND_SETTINGS: { ...PRE_INBOUND_SETTINGS, previewApp: true as const } };
+    for (const env of [previewSettings, { ...email, PRE_INBOUND_SETTINGS }]) {
+      await expect(createManagedMailAddress(env, 'user-1', { domainId: 'domain-1', address: 'reserved+tag' }))
+        .rejects.toMatchObject({ code: 'MAIL_ROUTING_OWNERSHIP_CONFLICT' });
+    }
+    await expect(createManagedMailAddress(previewSettings, 'user-1', { domainId: 'domain-1', address: 'reserved' }))
+      .rejects.toMatchObject({ code: 'CLOUDFLARE_ROUTING_NOT_CONFIGURED' });
+    expect(await findInboundRoutingOwner(DB, 'mailbox', 'reserved@example.test')).toBe('preview');
+    expect(preview.database.query("SELECT email FROM mail_addresses WHERE local_part LIKE 'reserved%'").all())
+      .toEqual([{ email: 'reserved@example.test' }]);
+  });
+
+  test('disabling a domain preserves its selection without claiming or transferring catch-all ownership', async () => {
+    const { prod, DB, production } = sharedInbound();
+    production.database.query("UPDATE mail_domains SET unknown_recipient_policy = 'collect'").run();
+    const update = (enabled: boolean) => updateMailDomain(prod, 'user-1', 'domain-1', { enabled, unknownRecipientPolicy: 'collect' });
+    expect((await update(false))?.enabled).toBe(0);
+    expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBeNull();
+    await claimInboundRoutingOwner(DB, 'catch_all', 'example.test', 'preview');
+    expect((await update(false))?.enabled).toBe(0);
+    await expect(update(true)).rejects.toMatchObject({ code: 'MAIL_ROUTING_OWNERSHIP_CONFLICT' });
+    expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBe('preview');
+  });
+
+  test('verifies a newly selected catch-all even when saving a disabled domain', async () => {
+    const { prod, DB, production } = sharedInbound();
+    const update = () => updateMailDomain(prod, 'user-1', 'domain-1', { enabled: false, unknownRecipientPolicy: 'collect' });
+    await expect(update()).rejects.toMatchObject({ code: 'MAIL_DOMAIN_COLLECT_NOT_READY' });
+    expect(production.database.query('SELECT unknown_recipient_policy FROM mail_domains').get())
+      .toEqual({ unknown_recipient_policy: 'reject' });
+    readyCatchAll(production.database);
+    expect(await update()).toMatchObject({ enabled: 0, unknown_recipient_policy: 'collect' });
+    expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBeNull();
+  });
+
+  test('a fixed PRE app without shared routing keeps identity settings read-only and rejects email events', async () => {
+    const { env, database } = environment();
+    const previewApp = { ...env, PRE_INBOUND_SETTINGS: { recipient: 'reserved@example.test', enabled: false, previewApp: true as const } };
+    await expect(createManagedMailAddress(previewApp, 'user-1', { domainId: 'domain-1', address: 'reserved' }))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_FIXED_PRE_READ_ONLY' });
+    await expect(syncCloudflareMailIdentities(previewApp, 'user-1'))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_FIXED_PRE_READ_ONLY' });
+    await expect(updateMailDomain(previewApp, 'user-1', 'domain-1', { enabled: false }))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_FIXED_PRE_READ_ONLY' });
+    for (const recipient of ['reserved@example.test', 'owner@example.test']) {
+      await expect(handleInboundEmail(message(fixtureBytes(), recipient).value, previewApp)).rejects.toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
+    }
+    expect(database.query('SELECT "to" FROM email_messages').all()).toEqual([]);
+  });
+
+  test('requires a PRE mailbox claim to deliver the exact legacy reservation under shared routing', async () => {
+    const { production, preview, binding, DB, email } = sharedInbound();
+    addManagedAddress(preview.database, 'address-pre', 'pre@example.test');
+    await claimInboundRoutingOwner(DB, 'catch_all', 'example.test', 'production');
+    await claimInboundRoutingOwner(DB, 'mailbox', 'owner@example.test', 'production');
+    const deliverFixed = async (recipient: string) => {
+      const inbound = message(fixtureBytes(), recipient);
+      await handleInboundEmail(inbound.value, { ...email, PRE_INBOUND_SETTINGS: { recipient, enabled: true } });
+      return inbound.rejected();
+    };
+    expect(await deliverFixed('pre@example.test')).not.toBe('');
+    expect(await deliverFixed('owner@example.test')).not.toBe('');
+    const failed = spyOn(binding, 'prepare').mockImplementation(() => { throw new Error('routing D1 unavailable'); });
+    try {
+      await expect(deliverFixed('pre@example.test')).rejects.toThrow('routing D1 unavailable');
+    } finally {
+      failed.mockRestore();
+    }
+    expect(production.BUCKET.objects.size).toBe(0);
+    expect(preview.BUCKET.objects.size).toBe(0);
+    await claimInboundRoutingOwner(DB, 'mailbox', 'pre@example.test', 'preview');
+    expect(await deliverFixed('pre@example.test')).toBe('');
+    expect(preview.database.query('SELECT "to" FROM email_messages').all()).toEqual([{ to: 'pre@example.test' }]);
+  });
+
+  test('sync imports only assigned rules and production delivery survives a PRE mail-store outage', async () => {
+    const { production, preview, binding, DB, prod, email } = sharedInbound();
+    await claimInboundRoutingOwner(DB, 'mailbox', 'owner@example.test', 'production');
+    await claimInboundRoutingOwner(DB, 'mailbox', 'prod@example.test', 'production');
+    await claimInboundRoutingOwner(DB, 'mailbox', 'pre@example.test', 'preview');
+    const zone = { id: 'a'.repeat(32), name: 'example.test', accountId: 'b'.repeat(32) };
+    production.database.query("UPDATE mail_domains SET cloudflare_zone_id = ?, cloudflare_account_id = ? WHERE id = 'domain-1'")
+      .run(zone.id, zone.accountId);
+    const actions = [{ type: 'worker', value: ['flaremail'] }];
+    const registryReads = spyOn(binding, 'prepare');
+    const synced = await syncCloudflareMailIdentities({
+      ...prod,
+      MAIL_IDENTITY_WORKER_NAME: 'flaremail', MAIL_IDENTITY_ACCOUNT_ID: zone.accountId,
+      CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN: 'fixture'
+    }, 'user-1', {
+      listZones: async () => [zone],
+      getCatchAll: async () => ({ enabled: true, actions }),
+      listRules: async () => ['prod', 'pre', ...Array.from({ length: 400 }, (_, index) => 'unassigned-' + index)].map((local) => ({
+        id: local, name: local, enabled: true, source: 'api',
+        matchers: [{ type: 'literal', field: 'to', value: local + '@example.test' }], actions
+      }))
+    });
+    expect(synced).toMatchObject({ addressesCreated: 1, skippedRules: 401 });
+    expect(registryReads.mock.calls.filter(([sql]) => sql.includes('json_each'))).toHaveLength(3);
+    registryReads.mockRestore();
+    expect(production.database.query('SELECT email FROM mail_addresses ORDER BY email').all())
+      .toEqual([{ email: 'owner@example.test' }, { email: 'prod@example.test' }]);
+    expect(production.database.query('SELECT unknown_recipient_policy FROM mail_domains').get()).toEqual({ unknown_recipient_policy: 'reject' });
+
+    const previewDb = spyOn(preview.DB, 'prepare').mockImplementation(() => { throw new Error('PRE D1 unavailable'); });
+    try {
+      await handleInboundEmail(message().value, email);
+      expect(previewDb).not.toHaveBeenCalled();
+      await expect(handleInboundEmail(message(fixtureBytes(), 'pre@example.test').value, email)).rejects.toThrow('PRE D1 unavailable');
+    } finally {
+      previewDb.mockRestore();
+    }
+    const routingDb = spyOn(binding, 'prepare').mockImplementation(() => { throw new Error('routing D1 unavailable'); });
+    try {
+      await expect(handleInboundEmail(message(fixtureBytes(), 'prod@example.test').value, email)).rejects.toThrow('routing D1 unavailable');
+    } finally {
+      routingDb.mockRestore();
+    }
+    expect(production.database.query('SELECT "to" FROM email_messages').all()).toEqual([{ to: 'owner@example.test' }]);
   });
 });
 
