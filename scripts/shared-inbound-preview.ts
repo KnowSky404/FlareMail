@@ -1,5 +1,8 @@
-import { readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { CloudflareTarget } from './cloudflare-target.ts';
 
 export function sharedInboundPreviewTargetHash(target: CloudflareTarget) {
@@ -61,5 +64,53 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true || receipt.legacyOperationsQuiesced !== true ||
       (phase === 'activate' && (!receipt.protectVersionId || receipt.protectionActive !== true || receipt.mailRoutesAndMappingsVerified !== true))) {
     throw new Error(errorCode);
+  }
+  return receipt.releaseCommit as string;
+}
+
+export function assertProductionReleaseSource(projectRoot: string, releaseCommit: string) {
+  const git = (args: string[]) => execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' }).trim();
+  if (git(['rev-parse', 'HEAD']) !== releaseCommit || git(['status', '--porcelain'])) {
+    throw new Error('INBOUND_PRODUCTION_RELEASE_SOURCE_NOT_VERIFIED');
+  }
+}
+
+export function assertLegacyProductionHasNoActiveInboundProtection(worker: string) {
+  // Avoid evaluating the project's Cloudflare configuration during metadata reads.
+  const directory = mkdtempSync(join(tmpdir(), 'flaremail-active-worker-'));
+  const cf = (args: string[]) => JSON.parse(execFileSync('cf', args, {
+    cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
+  }));
+  try {
+    let deployments;
+    try {
+      deployments = cf(['workers', 'deployments', 'list', '--worker', worker, '--per-page', '1']).deployments;
+    } catch (error) {
+      const stderr = (error as { stderr?: string }).stderr ?? '';
+      if (/\[10007\].*worker does not exist/iu.test(stderr) && /\b404 Not Found\b/u.test(stderr)) return;
+      throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
+    }
+    if (!Array.isArray(deployments)) throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
+    if (!deployments.length) return;
+    const versions = deployments[0].versions;
+    const activeVersions = Array.isArray(versions) ? versions.filter(item => item.percentage > 0) : [];
+    if (!activeVersions.length || activeVersions.some(item => !routingD1Id(item.version_id))) {
+      throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
+    }
+    for (const version of activeVersions) {
+      let bindings;
+      try {
+        const metadata = cf(['workers', 'versions', 'get', version.version_id, '--worker', worker]);
+        bindings = metadata.bindings ?? metadata.resources?.bindings;
+      } catch {
+        throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
+      }
+      if (!Array.isArray(bindings)) throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
+      if (bindings.some(binding => ['INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE', 'PRE_INBOUND_SETTINGS'].includes(binding.name))) {
+        throw new Error('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 }

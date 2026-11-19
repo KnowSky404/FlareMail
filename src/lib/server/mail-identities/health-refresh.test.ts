@@ -6,7 +6,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { CloudflareEmailRoutingError, type CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 import { ResendDomainError } from '$lib/server/resend-domains';
-import { refreshMailDomainHealth, refreshManagedMailDomainHealth, type MailHealthRefreshDependencies } from './health-refresh';
+import { refreshMailDomainHealth, refreshManagedMailDomainHealth, refreshPreviewCatchAllHealth, type MailHealthRefreshDependencies } from './health-refresh';
 
 const schema = readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8');
 const ownerId = 'health-owner-000000000000000001';
@@ -98,6 +98,30 @@ function successDependencies(nowMs = defaultNow): MailHealthRefreshDependencies 
 }
 
 describe('scheduled mail domain health refresh', () => {
+  test('production refreshes only enabled PRE-owned catch-all domains with read operations', async () => {
+    const prod = createFixture();
+    const pre = createFixture({ collect: true });
+    pre.sqlite.query(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, unknown_recipient_policy)
+      VALUES ('unowned', ?, 'excluded.example.test', ?, 'flaremail-worker', 'collect')`).run(ownerId, zoneId);
+    const deps = successDependencies();
+    const factory = deps.cloudflareClientFactory!;
+    deps.cloudflareClientFactory = (...args) => ({ ...factory(...args), listRules: async () => { throw new Error('exact rules are out of scope'); } });
+    const env = {
+      ...prod.env, PRE_INBOUND_SETTINGS: { recipient: null, enabled: true }, PRE_INBOUND_DB: pre.db,
+      INBOUND_ROUTING_SCOPE: { environment: 'production' as const },
+      INBOUND_ROUTING_DB: { prepare: () => ({
+        all: async () => ({ results: [{ route_key: 'mail.example.test' }] }),
+        bind: () => ({ first: async () => ({ environment: 'preview' }) })
+      }) } as unknown as D1Database
+    };
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain()).toMatchObject({ catch_all_target: 'this_worker', catch_all_checked_at: new Date(defaultNow).toISOString(), cloudflare_error_code: null });
+    expect(prod.readDomain().catch_all_checked_at).toBeNull();
+    expect(pre.sqlite.query("SELECT catch_all_checked_at FROM mail_domains WHERE id='unowned'").get()).toEqual({ catch_all_checked_at: null });
+    pre.sqlite.close();
+    prod.sqlite.close();
+  });
+
   test('ignores retained production records for PRE mailboxes', async () => {
     const fixture = createFixture({ collect: true });
     fixture.env.PRE_INBOUND_SETTINGS = { recipient: 'one@mail.example.test', enabled: false };

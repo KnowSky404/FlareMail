@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { sharedInboundPreviewTargetHash } from './shared-inbound-preview';
+import { assertSharedInboundProduction, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
 
 test('production activation requires the reviewed PRE and an active, paused protection deployment', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-shared-prod-'));
@@ -32,9 +32,8 @@ test('production activation requires the reviewed PRE and an active, paused prot
   try {
     await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
     await writeFile(proof, JSON.stringify({ ...evidence, phase: 'protect', targetHash: sharedInboundPreviewTargetHash(candidate) }), { mode: 0o600 });
-    const guarded = await cloudflareConfig.worker({ mode: 'production', isPreview: false });
-    expect(guarded.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'production', readOnly: true });
-    expect(guarded.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: null, enabled: false });
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toBe(evidence.releaseCommit);
+    await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_RELEASE_SOURCE_NOT_VERIFIED');
 
     const active = { ...candidate, vars: { ...candidate.vars, PRE_INBOUND_ENABLED: 'true' } };
     await writeFile(file, JSON.stringify(active));
@@ -43,9 +42,7 @@ test('production activation requires the reviewed PRE and an active, paused prot
     await writeFile(proof, JSON.stringify({ ...activation, protectionActive: false }));
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
     await writeFile(proof, JSON.stringify(activation));
-    const activated = await cloudflareConfig.worker({ mode: 'production', isPreview: false });
-    expect(activated.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'production' });
-    expect(activated.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: null, enabled: true });
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toBe(evidence.releaseCommit);
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
