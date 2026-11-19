@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertSharedInboundPreview } from './shared-inbound-preview.ts';
 import { normalizePreInboundRecipient, PRE_INBOUND_BINDING_NAMES, readPreInboundConfig } from '../src/lib/server/inbound/pre-inbound.ts';
 
 interface D1Target {
@@ -109,9 +110,14 @@ export function readCloudflareTarget(config = process.env.FLAREMAIL_CF_CONFIG ??
   return target;
 }
 
-export function checkPreInboundRelease(target: CloudflareTarget) {
-  // shortcut: reservation targets are local-only until identity and live deployment guards are implemented.
-  if (target.vars.PRE_INBOUND_RECIPIENT !== undefined || target.inboundRouting) throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+export function checkPreInboundRelease(target: CloudflareTarget, nativePreview = false) {
+  if (target.vars.PRE_INBOUND_RECIPIENT === undefined && !target.inboundRouting) return;
+  if (nativePreview && target.vars.APP_ENV === 'preview' && target.inboundRouting &&
+      target.vars.PRE_INBOUND_RECIPIENT === undefined && process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT) {
+    assertSharedInboundPreview(target, process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT);
+    return;
+  }
+  throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
 }
 
 export function localStateArgs(persistTo?: string) {

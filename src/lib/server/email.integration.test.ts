@@ -516,8 +516,12 @@ describe('shared PRE and production inbound routing', () => {
     expect(production.database.query('SELECT unknown_recipient_policy FROM mail_domains').get())
       .toEqual({ unknown_recipient_policy: 'reject' });
     readyCatchAll(production.database);
-    expect(await update()).toMatchObject({ enabled: 0, unknown_recipient_policy: 'collect' });
+    await updateMailDomain(prod, 'user-1', 'domain-1', { enabled: false });
+    expect(await updateMailDomain(prod, 'user-1', 'domain-1', { unknownRecipientPolicy: 'collect' }))
+      .toMatchObject({ enabled: 0, unknown_recipient_policy: 'collect' });
     expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBeNull();
+    expect(await updateMailDomain(prod, 'user-1', 'domain-1', { enabled: true })).toMatchObject({ enabled: 1 });
+    expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBe('production');
   });
 
   test('a fixed PRE app without shared routing keeps identity settings read-only and rejects email events', async () => {
@@ -533,6 +537,18 @@ describe('shared PRE and production inbound routing', () => {
       await expect(handleInboundEmail(message(fixtureBytes(), recipient).value, previewApp)).rejects.toThrow('PRE_INBOUND_CONFIGURATION_INVALID');
     }
     expect(database.query('SELECT "to" FROM email_messages').all()).toEqual([]);
+  });
+
+  test('native shared PRE acceptance cannot reserve or mutate mail routing', async () => {
+    const { pre, DB, preview } = sharedInbound();
+    const stage = { ...pre, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const, readOnly: true as const } };
+    await expect(createManagedMailAddress(stage, 'user-1', { domainId: 'domain-1', address: 'unassigned' }))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_PREVIEW_READ_ONLY' });
+    await expect(syncCloudflareMailIdentities(stage, 'user-1')).rejects.toMatchObject({ code: 'MAIL_ROUTING_PREVIEW_READ_ONLY' });
+    await expect(updateMailDomain(stage, 'user-1', 'domain-1', { enabled: false }))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_PREVIEW_READ_ONLY' });
+    expect(await findInboundRoutingOwner(DB, 'mailbox', 'unassigned@example.test')).toBeNull();
+    expect(preview.database.query('SELECT enabled FROM mail_domains WHERE id = ?').get('domain-1')).toEqual({ enabled: 1 });
   });
 
   test('requires a PRE mailbox claim to deliver the exact legacy reservation under shared routing', async () => {

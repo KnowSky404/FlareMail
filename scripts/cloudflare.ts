@@ -52,7 +52,12 @@ if (command === 'typegen') {
 } else if (command === 'deploy' || command === 'pre') {
   const forwardedArgs = normalizeDeployArguments(args);
   const target = readCloudflareTarget(process.env.FLAREMAIL_CF_CONFIG ?? (command === 'deploy' ? 'cloudflare.deploy.json' : 'cloudflare.preview.json'), true);
-  checkPreInboundRelease(target);
+  const sharedPreview = command === 'pre' && Boolean(target.inboundRouting);
+  const previewArgs = forwardedArgs.filter(argument => argument !== '--dry-run');
+  if (sharedPreview && (previewArgs.length !== 2 || previewArgs[0] !== '--preview-name' || previewArgs[1] !== 'mail-ai')) {
+    throw new Error('Shared inbound PRE must deploy to mail-ai through a fresh build.');
+  }
+  checkPreInboundRelease(target, sharedPreview);
   const invocation = createDeployInvocation('deploy', environment, args);
   await run(command === 'deploy' ? [invocation.command, ...invocation.args] : ['cf', 'previews', 'deploy', '--mode', mode, ...forwardedArgs]);
 } else throw new Error('Usage: bun scripts/cloudflare.ts <build|preview|typegen|migrate|dry-run|deploy|pre>');

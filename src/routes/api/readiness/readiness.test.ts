@@ -70,6 +70,20 @@ describe('/api/readiness', () => {
       .toBe(FLAREMAIL_SCHEMA_VERSION);
   });
 
+  test('checks the configured shared registry and reports the read-only preview scope', async () => {
+    using database = new Database(':memory:');
+    using registry = new Database(':memory:');
+    applyMigrations(database);
+    const bindings = { INBOUND_ROUTING_SCOPE: { environment: 'preview', readOnly: true }, INBOUND_ROUTING_DB: new D1(registry) };
+    const missing = await health(database, bindings);
+    expect(missing.status).toBe(503);
+    expect(await missing.json()).toMatchObject({ error: { code: 'INBOUND_ROUTING_NOT_READY' } });
+    registry.exec(readFileSync(join(repositoryRoot, 'routing-migrations/0001_ownership.sql'), 'utf8'));
+    const ready = await health(database, bindings);
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({ inboundRouting: { environment: 'preview', readOnly: true } });
+  });
+
   test('exposes provider-specific health only through the authenticated readiness endpoint', async () => {
     const database = new Database(':memory:');
     applyMigrations(database);

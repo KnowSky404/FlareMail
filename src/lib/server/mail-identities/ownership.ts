@@ -14,7 +14,14 @@ export function isStandaloneFixedPreview(env: CloudflareEnv) {
   return env.PRE_INBOUND_SETTINGS?.previewApp === true && !readInboundRouting(env);
 }
 
+export function isMailRoutingReadOnly(env: CloudflareEnv) {
+  return env.INBOUND_ROUTING_SCOPE?.readOnly === true || isStandaloneFixedPreview(env);
+}
+
 export function requireMailRoutingWrites(env: CloudflareEnv) {
+  if (env.INBOUND_ROUTING_SCOPE?.readOnly === true) {
+    throw new ApiError(403, 'MAIL_ROUTING_PREVIEW_READ_ONLY', 'PRE 验收期间的邮件身份配置为只读。', undefined, undefined, false);
+  }
   if (isStandaloneFixedPreview(env)) {
     throw new ApiError(403, 'MAIL_ROUTING_FIXED_PRE_READ_ONLY', '固定地址 PRE 的邮件身份配置为只读。', undefined, undefined, false);
   }

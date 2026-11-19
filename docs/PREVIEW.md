@@ -20,6 +20,12 @@
    允许这些检查请求，须先获得域名/地址检查状态写入授权，不能视为纯只读访问。
 6. PRE 业务验收完成后，分别在 push 和创建 PR 前实际执行 `codex review --base origin/main` 并处理有效问题。等待当前 head 的 Codex Code Review 和 Security Review 完成，再按仓库默认授权 rebase 合并和收尾。实现提交追加后补做受影响本地/PRE 验收及两种 review。
 
+### 共享归属的只读 PRE 验收
+
+候选目标绑定当前 `mail-ai` 的独立邮件 D1/R2 和已回填的专用归属 D1。Previews Base 和将发布的有效配置需确认没有邮件规则管理凭证。使用权限为 `0600` 的私有 JSON 记录本次控制面检查，路径通过 `FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT` 提供。记录 `checkedAt`、`accountId`、`workerName`、`previewName`、`targetHash`、`routingDatabaseId`，以及 `production` 和 `preview` 的 `deploymentId`、`databaseId` 和 `bucket`。实际核对归属表和 Base 后，分别记录 `registryVerified` 和 `previewBaseVerified` 为 `true`。`targetHash` 是解析后的完整候选目标用 `JSON.stringify` 序列化后的 SHA-256。上传前重新核对线上部署，两侧证据发生变化则更新预检。`CLOUDFLARE_ACCOUNT_ID` 须与私有记录中的账号一致。
+
+该阶段只发布 `mail-ai`，以 Owner 会话访问只读域名、邮箱和 `/api/readiness`。就绪响应包含 `inboundRouting.environment=preview` 和 `inboundRouting.readOnly=true`。部署后重新核对 PRE 实际绑定和生产部署指针。预约的 SMTP 验收和生产规则切换按共享收信 SPEC 的后续环节执行。
+
 单 Worker 收信方案启用后，PRE 的 D1 迁移与 D1/R2 换绑须同时检查生产 `email()`、目标 PRE 版本和所有可访问该存储的入口，包括稳定 PRE URL、部署专属 URL 和版本预览 URL。线上迁移要求所有相关版本兼容前后 schema；不兼容时先发布兼容版本，或按授权暂停并排空受影响的请求。换绑也需暂停、排空并核对两侧绑定和已有数据。逐个重新核验实际绑定与 schema 后才恢复本次维护涉及的入口。此要求适用于下文各项 PRE 迁移。参见 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
 
 生产建立保留地址后，普通 PRE 发布须在上传前检查生产部署完整版本清单，只接受一个占 100% 流量的活动版本，并比较候选地址及 D1/R2 与其 PRE 入站配置。发布后再核对实际生效值。经授权的暂停换绑窗口按 SPEC 执行。

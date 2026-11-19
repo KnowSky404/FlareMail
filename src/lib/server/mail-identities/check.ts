@@ -12,7 +12,7 @@ import {
 import { listManagedMailAddresses, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { getExactResendDomain, canSendFromResendDomain, ResendDomainError } from '$lib/server/resend-domains';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, isStandaloneFixedPreview } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, isMailRoutingReadOnly } from './ownership';
 
 type CloudflareClient = Pick<CloudflareEmailRoutingClient, 'getZone' | 'listRules' | 'getCatchAll'>;
 type ResendLookup = typeof getExactResendDomain;
@@ -249,8 +249,8 @@ export async function checkManagedMailDomain(
     ? await acquireProviderCheckLease(env.DB, 'resend', domain, resendCheckToken, resendLeaseAt)
     : false;
   const routingToken = env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim();
-  const fixedPreview = isStandaloneFixedPreview(env);
-  const cloudflare = fixedPreview ? null : dependencies?.cloudflareClient ?? (routingToken
+  const readOnly = isMailRoutingReadOnly(env);
+  const cloudflare = readOnly ? null : dependencies?.cloudflareClient ?? (routingToken
     ? new CloudflareEmailRoutingClient({
         token: routingToken,
         timeoutMs: 4_000,
@@ -258,7 +258,7 @@ export async function checkManagedMailDomain(
         deadlineAt: Date.parse(now()) + 12_000
       })
     : null);
-  if (fixedPreview) {
+  if (readOnly) {
     result.cloudflare.errorCode = 'cloudflare_token_missing';
   } else if (!cloudflare) {
     result.cloudflare.errorCode = 'cloudflare_token_missing';

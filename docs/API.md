@@ -151,11 +151,19 @@ conflicting claim returns HTTP 409 with `MAIL_ROUTING_OWNERSHIP_CONFLICT`.
 Sync imports only routes assigned to the current environment. Disabling or
 deleting a mailbox preserves its receiving ownership. See the
 [shared inbound routing SPEC](./specs/shared-inbound-routing.md).
+Enable catch-all collection in workspace domain settings when shared inbound
+routing is configured. The domain configuration CLI only accepts `reject` in
+that configuration.
 
 In standalone fixed-address PRE, the workspace can read saved identities.
 Identity and domain writes and discovery return HTTP 403 with
 `MAIL_ROUTING_FIXED_PRE_READ_ONLY`. Cloudflare identity checks are disabled
 for this local mode.
+
+Native shared-routing PRE acceptance returns HTTP 403 with
+`MAIL_ROUTING_PREVIEW_READ_ONLY` for identity writes and discovery.
+Authenticated readiness checks the bound ownership table and reports the
+current routing environment and read-only state.
 
 Domain warnings on both management pages use the current `cloudflare_error_code`
 and `resend_error_code` independently, with provider-specific credential guidance
