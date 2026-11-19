@@ -2,7 +2,7 @@
 
 使用全局 `cf`（已验证 `1.0.0-beta.25`，Node.js ≥ 22.18）和原生 `cloudflare.config.ts`。不再使用直接 Wrangler 命令。旧配置/命令见[历史记录](archive/wrangler-preview.md)，不作为当前操作依据。
 
-当前 `mail-ai` 使用独立 D1 和 R2。独立 PRE 收信 Worker 已撤下，Cloudflare 禁用了关联的精确规则。旧测试地址仍可能命中生产 catch-all。首次切换把原测试地址作为保留地址，分流和隔离核对通过后再向它投递测试邮件。参见 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
+当前 `mail-ai` 使用独立 D1 和 R2。独立 PRE 收信 Worker 已撤下，Cloudflare 禁用了关联的精确规则。旧测试地址仍可能命中生产 catch-all。首次切换把原测试地址作为保留地址，先部署并核对停收保护。随后用获准的 SMTP 探测验证命中精确规则且被拒收。只有在分流和隔离核对通过、正式开启投递后才做入箱验证。参见 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
 
 ## 默认验收顺序
 
