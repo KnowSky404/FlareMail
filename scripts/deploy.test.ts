@@ -7,6 +7,45 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
+import { sharedInboundPreviewTargetHash } from './shared-inbound-preview';
+
+test('allows only a verified, native read-only shared PRE build', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-shared-pre-'));
+  const file = join(directory, 'target.json');
+  const receiptPath = join(directory, 'receipt.json');
+  const env = { FLAREMAIL_CF_CONFIG: file, FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT: receiptPath, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) };
+  const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  const candidate = {
+    ...localTarget, databaseId: '22222222-2222-4222-8222-222222222222', bucket: 'preview-bucket', cron: [],
+    vars: { ...localTarget.vars, APP_ENV: 'preview', AUTO_REPLY_ENABLED: 'false', INBOUND_NOTIFICATION_ENABLED: 'false', TELEGRAM_ENABLED: 'false' },
+    inboundRouting: { databaseId: '33333333-3333-4333-8333-333333333333', databaseName: 'routing', environment: 'preview' as const }
+  };
+  const receipt = {
+    accountId: env.CLOUDFLARE_ACCOUNT_ID, workerName: candidate.name, previewName: 'mail-ai', checkedAt: new Date().toISOString(),
+    targetHash: sharedInboundPreviewTargetHash(candidate), registryVerified: true, previewBaseVerified: true,
+    routingDatabaseId: candidate.inboundRouting.databaseId,
+    preview: { deploymentId: 'preview-version', databaseId: candidate.databaseId, bucket: candidate.bucket },
+    production: { deploymentId: 'prod-version', databaseId: localTarget.databaseId, bucket: 'production-bucket' }
+  };
+  Object.assign(process.env, env);
+  try {
+    await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
+    await writeFile(receiptPath, JSON.stringify(receipt), { mode: 0o600 });
+    const preview = await cloudflareConfig.worker({ mode: 'preview', isPreview: true });
+    expect(preview.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'preview', readOnly: true });
+    await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: false })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+    await writeFile(receiptPath, JSON.stringify({ ...receipt, production: { ...receipt.production, databaseId: candidate.databaseId } }));
+    await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
+    await writeFile(receiptPath, JSON.stringify({ ...receipt, checkedAt: '2000-01-01T00:00:00.000Z' }));
+    await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 describe('global cf commands', () => {
   test('requires complete, isolated inbound storage and keeps deployment roles distinct', () => {

@@ -4,6 +4,7 @@ import { validateEnvironment } from '$lib/server/config/env';
 import { mailHealthState } from '$lib/domain/mail/health';
 import { listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
+import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
 import { getRequestId, withApiHandler } from '$lib/server/http/api';
 import { requireWorkspaceSession } from '$lib/server/workspace-api';
 import type { RequestHandler } from './$types';
@@ -61,6 +62,8 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   let schemaCode: 'D1_UNAVAILABLE' | 'SCHEMA_NOT_READY' = 'D1_UNAVAILABLE';
   let cleanupQueue: { pending: number; processing: number; retryable: number; manualReview: number; staleProcessing: number } | undefined;
   let mailHealth: Array<Record<string, unknown>> | undefined;
+  let inboundRouting: { environment: 'production' | 'preview'; readOnly: boolean } | undefined;
+  let inboundRoutingReady = true;
   const now = new Date();
   const nowMs = now.getTime();
 
@@ -141,8 +144,19 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     }
   }
 
-  const ok = validation.ok && schemaReady;
-  const errorCode = !validation.ok ? 'CONFIG_INVALID' : schemaCode;
+  if (env) {
+    try {
+      const routing = readInboundRouting(env);
+      if (routing) {
+        await routing.db.prepare('SELECT kind FROM inbound_routing_ownership LIMIT 1').first();
+        inboundRouting = { environment: routing.environment, readOnly: env.INBOUND_ROUTING_SCOPE?.readOnly === true };
+      }
+    } catch {
+      inboundRoutingReady = false;
+    }
+  }
+  const ok = validation.ok && schemaReady && inboundRoutingReady;
+  const errorCode = !validation.ok ? 'CONFIG_INVALID' : !schemaReady ? schemaCode : 'INBOUND_ROUTING_NOT_READY';
   return json({
     ok,
     version: env?.APP_VERSION ?? 'development',
@@ -150,10 +164,13 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     requestId,
     ...(cleanupQueue && schemaReady ? { cleanupQueue } : {}),
     ...(mailHealth && schemaReady ? { mailHealth } : {}),
+    ...(inboundRouting ? { inboundRouting } : {}),
     ...(ok ? {} : {
       error: {
         code: errorCode,
-        message: errorCode === 'CONFIG_INVALID' ? '服务配置尚未完成。' : errorCode === 'D1_UNAVAILABLE' ? '工作区数据服务暂时不可用。' : '服务数据结构尚未就绪。',
+        message: errorCode === 'CONFIG_INVALID' ? '服务配置尚未完成。'
+          : errorCode === 'D1_UNAVAILABLE' ? '工作区数据服务暂时不可用。'
+          : errorCode === 'INBOUND_ROUTING_NOT_READY' ? '收信归属库尚未就绪。' : '服务数据结构尚未就绪。',
         retryable: errorCode !== 'CONFIG_INVALID'
       }
     })

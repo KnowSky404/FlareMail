@@ -3,11 +3,11 @@ import { CloudflareEmailRoutingClient, CloudflareEmailRoutingError } from '$lib/
 import { getManagedMailDomain } from '$lib/server/db/mail-identities';
 import { ApiError } from '$lib/server/http/api';
 import { isMailHealthFresh } from '$lib/domain/mail/health';
-import { isStandaloneFixedPreview, requireMailRoutingWrites, reserveMailRoutingOwnership } from './ownership';
+import { isMailRoutingReadOnly, requireMailRoutingWrites, reserveMailRoutingOwnership } from './ownership';
 import { MailIdentityValidationError, normalizeCloudflareZoneId, normalizeEmailWorkerName, normalizeMailDomain } from './validation';
 
 export function domainOnboardingConfiguration(env: CloudflareEnv) {
-  if (isStandaloneFixedPreview(env)) return { workerName: null, available: false, canManageRouting: false };
+  if (isMailRoutingReadOnly(env)) return { workerName: null, available: false, canManageRouting: false };
   const workerName = env.MAIL_IDENTITY_WORKER_NAME?.trim() ?? '';
   let workerConfigured = false;
   try {
@@ -86,7 +86,7 @@ export async function updateMailDomain(
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂不可用。');
   const domain = await getManagedMailDomain(env.DB, ownerUserId, domainId);
   if (!domain) throw new ApiError(404, 'MAIL_DOMAIN_NOT_FOUND', '邮件域名不存在。', undefined, undefined, false);
-  const claimsCatchAll = input.enabled !== false && (input.unknownRecipientPolicy === 'collect' ||
+  const claimsCatchAll = (input.enabled ?? Boolean(domain.enabled)) && (input.unknownRecipientPolicy === 'collect' ||
     (input.enabled === true && input.unknownRecipientPolicy === undefined && domain.unknown_recipient_policy === 'collect'));
   if (input.unknownRecipientPolicy === 'collect' && domain.unknown_recipient_policy !== 'collect' &&
     (domain.catch_all_target !== 'this_worker' || !isMailHealthFresh(domain.catch_all_checked_at) || domain.cloudflare_error_code)) {

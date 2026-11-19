@@ -11,7 +11,7 @@ export default defineConfig({
     const config = process.env.FLAREMAIL_CF_CONFIG ?? (remote ? `cloudflare.${mode === 'production' ? 'deploy' : 'preview'}.json` : 'cloudflare.local.json');
     const target = readCloudflareTarget(config, remote);
     if (remote && target.vars.APP_ENV !== mode) throw new Error(`The ${mode} build requires APP_ENV=${mode}.`);
-    if (isPreview || remote) checkPreInboundRelease(target);
+    if (isPreview || remote) checkPreInboundRelease(target, isPreview && mode === 'preview');
     const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
     const preInboundSettings = cloudflarePreInboundSettings(target);
     if (!remote && process.env.FLAREMAIL_E2E === 'true') {
@@ -42,7 +42,7 @@ export default defineConfig({
         } : {}),
         ...(target.inboundRouting ? {
           INBOUND_ROUTING_DB: bindings.d1({ name: target.inboundRouting.databaseName, id: target.inboundRouting.databaseId }),
-          INBOUND_ROUTING_SCOPE: bindings.json({ environment: target.inboundRouting.environment })
+          INBOUND_ROUTING_SCOPE: bindings.json({ environment: target.inboundRouting.environment, ...(isPreview ? { readOnly: true as const } : {}) })
         } : {}),
         ASSETS: bindings.assets()
       }

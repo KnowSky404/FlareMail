@@ -1,4 +1,4 @@
-import { executeD1 } from './cloudflare-target';
+import { executeD1, readCloudflareTarget } from './cloudflare-target';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,6 +23,9 @@ if (cloudflareAccountId && !/^[a-f0-9]{32}$/iu.test(cloudflareAccountId)) {
 }
 
 const config = process.env.FLAREMAIL_CF_CONFIG ?? (remote ? 'cloudflare.deploy.json' : 'cloudflare.local.json');
+if (policy === 'collect' && readCloudflareTarget(config, remote).inboundRouting) {
+  throw new Error('Enable catch-all collection in workspace domain settings when shared inbound routing is configured.');
+}
 const sqlText = (value: string) => "'" + value.replaceAll("'", "''") + "'";
 
 async function executeDatabase(extraArguments: string[]) {
