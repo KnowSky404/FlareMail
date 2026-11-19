@@ -22,8 +22,11 @@ export function isPreviewRoutingReadOnly(env: CloudflareEnv) {
   return env.INBOUND_ROUTING_SCOPE?.environment !== 'production' && isMailRoutingReadOnly(env);
 }
 
-export function hasProductionCatchAllObserver(env: CloudflareEnv, policy: 'reject' | 'collect') {
-  return env.INBOUND_ROUTING_SCOPE?.environment === 'preview' && policy === 'collect';
+export function hasProductionCatchAllObserver(
+  env: CloudflareEnv, domain: { enabled: number; unknown_recipient_policy: 'reject' | 'collect' }
+) {
+  return env.INBOUND_ROUTING_SCOPE?.environment === 'preview' && domain.enabled === 1 &&
+    domain.unknown_recipient_policy === 'collect';
 }
 
 export function requireMailRoutingWrites(env: CloudflareEnv) {

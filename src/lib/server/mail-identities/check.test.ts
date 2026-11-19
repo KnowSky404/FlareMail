@@ -297,6 +297,9 @@ describe('managed mail domain checks', () => {
         cloudflare_next_check_at: nextCheck, catch_all_target: 'external', catch_all_checked_at: observedAt,
         last_error_code: 'preview_catch_all:cloudflare_collect_catch_all_unavailable', last_error_at: observedAt
       });
+    fixture.sqlite.query('UPDATE mail_domains SET enabled = 0').run();
+    await checkManagedMailDomain(env, ownerId, domainId, dependencies([], { now }));
+    expect(fixture.selectDomain()).toMatchObject({ catch_all_target: 'this_worker', catch_all_checked_at: now() });
     fixture.sqlite.close();
   });
 
