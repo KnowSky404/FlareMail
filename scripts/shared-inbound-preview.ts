@@ -36,6 +36,7 @@ export function assertSharedInboundPreview(target: CloudflareTarget, receiptPath
   const productionDb = routingD1Id(receipt.production?.databaseId);
   const registry = routingD1Id(target.inboundRouting?.databaseId);
   const delivery = receipt.production?.previewDelivery;
+  const legacyFixedDelivery = delivery?.routingDatabaseId === null;
   const reserved = fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT);
   const managementEnabled = receipt.previewManagementAuthorized === true;
   if (receipt.previewName !== 'mail-ai' || receipt.workerName !== target.name ||
@@ -47,18 +48,19 @@ export function assertSharedInboundPreview(target: CloudflareTarget, receiptPath
       receipt.preview.bucket !== target.bucket || !receipt.production.bucket || receipt.production.bucket === target.bucket ||
       (receipt.fixedReservationHash ?? null) !== reserved ||
       (delivery !== null && (routingD1Id(delivery?.databaseId) !== previewDb || delivery?.bucket !== target.bucket ||
-        routingD1Id(delivery?.routingDatabaseId) !== registry || (delivery?.fixedReservationHash ?? null) !== reserved)) ||
+        (legacyFixedDelivery ? !reserved : routingD1Id(delivery?.routingDatabaseId) !== registry) ||
+        (delivery?.fixedReservationHash ?? null) !== reserved)) ||
       receipt.registryVerified !== true || receipt.previewBaseVerified !== true || target.cron.length !== 0 ||
       ['AUTO_REPLY_ENABLED', 'INBOUND_NOTIFICATION_ENABLED', 'TELEGRAM_ENABLED'].some(key => target.vars[key] !== 'false') ||
       Object.hasOwn(target.vars, 'CLOUDFLARE_EMAIL_ROUTING_TOKEN') ||
       (!managementEnabled && target.secrets?.includes('CLOUDFLARE_EMAIL_ROUTING_TOKEN')) ||
-      (managementEnabled && (delivery === null || target.vars.MAIL_IDENTITY_WORKER_NAME !== target.name ||
+      (managementEnabled && (delivery === null || legacyFixedDelivery || target.vars.MAIL_IDENTITY_WORKER_NAME !== target.name ||
         target.vars.MAIL_IDENTITY_ACCOUNT_ID !== receipt.accountId))) {
     throw new Error('INBOUND_PREVIEW_PREFLIGHT_INVALID');
   }
   return {
     previewCommit: receipt.previewCommit as string, deploymentId: receipt.production.deploymentId as string,
-    productionDb, productionBucket: receipt.production.bucket as string, expectsDelivery: delivery !== null, managementEnabled,
+    productionDb, productionBucket: receipt.production.bucket as string, expectsDelivery: delivery !== null, legacyFixedDelivery, managementEnabled,
     previewDeploymentId: receipt.preview.deploymentId as string
   };
 }
@@ -307,7 +309,10 @@ export function assertActiveProductionForPreview(target: CloudflareTarget, sourc
     throw new Error('INBOUND_PREVIEW_PREFLIGHT_INVALID');
   }
   if (source.expectsDelivery) {
-    if (!settings || db('INBOUND_ROUTING_DB') !== routingD1Id(target.inboundRouting?.databaseId) ||
+    const registryMatches = source.legacyFixedDelivery
+      ? !binding('INBOUND_ROUTING_DB') && !binding('INBOUND_ROUTING_SCOPE')
+      : db('INBOUND_ROUTING_DB') === routingD1Id(target.inboundRouting?.databaseId);
+    if (!settings || !registryMatches ||
         db('PRE_INBOUND_DB') !== routingD1Id(target.databaseId) || bucket('PRE_INBOUND_BUCKET') !== target.bucket ||
         fixedReservationHash(settings.recipient ?? undefined) !== fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT)) {
       throw new Error('INBOUND_PREVIEW_PREFLIGHT_INVALID');
@@ -427,8 +432,11 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
     throw new Error('INBOUND_PRODUCTION_DEPLOYMENT_CHANGED');
   }
   const existingRegistry = db('INBOUND_ROUTING_DB');
-  if (source.protectVersionId || source.maintaining || source.pauseOnly || existingRegistry || binding('PRE_INBOUND_SETTINGS')) {
-    if (!settings || existingRegistry !== routingD1Id(target.inboundRouting?.databaseId) ||
+  const legacyFixedUpgrade = source.protecting && Boolean(settings?.recipient) &&
+    !binding('INBOUND_ROUTING_DB') && !binding('INBOUND_ROUTING_SCOPE');
+  if (source.protectVersionId || source.maintaining || source.pauseOnly ||
+      ['INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE', 'PRE_INBOUND_SETTINGS'].some(name => binding(name))) {
+    if (!settings || (!legacyFixedUpgrade && existingRegistry !== routingD1Id(target.inboundRouting?.databaseId)) ||
         db('PRE_INBOUND_DB') !== routingD1Id(target.preInbound?.databaseId) || bucket('PRE_INBOUND_BUCKET') !== target.preInbound?.bucket ||
         fixedReservationHash(settings.recipient ?? undefined) !== fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT) ||
         (source.protectVersionId && (version.id !== source.protectVersionId || settings.enabled !== false)) ||
