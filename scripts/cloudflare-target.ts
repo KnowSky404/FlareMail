@@ -125,8 +125,8 @@ export function checkPreInboundRelease(target: CloudflareTarget, nativePreview =
   }
   if (!nativePreview && target.vars.APP_ENV === 'production' && target.inboundRouting &&
       target.vars.PRE_INBOUND_RECIPIENT === undefined && process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT) {
-    const releaseCommit = assertSharedInboundProduction(target, process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT);
-    assertProductionReleaseSource(projectRoot, releaseCommit);
+    const source = assertSharedInboundProduction(target, process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT);
+    assertProductionReleaseSource(projectRoot, source);
     return;
   }
   throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');

@@ -65,17 +65,26 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       (phase === 'activate' && (!receipt.protectVersionId || receipt.protectionActive !== true || receipt.mailRoutesAndMappingsVerified !== true))) {
     throw new Error(errorCode);
   }
-  return receipt.releaseCommit as string;
+  return { releaseCommit: receipt.releaseCommit as string, acceptedPreviewCommit: receipt.acceptedPreviewCommit as string };
 }
 
-export function assertProductionReleaseSource(projectRoot: string, releaseCommit: string) {
-  const git = (args: string[]) => execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' }).trim();
-  if (git(['rev-parse', 'HEAD']) !== releaseCommit || git(['status', '--porcelain'])) {
+export function assertProductionReleaseSource(projectRoot: string, source: { releaseCommit: string; acceptedPreviewCommit: string }) {
+  const git = (args: string[]) => execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  if (git(['rev-parse', 'HEAD']) !== source.releaseCommit || git(['status', '--porcelain'])) {
     throw new Error('INBOUND_PRODUCTION_RELEASE_SOURCE_NOT_VERIFIED');
   }
+  try {
+    if (git(['rev-parse', source.releaseCommit + '^{tree}']) === git(['rev-parse', source.acceptedPreviewCommit + '^{tree}'])) return;
+  } catch {
+    // A missing accepted source revision is also insufficient release evidence.
+  }
+  throw new Error('INBOUND_PRODUCTION_RELEASE_DIFFERS_FROM_PRE_ACCEPTANCE');
 }
 
 export function assertLegacyProductionHasNoActiveInboundProtection(worker: string) {
+  if (!/^[a-f0-9]{32}$/u.test(process.env.CLOUDFLARE_ACCOUNT_ID ?? '')) {
+    throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
+  }
   // Avoid evaluating the project's Cloudflare configuration during metadata reads.
   const directory = mkdtempSync(join(tmpdir(), 'flaremail-active-worker-'));
   const cf = (args: string[]) => JSON.parse(execFileSync('cf', args, {

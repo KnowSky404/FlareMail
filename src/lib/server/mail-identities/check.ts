@@ -12,7 +12,7 @@ import {
 import { listManagedMailAddresses, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { getExactResendDomain, canSendFromResendDomain, ResendDomainError } from '$lib/server/resend-domains';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, isMailRoutingReadOnly, isPreviewRoutingReadOnly } from './ownership';
 
 type CloudflareClient = Pick<CloudflareEmailRoutingClient, 'getZone' | 'listRules' | 'getCatchAll'>;
 type ResendLookup = typeof getExactResendDomain;
@@ -276,8 +276,10 @@ export async function checkManagedMailDomain(
     if (cloudflareLeaseAcquired) {
       try {
         if (domain.unknown_recipient_policy === 'collect') collectOwnershipError = await catchAllOwnershipError(env, domain.domain_name);
-        const domainAddresses = (await listManagedMailAddresses(env.DB, ownerUserId)).filter((address) => address.domain_id === domain.id);
-        addresses = await filterOwnedMailboxes(env, domainAddresses);
+        if (!isMailRoutingReadOnly(env)) {
+          const domainAddresses = (await listManagedMailAddresses(env.DB, ownerUserId)).filter((address) => address.domain_id === domain.id);
+          addresses = await filterOwnedMailboxes(env, domainAddresses);
+        }
       } catch (error) {
         result.cloudflare.errorCode = classifyCloudflareError(error);
         await recordProviderCheckFailure(

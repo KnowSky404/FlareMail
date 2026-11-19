@@ -39,7 +39,7 @@ function conflictsWithFixedPreviewReservation(env: CloudflareEnv, kind: InboundR
   if (kind !== 'mailbox' || typeof recipient !== 'string') return false;
   const match = resolvePreInboundMatch(normalizePreInboundRecipient(recipient), value);
   if (isStandaloneFixedPreview(env)) return match !== 'exact';
-  return match === 'subaddress' || (match === 'exact' && env.PRE_INBOUND_SETTINGS?.previewApp !== true);
+  return match === 'subaddress' || (match === 'exact' && readInboundRouting(env)?.environment !== 'preview');
 }
 
 export async function filterOwnedMailboxes<T extends { email: string }>(env: CloudflareEnv, mailboxes: T[]) {
