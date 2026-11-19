@@ -24,7 +24,7 @@
 
 候选目标绑定当前 `mail-ai` 的独立邮件 D1/R2 和已回填的专用归属 D1。Previews Base 和将发布的有效配置需确认没有邮件规则管理凭证。使用权限为 `0600` 的私有 JSON 记录本次控制面检查，路径通过 `FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT` 提供。记录 `checkedAt`、`accountId`、`workerName`、`previewName`、`targetHash`、`routingDatabaseId`，以及 `production` 和 `preview` 的 `deploymentId`、`databaseId` 和 `bucket`。实际核对归属表和 Base 后，分别记录 `registryVerified` 和 `previewBaseVerified` 为 `true`。`targetHash` 是解析后的完整候选目标用 `JSON.stringify` 序列化后的 SHA-256。上传前重新核对线上部署，两侧证据发生变化则更新预检。`CLOUDFLARE_ACCOUNT_ID` 须与私有记录中的账号一致。
 
-同时核对全部活动生产版本是否已有 PRE 入站绑定。无绑定时将 `production.previewDelivery` 设为 `null`。存在绑定时记录它的 `databaseId`、`bucket` 和 `routingDatabaseId`，三项都须与候选 PRE 目标一致。
+同时核对全部活动生产版本是否已有 PRE 入站绑定。无绑定时将 `production.previewDelivery` 设为 `null`。存在绑定时记录它的 `databaseId`、`bucket` 和 `routingDatabaseId`，三项都须与候选 PRE 目标一致。远程 PRE 需要明确设置 `CLOUDFLARE_ACCOUNT_ID`。省略共享归属的旧目标也会查询该账号的活动生产版本，在已有 PRE 收信保护时拒绝上传。
 
 该阶段只发布 `mail-ai`，以 Owner 会话访问只读域名、邮箱和 `/api/readiness`。就绪响应包含 `inboundRouting.environment=preview` 和 `inboundRouting.readOnly=true`。部署后重新核对 PRE 实际绑定和生产部署指针。预约的 SMTP 验收和生产规则切换按共享收信 SPEC 的后续环节执行。
 
