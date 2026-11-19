@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import type { CloudflareTarget } from './cloudflare-target.ts';
 import { normalizePreInboundRecipient } from '../src/lib/server/inbound/pre-inbound.ts';
+import { isMailHealthFresh, previewCatchAllError } from '../src/lib/domain/mail/health.ts';
 
 export function sharedInboundPreviewTargetHash(target: CloudflareTarget) {
   return createHash('sha256').update(JSON.stringify(target)).digest('hex');
@@ -86,7 +87,7 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       target.preInbound?.bucket === target.bucket ||
       (receipt.production.fixedReservationHash && receipt.production.fixedReservationHash !== reserved) ||
       (phase === 'protect' && (!reserved || receipt.production.fixedReservationHash !== reserved)) ||
-      receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true ||
+      receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true || (!pauseOnly && !target.cron.length) ||
       (!pauseOnly && phase !== 'maintain' && receipt.legacyOperationsQuiesced !== true) ||
       (phase === 'activate' && (!routingD1Id(receipt.protectVersionId) || receipt.protectionActive !== true ||
         receipt.mailRoutesAndMappingsVerified !== true || receipt.preCatchAllsVerified !== true))) {
@@ -95,7 +96,7 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
   return {
     releaseCommit: receipt.releaseCommit as string, acceptedPreviewCommit: receipt.acceptedPreviewCommit as string,
     deploymentId: receipt.production.deploymentId as string, protectVersionId: phase === 'activate' ? receipt.protectVersionId as string : null,
-    maintaining: phase === 'maintain', pauseOnly,
+    protecting: phase === 'protect', maintaining: phase === 'maintain', pauseOnly,
     previewDeploymentId: (receipt.preview?.deploymentId ?? '') as string, previewBuildLabel: (receipt.preview?.buildLabel ?? '') as string
   };
 }
@@ -127,7 +128,7 @@ interface WorkerBindingMetadata {
   id?: string;
   bucket_name?: string;
   text?: string;
-  json?: { recipient?: string | null; enabled?: boolean } | string;
+  json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean } | string;
 }
 
 function readActiveProduction(worker: string) {
@@ -167,6 +168,7 @@ function readActiveProduction(worker: string) {
       if (!Array.isArray(bindings)) throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
       return {
         id: String(version.version_id), percentage: Number(version.percentage), bindings: bindings as WorkerBindingMetadata[],
+        deployedAt: Date.parse(deployments[0].created_on ?? ''),
         compatibilityDate: runtime.compatibility_date as string | undefined,
         compatibilityFlags: (runtime.compatibility_flags ?? []) as string[]
       };
@@ -233,19 +235,26 @@ function cloudflareSessionToken(projectRoot: string) {
   throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE');
 }
 
-function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
+function cloudflareAccountRequest(projectRoot: string, errorCode: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = cloudflareSessionToken(projectRoot);
-  return async <T>(path: string) => {
-    const response = await fetch('https://api.cloudflare.com/client/v4/accounts/' + account + '/workers/' + path, {
-      headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8_000), redirect: 'error'
+  return async <T>(path: string, sql?: string) => {
+    const response = await fetch('https://api.cloudflare.com/client/v4/accounts/' + account + '/' + path, {
+      headers: { Authorization: 'Bearer ' + token, ...(sql ? { 'Content-Type': 'application/json' } : {}) },
+      ...(sql ? { method: 'POST', body: JSON.stringify({ sql }) } : {}),
+      signal: AbortSignal.timeout(8_000), redirect: 'error'
     });
     if (!response.ok) throw new Error(errorCode);
     const envelope = await response.json() as { success: boolean; result: T };
     if (!envelope.success) throw new Error(errorCode);
     return envelope.result;
   };
+}
+
+function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
+  const request = cloudflareAccountRequest(projectRoot, errorCode);
+  return <T>(path: string) => request<T>('workers/' + path);
 }
 
 async function readLiveNativePreview(workerName: string, projectRoot: string) {
@@ -313,7 +322,7 @@ function sameStrings(left: string[], right: string[]) {
   return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
 }
 
-export function assertPauseConfiguration(
+export function assertUnchangedProductionConfiguration(
   target: CloudflareTarget,
   active: { bindings: WorkerBindingMetadata[]; compatibilityDate?: string; compatibilityFlags: string[]; cron: string[] }
 ) {
@@ -325,7 +334,7 @@ export function assertPauseConfiguration(
       !sameStrings(target.secrets ?? [], activeSecrets) ||
       target.compatibilityDate !== active.compatibilityDate ||
       !sameStrings(target.compatibilityFlags, active.compatibilityFlags) || !sameStrings(target.cron, active.cron)) {
-    throw new Error('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_CHANGED');
+    throw new Error('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
   }
 }
 
@@ -347,6 +356,40 @@ export async function verifyProductionWorkerDev(target: CloudflareTarget, projec
   return subdomain.enabled;
 }
 
+export async function assertProductionCatchAllActivation(
+  target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string
+) {
+  const errorCode = 'INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED';
+  const request = cloudflareAccountRequest(projectRoot, errorCode);
+  const query = async <T>(databaseId: string | undefined, sql: string) => {
+    const id = routingD1Id(databaseId);
+    if (!id) throw new Error(errorCode);
+    const [statement] = await request<{ success?: boolean; results?: T[] }[]>('d1/database/' + id + '/query', sql);
+    if (statement?.success !== true || !Array.isArray(statement.results)) throw new Error(errorCode);
+    return statement.results;
+  };
+  const [scheduleResult, domains, claims] = await Promise.all([
+    request<{ schedules?: { cron: string }[] }>('workers/scripts/' + encodeURIComponent(target.name) + '/schedules'),
+    query<{ domain_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
+      target.preInbound?.databaseId,
+      `SELECT lower(domain_name) AS domain_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
+       FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
+    ),
+    query<{ route_key: string }>(target.inboundRouting?.databaseId,
+      `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`)
+  ]);
+  if (!Array.isArray(scheduleResult.schedules) || !scheduleResult.schedules.length ||
+      scheduleResult.schedules.some(schedule => typeof schedule.cron !== 'string') || !Number.isFinite(version.deployedAt)) {
+    throw new Error(errorCode);
+  }
+  assertUnchangedProductionConfiguration(target, { ...version, cron: scheduleResult.schedules.map(schedule => schedule.cron) });
+  const owned = new Set(claims.map(claim => claim.route_key));
+  const now = Date.now();
+  if (domains.some(domain => !owned.has(domain.domain_name) || domain.catch_all_target !== 'this_worker' ||
+      !isMailHealthFresh(domain.catch_all_checked_at, now) || Date.parse(domain.catch_all_checked_at ?? '') < version.deployedAt ||
+      previewCatchAllError(domain.last_error_code, domain.last_error_at))) throw new Error(errorCode);
+}
+
 export async function readPauseObservability(
   target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string
 ) {
@@ -364,7 +407,7 @@ export async function readPauseObservability(
   if (!Array.isArray(schedules) || schedules.some(schedule => typeof schedule.cron !== 'string')) {
     throw new Error('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_UNAVAILABLE');
   }
-  assertPauseConfiguration(target, { ...version, cron: schedules.map(schedule => schedule.cron) });
+  assertUnchangedProductionConfiguration(target, { ...version, cron: schedules.map(schedule => schedule.cron) });
   const sink = (value: ObservabilityMetadata) => ({
     enabled: value.enabled, headSamplingRate: value.head_sampling_rate,
     persist: value.persist, destinations: value.destinations
@@ -393,5 +436,7 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
       throw new Error('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
     }
   }
-  return version;
+  const scopeBinding = binding('INBOUND_ROUTING_SCOPE')?.json;
+  const scope = typeof scopeBinding === 'string' ? JSON.parse(scopeBinding) as Exclude<WorkerBindingMetadata['json'], string> : scopeBinding;
+  return { ...version, routingReadOnly: scope?.readOnly === true };
 }

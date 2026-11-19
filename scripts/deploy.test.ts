@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertLivePreviewForPublish, assertPauseConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertLivePreviewForPublish, assertProductionCatchAllActivation, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -44,11 +44,11 @@ test('emergency pause keeps the same authentication variables, secrets and produ
     bindings: [{ name: 'AUTH_MODE', type: 'plain_text', text: 'access' }, { name: 'RESEND_API_KEY', type: 'secret_text' }],
     compatibilityDate: target.compatibilityDate, compatibilityFlags: target.compatibilityFlags, cron: target.cron
   };
-  expect(() => assertPauseConfiguration(target, active)).not.toThrow();
-  expect(() => assertPauseConfiguration({ ...target, vars: { ...target.vars, AUTH_MODE: 'local' } }, active))
-    .toThrow('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_CHANGED');
-  expect(() => assertPauseConfiguration({ ...target, cron: [] }, active))
-    .toThrow('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_CHANGED');
+  expect(() => assertUnchangedProductionConfiguration(target, active)).not.toThrow();
+  expect(() => assertUnchangedProductionConfiguration({ ...target, vars: { ...target.vars, AUTH_MODE: 'local' } }, active))
+    .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
+  expect(() => assertUnchangedProductionConfiguration({ ...target, cron: [] }, active))
+    .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
 });
 
 test('production requires live historical URL isolation and keeps the main URL setting', async () => {
@@ -73,6 +73,45 @@ test('production requires live historical URL isolation and keeps the main URL s
     else process.env.CLOUDFLARE_API_TOKEN = token;
     if (legacyToken === undefined) delete process.env.CF_API_TOKEN;
     else process.env.CF_API_TOKEN = legacyToken;
+  }
+});
+
+test('activation requires PRE catch-all observations produced after the protection deployment', async () => {
+  const environment = { CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: 'fixture-token' };
+  const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+  Object.assign(process.env, environment);
+  const target = {
+    ...localTarget, vars: { PRE_INBOUND_ENABLED: 'true' }, bucket: 'prod-bucket', cron: ['* * * * *'],
+    preInbound: { databaseId: 'b'.repeat(8) + '-bbbb-4bbb-8bbb-bbbbbbbbbbbb', databaseName: 'pre', bucket: 'preview-bucket' },
+    inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
+  };
+  const active = {
+    id: 'version', percentage: 100, bindings: [], routingReadOnly: true, deployedAt: Date.now() - 60_000,
+    compatibilityDate: target.compatibilityDate, compatibilityFlags: target.compatibilityFlags
+  };
+  const domain = {
+    domain_name: 'mail.example.test', catch_all_target: 'this_worker',
+    catch_all_checked_at: new Date(active.deployedAt - 1).toISOString(), last_error_code: null, last_error_at: null
+  };
+  const fetch = spyOn(globalThis, 'fetch');
+  const mockRequests = () => {
+    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: target.cron[0] }] } }));
+    fetch.mockResolvedValueOnce(Response.json({ success: true, result: [{ success: true, results: [domain] }] }));
+    fetch.mockResolvedValueOnce(Response.json({ success: true, result: [{ success: true, results: [{ route_key: domain.domain_name }] }] }));
+  };
+  try {
+    mockRequests();
+    await expect(assertProductionCatchAllActivation(target, active, projectRoot))
+      .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED');
+    domain.catch_all_checked_at = new Date(active.deployedAt + 1).toISOString();
+    mockRequests();
+    await expect(assertProductionCatchAllActivation(target, active, projectRoot)).resolves.toBeUndefined();
+  } finally {
+    fetch.mockRestore();
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 
