@@ -213,6 +213,13 @@ describe('trusted inbound address resolution', () => {
     const withinGrace = Date.parse('2026-09-21T11:59:00.000Z');
     expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinGrace))
       .toMatchObject({ accepted: true, recipientStatus: 'unregistered' });
+    const preview = { productionObservedCatchAll: true };
+    expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinGrace, preview))
+      .toMatchObject({ accepted: false, reason: 'address_unavailable' });
+    db.query(`UPDATE mail_domains SET last_error_code = 'preview_catch_all:1:cloudflare_timeout',
+      last_error_at = '2026-09-20T12:00:00.000Z'`).run();
+    expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinGrace, preview))
+      .toMatchObject({ accepted: true, recipientStatus: 'unregistered' });
     const pastGrace = Date.parse('2026-09-21T12:00:01.000Z');
     expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', pastGrace))
       .toEqual({ accepted: false, reason: 'address_unavailable' });
