@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { buildInboundRoutingPlan, inboundRoutingBackfillSql } from './inbound-routing-backfill';
+import { buildInboundRoutingPlan, identityClaimsSql, inboundRoutingBackfillSql } from './inbound-routing-backfill';
 
 const production = { kind: 'mailbox', key: 'company@example.test', environment: 'production' } as const;
 const preview = { ...production, environment: 'preview' } as const;
@@ -19,4 +19,16 @@ test('a competing claim after the audit aborts all registry writes', () => {
   db.exec(inboundRoutingBackfillSql([production]));
   expect(() => db.exec(inboundRoutingBackfillSql([catchAll, preview]))).toThrow();
   expect(db.query('SELECT kind, route_key AS key, environment FROM inbound_routing_ownership').all()).toEqual([production]);
+});
+
+test('a disabled domain preference does not add or conflict with a catch-all claim', () => {
+  using db = new Database(':memory:');
+  db.exec(readFileSync(new URL('../schema.sql', import.meta.url), 'utf8'));
+  db.exec(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, enabled, unknown_recipient_policy)
+    VALUES ('paused', 'fixture', 'example.test', 'zone', 'worker', 0, 'collect'),
+           ('active', 'fixture', 'active.example.test', 'zone', 'worker', 1, 'collect')`);
+  const rows = db.query<{ kind: typeof catchAll.kind; route_key: string }, []>(identityClaimsSql).all();
+  expect(rows).toEqual([{ kind: 'catch_all', route_key: 'active.example.test' }]);
+  const requested = rows.map(({ kind, route_key: key }) => ({ kind, key, environment: production.environment }));
+  expect(buildInboundRoutingPlan([catchAll], requested)).toEqual({ additions: requested, conflicts: [] });
 });
