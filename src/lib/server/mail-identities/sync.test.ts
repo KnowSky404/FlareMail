@@ -73,6 +73,18 @@ describe('Cloudflare mail identity discovery', () => {
     await syncCloudflareMailIdentities(env, owner, client);
     expect(db.query('SELECT enabled, unknown_recipient_policy FROM mail_domains').get()).toEqual({ enabled: 0, unknown_recipient_policy: 'reject' });
   });
+  test('imports a PRE-owned catch-all with production verification due', async () => {
+    const { db, env, client } = fixture([], true);
+    const registry = new Database(':memory:');
+    databases.push(registry);
+    registry.exec(readFileSync(new URL('../../../../routing-migrations/0001_ownership.sql', import.meta.url), 'utf8'));
+    registry.query("INSERT INTO inbound_routing_ownership (kind, route_key, environment) VALUES ('catch_all', 'example.com', 'preview')").run();
+    env.INBOUND_ROUTING_SCOPE = { environment: 'preview' };
+    env.INBOUND_ROUTING_DB = { prepare: (sql: string) => new Statement(registry, sql) } as unknown as D1Database;
+    expect(await syncCloudflareMailIdentities(env, owner, client)).toMatchObject({ domainsCreated: 1 });
+    expect(db.query('SELECT unknown_recipient_policy, catch_all_checked_at, cloudflare_next_check_at FROM mail_domains').get())
+      .toEqual({ unknown_recipient_policy: 'collect', catch_all_checked_at: null, cloudflare_next_check_at: null });
+  });
   test('repeat sync preserves IDs, settings, pending operations and deleted addresses', async () => {
     const { db, env, client } = fixture([rule(), rule('deleted@example.com', 'flaremail', true, 'rule-2')]);
     await syncCloudflareMailIdentities(env, owner, client);
