@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   // Resource API commands read account defaults without evaluating Worker bindings.
   worker: async ({ isPreview, mode }) => {
+    if (isPreview && mode !== 'preview') throw new Error('NATIVE_PREVIEW_REQUIRES_PREVIEW_MODE');
     // The Vite plugin blocks static config dependencies from serving as Worker modules.
     const { checkPreInboundRelease, cloudflarePreInboundSettings, projectRoot, readCloudflareTarget } = await import('./scripts/cloudflare-target.ts');
     const remote = mode === 'production' || mode === 'preview';

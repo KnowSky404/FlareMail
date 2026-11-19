@@ -151,6 +151,7 @@ test('production activation requires the reviewed PRE and an active, paused prot
     await writeFile(proof, JSON.stringify({ ...protect, production: { ...production, fixedReservationHash: null } }), { mode: 0o600 });
     expect(() => assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
     await writeFile(proof, JSON.stringify(protect));
+    await expect(cloudflareConfig.worker({ mode: 'production', isPreview: true })).rejects.toThrow('NATIVE_PREVIEW_REQUIRES_PREVIEW_MODE');
     expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({
       releaseCommit: evidence.releaseCommit, acceptedPreviewCommit: evidence.acceptedPreviewCommit
     });
@@ -318,7 +319,7 @@ test('native remote builds reject PRE reservations while local builds keep both 
     const localAdapter = JSON.parse(await readFile(adapterOptions(true).config, 'utf8'));
     expect(localAdapter.d1_databases).toContainEqual({ binding: 'PRE_INBOUND_DB', database_name: target.preInbound.databaseName, database_id: target.preInbound.databaseId });
     expect(localAdapter.r2_buckets).toContainEqual({ binding: 'PRE_INBOUND_BUCKET', bucket_name: target.preInbound.bucket });
-    await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+    await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('NATIVE_PREVIEW_REQUIRES_PREVIEW_MODE');
 
     await writeFile(file, JSON.stringify({ ...target, vars: { ...vars, APP_ENV: 'production' } }));
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
@@ -333,7 +334,7 @@ test('native remote builds reject PRE reservations while local builds keep both 
     const dynamicBuild = await cloudflareConfig.worker({ mode: 'development', isPreview: false });
     expect(dynamicBuild.env.INBOUND_ROUTING_DB?.id).toBe(inboundRouting.databaseId);
     expect(dynamicBuild.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: null, enabled: true });
-    await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
+    await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('NATIVE_PREVIEW_REQUIRES_PREVIEW_MODE');
     const child = Bun.spawn(['cf', 'build', '--mode', 'development'], {
       cwd: join(projectRoot, 'worker'),
       env: { ...process.env, FLAREMAIL_CF_CONFIG: file },
