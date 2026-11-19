@@ -112,9 +112,10 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   and inbound notifications; they never set a user's From address.
 - [ ] `AUTO_REPLY_ENABLED`, `INBOUND_NOTIFICATION_ENABLED` and
   `NOTIFICATION_EMAIL` were reviewed as real outbound behavior.
-- [ ] Every receiving address is explicitly configured under its exact mail
-  domain and Cloudflare zone, has an active exact Worker rule, and is enabled
-  in D1. Mail identity ownership does not depend on a login or profile email.
+- [ ] Every ordinary managed production address enabled for receiving has its
+  exact mail domain, Cloudflare zone, exact Worker rule and enabled identity
+  in production D1. A reserved PRE address is verified under its PRE Owner and
+  PRE D1. Mail identity ownership is independent of the login or profile email.
 - [ ] `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` is scoped to configured zones with
   `Zone Read` and `Email Routing Rules Read`. When in-app address create/delete
   is enabled, `CLOUDFLARE_EMAIL_ROUTING_TOKEN` is a separate secret with
@@ -270,22 +271,28 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   Email Routing → Enable/Get started → verify the zone's current DNS
   ```
 
-- [ ] The exact actual domain-to-zone/Worker mapping is recorded by authenticated
+- [ ] For ordinary production identities, the domain-to-zone/Worker mapping is recorded by authenticated
   Cloudflare configuration sync, verified browser enrollment, or
   `bun run mail:domain:configure -- --remote` after separate approval. The
   application identity manager created or imported each exact
   literal `to` Worker rule; it did not create a destination-address forwarding
   rule or overwrite a conflicting route.
-- [ ] The receiving address is active and receive-enabled. Its rule and any
+- [ ] The ordinary production receiving address is active and receive-enabled. Its rule and any
   existing catch-all were checked for priority and target. External catch-all
   rules were not changed; the operator understands that deleting an app-owned
   exact rule cannot block delivery through an external catch-all.
-- [ ] Cloudflare subaddressing and the intended alias behavior were reviewed.
+- [ ] Cloudflare subaddressing and ordinary production alias behavior were reviewed.
   An unregistered `name+tag` maps to its enabled base identity; a registered
   literal alias takes precedence, and disabled/deleted aliases or bases are
   rejected. The actual envelope recipient remains in the stored message.
   Any real-mail smoke is explicitly authorized; local fixtures do not prove
   production routing or SMTP failure/redelivery behavior.
+- [ ] For single-Worker PRE inbound, the authorized administrator validated the
+  dedicated exact rule and its production Worker target while the guard rejected
+  the reserved address. The PRE identity is recorded in PRE D1, production
+  identity operations exclude the reservation, and the guard rejects its
+  `+tag` variants even when the exact address accepts delivery.
+  See [single-Worker PRE inbound SPEC](specs/single-worker-pre-inbound.md).
 - [ ] Address deletion review used the authenticated live preview, checked its
   route observation and catch-all freshness, and selected either removal of a
   verified FlareMail rule or retention as the deleted tombstone's rejection
