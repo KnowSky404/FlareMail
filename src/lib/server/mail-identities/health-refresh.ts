@@ -240,11 +240,20 @@ async function saveCloudflareResult(
   domain: HealthDomainRow,
   token: string,
   result: ProviderCheckResult,
-  nowMs: number
+  nowMs: number,
+  catchAllOnly = false
 ) {
   const previousFailures = Number(domain.cloudflare_failure_count ?? 0);
   const failureCount = result.errorCode && result.retryable ? Math.min(previousFailures + 1, 1000) : 0;
   const nextAt = mailHealthNextCheckAt(domain.id, nowMs, Math.max(1, failureCount), result.errorCode, result.retryable);
+  if (catchAllOnly) {
+    await db.prepare(`UPDATE mail_domains SET
+        catch_all_target = COALESCE(?, catch_all_target), catch_all_checked_at = COALESCE(?, catch_all_checked_at),
+        cloudflare_next_check_at = ?, cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
+      WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`)
+      .bind(result.catchAllTarget ?? null, result.catchAllObservedAt ?? null, nextAt, isoAt(nowMs), domain.id, domain.owner_user_id, token).run();
+    return;
+  }
   await db.prepare(
     `UPDATE mail_domains SET
        catch_all_target = CASE WHEN ? IS NULL THEN catch_all_target ELSE ? END,
@@ -331,7 +340,7 @@ async function runProvider(
           deadlineAt: currentTime + 12_000
         });
       result = await checkCloudflareDomain(env, domain, client, nowMs(), Boolean(catchAllDomains));
-      await saveCloudflareResult(env.DB, domain, token, result, nowMs());
+      await saveCloudflareResult(env.DB, domain, token, result, nowMs(), Boolean(catchAllDomains));
     } else {
       result = await checkResendDomain(
         domain,

@@ -101,6 +101,9 @@ describe('scheduled mail domain health refresh', () => {
   test('production refreshes only enabled PRE-owned catch-all domains with read operations', async () => {
     const prod = createFixture();
     const pre = createFixture({ collect: true });
+    const priorFullCheck = new Date(defaultNow - 60_000).toISOString();
+    pre.sqlite.query(`UPDATE mail_domains SET cloudflare_checked_at = ?, cloudflare_error_code = 'cloudflare_managed_route_needs_review'`)
+      .run(priorFullCheck);
     pre.sqlite.query(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, unknown_recipient_policy)
       VALUES ('unowned', ?, 'excluded.example.test', ?, 'flaremail-worker', 'collect')`).run(ownerId, zoneId);
     const deps = successDependencies();
@@ -115,7 +118,10 @@ describe('scheduled mail domain health refresh', () => {
       }) } as unknown as D1Database
     };
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
-    expect(pre.readDomain()).toMatchObject({ catch_all_target: 'this_worker', catch_all_checked_at: new Date(defaultNow).toISOString(), cloudflare_error_code: null });
+    expect(pre.readDomain()).toMatchObject({
+      catch_all_target: 'this_worker', catch_all_checked_at: new Date(defaultNow).toISOString(),
+      cloudflare_checked_at: priorFullCheck, cloudflare_error_code: 'cloudflare_managed_route_needs_review'
+    });
     expect(prod.readDomain().catch_all_checked_at).toBeNull();
     expect(pre.sqlite.query("SELECT catch_all_checked_at FROM mail_domains WHERE id='unowned'").get()).toEqual({ catch_all_checked_at: null });
     pre.sqlite.close();
