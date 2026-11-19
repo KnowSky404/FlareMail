@@ -10,7 +10,7 @@
 2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。使用现有生产 Worker 名称作为原生 Preview 的父级，沿用 `mail-ai` 的独立 D1 和 R2。发布前核对 PRE 的 D1 UUID 和 R2 桶名分别与生产不同。设置 `APP_ENV=preview`、实际 Provider/Auth 配置，关闭自动回复、通知和 Telegram，使用 `cron=[]`。资源创建、Owner 初始化和邮件规则调整各自独立授权。
    如果沿用 PRE D1 并更换 R2，在部署前先于授权维护窗口暂停并排空所有访问 PRE D1/R2 的入口和任务，包括只读入口和旧预览 URL。再清点原信、独立正文、草稿、附件和待处理记录依赖的对象，核对新桶上的对象和完整性。没有相关对象时记录空清单。涉及复制、修复或删除时取得相应授权。
 3. `bun run deploy:pre -- <preview-name>` 先构建 Svelte 应用，再在 `worker/` 通过全局 `cf previews deploy --mode preview` 构建并上传原生 Preview，不切换生产流量。名称是合法稳定名称，不把 `/` 等分支字符直接拼进去。记录命令时间、提交 SHA、Preview URL 和部署/版本 ID。
-4. 对该提交验收登录、相关业务页面/API、已认证 `/api/readiness`、D1/R2 绑定，并核对生产流量指向没有变化。`/api/health` 仅证明存活，不能替代业务验收；HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
+4. 上传后先按下文「当前 mail-ai 的邮箱身份验收」检查 Cloudflare 实际绑定、规则权限、仍可访问的旧 URL 和生产 deployment。隔离核对通过后，才验收登录、业务页面/API 和已认证 `/api/readiness`。`/api/health` 仅证明存活，HTTP 验收和 `email()`、Cron、真实投递各自需要证据。
    更换 R2 后，在恢复常规访问前，用授权的验收入口和已读样本核对原文、正文与附件可读取，并验证所有将恢复的入口使用核定存储。
 5. **当前 D1 和 R2 独立，默认只读**。E2E seed、fixture、Owner bootstrap、数据库重置和迁移与默认验收分开。打开未读邮件会自动写入已读状态，使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
    域名页新增“刷新全部”，并在页面空闲时每分钟重读状态、每五分钟复查供应商
