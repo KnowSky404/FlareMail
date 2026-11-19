@@ -71,6 +71,8 @@ test('production activation requires the reviewed PRE and an active, paused prot
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
     await writeFile(proof, JSON.stringify(activation));
     expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ releaseCommit: evidence.releaseCommit });
+    await writeFile(proof, JSON.stringify({ ...evidence, phase: 'maintain', targetHash: sharedInboundPreviewTargetHash(active) }));
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ maintaining: true, protectVersionId: null });
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
@@ -103,7 +105,10 @@ test('allows only a verified, native read-only shared PRE build', async () => {
   try {
     await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
     await writeFile(receiptPath, JSON.stringify(receipt), { mode: 0o600 });
-    expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({ previewCommit });
+    expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({ previewCommit, managementEnabled: false });
+    await writeFile(receiptPath, JSON.stringify({ ...receipt, previewManagementAuthorized: true }));
+    expect(() => assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
+    await writeFile(receiptPath, JSON.stringify(receipt));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_RELEASE_SOURCE_NOT_VERIFIED');
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: false })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
     await writeFile(receiptPath, JSON.stringify({ ...receipt, production: { ...receipt.production, databaseId: candidate.databaseId.toUpperCase() } }));

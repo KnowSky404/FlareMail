@@ -124,13 +124,13 @@ export function checkPreInboundRelease(target: CloudflareTarget, nativePreview =
     const source = assertSharedInboundPreview(target, process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT);
     assertReleaseCheckout(projectRoot, source.previewCommit, 'INBOUND_PREVIEW_RELEASE_SOURCE_NOT_VERIFIED');
     assertActiveProductionForPreview(target, source);
-    return;
+    return { kind: 'preview' as const, managementEnabled: source.managementEnabled };
   }
   if (!nativePreview && target.vars.APP_ENV === 'production' && target.inboundRouting && process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT) {
     const source = assertSharedInboundProduction(target, process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT);
     assertProductionReleaseSource(projectRoot, source);
     assertActiveProductionForRelease(target, source);
-    return;
+    return { kind: 'production' as const, source };
   }
   throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
 }
