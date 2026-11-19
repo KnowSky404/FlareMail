@@ -93,7 +93,10 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   cutover, later releases and rollbacks.
 - [ ] Verify the reservation against the active Worker binding and the private
   release record before publishing. Block a candidate that omits or changes
-  the established address, or whose baseline cannot be verified.
+  the established address, or whose baseline cannot be verified. Use one
+  serialized window for production and PRE activation and recheck both
+  active versions immediately before activation. Repeat preflight if the
+  checked baseline changed.
 - [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Worker
   secrets; record only presence, never values. Domain status checks require
   Full access under Resend's current key model; Sending access is send-only.
