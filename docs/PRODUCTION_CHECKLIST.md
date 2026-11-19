@@ -98,7 +98,9 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   release record before publishing. Block a candidate that omits or changes
   the established address, or whose baseline cannot be verified. Use one
   serialized window for production and PRE activation and recheck both
-  active versions immediately before activation. For an emergency pause,
+  active deployments immediately before activation. A normal release with a
+  reserved address requires one production version serving 100% of traffic.
+  For an emergency pause,
   verify production and the reservation again even if PRE metadata remains
   unavailable or drifted. Repeat preflight if the required baseline changed.
 - [ ] `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` are present as Worker
