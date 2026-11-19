@@ -1,6 +1,6 @@
 import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRoutingClient, CloudflareEmailRoutingError, type CloudflareCatchAll, type CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_ERROR_PREFIX, previewCatchAllError } from '$lib/domain/mail/health';
+import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_CRON_VERIFIED, PREVIEW_CATCH_ALL_ERROR_PREFIX, previewCatchAllError } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
 import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
@@ -141,8 +141,11 @@ async function checkCloudflareDomain(
   domain: HealthDomainRow,
   client: CloudflareHealthClient,
   nowMs: number,
-  catchAllOnly = false
+  productionWorker?: string
 ): Promise<ProviderCheckResult> {
+  if (productionWorker && domain.worker_name !== productionWorker) {
+    return { errorCode: 'cloudflare_worker_mapping_conflict', retryable: false, observedAt: null, catchAllTarget: 'unknown' };
+  }
   const observations = await Promise.allSettled([
     client.getZone(domain.cloudflare_zone_id),
     client.getCatchAll(domain.cloudflare_zone_id)
@@ -157,10 +160,10 @@ async function checkCloudflareDomain(
     return { errorCode: 'cloudflare_zone_mapping_conflict', retryable: false, observedAt: null };
   }
 
-  const target = catchAllTarget(catchAll, domain.worker_name);
+  const target = catchAllTarget(catchAll, productionWorker ?? domain.worker_name);
   const catchAllObservedAt = isoAt(nowMs);
   try {
-    const routeDrift = !catchAllOnly && await checkManagedRouteDrift(env, domain, await client.listRules(domain.cloudflare_zone_id));
+    const routeDrift = !productionWorker && await checkManagedRouteDrift(env, domain, await client.listRules(domain.cloudflare_zone_id));
     const collectOwnershipError = domain.unknown_recipient_policy === 'collect'
       ? await catchAllOwnershipError(env, domain.domain_name) : null;
     const collectMismatch = domain.unknown_recipient_policy === 'collect' && target !== 'this_worker';
@@ -251,8 +254,10 @@ async function saveCloudflareResult(
   const nextAt = mailHealthNextCheckAt(domain.id, nowMs, Math.max(1, failureCount), result.errorCode, result.retryable);
   if (catchAllOnly) {
     const retry = failureCount ? String(failureCount) + ':' : '';
-    const catchAllError = result.errorCode ? PREVIEW_CATCH_ALL_ERROR_PREFIX + retry + result.errorCode : null;
-    // Reuse the legacy error mirror and restore it from the full observation on recovery.
+    const verifiedAt = !result.errorCode && result.catchAllTarget === 'this_worker' ? result.catchAllObservedAt : null;
+    const observationCode = verifiedAt ? PREVIEW_CATCH_ALL_CRON_VERIFIED
+      : result.errorCode ? PREVIEW_CATCH_ALL_ERROR_PREFIX + retry + result.errorCode : null;
+    // The legacy mirror holds the narrower observation; full mailbox diagnostics use the Cloudflare columns.
     await db.prepare(`UPDATE mail_domains SET
         catch_all_target = COALESCE(?, catch_all_target), catch_all_checked_at = COALESCE(?, catch_all_checked_at),
         last_error_code = COALESCE(?, cloudflare_error_code),
@@ -260,7 +265,7 @@ async function saveCloudflareResult(
         cloudflare_next_check_at = ?, cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
       WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`)
       .bind(result.catchAllTarget ?? null, result.catchAllObservedAt ?? null,
-        catchAllError, catchAllError, isoAt(nowMs), nextAt, isoAt(nowMs), domain.id, domain.owner_user_id, token).run();
+        observationCode, observationCode, verifiedAt ?? isoAt(nowMs), nextAt, isoAt(nowMs), domain.id, domain.owner_user_id, token).run();
     return;
   }
   await db.prepare(
@@ -318,14 +323,14 @@ async function runProvider(
   credential: string | undefined,
   dependencies: MailHealthRefreshDependencies,
   foregroundDomain?: HealthDomainRow,
-  catchAllDomains?: string[]
+  catchAll?: { domains: string[]; workerName: string }
 ): Promise<ProviderRefreshSummary> {
   if (!credential?.trim()) return { state: 'not_configured', checked: 0, skippedBusy: 0, errorCode: null };
   if (!env.DB) return { state: 'unavailable', checked: 0, skippedBusy: 0, errorCode: 'd1_unavailable' };
   const nowMs = dependencies.nowMs ?? Date.now;
   const uuid = dependencies.randomUUID ?? (() => crypto.randomUUID());
   const startedAt = isoAt(nowMs());
-  const selected = foregroundDomain ? { results: [foregroundDomain] } : await selectCandidates(env.DB, provider, startedAt, catchAllDomains);
+  const selected = foregroundDomain ? { results: [foregroundDomain] } : await selectCandidates(env.DB, provider, startedAt, catchAll?.domains);
   const limit = Math.max(1, Math.min(5, dependencies.maxDomainsPerProvider ?? maxDomainsPerProvider));
   let checked = 0;
   let skippedBusy = 0;
@@ -348,8 +353,8 @@ async function runProvider(
           maxRulePages: 10,
           deadlineAt: currentTime + 12_000
         });
-      result = await checkCloudflareDomain(env, domain, client, nowMs(), Boolean(catchAllDomains));
-      await saveCloudflareResult(env.DB, domain, token, result, nowMs(), Boolean(catchAllDomains));
+      result = await checkCloudflareDomain(env, domain, client, nowMs(), catchAll?.workerName);
+      await saveCloudflareResult(env.DB, domain, token, result, nowMs(), Boolean(catchAll));
     } else {
       result = await checkResendDomain(
         domain,
@@ -381,13 +386,14 @@ export async function refreshMailDomainHealth(
 /** Production observes PRE-owned catch-alls through its existing read operations. */
 export async function refreshPreviewCatchAllHealth(env: CloudflareEnv, dependencies: MailHealthRefreshDependencies = {}) {
   const routing = readInboundRouting(env);
-  if (routing?.environment !== 'production' || !env.PRE_INBOUND_SETTINGS || !env.PRE_INBOUND_DB) return;
+  const workerName = env.INBOUND_ROUTING_SCOPE?.workerName;
+  if (routing?.environment !== 'production' || !workerName || !env.PRE_INBOUND_SETTINGS || !env.PRE_INBOUND_DB) return;
   const { results } = await routing.db.prepare(`SELECT route_key FROM inbound_routing_ownership
     WHERE kind = 'catch_all' AND environment = 'preview'`).all<{ route_key: string }>();
   if (!results.length) return;
   const preview = { ...env, DB: env.PRE_INBOUND_DB, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const } };
   const token = env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim();
-  return runProvider(preview, 'cloudflare', token, dependencies, undefined, results.map(row => row.route_key));
+  return runProvider(preview, 'cloudflare', token, dependencies, undefined, { domains: results.map(row => row.route_key), workerName });
 }
 
 /** Foreground observations share Cron's locks but never reconcile address lifecycle. */

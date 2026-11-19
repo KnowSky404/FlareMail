@@ -114,7 +114,7 @@ describe('scheduled mail domain health refresh', () => {
     deps.cloudflareClientFactory = (...args) => ({ ...factory(...args), listRules: async () => { throw new Error('exact rules are out of scope'); } });
     const env = {
       ...prod.env, PRE_INBOUND_SETTINGS: { recipient: null, enabled: false }, PRE_INBOUND_DB: pre.db,
-      INBOUND_ROUTING_SCOPE: { environment: 'production' as const },
+      INBOUND_ROUTING_SCOPE: { environment: 'production' as const, workerName: 'flaremail-worker' },
       INBOUND_ROUTING_DB: { prepare: () => ({
         all: async () => ({ results: [{ route_key: 'mail.example.test' }] }),
         bind: () => ({ first: async () => ({ environment: 'preview' }) })
@@ -139,11 +139,17 @@ describe('scheduled mail domain health refresh', () => {
     expect(Date.parse(String(pre.readDomain().cloudflare_next_check_at))).toBeGreaterThan(firstRetry);
     pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
     deps.cloudflareClientFactory = successfulFactory;
+    pre.sqlite.query("UPDATE mail_domains SET worker_name = 'legacy-worker' WHERE id = ?").run(domainId);
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain()).toMatchObject({
+      catch_all_target: 'unknown', last_error_code: 'preview_catch_all:cloudflare_worker_mapping_conflict'
+    });
+    pre.sqlite.query("UPDATE mail_domains SET worker_name = 'flaremail-worker', cloudflare_next_check_at = NULL WHERE id = ?").run(domainId);
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
     expect(pre.readDomain()).toMatchObject({
       catch_all_target: 'this_worker', catch_all_checked_at: new Date(defaultNow).toISOString(),
-      cloudflare_checked_at: priorFullCheck, cloudflare_error_code: priorError,
-      last_error_code: priorError, last_error_at: priorFullCheck
+      cloudflare_checked_at: priorFullCheck, cloudflare_error_code: priorError, cloudflare_error_at: priorFullCheck,
+      last_error_code: 'preview_catch_all_cron_verified', last_error_at: new Date(defaultNow).toISOString()
     });
     expect(prod.readDomain().catch_all_checked_at).toBeNull();
     expect(pre.sqlite.query("SELECT catch_all_checked_at FROM mail_domains WHERE id='unowned'").get()).toEqual({ catch_all_checked_at: null });

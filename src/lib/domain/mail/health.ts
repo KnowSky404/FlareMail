@@ -1,6 +1,7 @@
 export const MAIL_HEALTH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS = 24 * 60 * 60 * 1000;
 export const PREVIEW_CATCH_ALL_ERROR_PREFIX = 'preview_catch_all:';
+export const PREVIEW_CATCH_ALL_CRON_VERIFIED = 'preview_catch_all_cron_verified';
 export const TRANSIENT_CLOUDFLARE_HEALTH_ERRORS = new Set([
   'cloudflare_rate_limited',
   'cloudflare_timeout',

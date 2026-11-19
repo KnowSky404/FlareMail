@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import type { CloudflareTarget } from './cloudflare-target.ts';
 import { normalizePreInboundRecipient } from '../src/lib/server/inbound/pre-inbound.ts';
-import { isMailHealthFresh, previewCatchAllError } from '../src/lib/domain/mail/health.ts';
+import { isMailHealthFresh, PREVIEW_CATCH_ALL_CRON_VERIFIED } from '../src/lib/domain/mail/health.ts';
 
 export function sharedInboundPreviewTargetHash(target: CloudflareTarget) {
   return createHash('sha256').update(JSON.stringify(target)).digest('hex');
@@ -370,9 +370,9 @@ export async function assertProductionCatchAllActivation(
   };
   const [scheduleResult, domains, claims] = await Promise.all([
     request<{ schedules?: { cron: string }[] }>('workers/scripts/' + encodeURIComponent(target.name) + '/schedules'),
-    query<{ domain_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
+    query<{ domain_name: string; worker_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
       target.preInbound?.databaseId,
-      `SELECT lower(domain_name) AS domain_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
+      `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
        FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
     ),
     query<{ route_key: string }>(target.inboundRouting?.databaseId,
@@ -385,9 +385,10 @@ export async function assertProductionCatchAllActivation(
   assertUnchangedProductionConfiguration(target, { ...version, cron: scheduleResult.schedules.map(schedule => schedule.cron) });
   const owned = new Set(claims.map(claim => claim.route_key));
   const now = Date.now();
-  if (domains.some(domain => !owned.has(domain.domain_name) || domain.catch_all_target !== 'this_worker' ||
-      !isMailHealthFresh(domain.catch_all_checked_at, now) || Date.parse(domain.catch_all_checked_at ?? '') < version.deployedAt ||
-      previewCatchAllError(domain.last_error_code, domain.last_error_at))) throw new Error(errorCode);
+  if (domains.some(domain => !owned.has(domain.domain_name) || domain.worker_name !== target.name ||
+      domain.catch_all_target !== 'this_worker' || domain.last_error_code !== PREVIEW_CATCH_ALL_CRON_VERIFIED ||
+      domain.last_error_at !== domain.catch_all_checked_at || !isMailHealthFresh(domain.catch_all_checked_at, now) ||
+      Date.parse(domain.catch_all_checked_at ?? '') < version.deployedAt)) throw new Error(errorCode);
 }
 
 export async function readPauseObservability(

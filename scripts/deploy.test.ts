@@ -90,7 +90,7 @@ test('activation requires PRE catch-all observations produced after the protecti
     compatibilityDate: target.compatibilityDate, compatibilityFlags: target.compatibilityFlags
   };
   const domain = {
-    domain_name: 'mail.example.test', catch_all_target: 'this_worker',
+    domain_name: 'mail.example.test', worker_name: target.name, catch_all_target: 'this_worker',
     catch_all_checked_at: new Date(active.deployedAt - 1).toISOString(), last_error_code: null, last_error_at: null
   };
   const fetch = spyOn(globalThis, 'fetch');
@@ -104,6 +104,10 @@ test('activation requires PRE catch-all observations produced after the protecti
     await expect(assertProductionCatchAllActivation(target, active, projectRoot))
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED');
     domain.catch_all_checked_at = new Date(active.deployedAt + 1).toISOString();
+    mockRequests();
+    await expect(assertProductionCatchAllActivation(target, active, projectRoot))
+      .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED');
+    Object.assign(domain, { last_error_code: 'preview_catch_all_cron_verified', last_error_at: domain.catch_all_checked_at });
     mockRequests();
     await expect(assertProductionCatchAllActivation(target, active, projectRoot)).resolves.toBeUndefined();
   } finally {
