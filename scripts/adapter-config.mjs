@@ -26,9 +26,13 @@ export function adapterOptions(useSelectedTarget = false) {
     secrets: { required: target.secrets ?? [] },
     d1_databases: [
       { binding: 'DB', database_name: target.databaseName, database_id: target.databaseId },
+      ...(target.preInbound ? [{ binding: 'PRE_INBOUND_DB', database_name: target.preInbound.databaseName, database_id: target.preInbound.databaseId }] : []),
       ...(routing ? [{ binding: 'INBOUND_ROUTING_DB', database_name: routing.databaseName, database_id: routing.databaseId }] : [])
     ],
-    r2_buckets: [{ binding: 'BUCKET', bucket_name: target.bucket }]
+    r2_buckets: [
+      { binding: 'BUCKET', bucket_name: target.bucket },
+      ...(target.preInbound ? [{ binding: 'PRE_INBOUND_BUCKET', bucket_name: target.preInbound.bucket }] : [])
+    ]
   }), { mode: 0o600 });
   chmodSync(path, 0o600);
   return { config: path, platformProxy: { persist: { path: resolve(root, process.env.FLAREMAIL_STATE_DIR ?? '.cloudflare/state', 'v3') } } };

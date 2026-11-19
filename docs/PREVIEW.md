@@ -26,6 +26,8 @@
 
 同时核对全部活动生产版本是否已有 PRE 入站绑定。无绑定时将 `production.previewDelivery` 设为 `null`。存在绑定时记录它的 `databaseId`、`bucket` 和 `routingDatabaseId`，三项都须与候选 PRE 目标一致。远程 PRE 需要明确设置 `CLOUDFLARE_ACCOUNT_ID`。省略共享归属的旧目标也会查询该账号的活动生产版本，在已有 PRE 收信保护时拒绝上传。
 
+保留旧固定收件地址时，先比对生产和 PRE 的私有候选配置及已发布绑定。记录规范化地址的小写 SHA-256 为 `fixedReservationHash`，活动生产配送的相同指纹放在 `production.previewDelivery.fixedReservationHash`。
+
 该阶段只发布 `mail-ai`，以 Owner 会话访问只读域名、邮箱和 `/api/readiness`。就绪响应包含 `inboundRouting.environment=preview` 和 `inboundRouting.readOnly=true`。部署后重新核对 PRE 实际绑定和生产部署指针。预约的 SMTP 验收和生产规则切换按共享收信 SPEC 的后续环节执行。
 
 单 Worker 收信方案启用后，PRE 的 D1 迁移与 D1/R2 换绑须同时检查生产 `email()`、目标 PRE 版本和所有可访问该存储的入口，包括稳定 PRE URL、部署专属 URL 和版本预览 URL。线上迁移要求所有相关版本兼容前后 schema；不兼容时先发布兼容版本，或按授权暂停并排空受影响的请求。换绑也需暂停、排空并核对两侧绑定和已有数据。逐个重新核验实际绑定与 schema 后才恢复本次维护涉及的入口。此要求适用于下文各项 PRE 迁移。参见 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
