@@ -251,21 +251,24 @@ function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
 async function readLiveNativePreview(workerName: string, projectRoot: string) {
   const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
   const workers = 'workers/';
-  const worker = await get<{ id?: string }>(workers + encodeURIComponent(workerName));
+  const worker = await get<{ id?: string; previews_base_config?: { env?: Record<string, unknown> } }>(
+    workers + encodeURIComponent(workerName)
+  );
   if (!worker?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const path = workers + encodeURIComponent(worker.id) + '/previews';
   const previews = await get<Array<{ id?: string; slug?: string }>>(path + '?slug=mail-ai');
   const preview = Array.isArray(previews) ? previews.find(entry => entry.slug === 'mail-ai') : null;
   if (!preview?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
-  return get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string }> }>(
+  const latest = await get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string }> }>(
     path + '/' + encodeURIComponent(preview.id) + '/deployments/latest?include=bindings'
   );
+  return { latest, baseEnv: worker.previews_base_config?.env };
 }
 
 export async function assertLiveNativePreview(
   target: CloudflareTarget, source: { previewDeploymentId: string; previewBuildLabel: string }, projectRoot: string
 ) {
-  const latest = await readLiveNativePreview(target.name, projectRoot);
+  const { latest } = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
   if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' || env?.APP_VERSION?.text !== source.previewBuildLabel ||
       routingD1Id(env?.DB?.database_id ?? env?.DB?.id) !== routingD1Id(target.preInbound?.databaseId) ||
@@ -278,13 +281,13 @@ export async function assertLiveNativePreview(
 export async function assertLivePreviewForPublish(
   target: CloudflareTarget, source: { previewDeploymentId: string; managementEnabled: boolean }, projectRoot: string
 ) {
-  const latest = await readLiveNativePreview(target.name, projectRoot);
+  const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
   const registry = routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id);
   if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' ||
       routingD1Id(env?.DB?.database_id ?? env?.DB?.id) !== routingD1Id(target.databaseId) || env?.BUCKET?.bucket_name !== target.bucket ||
       (env?.INBOUND_ROUTING_DB && registry !== routingD1Id(target.inboundRouting?.databaseId)) ||
-      (!source.managementEnabled && env?.CLOUDFLARE_EMAIL_ROUTING_TOKEN)) {
+      (!source.managementEnabled && (env?.CLOUDFLARE_EMAIL_ROUTING_TOKEN || baseEnv?.CLOUDFLARE_EMAIL_ROUTING_TOKEN))) {
     throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
   }
 }

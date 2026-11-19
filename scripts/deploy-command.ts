@@ -13,7 +13,7 @@ export function requireDeployConfig(path = 'cloudflare.deploy.json', fileExists 
 }
 export function normalizeDeployArguments(args: string[], callerDirectory = process.cwd()) {
   return args.map((argument, index) => {
-    if (/^(?:--(?:mode|prebuilt|worker|config|provision|profile)(?:=|$)|-m)/u.test(argument)) {
+    if (/^(?:--(?:mode|prebuilt|worker|config|provision|profile|dispatch-namespace|dispatchNamespace)(?:=|$)|-m)/u.test(argument)) {
       throw new Error('The release mode, provisioning policy, deployment account and build target are controlled by this script.');
     }
     if (argument === '--secrets-file') {

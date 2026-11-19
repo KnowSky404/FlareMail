@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertPauseConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertLivePreviewForPublish, assertPauseConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -138,7 +138,10 @@ test('allows only a verified, native read-only shared PRE build', async () => {
   const file = join(directory, 'target.json');
   const receiptPath = join(directory, 'receipt.json');
   const previewCommit = 'c'.repeat(40);
-  const env = { FLAREMAIL_CF_CONFIG: file, FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT: receiptPath, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) };
+  const env = {
+    FLAREMAIL_CF_CONFIG: file, FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT: receiptPath,
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: 'fixture-token'
+  };
   const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   const candidate = {
     ...localTarget, databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', bucket: 'preview-bucket', cron: [],
@@ -157,6 +160,23 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
     await writeFile(receiptPath, JSON.stringify(receipt), { mode: 0o600 });
     expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({ previewCommit, managementEnabled: false });
+    const fetch = spyOn(globalThis, 'fetch');
+    try {
+      fetch.mockResolvedValueOnce(Response.json({ success: true, result: {
+        id: 'worker-id', previews_base_config: { env: { CLOUDFLARE_EMAIL_ROUTING_TOKEN: { type: 'secret_text' } } }
+      } }));
+      fetch.mockResolvedValueOnce(Response.json({ success: true, result: [{ id: 'preview-id', slug: 'mail-ai' }] }));
+      fetch.mockResolvedValueOnce(Response.json({ success: true, result: {
+        id: receipt.preview.deploymentId, env: {
+          APP_ENV: { text: 'preview' }, DB: { database_id: candidate.databaseId }, BUCKET: { bucket_name: candidate.bucket }
+        }
+      } }));
+      await expect(assertLivePreviewForPublish(readCloudflareTarget(file, true), {
+        previewDeploymentId: receipt.preview.deploymentId, managementEnabled: false
+      }, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
+    } finally {
+      fetch.mockRestore();
+    }
     await writeFile(receiptPath, JSON.stringify({ ...receipt, previewManagementAuthorized: true }));
     expect(() => assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
     await writeFile(receiptPath, JSON.stringify(receipt));
@@ -309,6 +329,8 @@ test('normalizes secret files from the caller directory and rejects policy overr
   expect(normalizeDeployArguments(['--secrets-file=../release-secrets.json'], '/workspace/app')).toEqual(['--secrets-file=/workspace/release-secrets.json']);
   expect(() => normalizeDeployArguments(['--secrets-file'])).toThrow('requires a path');
   expect(() => normalizeDeployArguments(['--provision=true'])).toThrow('controlled by this script');
+  expect(() => normalizeDeployArguments(['--dispatch-namespace=other'])).toThrow('controlled by this script');
+  expect(() => normalizeDeployArguments(['--dispatchNamespace', 'other'])).toThrow('controlled by this script');
 });
 
 
