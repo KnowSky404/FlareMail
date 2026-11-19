@@ -6,15 +6,20 @@ export default defineConfig({
   // Resource API commands read account defaults without evaluating Worker bindings.
   worker: async ({ isPreview, mode }) => {
     // The Vite plugin blocks static config dependencies from serving as Worker modules.
-    const { checkPreInboundRelease, cloudflarePreInboundSettings, readCloudflareTarget } = await import('./scripts/cloudflare-target.ts');
+    const { checkPreInboundRelease, cloudflarePreInboundSettings, projectRoot, readCloudflareTarget } = await import('./scripts/cloudflare-target.ts');
     const remote = mode === 'production' || mode === 'preview';
     const config = process.env.FLAREMAIL_CF_CONFIG ?? (remote ? `cloudflare.${mode === 'production' ? 'deploy' : 'preview'}.json` : 'cloudflare.local.json');
     const target = readCloudflareTarget(config, remote);
     if (remote && target.vars.APP_ENV !== mode) throw new Error(`The ${mode} build requires APP_ENV=${mode}.`);
-    if (isPreview || remote) checkPreInboundRelease(target, isPreview && mode === 'preview');
+    const release = isPreview || remote ? checkPreInboundRelease(target, isPreview && mode === 'preview') : undefined;
+    if (release?.kind === 'production') {
+      const { assertLiveNativePreview } = await import('./scripts/shared-inbound-preview.ts');
+      await assertLiveNativePreview(target, release.source, projectRoot);
+    }
     const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
     const preInboundSettings = cloudflarePreInboundSettings(target);
-    const pauseRoutingWrites = isPreview || (mode === 'production' && !preInboundSettings?.enabled);
+    const pauseRoutingWrites = (isPreview && (release?.kind !== 'preview' || !release.managementEnabled)) ||
+      (mode === 'production' && !preInboundSettings?.enabled);
     if (!remote && process.env.FLAREMAIL_E2E === 'true') {
       Object.assign(vars, {
         APP_ENV: 'development', AUTH_MODE: 'local', ALLOW_FAKE_SERVICES: 'true', OUTBOUND_PROVIDER: 'demo',
