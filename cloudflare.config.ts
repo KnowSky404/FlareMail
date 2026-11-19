@@ -12,13 +12,16 @@ export default defineConfig({
     const target = readCloudflareTarget(config, remote);
     if (remote && target.vars.APP_ENV !== mode) throw new Error(`The ${mode} build requires APP_ENV=${mode}.`);
     const release = isPreview || remote ? checkPreInboundRelease(target, isPreview && mode === 'preview') : undefined;
-    if (release?.kind === 'production') {
+    if (release?.kind === 'production' && !release.source.pauseOnly) {
       const { assertLiveNativePreview } = await import('./scripts/shared-inbound-preview.ts');
       await assertLiveNativePreview(target, release.source, projectRoot);
+    } else if (release?.kind === 'preview') {
+      const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
+      await assertLivePreviewForPublish(target, release.source, projectRoot);
     }
     const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
     const preInboundSettings = cloudflarePreInboundSettings(target);
-    const pauseRoutingWrites = (isPreview && (release?.kind !== 'preview' || !release.managementEnabled)) ||
+    const pauseRoutingWrites = (isPreview && (release?.kind !== 'preview' || !release.source.managementEnabled)) ||
       (mode === 'production' && !preInboundSettings?.enabled);
     if (!remote && process.env.FLAREMAIL_E2E === 'true') {
       Object.assign(vars, {

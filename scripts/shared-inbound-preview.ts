@@ -57,7 +57,8 @@ export function assertSharedInboundPreview(target: CloudflareTarget, receiptPath
   }
   return {
     previewCommit: receipt.previewCommit as string, deploymentId: receipt.production.deploymentId as string,
-    productionDb, productionBucket: receipt.production.bucket as string, expectsDelivery: delivery !== null, managementEnabled
+    productionDb, productionBucket: receipt.production.bucket as string, expectsDelivery: delivery !== null, managementEnabled,
+    previewDeploymentId: receipt.preview.deploymentId as string
   };
 }
 
@@ -68,22 +69,24 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
   const previewDb = routingD1Id(target.preInbound?.databaseId);
   const registry = routingD1Id(target.inboundRouting?.databaseId);
   const phase = receipt.phase;
+  const pauseOnly = phase === 'pause';
   const reserved = fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT);
-  if (!['protect', 'activate', 'maintain'].includes(phase) || (target.vars.PRE_INBOUND_ENABLED === 'false') !== (phase === 'protect') ||
+  if (!['protect', 'activate', 'maintain', 'pause'].includes(phase) || (target.vars.PRE_INBOUND_ENABLED === 'false') !== (phase === 'protect' || pauseOnly) ||
       receipt.workerName !== target.name || receipt.previewName !== 'mail-ai' ||
       receipt.targetHash !== sharedInboundPreviewTargetHash(target) ||
       !/^[a-f0-9]{40}$/u.test(receipt.releaseCommit) ||
       target.vars.APP_VERSION !== 'production+' + receipt.releaseCommit.slice(0, 7) ||
-      !/^[a-f0-9]{40}$/u.test(receipt.acceptedPreviewCommit) ||
-      receipt.preview?.buildLabel !== 'preview+' + receipt.acceptedPreviewCommit.slice(0, 7) || receipt.ownerAcceptanceVerified !== true ||
-      !receipt.production?.deploymentId || !receipt.preview?.deploymentId ||
+      (!pauseOnly && (!/^[a-f0-9]{40}$/u.test(receipt.acceptedPreviewCommit) ||
+        receipt.preview?.buildLabel !== 'preview+' + receipt.acceptedPreviewCommit.slice(0, 7) || receipt.ownerAcceptanceVerified !== true ||
+        !receipt.preview?.deploymentId || routingD1Id(receipt.preview.databaseId) !== previewDb || receipt.preview.bucket !== target.preInbound?.bucket ||
+        (receipt.preview.fixedReservationHash ?? null) !== reserved)) || !receipt.production?.deploymentId ||
       !productionDb || !previewDb || !registry || new Set([productionDb, previewDb, registry]).size !== 3 ||
-      routingD1Id(receipt.production.databaseId) !== productionDb || routingD1Id(receipt.preview.databaseId) !== previewDb ||
+      routingD1Id(receipt.production.databaseId) !== productionDb ||
       routingD1Id(receipt.routingDatabaseId) !== registry || receipt.production.bucket !== target.bucket ||
-      receipt.preview.bucket !== target.preInbound?.bucket || receipt.preview.bucket === target.bucket ||
-      (receipt.preview.fixedReservationHash ?? null) !== reserved ||
+      target.preInbound?.bucket === target.bucket ||
       (receipt.production.fixedReservationHash && receipt.production.fixedReservationHash !== reserved) ||
-      receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true || (phase !== 'maintain' && receipt.legacyOperationsQuiesced !== true) ||
+      receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true ||
+      (!pauseOnly && phase !== 'maintain' && receipt.legacyOperationsQuiesced !== true) ||
       (phase === 'activate' && (!routingD1Id(receipt.protectVersionId) || receipt.protectionActive !== true ||
         receipt.mailRoutesAndMappingsVerified !== true || receipt.preCatchAllsVerified !== true))) {
     throw new Error(errorCode);
@@ -91,7 +94,8 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
   return {
     releaseCommit: receipt.releaseCommit as string, acceptedPreviewCommit: receipt.acceptedPreviewCommit as string,
     deploymentId: receipt.production.deploymentId as string, protectVersionId: phase === 'activate' ? receipt.protectVersionId as string : null,
-    maintaining: phase === 'maintain', previewDeploymentId: receipt.preview.deploymentId as string, previewBuildLabel: receipt.preview.buildLabel as string
+    maintaining: phase === 'maintain', pauseOnly,
+    previewDeploymentId: (receipt.preview?.deploymentId ?? '') as string, previewBuildLabel: (receipt.preview?.buildLabel ?? '') as string
   };
 }
 
@@ -120,6 +124,7 @@ interface WorkerBindingMetadata {
   database_id?: string;
   id?: string;
   bucket_name?: string;
+  text?: string;
   json?: { recipient?: string | null; enabled?: boolean } | string;
 }
 
@@ -204,9 +209,7 @@ function cloudflareSessionToken(projectRoot: string) {
   throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE');
 }
 
-export async function assertLiveNativePreview(
-  target: CloudflareTarget, source: { previewDeploymentId: string; previewBuildLabel: string }, projectRoot: string
-) {
+async function readLiveNativePreview(workerName: string, projectRoot: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = cloudflareSessionToken(projectRoot);
@@ -220,21 +223,41 @@ export async function assertLiveNativePreview(
     if (!envelope.success) throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
     return envelope.result;
   };
-  const worker = await get<{ id?: string }>(workers + encodeURIComponent(target.name));
+  const worker = await get<{ id?: string }>(workers + encodeURIComponent(workerName));
   if (!worker?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const path = workers + encodeURIComponent(worker.id) + '/previews';
   const previews = await get<Array<{ id?: string; slug?: string }>>(path + '?slug=mail-ai');
   const preview = Array.isArray(previews) ? previews.find(entry => entry.slug === 'mail-ai') : null;
   if (!preview?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
-  const latest = await get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string }> }>(
+  return get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string }> }>(
     path + '/' + encodeURIComponent(preview.id) + '/deployments/latest?include=bindings'
   );
+}
+
+export async function assertLiveNativePreview(
+  target: CloudflareTarget, source: { previewDeploymentId: string; previewBuildLabel: string }, projectRoot: string
+) {
+  const latest = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
   if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' || env?.APP_VERSION?.text !== source.previewBuildLabel ||
       routingD1Id(env?.DB?.database_id ?? env?.DB?.id) !== routingD1Id(target.preInbound?.databaseId) ||
       env?.BUCKET?.bucket_name !== target.preInbound?.bucket ||
       routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id) !== routingD1Id(target.inboundRouting?.databaseId)) {
     throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
+  }
+}
+
+export async function assertLivePreviewForPublish(
+  target: CloudflareTarget, source: { previewDeploymentId: string; managementEnabled: boolean }, projectRoot: string
+) {
+  const latest = await readLiveNativePreview(target.name, projectRoot);
+  const env = latest?.env;
+  const registry = routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id);
+  if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' ||
+      routingD1Id(env?.DB?.database_id ?? env?.DB?.id) !== routingD1Id(target.databaseId) || env?.BUCKET?.bucket_name !== target.bucket ||
+      (env?.INBOUND_ROUTING_DB && registry !== routingD1Id(target.inboundRouting?.databaseId)) ||
+      (!source.managementEnabled && env?.CLOUDFLARE_EMAIL_ROUTING_TOKEN)) {
+    throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
   }
 }
 
@@ -261,12 +284,13 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
     throw new Error('INBOUND_PRODUCTION_DEPLOYMENT_CHANGED');
   }
   const existingRegistry = db('INBOUND_ROUTING_DB');
-  if (source.protectVersionId || source.maintaining || existingRegistry || binding('PRE_INBOUND_SETTINGS')) {
+  if (source.protectVersionId || source.maintaining || source.pauseOnly || existingRegistry || binding('PRE_INBOUND_SETTINGS')) {
     if (!settings || existingRegistry !== routingD1Id(target.inboundRouting?.databaseId) ||
         db('PRE_INBOUND_DB') !== routingD1Id(target.preInbound?.databaseId) || bucket('PRE_INBOUND_BUCKET') !== target.preInbound?.bucket ||
         fixedReservationHash(settings.recipient ?? undefined) !== fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT) ||
         (source.protectVersionId && (version.id !== source.protectVersionId || settings.enabled !== false)) ||
-        (source.maintaining && settings.enabled !== true)) {
+        (source.maintaining && settings.enabled !== true) ||
+        (source.pauseOnly && (settings.enabled !== true || binding('APP_VERSION')?.text !== target.vars.APP_VERSION))) {
       throw new Error('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
     }
   }

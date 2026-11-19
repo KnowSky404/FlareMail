@@ -63,6 +63,10 @@ test('production activation requires the reviewed PRE and an active, paused prot
     });
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_RELEASE_SOURCE_NOT_VERIFIED');
 
+    await writeFile(proof, JSON.stringify({ ...evidence, phase: 'pause', preview: undefined, acceptedPreviewCommit: undefined,
+      ownerAcceptanceVerified: false, targetHash: sharedInboundPreviewTargetHash(candidate) }));
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ pauseOnly: true });
+
     const active = { ...candidate, vars: { ...candidate.vars, PRE_INBOUND_ENABLED: 'true' } };
     await writeFile(file, JSON.stringify(active));
     const activation = { ...evidence, phase: 'activate', targetHash: sharedInboundPreviewTargetHash(active),

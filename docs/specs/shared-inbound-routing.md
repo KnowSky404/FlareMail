@@ -44,7 +44,9 @@
 
 生产切换使用权限为 `0600` 的 `FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT` 记录。在 PRE 验收和合并之后，核对实际部署、两侧存储、归属表、已停止的旧入口及在途操作，记录 `phase: "protect"` 和 `PRE_INBOUND_ENABLED=false`。保护版本阻挡 PRE 投递及身份写入，确认其已服务全部生产流量后才修改获准的 PRE 规则及映射。保留该版本作为回退目标。复核规则、映射和同一归属库后以 `phase: "activate"` 和 `PRE_INBOUND_ENABLED=true` 重启交付，按授权验证两边真实 SMTP。通过 `CLOUDFLARE_ACCOUNT_ID` 固定预检和上传账号，命名登录配置通过 `CLOUDFLARE_AUTH_PROFILE` 选择。发布脚本核对干净工作树和 `releaseCommit`，要求它与 `acceptedPreviewCommit` 的源码树一致，并阻止缺少保护配置的目标覆盖已经启用保护的生产部署。生产发布仍走原有 PR、审查和生产清单。
 
-已启用的生产收信配置保持原绑定和保留地址时，日常发布使用 `phase: "maintain"`，继续交付。所有生产共享发布都在构建时再次读取实际 `mail-ai` 部署及其绑定。PRE 验收默认只读。生产已开启使用同一绑定的配送后，经独立授权可以在 PRE 预检中声明 `previewManagementAuthorized`，并核对所属账号和规则管理凭证范围后开启身份管理。
+已启用的生产收信配置保持原绑定和保留地址时，日常发布使用 `phase: "maintain"`，继续交付。首次保护、开启交付及日常发布都在构建时再次读取实际 `mail-ai` 部署及其绑定。PRE 验收默认只读。生产已开启使用同一绑定的配送后，经独立授权可以在 PRE 预检中声明 `previewManagementAuthorized`，并核对所属账号和规则管理凭证范围后开启身份管理。
+
+紧急停收使用同一生产版本源码和相同绑定，只将交付开关置为 `false`，并记录 `phase: "pause"`。此时允许 PRE 元数据不可用，构建仍校验正在服务的生产保护版本、绑定和保留地址。
 
 ### 本地运行
 
