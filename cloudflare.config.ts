@@ -60,7 +60,11 @@ export default defineConfig({
         } : {}),
         ...(target.inboundRouting ? {
           INBOUND_ROUTING_DB: bindings.d1({ name: target.inboundRouting.databaseName, id: target.inboundRouting.databaseId }),
-          INBOUND_ROUTING_SCOPE: bindings.json({ environment: target.inboundRouting.environment, ...(pauseRoutingWrites ? { readOnly: true as const } : {}) })
+          INBOUND_ROUTING_SCOPE: bindings.json({
+            environment: target.inboundRouting.environment,
+            ...(target.inboundRouting.environment === 'production' ? { workerName: target.name } : {}),
+            ...(pauseRoutingWrites ? { readOnly: true as const } : {})
+          })
         } : {}),
         ASSETS: bindings.assets()
       }
