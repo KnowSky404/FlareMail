@@ -279,7 +279,8 @@ async function saveCloudflareResult(
        cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
      WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`
   ).bind(
-    result.catchAllTarget ?? null, preserveCatchAllObservation ? null : result.catchAllObservedAt ?? null,
+    preserveCatchAllObservation ? null : result.catchAllTarget ?? null,
+    preserveCatchAllObservation ? null : result.catchAllObservedAt ?? null,
     result.observedAt,
     result.errorCode, result.errorCode ? isoAt(nowMs) : null, failureCount,
     ...(preserveCatchAllObservation ? [] : [nextAt, result.errorCode, result.errorCode ? isoAt(nowMs) : null]), isoAt(nowMs),

@@ -98,7 +98,7 @@ async function recordProviderCheckFailure(
     (preserveCatchAllObservation ? '' : `${provider}_next_check_at = ?, `) +
     `${provider}_check_token = NULL, ${provider}_check_expires_at = NULL, ` +
     (provider === 'cloudflare' && !preserveCatchAllObservation ? 'last_error_code = ?, last_error_at = ?, ' : '') +
-    (errorCode === 'cloudflare_zone_mapping_conflict' ? "catch_all_target = 'unknown', " : '') +
+    (errorCode === 'cloudflare_zone_mapping_conflict' && !preserveCatchAllObservation ? "catch_all_target = 'unknown', " : '') +
     'updated_at = ? WHERE id = ? AND owner_user_id = ? AND ' + `${provider}_check_token = ? AND ${provider}_check_expires_at > ?`
   ).bind(
     errorCode,
@@ -384,15 +384,14 @@ export async function checkManagedMailDomain(
         const statements = [
           env.DB.prepare(
             'UPDATE mail_domains SET cloudflare_account_id = COALESCE(cloudflare_account_id, ?), ' +
-            'catch_all_target = ?, ' + (preserveCatchAllObservation ? '' : 'catch_all_checked_at = ?, ') +
+            (preserveCatchAllObservation ? '' : 'catch_all_target = ?, catch_all_checked_at = ?, ') +
             'cloudflare_checked_at = ?, cloudflare_error_code = ?, cloudflare_error_at = ?, cloudflare_failure_count = 0, ' +
             (preserveCatchAllObservation ? '' : 'cloudflare_next_check_at = ?, last_error_code = ?, last_error_at = ?, ') +
             'updated_at = ? ' +
             'WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ? AND cloudflare_check_expires_at > ?'
           ).bind(
             zone.accountId,
-            target,
-            ...(preserveCatchAllObservation ? [] : [timestamp]),
+            ...(preserveCatchAllObservation ? [] : [target, timestamp]),
             timestamp,
             cloudflareHealthError,
             cloudflareHealthError ? timestamp : null,
