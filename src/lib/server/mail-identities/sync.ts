@@ -77,6 +77,7 @@ export async function syncCloudflareMailIdentities(env: CloudflareEnv, ownerUser
       catchAll.actions[0]?.type === 'worker' && catchAll.actions[0]?.value.length === 1 &&
       catchAll.actions[0]?.value[0] === workerName;
     const collectForEnvironment = catchesForWorker && await ownsMailRouting(env, 'catch_all', zone.name);
+    const needsProductionCheck = collectForEnvironment && env.INBOUND_ROUTING_SCOPE?.environment === 'preview';
     const candidates = [];
     for (const rule of rules) {
       const identity = workerRecipient(rule, workerName);
@@ -108,9 +109,10 @@ export async function syncCloudflareMailIdentities(env: CloudflareEnv, ownerUser
               : catchAll.actions[0]?.type === 'drop' ? 'drop' : 'external';
             const timestamp = new Date().toISOString();
             await env.DB.prepare(`UPDATE mail_domains SET catch_all_target = ?, catch_all_checked_at = ?,
-              cloudflare_checked_at = ?, unknown_recipient_policy = ?, updated_at = ?
+              cloudflare_checked_at = ?, unknown_recipient_policy = ?,
+              ${needsProductionCheck ? 'cloudflare_next_check_at = NULL,' : ''} updated_at = ?
               WHERE id = ? AND owner_user_id = ? AND updated_at = ?`)
-              .bind(target, timestamp, timestamp, collectForEnvironment ? 'collect' : 'reject', timestamp,
+              .bind(target, needsProductionCheck ? null : timestamp, timestamp, collectForEnvironment ? 'collect' : 'reject', timestamp,
                 domain.id, ownerUserId, domain.updated_at).run();
           }
         }
