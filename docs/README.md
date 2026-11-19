@@ -11,7 +11,8 @@ The project overview is available in both languages. Detailed guides currently u
 | [User guide](./USER_GUIDE.md) | English | Domains, addresses, daily mail actions, search, compose, and settings |
 | [Local development](./DEVELOPMENT.md) | English | Local setup, Owner bootstrap, Worker preview, tests, and repository structure |
 | [Deployment](../DEPLOY.md) | English | Authoritative first production deployment, upgrades, Custom Domains, Resend, Email Routing, and rollback |
-| [Preview and domain setup](./PREVIEW.md) | 中文 | Preview environments, shared production data, provider credentials, and browser domain setup |
+| [Preview and domain setup](./PREVIEW.md) | 中文 | Isolated Preview storage, provider credentials, and identity acceptance |
+| [Single-Worker PRE inbound](./specs/single-worker-pre-inbound.md) | 中文 | Proposed SMTP routing, storage isolation, cutover and rollback |
 | [Maintenance and recovery](./DEPLOYMENT.md) | English | Read-only audits, identity backfill, retention, R2 cleanup, FTS export, and incident recovery |
 | [Production checklist](./PRODUCTION_CHECKLIST.md) | English | Release gates, migration review, provider checks, and rollback readiness |
 | [AI setup and privacy](./AI.md) | English / 中文 | Provider settings, summary language, explicit consent, limits and troubleshooting |
