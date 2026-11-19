@@ -29,12 +29,15 @@ export function assertSharedInboundPreview(target: CloudflareTarget, receiptPath
   const previewDb = routingD1Id(target.databaseId);
   const productionDb = routingD1Id(receipt.production?.databaseId);
   const registry = routingD1Id(target.inboundRouting?.databaseId);
+  const delivery = receipt.production?.previewDelivery;
   if (receipt.previewName !== 'mail-ai' || receipt.workerName !== target.name ||
       !receipt.production?.deploymentId || !receipt.preview?.deploymentId ||
       receipt.targetHash !== sharedInboundPreviewTargetHash(target) ||
       !previewDb || !productionDb || !registry || new Set([previewDb, productionDb, registry]).size !== 3 ||
       routingD1Id(receipt.preview.databaseId) !== previewDb || routingD1Id(receipt.routingDatabaseId) !== registry ||
       receipt.preview.bucket !== target.bucket || !receipt.production.bucket || receipt.production.bucket === target.bucket ||
+      (delivery !== null && (routingD1Id(delivery?.databaseId) !== previewDb || delivery?.bucket !== target.bucket ||
+        routingD1Id(delivery?.routingDatabaseId) !== registry)) ||
       receipt.registryVerified !== true || receipt.previewBaseVerified !== true || target.cron.length !== 0 ||
       ['AUTO_REPLY_ENABLED', 'INBOUND_NOTIFICATION_ENABLED', 'TELEGRAM_ENABLED'].some(key => target.vars[key] !== 'false') ||
       Object.hasOwn(target.vars, 'CLOUDFLARE_EMAIL_ROUTING_TOKEN') ||
@@ -62,7 +65,8 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       routingD1Id(receipt.routingDatabaseId) !== registry || receipt.production.bucket !== target.bucket ||
       receipt.preview.bucket !== target.preInbound?.bucket || receipt.preview.bucket === target.bucket ||
       receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true || receipt.legacyOperationsQuiesced !== true ||
-      (phase === 'activate' && (!receipt.protectVersionId || receipt.protectionActive !== true || receipt.mailRoutesAndMappingsVerified !== true))) {
+      (phase === 'activate' && (!receipt.protectVersionId || receipt.protectionActive !== true ||
+        receipt.mailRoutesAndMappingsVerified !== true || receipt.preCatchAllsVerified !== true))) {
     throw new Error(errorCode);
   }
   return { releaseCommit: receipt.releaseCommit as string, acceptedPreviewCommit: receipt.acceptedPreviewCommit as string };

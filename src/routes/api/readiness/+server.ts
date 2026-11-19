@@ -44,6 +44,16 @@ const REQUIRED_TABLES = [
   'workspace_telegram_rate_limits',
   'workspace_telegram_delivery_limits'
 ] as const;
+
+async function hasSupportedWorkspaceSchema(db: D1Database) {
+  const placeholders = REQUIRED_TABLES.map(() => '?').join(', ');
+  const tables = await db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${placeholders})`)
+    .bind(...REQUIRED_TABLES).all<{ name: string }>();
+  const version = await db.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?')
+    .bind('flaremail').first<{ schema_version: number }>();
+  return (tables.results?.length ?? 0) === REQUIRED_TABLES.length && isSupportedWorkspaceSchemaVersion(version?.schema_version);
+}
+
 export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
   const requestId = getRequestId(event);
@@ -70,13 +80,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
 
   if (env?.DB) {
     try {
-      const placeholders = REQUIRED_TABLES.map(() => '?').join(', ');
-      const tables = await env.DB.prepare(`
-        SELECT name FROM sqlite_master
-        WHERE type = 'table' AND name IN (${placeholders})
-      `).bind(...REQUIRED_TABLES).all<{ name: string }>();
-      const version = await env.DB.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?').bind('flaremail').first<{ schema_version: number }>();
-      schemaReady = (tables.results?.length ?? 0) === REQUIRED_TABLES.length && isSupportedWorkspaceSchemaVersion(version?.schema_version);
+      schemaReady = await hasSupportedWorkspaceSchema(env.DB);
       schemaCode = 'SCHEMA_NOT_READY';
       if (schemaReady) {
         const queue = await env.DB.prepare(`
@@ -152,6 +156,9 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
         if (routing.environment === 'production') {
           readPreInboundBindings(env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function',
             typeof env.PRE_INBOUND_BUCKET?.put === 'function', true);
+          if (!env.PRE_INBOUND_DB || !await hasSupportedWorkspaceSchema(env.PRE_INBOUND_DB)) {
+            throw new Error('PRE_INBOUND_SCHEMA_NOT_READY');
+          }
         }
         await routing.db.prepare('SELECT kind FROM inbound_routing_ownership LIMIT 1').first();
         inboundRouting = { environment: routing.environment, readOnly: env.INBOUND_ROUTING_SCOPE?.readOnly === true };
