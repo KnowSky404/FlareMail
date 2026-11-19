@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertProductionReleaseSource, assertSharedInboundProduction, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
+import { assertProductionReleaseSource, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -113,6 +113,14 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
     await writeFile(receiptPath, JSON.stringify({ ...receipt, checkedAt: '2000-01-01T00:00:00.000Z' }));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
+    const fixed = { ...candidate, vars: { ...candidate.vars, PRE_INBOUND_RECIPIENT: 'pre@example.test' } };
+    await writeFile(file, JSON.stringify(fixed));
+    await writeFile(receiptPath, JSON.stringify({ ...receipt, targetHash: sharedInboundPreviewTargetHash(fixed) }));
+    await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
+    await writeFile(receiptPath, JSON.stringify({ ...receipt, targetHash: sharedInboundPreviewTargetHash(fixed),
+      fixedReservationHash: fixedReservationHash('  PRE@EXAMPLE.TEST ') }));
+    expect((await cloudflareConfig.worker({ mode: 'preview', isPreview: true })).env.PRE_INBOUND_SETTINGS?.value)
+      .toMatchObject({ recipient: 'pre@example.test', previewApp: true });
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
@@ -185,6 +193,9 @@ test('native remote builds reject PRE reservations while local builds keep both 
     const local = await cloudflareConfig.worker({ mode: 'development', isPreview: false });
     expect(local.env.PRE_INBOUND_DB?.id).toBe(target.preInbound.databaseId);
     expect(local.env.PRE_INBOUND_BUCKET?.name).toBe(target.preInbound.bucket);
+    const localAdapter = JSON.parse(await readFile(adapterOptions(true).config, 'utf8'));
+    expect(localAdapter.d1_databases).toContainEqual({ binding: 'PRE_INBOUND_DB', database_name: target.preInbound.databaseName, database_id: target.preInbound.databaseId });
+    expect(localAdapter.r2_buckets).toContainEqual({ binding: 'PRE_INBOUND_BUCKET', bucket_name: target.preInbound.bucket });
     await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
 
     await writeFile(file, JSON.stringify({ ...target, vars: { ...vars, APP_ENV: 'production' } }));

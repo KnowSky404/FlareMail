@@ -1,6 +1,6 @@
 import { createDeployInvocation, normalizeDeployArguments } from './deploy-command';
 import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { checkPreInboundRelease, defaultStatePath, localStateArgs, projectRoot, readCloudflareTarget } from './cloudflare-target';
 
 const [command, ...args] = process.argv.slice(2);
@@ -50,6 +50,9 @@ if (command === 'typegen') {
   const invocation = createDeployInvocation('dry-run', environment);
   await run([invocation.command, ...invocation.args]);
 } else if (command === 'deploy' || command === 'pre') {
+  for (const key of ['FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT', 'FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT']) {
+    if (environment[key]) process.env[key] = environment[key] = resolve(environment[key]);
+  }
   const forwardedArgs = normalizeDeployArguments(args);
   const target = readCloudflareTarget(process.env.FLAREMAIL_CF_CONFIG ?? (command === 'deploy' ? 'cloudflare.deploy.json' : 'cloudflare.preview.json'), true);
   const sharedPreview = command === 'pre' && Boolean(target.inboundRouting);

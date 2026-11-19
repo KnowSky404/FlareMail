@@ -4,9 +4,14 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { CloudflareTarget } from './cloudflare-target.ts';
+import { normalizePreInboundRecipient } from '../src/lib/server/inbound/pre-inbound.ts';
 
 export function sharedInboundPreviewTargetHash(target: CloudflareTarget) {
   return createHash('sha256').update(JSON.stringify(target)).digest('hex');
+}
+
+export function fixedReservationHash(value: string | undefined) {
+  return value === undefined ? null : createHash('sha256').update(normalizePreInboundRecipient(value)).digest('hex');
 }
 
 function routingD1Id(value: unknown) {
@@ -30,14 +35,16 @@ export function assertSharedInboundPreview(target: CloudflareTarget, receiptPath
   const productionDb = routingD1Id(receipt.production?.databaseId);
   const registry = routingD1Id(target.inboundRouting?.databaseId);
   const delivery = receipt.production?.previewDelivery;
+  const reserved = fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT);
   if (receipt.previewName !== 'mail-ai' || receipt.workerName !== target.name ||
       !receipt.production?.deploymentId || !receipt.preview?.deploymentId ||
       receipt.targetHash !== sharedInboundPreviewTargetHash(target) ||
       !previewDb || !productionDb || !registry || new Set([previewDb, productionDb, registry]).size !== 3 ||
       routingD1Id(receipt.preview.databaseId) !== previewDb || routingD1Id(receipt.routingDatabaseId) !== registry ||
       receipt.preview.bucket !== target.bucket || !receipt.production.bucket || receipt.production.bucket === target.bucket ||
+      (receipt.fixedReservationHash ?? null) !== reserved ||
       (delivery !== null && (routingD1Id(delivery?.databaseId) !== previewDb || delivery?.bucket !== target.bucket ||
-        routingD1Id(delivery?.routingDatabaseId) !== registry)) ||
+        routingD1Id(delivery?.routingDatabaseId) !== registry || (delivery?.fixedReservationHash ?? null) !== reserved)) ||
       receipt.registryVerified !== true || receipt.previewBaseVerified !== true || target.cron.length !== 0 ||
       ['AUTO_REPLY_ENABLED', 'INBOUND_NOTIFICATION_ENABLED', 'TELEGRAM_ENABLED'].some(key => target.vars[key] !== 'false') ||
       Object.hasOwn(target.vars, 'CLOUDFLARE_EMAIL_ROUTING_TOKEN') ||
@@ -53,6 +60,7 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
   const previewDb = routingD1Id(target.preInbound?.databaseId);
   const registry = routingD1Id(target.inboundRouting?.databaseId);
   const phase = target.vars.PRE_INBOUND_ENABLED === 'false' ? 'protect' : 'activate';
+  const reserved = fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT);
   if (receipt.phase !== phase || receipt.workerName !== target.name || receipt.previewName !== 'mail-ai' ||
       receipt.targetHash !== sharedInboundPreviewTargetHash(target) ||
       !/^[a-f0-9]{40}$/u.test(receipt.releaseCommit) ||
@@ -64,6 +72,8 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       routingD1Id(receipt.production.databaseId) !== productionDb || routingD1Id(receipt.preview.databaseId) !== previewDb ||
       routingD1Id(receipt.routingDatabaseId) !== registry || receipt.production.bucket !== target.bucket ||
       receipt.preview.bucket !== target.preInbound?.bucket || receipt.preview.bucket === target.bucket ||
+      (receipt.preview.fixedReservationHash ?? null) !== reserved ||
+      (receipt.production.fixedReservationHash && receipt.production.fixedReservationHash !== reserved) ||
       receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true || receipt.legacyOperationsQuiesced !== true ||
       (phase === 'activate' && (!receipt.protectVersionId || receipt.protectionActive !== true ||
         receipt.mailRoutesAndMappingsVerified !== true || receipt.preCatchAllsVerified !== true))) {
