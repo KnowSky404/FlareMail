@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { validateEnvironment } from '$lib/server/config/env';
-import { mailHealthState } from '$lib/domain/mail/health';
+import { mailHealthState, previewCatchAllError } from '$lib/domain/mail/health';
 import { listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
 import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
@@ -116,6 +116,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
             }),
             checkedAt: domain.cloudflare_checked_at,
             catchAllCheckedAt: domain.catch_all_checked_at,
+            catchAllRefreshError: previewCatchAllError(domain.last_error_code, domain.last_error_at),
             nextCheckAt: domain.cloudflare_next_check_at,
             lastFailureAt: domain.cloudflare_error_at,
             errorCode: domain.cloudflare_error_code

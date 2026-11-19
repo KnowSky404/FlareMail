@@ -3,7 +3,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { formatDate } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
-  import { mailHealthState, type MailHealthState } from '$lib/domain/mail/health';
+  import { mailHealthState, previewCatchAllError, type MailHealthState } from '$lib/domain/mail/health';
   import type { DomainCheck, MailAddress, MailDomain } from './mail-resource-types';
 
   let {
@@ -26,6 +26,7 @@
 
   const { t, locale } = useLocale();
   const providers = ['cloudflare', 'resend'] as const;
+  const catchAllRefreshError = $derived(previewCatchAllError(domain.last_error_code, domain.last_error_at));
 
   function routeStatusLabel(status: string) {
     const labels: Record<string, string> = {
@@ -260,6 +261,12 @@
       <div><dt class="text-xs text-[var(--fm-text-muted)]">{t('settings.catchAll')}</dt><dd class="mt-1 text-[var(--fm-text)]">{catchAllLabel(catchAllTarget())}</dd></div>
       <div><dt class="text-xs text-[var(--fm-text-muted)]">{t('settings.unknownRecipients')}</dt><dd class="mt-1 text-[var(--fm-text)]">{domain.unknown_recipient_policy === 'collect' ? t('settings.unknownCollect') : t('settings.unknownReject')}</dd></div>
     </dl>
+    {#if catchAllRefreshError}
+      <p class="flex gap-2 text-sm text-[var(--fm-danger)]" data-catch-all-refresh-error>
+        <AlertTriangle size={15} class="mt-0.5 shrink-0" aria-hidden="true" />
+        <span>{t('settings.cloudflareCheckNeedsAttention')} {formatTimestamp(catchAllRefreshError.at)} <code>{catchAllRefreshError.code}</code></span>
+      </p>
+    {/if}
     {#if hasCatchAllWarning()}
       <p class="flex gap-2 rounded border border-[var(--fm-warning)]/40 bg-[var(--fm-warning)]/10 p-3 text-sm text-[var(--fm-text)]">
         {#if catchAllTarget() === 'external'}<AlertTriangle size={15} class="mt-0.5 shrink-0 text-[var(--fm-warning)]" aria-hidden="true" />{:else}<ShieldAlert size={15} class="mt-0.5 shrink-0 text-[var(--fm-warning)]" aria-hidden="true" />{/if}

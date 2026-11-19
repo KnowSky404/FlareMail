@@ -15,6 +15,12 @@ const configurationRetryDelayMs = 6 * 60 * 60 * 1000;
 
 export type MailHealthState = 'not_configured' | 'fresh' | 'stale' | 'refreshing' | 'degraded';
 
+export function previewCatchAllError(code: string | null | undefined, at: string | null | undefined) {
+  return code?.startsWith(PREVIEW_CATCH_ALL_ERROR_PREFIX)
+    ? { code: code.slice(PREVIEW_CATCH_ALL_ERROR_PREFIX.length), at: at ?? null }
+    : null;
+}
+
 export function isMailHealthFresh(checkedAt: string | null | undefined, nowMs = Date.now()) {
   const checkedAtMs = checkedAt ? Date.parse(checkedAt) : Number.NaN;
   return Number.isFinite(checkedAtMs) && checkedAtMs <= nowMs && nowMs - checkedAtMs <= MAIL_HEALTH_MAX_AGE_MS;

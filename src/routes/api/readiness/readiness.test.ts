@@ -111,8 +111,10 @@ describe('/api/readiness', () => {
     const database = new Database(':memory:');
     applyMigrations(database);
     database.query(`
-      INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name)
-      VALUES ('domain-1', 'owner-1', 'mail.example.test', ?, 'flaremail-worker')
+      INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name,
+        cloudflare_error_code, last_error_code, last_error_at)
+      VALUES ('domain-1', 'owner-1', 'mail.example.test', ?, 'flaremail-worker',
+        'cloudflare_managed_route_needs_review', 'preview_catch_all:cloudflare_timeout', '2026-09-21T12:00:00.000Z')
     `).run('a'.repeat(32));
     const response = await health(database, {
       CLOUDFLARE_EMAIL_ROUTING_TOKEN: 'private-cloudflare-token',
@@ -123,7 +125,10 @@ describe('/api/readiness', () => {
     expect(payload.mailHealth[0]).toMatchObject({
       domainId: 'domain-1',
       domainName: 'mail.example.test',
-      cloudflare: { state: 'stale', checkedAt: null, catchAllCheckedAt: null, errorCode: null },
+      cloudflare: {
+        state: 'degraded', checkedAt: null, catchAllCheckedAt: null, errorCode: 'cloudflare_managed_route_needs_review',
+        catchAllRefreshError: { code: 'cloudflare_timeout', at: '2026-09-21T12:00:00.000Z' }
+      },
       resend: { state: 'stale', checkedAt: null, errorCode: null, status: 'unknown' }
     });
     expect(JSON.stringify(payload)).not.toContain('private-cloudflare-token');
