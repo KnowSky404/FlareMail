@@ -2,7 +2,7 @@ import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRout
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_CRON_VERIFIED, PREVIEW_CATCH_ALL_ERROR_PREFIX, previewCatchAllError } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, hasProductionCatchAllObserver, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
 import { ApiError } from '$lib/server/http/api';
 import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
@@ -157,7 +157,7 @@ async function checkCloudflareDomain(
   const zone = (observations[0] as PromiseFulfilledResult<Awaited<ReturnType<CloudflareHealthClient['getZone']>>>).value;
   const catchAll = (observations[1] as PromiseFulfilledResult<CloudflareCatchAll>).value;
   if (!validateZone(domain, zone)) {
-    return { errorCode: 'cloudflare_zone_mapping_conflict', retryable: false, observedAt: null };
+    return { errorCode: 'cloudflare_zone_mapping_conflict', retryable: false, observedAt: null, catchAllTarget: 'unknown' };
   }
 
   const target = catchAllTarget(catchAll, productionWorker ?? domain.worker_name);
@@ -246,7 +246,8 @@ async function saveCloudflareResult(
   token: string,
   result: ProviderCheckResult,
   nowMs: number,
-  catchAllOnly = false
+  catchAllOnly = false,
+  preserveCatchAllObservation = false
 ) {
   const previousFailures = catchAllOnly ? (previewCatchAllError(domain.last_error_code, domain.last_error_at)?.retryCount ?? 0)
     : Number(domain.cloudflare_failure_count ?? 0);
@@ -270,19 +271,18 @@ async function saveCloudflareResult(
   }
   await db.prepare(
     `UPDATE mail_domains SET
-       catch_all_target = CASE WHEN ? IS NULL THEN catch_all_target ELSE ? END,
-       catch_all_checked_at = CASE WHEN ? IS NULL THEN catch_all_checked_at ELSE ? END,
-       cloudflare_checked_at = CASE WHEN ? IS NULL THEN cloudflare_checked_at ELSE ? END,
-       cloudflare_error_code = ?, cloudflare_error_at = ?, cloudflare_failure_count = ?, cloudflare_next_check_at = ?,
-       last_error_code = ?, last_error_at = ?,
+       catch_all_target = COALESCE(?, catch_all_target),
+       catch_all_checked_at = COALESCE(?, catch_all_checked_at),
+       cloudflare_checked_at = COALESCE(?, cloudflare_checked_at),
+       cloudflare_error_code = ?, cloudflare_error_at = ?, cloudflare_failure_count = ?,
+       ${preserveCatchAllObservation ? '' : 'cloudflare_next_check_at = ?, last_error_code = ?, last_error_at = ?,'}
        cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
      WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`
   ).bind(
-    result.catchAllObservedAt ?? null, result.catchAllTarget ?? null,
-    result.catchAllObservedAt ?? null, result.catchAllObservedAt ?? null,
-    result.observedAt, result.observedAt,
-    result.errorCode, result.errorCode ? isoAt(nowMs) : null, failureCount, nextAt,
-    result.errorCode, result.errorCode ? isoAt(nowMs) : null, isoAt(nowMs),
+    result.catchAllTarget ?? null, preserveCatchAllObservation ? null : result.catchAllObservedAt ?? null,
+    result.observedAt,
+    result.errorCode, result.errorCode ? isoAt(nowMs) : null, failureCount,
+    ...(preserveCatchAllObservation ? [] : [nextAt, result.errorCode, result.errorCode ? isoAt(nowMs) : null]), isoAt(nowMs),
     domain.id, domain.owner_user_id, token
   ).run();
 }
@@ -354,7 +354,8 @@ async function runProvider(
           deadlineAt: currentTime + 12_000
         });
       result = await checkCloudflareDomain(env, domain, client, nowMs(), catchAll?.workerName);
-      await saveCloudflareResult(env.DB, domain, token, result, nowMs(), Boolean(catchAll));
+      await saveCloudflareResult(env.DB, domain, token, result, nowMs(), Boolean(catchAll),
+        hasProductionCatchAllObserver(env, domain.unknown_recipient_policy));
     } else {
       result = await checkResendDomain(
         domain,

@@ -273,6 +273,32 @@ describe('managed mail domain checks', () => {
     fixture.sqlite.close();
   });
 
+  test('PRE checks leave production catch-all proof and its next check intact', async () => {
+    const fixture = createFixture();
+    const observedAt = '2026-09-21T12:00:00.000Z';
+    const nextCheck = '2026-09-22T05:00:00.000Z';
+    fixture.sqlite.query(`UPDATE mail_domains SET unknown_recipient_policy = 'collect',
+      catch_all_checked_at = ?, last_error_code = 'preview_catch_all_cron_verified', last_error_at = ?, cloudflare_next_check_at = ?`)
+      .run(observedAt, observedAt, nextCheck);
+    const env = {
+      ...fixture.env, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const },
+      INBOUND_ROUTING_DB: {
+        prepare: () => ({ bind: () => ({
+          first: async () => ({ environment: 'preview' }), all: async () => ({ results: [] })
+        }) })
+      } as unknown as D1Database
+    };
+    const now = () => '2026-09-21T12:30:00.000Z';
+    const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([], { now }));
+    expect(result.cloudflare).toMatchObject({ state: 'ready', checkedAt: now() });
+    expect(fixture.sqlite.query(`SELECT cloudflare_next_check_at, catch_all_checked_at, last_error_code, last_error_at FROM mail_domains`).get())
+      .toEqual({
+        cloudflare_next_check_at: nextCheck, catch_all_checked_at: observedAt,
+        last_error_code: 'preview_catch_all_cron_verified', last_error_at: observedAt
+      });
+    fixture.sqlite.close();
+  });
+
   test('the production protection phase checks provider health without reconciling mailboxes', async () => {
     const fixture = createFixture();
     const env = {

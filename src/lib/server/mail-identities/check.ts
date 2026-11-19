@@ -12,7 +12,7 @@ import {
 import { listManagedMailAddresses, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { getExactResendDomain, canSendFromResendDomain, ResendDomainError } from '$lib/server/resend-domains';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, isMailRoutingReadOnly, isPreviewRoutingReadOnly } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, hasProductionCatchAllObserver, isMailRoutingReadOnly, isPreviewRoutingReadOnly } from './ownership';
 
 type CloudflareClient = Pick<CloudflareEmailRoutingClient, 'getZone' | 'listRules' | 'getCatchAll'>;
 type ResendLookup = typeof getExactResendDomain;
@@ -88,21 +88,24 @@ async function recordProviderCheckFailure(
   token: string,
   errorCode: string,
   retryable: boolean,
-  timestamp: string
+  timestamp: string,
+  preserveCatchAllObservation = false
 ) {
   const failureCount = retryable ? Math.min(domain[`${provider}_failure_count` as 'cloudflare_failure_count' | 'resend_failure_count'] + 1, 1000) : 0;
   const nextCheckAt = mailHealthNextCheckAt(domain.id, Date.parse(timestamp), Math.max(1, failureCount), errorCode, retryable);
   await db.prepare(
     `UPDATE mail_domains SET ${provider}_error_code = ?, ${provider}_error_at = ?, ${provider}_failure_count = ?, ` +
-    `${provider}_next_check_at = ?, ${provider}_check_token = NULL, ${provider}_check_expires_at = NULL, ` +
-    (provider === 'cloudflare' ? 'last_error_code = ?, last_error_at = ?, ' : '') +
+    (preserveCatchAllObservation ? '' : `${provider}_next_check_at = ?, `) +
+    `${provider}_check_token = NULL, ${provider}_check_expires_at = NULL, ` +
+    (provider === 'cloudflare' && !preserveCatchAllObservation ? 'last_error_code = ?, last_error_at = ?, ' : '') +
+    (errorCode === 'cloudflare_zone_mapping_conflict' ? "catch_all_target = 'unknown', " : '') +
     'updated_at = ? WHERE id = ? AND owner_user_id = ? AND ' + `${provider}_check_token = ? AND ${provider}_check_expires_at > ?`
   ).bind(
     errorCode,
     timestamp,
     failureCount,
-    nextCheckAt,
-    ...(provider === 'cloudflare' ? [errorCode, timestamp] : []),
+    ...(preserveCatchAllObservation ? [] : [nextCheckAt]),
+    ...(provider === 'cloudflare' && !preserveCatchAllObservation ? [errorCode, timestamp] : []),
     timestamp,
     domain.id,
     domain.owner_user_id,
@@ -227,6 +230,7 @@ export async function checkManagedMailDomain(
   const domain = await getManagedMailDomain(env.DB, ownerUserId, domainId);
   if (!domain) throw new Error('MAIL_DOMAIN_NOT_FOUND');
   const now = dependencies?.now ?? isoNow;
+  const preserveCatchAllObservation = hasProductionCatchAllObserver(env, domain.unknown_recipient_policy);
   const result: ManagedMailDomainCheckResult = {
     domainId: domain.id,
     domainName: domain.domain_name,
@@ -263,8 +267,11 @@ export async function checkManagedMailDomain(
   } else if (!cloudflare) {
     result.cloudflare.errorCode = 'cloudflare_token_missing';
     await env.DB.prepare(
-      'UPDATE mail_domains SET cloudflare_error_code = ?, cloudflare_error_at = ?, last_error_code = ?, last_error_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?'
-    ).bind(result.cloudflare.errorCode, now(), result.cloudflare.errorCode, now(), now(), domain.id, ownerUserId).run();
+      'UPDATE mail_domains SET cloudflare_error_code = ?, cloudflare_error_at = ?, ' +
+      (preserveCatchAllObservation ? '' : 'last_error_code = ?, last_error_at = ?, ') +
+      'updated_at = ? WHERE id = ? AND owner_user_id = ?'
+    ).bind(result.cloudflare.errorCode, now(), ...(preserveCatchAllObservation ? [] : [result.cloudflare.errorCode, now()]),
+      now(), domain.id, ownerUserId).run();
   } else {
     const cloudflareCheckToken = randomUUID();
     const cloudflareLeaseAt = now();
@@ -283,7 +290,7 @@ export async function checkManagedMailDomain(
       } catch (error) {
         result.cloudflare.errorCode = classifyCloudflareError(error);
         await recordProviderCheckFailure(
-          env.DB, 'cloudflare', domain, cloudflareCheckToken, result.cloudflare.errorCode, true, now()
+          env.DB, 'cloudflare', domain, cloudflareCheckToken, result.cloudflare.errorCode, true, now(), preserveCatchAllObservation
         );
       }
     }
@@ -333,7 +340,7 @@ export async function checkManagedMailDomain(
       result.cloudflare.errorCode = classifyCloudflareError(rejected.reason);
       await recordProviderCheckFailure(
         env.DB, 'cloudflare', domain, cloudflareCheckToken, result.cloudflare.errorCode,
-        providerFailureIsRetryable('cloudflare', rejected.reason), now()
+        providerFailureIsRetryable('cloudflare', rejected.reason), now(), preserveCatchAllObservation
       );
       await releaseAddressCheckLeases(env.DB, ownerUserId, leases.map(({ address, token: leaseToken }) => ({ addressId: address.id, token: leaseToken })));
     } else {
@@ -355,7 +362,7 @@ export async function checkManagedMailDomain(
       if (!zoneName || zone.id !== domain.cloudflare_zone_id || !domainMatchesZone || !accountMatches) {
         result.cloudflare.errorCode = 'cloudflare_zone_mapping_conflict';
         await recordProviderCheckFailure(
-          env.DB, 'cloudflare', domain, cloudflareCheckToken, result.cloudflare.errorCode, false, now()
+          env.DB, 'cloudflare', domain, cloudflareCheckToken, result.cloudflare.errorCode, false, now(), preserveCatchAllObservation
         );
         await releaseAddressCheckLeases(env.DB, ownerUserId, leases.map(({ address, token: leaseToken }) => ({ addressId: address.id, token: leaseToken })));
       } else {
@@ -377,20 +384,22 @@ export async function checkManagedMailDomain(
         const statements = [
           env.DB.prepare(
             'UPDATE mail_domains SET cloudflare_account_id = COALESCE(cloudflare_account_id, ?), ' +
-            'catch_all_target = ?, catch_all_checked_at = ?, cloudflare_checked_at = ?, ' +
-            'cloudflare_error_code = ?, cloudflare_error_at = ?, cloudflare_failure_count = 0, ' +
-            'cloudflare_next_check_at = ?, last_error_code = ?, last_error_at = ?, updated_at = ? ' +
+            'catch_all_target = ?, ' + (preserveCatchAllObservation ? '' : 'catch_all_checked_at = ?, ') +
+            'cloudflare_checked_at = ?, cloudflare_error_code = ?, cloudflare_error_at = ?, cloudflare_failure_count = 0, ' +
+            (preserveCatchAllObservation ? '' : 'cloudflare_next_check_at = ?, last_error_code = ?, last_error_at = ?, ') +
+            'updated_at = ? ' +
             'WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ? AND cloudflare_check_expires_at > ?'
           ).bind(
             zone.accountId,
             target,
-            timestamp,
+            ...(preserveCatchAllObservation ? [] : [timestamp]),
             timestamp,
             cloudflareHealthError,
             cloudflareHealthError ? timestamp : null,
-            mailHealthNextCheckAt(domain.id, Date.parse(timestamp), 0, cloudflareHealthError, false),
-            cloudflareHealthError,
-            cloudflareHealthError ? timestamp : null,
+            ...(preserveCatchAllObservation ? [] : [
+              mailHealthNextCheckAt(domain.id, Date.parse(timestamp), 0, cloudflareHealthError, false),
+              cloudflareHealthError, cloudflareHealthError ? timestamp : null
+            ]),
             timestamp,
             domain.id,
             ownerUserId,

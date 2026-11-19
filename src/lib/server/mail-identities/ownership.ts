@@ -22,6 +22,10 @@ export function isPreviewRoutingReadOnly(env: CloudflareEnv) {
   return env.INBOUND_ROUTING_SCOPE?.environment !== 'production' && isMailRoutingReadOnly(env);
 }
 
+export function hasProductionCatchAllObserver(env: CloudflareEnv, policy: 'reject' | 'collect') {
+  return env.INBOUND_ROUTING_SCOPE?.environment === 'preview' && policy === 'collect';
+}
+
 export function requireMailRoutingWrites(env: CloudflareEnv) {
   if (env.INBOUND_ROUTING_SCOPE?.readOnly === true) {
     if (env.INBOUND_ROUTING_SCOPE.environment === 'production') {

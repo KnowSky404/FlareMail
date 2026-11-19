@@ -388,7 +388,7 @@ export async function assertProductionCatchAllActivation(
   if (domains.some(domain => !owned.has(domain.domain_name) || domain.worker_name !== target.name ||
       domain.catch_all_target !== 'this_worker' || domain.last_error_code !== PREVIEW_CATCH_ALL_CRON_VERIFIED ||
       domain.last_error_at !== domain.catch_all_checked_at || !isMailHealthFresh(domain.catch_all_checked_at, now) ||
-      Date.parse(domain.catch_all_checked_at ?? '') < version.deployedAt)) throw new Error(errorCode);
+      (version.routingReadOnly && Date.parse(domain.catch_all_checked_at ?? '') < version.deployedAt))) throw new Error(errorCode);
 }
 
 export async function readPauseObservability(
