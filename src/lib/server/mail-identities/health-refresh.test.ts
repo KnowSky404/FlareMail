@@ -105,7 +105,7 @@ describe('scheduled mail domain health refresh', () => {
     const priorFullCheck = new Date(defaultNow - 60_000).toISOString();
     const priorError = 'cloudflare_managed_route_needs_review';
     pre.sqlite.query(`UPDATE mail_domains SET catch_all_checked_at = ?, cloudflare_checked_at = ?, cloudflare_error_code = ?,
-      cloudflare_error_at = ?, last_error_code = ?, last_error_at = ?`)
+      cloudflare_error_at = ?, last_error_code = ?, last_error_at = ?, cloudflare_failure_count = 4`)
       .run(previouslyVerified, priorFullCheck, priorError, priorFullCheck, priorError, priorFullCheck);
     pre.sqlite.query(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, unknown_recipient_policy)
       VALUES ('unowned', ?, 'excluded.example.test', ?, 'flaremail-worker', 'collect')`).run(ownerId, zoneId);
@@ -128,9 +128,15 @@ describe('scheduled mail domain health refresh', () => {
     expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: false });
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
     expect(pre.readDomain()).toMatchObject({
-      catch_all_checked_at: previouslyVerified, cloudflare_error_code: priorError, last_error_code: 'preview_catch_all:cloudflare_timeout'
+      catch_all_checked_at: previouslyVerified, cloudflare_error_code: priorError,
+      last_error_code: 'preview_catch_all:1:cloudflare_timeout', cloudflare_failure_count: 4
     });
     expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: true });
+    const firstRetry = Date.parse(String(pre.readDomain().cloudflare_next_check_at));
+    pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain().last_error_code).toBe('preview_catch_all:2:cloudflare_timeout');
+    expect(Date.parse(String(pre.readDomain().cloudflare_next_check_at))).toBeGreaterThan(firstRetry);
     pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
     deps.cloudflareClientFactory = successfulFactory;
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });

@@ -1,6 +1,6 @@
 import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRoutingClient, CloudflareEmailRoutingError, type CloudflareCatchAll, type CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_ERROR_PREFIX } from '$lib/domain/mail/health';
+import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_ERROR_PREFIX, previewCatchAllError } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
 import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
@@ -26,6 +26,8 @@ interface HealthDomainRow {
   cloudflare_check_token: string | null;
   cloudflare_check_expires_at: string | null;
   cloudflare_failure_count: number;
+  last_error_code: string | null;
+  last_error_at: string | null;
   resend_next_check_at: string | null;
   resend_check_token: string | null;
   resend_check_expires_at: string | null;
@@ -208,7 +210,7 @@ function selectCandidates(db: D1Database, provider: ProviderName, now: string, c
   return db.prepare(
     `SELECT id, owner_user_id, domain_name, cloudflare_zone_id, cloudflare_account_id, worker_name,
             unknown_recipient_policy, cloudflare_next_check_at, cloudflare_check_token, cloudflare_check_expires_at,
-            cloudflare_failure_count, resend_next_check_at, resend_check_token, resend_check_expires_at,
+            cloudflare_failure_count, last_error_code, last_error_at, resend_next_check_at, resend_check_token, resend_check_expires_at,
             resend_failure_count
      FROM mail_domains
      WHERE (${stem}_next_check_at IS NULL OR ${stem}_next_check_at <= ?)
@@ -243,11 +245,13 @@ async function saveCloudflareResult(
   nowMs: number,
   catchAllOnly = false
 ) {
-  const previousFailures = Number(domain.cloudflare_failure_count ?? 0);
+  const previousFailures = catchAllOnly ? (previewCatchAllError(domain.last_error_code, domain.last_error_at)?.retryCount ?? 0)
+    : Number(domain.cloudflare_failure_count ?? 0);
   const failureCount = result.errorCode && result.retryable ? Math.min(previousFailures + 1, 1000) : 0;
   const nextAt = mailHealthNextCheckAt(domain.id, nowMs, Math.max(1, failureCount), result.errorCode, result.retryable);
   if (catchAllOnly) {
-    const catchAllError = result.errorCode ? PREVIEW_CATCH_ALL_ERROR_PREFIX + result.errorCode : null;
+    const retry = failureCount ? String(failureCount) + ':' : '';
+    const catchAllError = result.errorCode ? PREVIEW_CATCH_ALL_ERROR_PREFIX + retry + result.errorCode : null;
     // Reuse the legacy error mirror and restore it from the full observation on recovery.
     await db.prepare(`UPDATE mail_domains SET
         catch_all_target = COALESCE(?, catch_all_target), catch_all_checked_at = COALESCE(?, catch_all_checked_at),
