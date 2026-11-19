@@ -3,6 +3,7 @@ import {
   isMailHealthFresh,
   MAIL_HEALTH_MAX_AGE_MS,
   MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS,
+  PREVIEW_CATCH_ALL_CRON_VERIFIED,
   previewCatchAllError,
   TRANSIENT_CLOUDFLARE_HEALTH_ERRORS
 } from '$lib/domain/mail/health';
@@ -115,7 +116,9 @@ export async function resolveInboundRecipient(
     ? previewCatchAllError(row.last_error_code, row.last_error_at)
     : { code: row.cloudflare_error_code, at: row.cloudflare_error_at };
   const errorAt = Date.parse(catchAllError?.at ?? '');
-  const catchAllWasRecentlyVerified = isMailHealthFresh(row.catch_all_checked_at, now);
+  const hasProductionObservation = !options.productionObservedCatchAll || Boolean(catchAllError) ||
+    (row.last_error_code === PREVIEW_CATCH_ALL_CRON_VERIFIED && row.last_error_at === row.catch_all_checked_at);
+  const catchAllWasRecentlyVerified = hasProductionObservation && isMailHealthFresh(row.catch_all_checked_at, now);
   const transientFailureGrace = Number.isFinite(checkedAt) && checkedAt <= now &&
     now - checkedAt <= MAIL_HEALTH_MAX_AGE_MS + MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS &&
     Number.isFinite(errorAt) && errorAt >= checkedAt && errorAt <= now &&

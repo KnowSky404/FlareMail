@@ -5,6 +5,7 @@ import { createInboundDedupeKey, handleInboundEmail } from './email';
 import { readPreInboundBindings } from './inbound/pre-inbound';
 import { claimInboundRoutingOwner, findInboundRoutingOwner } from './inbound/routing-ownership';
 import { updateMailDomain } from './mail-identities/domains';
+import { refreshPreviewCatchAllHealth } from './mail-identities/health-refresh';
 import { createManagedMailAddress, deleteManagedMailAddress, type MailIdentityRoutingDependencies } from './mail-identities/routing';
 import { syncCloudflareMailIdentities } from './mail-identities/sync';
 import { parseAddress } from './workspace/shared';
@@ -422,6 +423,17 @@ describe('shared PRE and production inbound routing', () => {
       await handleInboundEmail(inbound.value, { ...email, PRE_INBOUND_SETTINGS: { recipient: null, enabled } });
       return inbound.rejected();
     };
+    expect(await delivery('unknown@preview.test')).not.toBe('');
+    expect(await refreshPreviewCatchAllHealth({
+      ...email, INBOUND_ROUTING_SCOPE: { environment: 'production', workerName: 'flaremail' },
+      CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN: 'production-read-token'
+    }, {
+      cloudflareClientFactory: () => ({
+        getZone: async id => ({ id, name: 'preview.test', accountId: 'test-account' }),
+        getCatchAll: async () => ({ enabled: true, actions: [{ type: 'worker', value: ['flaremail'] }] }),
+        listRules: async () => { throw new Error('PRE catch-all verification must not read exact rules'); }
+      })
+    })).toMatchObject({ checked: 1 });
     for (const recipient of ['PRE+tag@EXAMPLE.TEST', 'unknown@preview.test', 'owner@example.test', 'unknown@example.test']) {
       expect(await delivery(recipient)).toBe('');
     }

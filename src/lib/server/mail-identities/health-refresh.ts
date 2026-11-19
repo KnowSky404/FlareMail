@@ -250,8 +250,8 @@ async function saveCloudflareResult(
   catchAllOnly = false,
   preserveCatchAllObservation = false
 ) {
-  const previousFailures = catchAllOnly ? (previewCatchAllError(domain.last_error_code, domain.last_error_at)?.retryCount ?? 0)
-    : Number(domain.cloudflare_failure_count ?? 0);
+  const previousCatchAllError = catchAllOnly ? previewCatchAllError(domain.last_error_code, domain.last_error_at) : null;
+  const previousFailures = catchAllOnly ? previousCatchAllError?.retryCount ?? 0 : Number(domain.cloudflare_failure_count ?? 0);
   const failureCount = result.errorCode && result.retryable ? Math.min(previousFailures + 1, 1000) : 0;
   const nextAt = mailHealthNextCheckAt(domain.id, nowMs, Math.max(1, failureCount), result.errorCode, result.retryable);
   if (catchAllOnly) {
@@ -259,14 +259,16 @@ async function saveCloudflareResult(
     const verifiedAt = !result.errorCode && result.catchAllTarget === 'this_worker' ? result.catchAllObservedAt : null;
     const observationCode = verifiedAt ? PREVIEW_CATCH_ALL_CRON_VERIFIED
       : result.errorCode ? PREVIEW_CATCH_ALL_ERROR_PREFIX + retry + result.errorCode : null;
+    const hadProductionObservation = domain.last_error_code === PREVIEW_CATCH_ALL_CRON_VERIFIED || Boolean(previousCatchAllError);
     // The legacy mirror holds the narrower observation; full mailbox diagnostics use the Cloudflare columns.
     await db.prepare(`UPDATE mail_domains SET
-        catch_all_target = COALESCE(?, catch_all_target), catch_all_checked_at = COALESCE(?, catch_all_checked_at),
+        catch_all_target = COALESCE(?, catch_all_target),
+        catch_all_checked_at = CASE WHEN ? THEN COALESCE(?, catch_all_checked_at) ELSE ? END,
         last_error_code = COALESCE(?, cloudflare_error_code),
         last_error_at = CASE WHEN ? IS NULL THEN cloudflare_error_at ELSE ? END,
         cloudflare_next_check_at = ?, cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
       WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`)
-      .bind(result.catchAllTarget ?? null, result.catchAllObservedAt ?? null,
+      .bind(result.catchAllTarget ?? null, hadProductionObservation ? 1 : 0, verifiedAt ?? null, verifiedAt ?? null,
         observationCode, observationCode, verifiedAt ?? isoAt(nowMs), nextAt, isoAt(nowMs), domain.id, domain.owner_user_id, token).run();
     return;
   }
