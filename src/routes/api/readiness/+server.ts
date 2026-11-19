@@ -152,14 +152,14 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   if (env) {
     try {
       const routing = readInboundRouting(env);
-      if (routing) {
-        if (routing.environment === 'production') {
-          readPreInboundBindings(env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function',
-            typeof env.PRE_INBOUND_BUCKET?.put === 'function', true);
-          if (!env.PRE_INBOUND_DB || !await hasSupportedWorkspaceSchema(env.PRE_INBOUND_DB)) {
-            throw new Error('PRE_INBOUND_SCHEMA_NOT_READY');
-          }
+      if (routing?.environment !== 'preview' && env.PRE_INBOUND_SETTINGS?.previewApp !== true && env.APP_ENV !== 'preview') {
+        const delivery = readPreInboundBindings(env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function',
+          typeof env.PRE_INBOUND_BUCKET?.put === 'function', routing?.environment === 'production');
+        if (delivery && (!env.PRE_INBOUND_DB || !await hasSupportedWorkspaceSchema(env.PRE_INBOUND_DB))) {
+          throw new Error('PRE_INBOUND_SCHEMA_NOT_READY');
         }
+      }
+      if (routing) {
         await routing.db.prepare('SELECT kind FROM inbound_routing_ownership LIMIT 1').first();
         inboundRouting = { environment: routing.environment, readOnly: env.INBOUND_ROUTING_SCOPE?.readOnly === true };
       }

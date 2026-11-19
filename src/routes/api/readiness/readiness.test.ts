@@ -97,6 +97,14 @@ describe('/api/readiness', () => {
     const productionReady = await health(database, productionBindings);
     expect(productionReady.status).toBe(200);
     expect(await productionReady.json()).toMatchObject({ inboundRouting: { environment: 'production', readOnly: false } });
+
+    const settings = { recipient: 'pre@example.test', enabled: false };
+    const preDb = new D1(previewDatabase);
+    const fixedWithoutBucket = await health(database, { PRE_INBOUND_SETTINGS: settings, PRE_INBOUND_DB: preDb });
+    expect(fixedWithoutBucket.status).toBe(503);
+    const fixed = await health(database, { PRE_INBOUND_SETTINGS: settings, PRE_INBOUND_DB: preDb, PRE_INBOUND_BUCKET: { put() {} } });
+    expect(fixed.status).toBe(200);
+    expect((await health(database, { PRE_INBOUND_SETTINGS: { ...settings, previewApp: true } })).status).toBe(200);
   });
 
   test('exposes provider-specific health only through the authenticated readiness endpoint', async () => {

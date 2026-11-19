@@ -115,7 +115,9 @@ export function readCloudflareTarget(config = process.env.FLAREMAIL_CF_CONFIG ??
 
 export function checkPreInboundRelease(target: CloudflareTarget, nativePreview = false) {
   if (target.vars.PRE_INBOUND_RECIPIENT === undefined && !target.inboundRouting) {
-    if (target.vars.APP_ENV === 'production') assertLegacyProductionHasNoActiveInboundProtection(target.name);
+    if (target.vars.APP_ENV === 'production' || target.vars.APP_ENV === 'preview') {
+      assertLegacyProductionHasNoActiveInboundProtection(target.name);
+    }
     return;
   }
   if (nativePreview && target.vars.APP_ENV === 'preview' && target.inboundRouting &&
