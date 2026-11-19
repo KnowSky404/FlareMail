@@ -3,6 +3,7 @@ import {
   isMailHealthFresh,
   MAIL_HEALTH_MAX_AGE_MS,
   MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS,
+  PREVIEW_CATCH_ALL_ERROR_PREFIX,
   TRANSIENT_CLOUDFLARE_HEALTH_ERRORS
 } from '$lib/domain/mail/health';
 import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
@@ -33,6 +34,8 @@ interface InboundRecipientRow {
   catch_all_checked_at: string | null;
   cloudflare_error_code: string | null;
   cloudflare_error_at: string | null;
+  last_error_code: string | null;
+  last_error_at: string | null;
   address_id: string | null;
   address_domain_id: string | null;
   address_owner_user_id: string | null;
@@ -59,6 +62,8 @@ export async function resolveInboundRecipient(
       d.catch_all_checked_at,
       d.cloudflare_error_code,
       d.cloudflare_error_at,
+      d.last_error_code,
+      d.last_error_at,
       a.id AS address_id,
       a.domain_id AS address_domain_id,
       a.owner_user_id AS address_owner_user_id,
@@ -105,12 +110,14 @@ export async function resolveInboundRecipient(
   }
 
   const checkedAt = row.catch_all_checked_at ? Date.parse(row.catch_all_checked_at) : Number.NaN;
-  const errorAt = row.cloudflare_error_at ? Date.parse(row.cloudflare_error_at) : Number.NaN;
+  const catchAllError = row.last_error_code?.startsWith(PREVIEW_CATCH_ALL_ERROR_PREFIX) ? row.last_error_code : null;
+  const errorCode = catchAllError ? catchAllError.slice(PREVIEW_CATCH_ALL_ERROR_PREFIX.length) : row.cloudflare_error_code;
+  const errorAt = Date.parse((catchAllError ? row.last_error_at : row.cloudflare_error_at) ?? '');
   const catchAllWasRecentlyVerified = isMailHealthFresh(row.catch_all_checked_at, now);
   const transientFailureGrace = Number.isFinite(checkedAt) && checkedAt <= now &&
     now - checkedAt <= MAIL_HEALTH_MAX_AGE_MS + MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS &&
     Number.isFinite(errorAt) && errorAt >= checkedAt && errorAt <= now &&
-    TRANSIENT_CLOUDFLARE_HEALTH_ERRORS.has(row.cloudflare_error_code ?? '');
+    TRANSIENT_CLOUDFLARE_HEALTH_ERRORS.has(errorCode ?? '');
   if (
     row.unknown_recipient_policy === 'collect' && row.catch_all_target === 'this_worker' &&
     (catchAllWasRecentlyVerified || transientFailureGrace)
