@@ -6,6 +6,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import { checkManagedMailDomain, type ManagedMailDomainCheckDependencies } from './check';
 import { disableManagedMailAddress } from './routing';
+import { updateMailDomain } from './domains';
 
 const schema = readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8');
 const ownerId = 'owner-0000-0000-0000-000000000001';
@@ -300,6 +301,38 @@ describe('managed mail domain checks', () => {
     fixture.sqlite.query('UPDATE mail_domains SET enabled = 0').run();
     await checkManagedMailDomain(env, ownerId, domainId, dependencies([], { now }));
     expect(fixture.selectDomain()).toMatchObject({ catch_all_target: 'this_worker', catch_all_checked_at: now() });
+    fixture.sqlite.close();
+  });
+
+  test('enabling PRE collection invalidates an in-flight foreground check', async () => {
+    const fixture = createFixture();
+    fixture.sqlite.query("UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?")
+      .run(new Date().toISOString());
+    const env = {
+      ...fixture.env, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const },
+      INBOUND_ROUTING_DB: {
+        prepare: () => ({ bind: () => ({
+          first: async () => ({ environment: 'preview' }), all: async () => ({ results: [] })
+        }) })
+      } as unknown as D1Database
+    };
+    const listStarted = deferred<void>();
+    const finishList = deferred<void>();
+    const check = checkManagedMailDomain(env, ownerId, domainId, dependencies([], {
+      async beforeList() {
+        listStarted.resolve();
+        await finishList.promise;
+      }
+    }));
+    await listStarted.promise;
+    try {
+      await updateMailDomain(env, ownerId, domainId, { unknownRecipientPolicy: 'collect' });
+    } finally {
+      finishList.resolve();
+    }
+    expect((await check).cloudflare.errorCode).toBe('cloudflare_check_superseded');
+    expect(fixture.sqlite.query('SELECT catch_all_checked_at, cloudflare_next_check_at, cloudflare_check_token FROM mail_domains').get())
+      .toEqual({ catch_all_checked_at: null, cloudflare_next_check_at: null, cloudflare_check_token: null });
     fixture.sqlite.close();
   });
 
