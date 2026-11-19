@@ -15,10 +15,13 @@ export default defineConfig({
     let workersDev: boolean | undefined;
     let observability = target.observability;
     if (release?.kind === 'production') {
-      const { assertLiveNativePreview, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
+      const { assertLiveNativePreview, assertProductionCatchAllActivation, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
       workersDev = await verifyProductionWorkerDev(target, projectRoot);
       if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
-      else await assertLiveNativePreview(target, release.source, projectRoot);
+      else {
+        await assertLiveNativePreview(target, release.source, projectRoot);
+        if (release.source.protectVersionId) await assertProductionCatchAllActivation(target, release.activeVersion, projectRoot);
+      }
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
       await assertLivePreviewForPublish(target, release.source, projectRoot);
@@ -26,7 +29,8 @@ export default defineConfig({
     const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
     const preInboundSettings = cloudflarePreInboundSettings(target);
     const pauseRoutingWrites = (isPreview && (release?.kind !== 'preview' || !release.source.managementEnabled)) ||
-      (mode === 'production' && !preInboundSettings?.enabled);
+      (release?.kind === 'production' && (release.source.protecting ||
+        (release.source.pauseOnly && release.activeVersion.routingReadOnly)));
     if (!remote && process.env.FLAREMAIL_E2E === 'true') {
       Object.assign(vars, {
         APP_ENV: 'development', AUTH_MODE: 'local', ALLOW_FAKE_SERVICES: 'true', OUTBOUND_PROVIDER: 'demo',

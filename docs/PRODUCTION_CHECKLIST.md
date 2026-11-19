@@ -120,7 +120,11 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   `Zone Read` and `Email Routing Rules Read`. When in-app address create/delete
   is enabled, `CLOUDFLARE_EMAIL_ROUTING_TOKEN` is a separate secret with
   `Email Routing Rules Edit` (write). No deployment token or
-  destination-address permissions are reused.
+  destination-address permissions are reused. The production scheduler uses a
+  credential with read access to every PRE zone collecting unknown recipients.
+  For the initial cutover, wait for the active protection deployment to record
+  a fresh catch-all observation for each of these zones before activation.
+  Keep those read permissions when adding PRE collection or rotating the token.
 - [ ] `AUTH_MODE` is explicitly selected. In `cloudflare-access` mode, the
   issuer, AUD, JWKS URL, single allowed `sub`, and stable Owner ID match the
   Cloudflare Access application and controlled bootstrap record.
