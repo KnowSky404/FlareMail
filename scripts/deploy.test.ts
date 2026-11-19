@@ -55,19 +55,24 @@ test('production requires live historical URL isolation and keeps the main URL s
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   const token = process.env.CLOUDFLARE_API_TOKEN;
   process.env.CLOUDFLARE_ACCOUNT_ID = 'a'.repeat(32);
-  process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
+  const legacyToken = process.env.CF_API_TOKEN;
+  delete process.env.CLOUDFLARE_API_TOKEN;
+  process.env.CF_API_TOKEN = 'fixture-token';
   const fetch = spyOn(globalThis, 'fetch');
   try {
     fetch.mockResolvedValueOnce(Response.json({ success: true, result: { enabled: true, previews_enabled: true } }));
     await expect(verifyProductionWorkerDev(localTarget, projectRoot)).rejects.toThrow('INBOUND_PRODUCTION_VERSION_URLS_NOT_DISABLED');
     fetch.mockResolvedValueOnce(Response.json({ success: true, result: { enabled: true, previews_enabled: false } }));
     await expect(verifyProductionWorkerDev(localTarget, projectRoot)).resolves.toBe(true);
+    expect(fetch.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: 'Bearer fixture-token' });
   } finally {
     fetch.mockRestore();
     if (account === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
     else process.env.CLOUDFLARE_ACCOUNT_ID = account;
     if (token === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
     else process.env.CLOUDFLARE_API_TOKEN = token;
+    if (legacyToken === undefined) delete process.env.CF_API_TOKEN;
+    else process.env.CF_API_TOKEN = legacyToken;
   }
 });
 

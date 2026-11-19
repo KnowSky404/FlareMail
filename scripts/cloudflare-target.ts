@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  assertActiveProductionForPreview, assertActiveProductionForRelease, assertLegacyProductionHasNoActiveInboundProtection, assertProductionReleaseSource, assertReleaseCheckout,
+  assertActiveProductionForPreview, assertActiveProductionForRelease, assertLegacyProductionHasNoActiveInboundProtection, assertProductionReleaseSource, assertReleaseCheckout, pinCloudflareReleaseIdentity,
   assertSharedInboundPreview, assertSharedInboundProduction
 } from './shared-inbound-preview.ts';
 import { normalizePreInboundRecipient, PRE_INBOUND_BINDING_NAMES, readPreInboundConfig } from '../src/lib/server/inbound/pre-inbound.ts';
@@ -116,6 +116,7 @@ export function readCloudflareTarget(config = process.env.FLAREMAIL_CF_CONFIG ??
 export function checkPreInboundRelease(target: CloudflareTarget, nativePreview = false) {
   if (target.vars.PRE_INBOUND_RECIPIENT === undefined && !target.inboundRouting) {
     if (target.vars.APP_ENV === 'production' || target.vars.APP_ENV === 'preview') {
+      if (!process.env.CLOUDFLARE_ACCOUNT_ID) pinCloudflareReleaseIdentity(resolve(projectRoot, 'worker'), true);
       assertLegacyProductionHasNoActiveInboundProtection(target.name);
     }
     return;

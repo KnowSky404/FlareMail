@@ -1,6 +1,7 @@
 import { createDeployInvocation, normalizeDeployArguments } from './deploy-command';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { pinCloudflareReleaseIdentity } from './shared-inbound-preview';
 import { checkPreInboundRelease, defaultStatePath, localStateArgs, projectRoot, readCloudflareTarget } from './cloudflare-target';
 
 const [command, ...args] = process.argv.slice(2);
@@ -60,6 +61,9 @@ if (command === 'typegen') {
   if (sharedPreview && (previewArgs.length !== 2 || previewArgs[0] !== '--preview-name' || previewArgs[1] !== 'mail-ai')) {
     throw new Error('Shared inbound PRE must deploy to mail-ai through a fresh build.');
   }
+  pinCloudflareReleaseIdentity(cwd, !target.inboundRouting);
+  environment.CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+  environment.CLOUDFLARE_AUTH_PROFILE = process.env.CLOUDFLARE_AUTH_PROFILE;
   const release = checkPreInboundRelease(target, sharedPreview);
   if (release?.kind === 'production' && release.source.pauseOnly && forwardedArgs.some(argument => /^--secrets-file(?:=|$)/u.test(argument))) {
     throw new Error('INBOUND_PRODUCTION_PAUSE_CANNOT_UPLOAD_SECRETS');

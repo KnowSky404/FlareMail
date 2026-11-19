@@ -197,13 +197,30 @@ function requireActiveProductionVersion(workerName: string, deploymentId: string
   return { version, binding, db, bucket, settings };
 }
 
+function cloudflareReleaseIdentity(projectRoot: string) {
+  return JSON.parse(execFileSync('cf', ['auth', 'whoami', '--json'], {
+    cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
+  })) as { authenticated?: boolean; accounts?: { id?: string }[]; profile?: { name?: string } };
+}
+
+export function pinCloudflareReleaseIdentity(projectRoot: string, discoverAccount: boolean) {
+  if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_AUTH_PROFILE) return;
+  const auth = cloudflareReleaseIdentity(projectRoot);
+  if (!auth.authenticated) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
+  const profile = auth.profile?.name;
+  if (!process.env.CLOUDFLARE_AUTH_PROFILE && profile && /^[\w-]+$/u.test(profile)) process.env.CLOUDFLARE_AUTH_PROFILE = profile;
+  if (discoverAccount && !process.env.CLOUDFLARE_ACCOUNT_ID) {
+    const account = auth.accounts?.length === 1 ? auth.accounts[0]?.id : undefined;
+    if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
+    process.env.CLOUDFLARE_ACCOUNT_ID = account;
+  }
+}
+
 function cloudflareSessionToken(projectRoot: string) {
-  const configured = process.env.CLOUDFLARE_API_TOKEN?.trim();
+  const configured = process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim();
   if (configured) return configured;
   try {
-    const auth = JSON.parse(execFileSync('cf', ['auth', 'whoami'], {
-      cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
-    }));
+    const auth = cloudflareReleaseIdentity(projectRoot);
     const name = auth.profile?.name;
     if (!auth.authenticated || typeof name !== 'string' || !/^[\w-]+$/u.test(name)) throw new Error();
     const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
