@@ -12,13 +12,12 @@
     "AUTO_REPLY_ENABLED": "false",
     "INBOUND_NOTIFICATION_ENABLED": "false",
     "TELEGRAM_ENABLED": "false",
-    "APP_BASE_URL": "https://mail-identities-flaremail.example.workers.dev",
-    "APP_VERSION": "preview+replace-with-commit",
-    "MAIL_IDENTITY_WORKER_NAME": "flaremail"
+    "APP_BASE_URL": "https://mail-ai-flaremail.example.workers.dev",
+    "APP_VERSION": "preview+replace-with-commit"
   },
-  "databaseId": "replace-with-production-database-id",
-  "databaseName": "replace-with-production-database",
-  "bucket": "replace-with-production-bucket",
+  "databaseId": "replace-with-preview-database-id",
+  "databaseName": "replace-with-preview-database",
+  "bucket": "replace-with-preview-bucket",
   "cron": [],
   "observability": {
     "enabled": true
@@ -26,7 +25,7 @@
   "secrets": [
     "RESEND_API_KEY",
     "RESEND_WEBHOOK_SECRET",
-    "CLOUDFLARE_EMAIL_ROUTING_TOKEN",
+    "CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN",
     "AI_SETTINGS_KEY"
   ]
 }

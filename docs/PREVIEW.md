@@ -2,22 +2,30 @@
 
 使用全局 `cf`（已验证 `1.0.0-beta.25`，Node.js ≥ 22.18）和原生 `cloudflare.config.ts`。不再使用直接 Wrangler 命令。旧配置/命令见[历史记录](archive/wrangler-preview.md)，不作为当前操作依据。
 
+当前 `mail-ai` 使用独立 D1 和 R2。独立 PRE 收信 Worker 已撤下，Cloudflare 禁用了关联的精确规则。旧测试地址仍可能命中生产 catch-all。首次切换把原测试地址作为保留地址，分流和隔离核对通过后再向它投递测试邮件。参见 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
+
 ## 默认验收顺序
 
 1. 在独立 worktree 从最新 `origin/main` 开发，完成 `bun run test`、`bun run check`、`bun run build`、相关浏览器 QA、`bun run deploy:dry-run`，创建干净原子提交。
-2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。必须使用现有生产 Worker 名称并沿用 `mail-ai` 的实际绑定（当前为既有独立 D1、共享生产 R2）；不把 D1 改指生产；`APP_ENV=preview`，实际 Provider/Auth 配置，关闭自动回复、通知、Telegram，`cron=[]`。不得创建替代资源或初始化 Owner。Preview 使用的生产邮件路由目的 Worker/account 保持不变。
+2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。使用现有生产 Worker 名称作为原生 Preview 的父级，沿用 `mail-ai` 的独立 D1 和 R2。发布前核对 PRE 的 D1 UUID 和 R2 桶名分别与生产不同。设置 `APP_ENV=preview`、实际 Provider/Auth 配置，关闭自动回复、通知和 Telegram，使用 `cron=[]`。资源创建、Owner 初始化和邮件规则调整各自独立授权。
 3. `bun run deploy:pre -- <preview-name>` 先构建 Svelte 应用，再在 `worker/` 通过全局 `cf previews deploy --mode preview` 构建并上传原生 Preview，不切换生产流量。名称是合法稳定名称，不把 `/` 等分支字符直接拼进去。记录命令时间、提交 SHA、Preview URL 和部署/版本 ID。
 4. 对该提交验收登录、相关业务页面/API、已认证 `/api/readiness`、D1/R2 绑定，并核对生产流量指向没有变化。`/api/health` 仅证明存活，不能替代业务验收；HTTP 验收不能证明生产 `email()`、Cron 或真实投递。
-5. **当前 D1 独立、R2 共享，默认只读**。不要运行 E2E seed、fixture、Owner bootstrap、数据库重置或迁移。打开未读邮件会自动写入已读状态；使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
+5. **当前 D1 和 R2 独立，默认只读**。E2E seed、fixture、Owner bootstrap、数据库重置和迁移与默认验收分开。打开未读邮件会自动写入已读状态，使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
    域名页新增“刷新全部”，并在页面空闲时每分钟重读状态、每五分钟复查供应商
    配置。供应商请求只读，但 `/domains/:domainId/refresh` 和完整检查会写入
    当前 PRE D1 的检查元数据。默认只读验收应直接使用 GET 接口；浏览器验收若
    允许这些检查请求，须先获得域名/地址检查状态写入授权，不能视为纯只读访问。
 6. PRE 业务验收完成后，分别在 push 和创建 PR 前实际执行 `codex review --base origin/main` 并处理有效问题。等待当前 head 的 Codex Code Review 和 Security Review 完成，再按仓库默认授权 rebase 合并和收尾。实现提交追加后补做受影响本地/PRE 验收及两种 review。
 
+单 Worker 收信方案启用后，PRE 的 D1 迁移与 D1/R2 换绑须同时检查生产 `email()`、目标 PRE 版本和所有可访问该存储的入口，包括稳定 PRE URL、部署专属 URL 和版本预览 URL。线上迁移要求所有相关版本兼容前后 schema；不兼容时先发布兼容版本，或按授权暂停并排空受影响的请求。换绑也需暂停、排空并核对两侧绑定和已有数据。此要求适用于下文各项 PRE 迁移。参见 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
+
+生产建立保留地址后，普通 PRE 发布须在上传前比较候选地址及 D1/R2 与当前生产运行版本的 PRE 入站配置，发布后再核对实际生效值。经授权的暂停换绑窗口按 SPEC 执行。
+
 原生 Preview 不继承生产 secrets；新 Preview 从 Previews Base 获取 secrets。仅在 JSON 中声明 secret 名称不会复制其值，发布成功也不能证明密钥齐全。检查已安装 cf 帮助、Base 和实际部署绑定；不要为了缺少配置改用生产 `cf deploy`，也不要为验收重置密钥。
 
 需要复用生产既有 secrets 时，可上传独立版本而不切生产流量：先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。沿用同一份私有 `cloudflare.preview.json`，保持 `APP_ENV=preview`、关闭自动动作和 Cron，不能改成 production mode。先核对 `--help`、绑定、secrets 及版本预览域名现状，再核对上传版本和生产 deployment 指针。记录该路径不能覆盖的原生 Preview 行为。禁止擅自创建生产 deployment 或应用 triggers。
+
+版本预览用于不依赖 Cloudflare 路由读取的 HTTP 验收，使用只声明已有且验收所需 secrets 的私有目标。路由状态验收使用拥有独立 `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN` 的原生 PRE，以及已核对的实际绑定。若生产只有规则管理 Token，按原生 PRE 的流程单独配置读取权限。
 
 本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
 
@@ -30,7 +38,7 @@ The user has authorized this Preview cleanup as the default. Verify the parent
 Worker and Preview IDs, run `cf previews delete <id> --worker <parent> --dry-run`,
 then use `--force` only to skip the confirmation for that verified Preview.
 Do not use `--delete-with-references`; stop and report references that prevent
-safe deletion. Never delete the parent production Worker, shared D1/R2 or
+safe deletion. Never delete the parent production Worker, existing D1/R2 or
 production/recovery versions as part of Preview cleanup. Version preview URLs
 are not separate native Preview environments.
 
@@ -54,9 +62,19 @@ until a usable replacement is confirmed.
 图片服务器发出请求，按本次授权范围选择邮件及是否启用不安全 HTML；合成图片请求、
 恶意内容和跨浏览器回归先在隔离本地 fixture 完成，不向 PRE 写入测试数据。
 
-## 从网页接入邮件域名
+## 当前 `mail-ai` 的邮箱身份验收
 
-管理员为目标环境配置 `MAIL_IDENTITY_WORKER_NAME` 和
+当前 `mail-ai` 使用已保存的身份记录进行网页验收。全量「同步 Cloudflare 配置」会把读取 Token 可见、指向配置 Worker 的规则导入 PRE D1。共用入站方案完成前，当前 PRE 不执行全量同步，模板省略 `MAIL_IDENTITY_WORKER_NAME`。原生 PRE 的父级 Worker 名称继续由目标文件中的 `name` 指定。
+
+沿用旧私有配置时，先在独立授权的 PRE 发布中移除旧的 `MAIL_IDENTITY_WORKER_NAME`、`MAIL_IDENTITY_ACCOUNT_ID` 和规则管理 Token 绑定。对照实际部署与 Previews Base，逐个核对稳定 URL、部署专属 URL 和版本预览 URL 的 D1、R2、全量发现和远端规则管理能力。任何仍能访问生产存储、发现生产规则或更改远端规则的 PRE 入口，按授权关闭该入口或撤销确认只属于 PRE 的旧权限。共享生产权限的处理另行授权。每个继续可访问的 PRE 入口须通过存储隔离和权限核对，对已授权的 Owner 会话使用只读 GET 检查保存的邮箱及域名。
+
+验收范围包括已保存的域名、地址和本地路由状态。GET 返回上次保存的状态，当前记录也可能仍指向已删除的 Worker。实际 Cloudflare 规则需另用有授权的只读查询核对，真实入箱将按新方案单独验证。当前 PRE 模板只声明读取规则所需的 Cloudflare Token。名称、签名等本地设置的写入另行授权。全量发现、接入新域名、创建地址、恢复或删除远端规则属于下节的独立路由环境。
+
+## 独立路由环境的邮箱身份接入
+
+下列流程适用于拥有独占邮件路由目标的环境。当前 `mail-ai` 的验收使用上一节。
+
+获准写入身份记录后，管理员可配置 `MAIL_IDENTITY_WORKER_NAME` 和
 `MAIL_IDENTITY_ACCOUNT_ID`，并添加限于目标邮件 Zone 的 Cloudflare Token：
 
 - `CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN`：Zone Read、Email Routing Rules Read。
@@ -76,7 +94,7 @@ Cloudflare 接口只执行读取，不创建/修改/删除路由或 DNS。导入
 `imported`，不取得规则删除权限，也不会自动启用发信。重复同步保留已有名称、
 签名、启停、删除及操作状态，不恢复已删除地址。同步失败时仍展示本地配置和重试提示。
 新接入且确认指向本应用的 catch-all 域名初始采用未知地址收集；既有域名的
-未知地址策略保持不变。同步写入当前目标 D1 的身份记录；当前 `mail-ai` 独立 D1 的同步不会更新生产 D1。若其他目标共享 D1，则双方可见。
+未知地址策略保持不变。同步写入当前目标 D1 的身份记录。若两个目标共享 D1，则双方可见。
 
 本地配置可见不等于本次 Cloudflare 同步成功。同步错误区分 Token 权限、连接失败、
 超时和限流；接口只返回安全的 `details.reason`，不暴露 Token 或原始供应商响应。
@@ -86,15 +104,13 @@ Cloudflare 接口只执行读取，不创建/修改/删除路由或 DNS。导入
 “手动接入其他域名”用于尚未发现的配置；其中“添加邮件域名”核验域名及所属 Zone，不自动修改 MX/SPF/DKIM 等 DNS。
 接入后检查域名状态，再从新增地址弹窗创建邮箱地址。缺少 Token 或部署映射时，
 页面会显示配置提示；已有域名/地址的本地设置仍可以编辑。域名设置可启停域名及
-切换未知地址策略，地址可编辑名称和签名；已有的地址启停、删除、恢复及发信操作
-继续可用。刷新失败时保留仍可查看的本地资源，不把读取失败显示成尚未配置。
+切换未知地址策略，地址可编辑名称和签名。启停、删除、恢复和发信按各自能力状态显示，涉及远端规则写入时需要管理权限。
+刷新失败时保留仍可查看的本地资源，不把读取失败显示成尚未配置。
 
-**原生 Preview 的 HTTP 测试不代表真实收信。** Email Routing 与 Cron 目标是
-Worker 的生产 handler，不能选择某个原生 Preview。本项目共用数据时继续由生产
-Worker 收信及执行定时任务，Preview 网页可查看其写入的邮件，但收信处理代码
-仍是生产版本。只有需要测试新的 `email()` / `scheduled()` 代码时，才另行安排
-接收/定时任务测试；无需为了网页 Preview 同时发布生产。配置收信规则时使用
-生产 Worker；不要把 cf OAuth 登录凭据当成应用的长期管理 Token。
+Email Routing 和 Cron 触发 Worker 的生产 handler。原生 Preview 的 HTTP 验收覆盖
+网页和 API，`email()` 和 `scheduled()` 使用独立的验收路径。有真实收信需求时
+参考 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
+应用长期管理凭据使用限于目标 Zone 的 Token。
 
 参考：[Worker Previews](https://developers.cloudflare.com/workers/previews/)、
 [自定义域名](https://developers.cloudflare.com/workers/previews/custom-domains/)、
@@ -103,7 +119,7 @@ Worker 收信及执行定时任务，Preview 网页可查看其写入的邮件�
 
 ## Optional AI acceptance
 
-See [AI setup](AI.md). AI is disabled by default. Current `mail-ai` uses an independent D1 with saved AI settings and shares production R2. AI generation sends selected email text to an external service. Publishing Preview does not authorize AI processing or migration 0030; obtain the relevant authorization separately. Fake/local tests are not real-provider acceptance.
+AI is disabled by default. Current `mail-ai` uses dedicated D1 and R2 with its own saved AI settings. AI generation sends selected email text to an external service. AI processing and migration 0030 require separate authorization. Real-provider acceptance uses authorized provider requests. See [AI setup](AI.md).
 
 
 AI language preferences and Telegram automatic summaries follow the
@@ -123,4 +139,4 @@ AI outbox processing. Local synthetic dispatcher tests cover that handler path.
 
 ### Schema 32 summary/classification acceptance
 
-Follow the [current SPEC](specs/ai-summary-and-automatic-classification.md). Migration 0032 requires explicit target-D1 migration authorization, backup/restore-point review and a compatible application rollout. A schema-version-only bridge is insufficient for category writes; pause those writes during cutover or use a reviewed dual-write bridge. Keep the existing independent PRE D1 and shared R2 bindings. Validate the exact committed SHA: AI settings default-off/readback, cache-only reader GET, six category filters and retired links, authentication and readiness. Enabling auto-classification, saving settings or generating real summaries needs separate write/external-processing authorization. Local fake-provider tests cover inbound enqueue and scheduled leases; HTTP checks alone do not prove email()/Cron execution. No production deployment is implied.
+Follow the [current SPEC](specs/ai-summary-and-automatic-classification.md). Migration 0032 requires explicit target-D1 migration authorization, backup/restore-point review and a compatible application rollout. A schema-version-only bridge is insufficient for category writes; pause those writes during cutover or use a reviewed dual-write bridge. Keep the existing independent PRE D1 and R2 bindings. Validate the exact committed SHA: AI settings default-off/readback, cache-only reader GET, six category filters and retired links, authentication and readiness. Enabling auto-classification, saving settings or generating real summaries needs separate write/external-processing authorization. Local fake-provider tests cover inbound enqueue and scheduled leases; HTTP checks alone do not prove email()/Cron execution. No production deployment is implied.
