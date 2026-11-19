@@ -85,6 +85,7 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       routingD1Id(receipt.routingDatabaseId) !== registry || receipt.production.bucket !== target.bucket ||
       target.preInbound?.bucket === target.bucket ||
       (receipt.production.fixedReservationHash && receipt.production.fixedReservationHash !== reserved) ||
+      (phase === 'protect' && (!reserved || receipt.production.fixedReservationHash !== reserved)) ||
       receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true ||
       (!pauseOnly && phase !== 'maintain' && receipt.legacyOperationsQuiesced !== true) ||
       (phase === 'activate' && (!routingD1Id(receipt.protectVersionId) || receipt.protectionActive !== true ||
