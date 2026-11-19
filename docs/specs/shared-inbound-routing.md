@@ -39,7 +39,9 @@
 
 先实现本地归属迁移、双环境配置互斥和 Worker 分流。使用三套隔离本地 D1 及两套 R2 验证两个域、共享域、重复申请、显式地址覆盖 catch-all、停用/删除、未知地址、PRE 停收和故障隔离。保留固定模式和未配置场景的回归。
 
-专用归属库创建并回填后，原生 `mail-ai` 可以先进行只读验收。发布前核对当前生产和 PRE 部署、Previews Base、三套 D1、两套 R2 以及归属表，确认 PRE 没有邮件规则写入权。使用权限为 `0600` 的私有预检记录，设置 `FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT`，经 `bun run deploy:pre -- --preview-name mail-ai` 重新构建并上传。预检记录绑定候选目标、Cloudflare 账号、两侧实际部署及存储，详见 [PRE 指南](../PREVIEW.md)。验收 PRE 的域名、邮箱和已认证 `/api/readiness`；期间服务端拒绝路由设置写入和归属登记。带新绑定的生产发布继续由发布守卫拦截，待生产双向绑定、回退及真实 SMTP 切换验证就绪后开启。带 PRE 入站配置的本地 Worker 使用 `cf dev`，构建命令拒绝生成可上传的 Worker 产物。
+专用归属库创建并回填后，原生 `mail-ai` 可以先进行只读验收。发布前核对当前生产和 PRE 部署、Previews Base、三套 D1、两套 R2 以及归属表，确认 PRE 没有邮件规则写入权。使用权限为 `0600` 的私有预检记录，设置 `FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT`，经 `bun run deploy:pre -- --preview-name mail-ai` 重新构建并上传。预检记录绑定候选目标、Cloudflare 账号、两侧实际部署及存储，详见 [PRE 指南](../PREVIEW.md)。验收 PRE 的域名、邮箱和已认证 `/api/readiness`；期间服务端拒绝路由设置写入和归属登记。带 PRE 入站配置的本地 Worker 使用 `cf dev`，构建命令拒绝生成可上传的 Worker 产物。
+
+生产切换使用权限为 `0600` 的 `FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT` 记录。在 PRE 验收和合并之后，核对实际部署、两侧存储、归属表、已停止的旧入口及在途操作，记录 `phase: "protect"` 和 `PRE_INBOUND_ENABLED=false`。保护版本阻挡 PRE 投递及身份写入，确认其已服务全部生产流量后才修改获准的 PRE 规则及映射。保留该版本作为回退目标。复核规则、映射和同一归属库后以 `phase: "activate"` 和 `PRE_INBOUND_ENABLED=true` 重启交付，按授权验证两边真实 SMTP。生产发布仍走原有 PR、审查和生产清单。
 
 ### 本地运行
 

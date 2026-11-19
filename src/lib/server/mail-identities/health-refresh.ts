@@ -2,7 +2,7 @@ import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRout
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { mailHealthNextCheckAt } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, isMailRoutingReadOnly } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
 import { ApiError } from '$lib/server/http/api';
 
@@ -376,7 +376,7 @@ async function refreshProviders(
     runProvider(
       env,
       'cloudflare',
-      isMailRoutingReadOnly(env) ? undefined : env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim(),
+      isPreviewRoutingReadOnly(env) ? undefined : env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim(),
       dependencies,
       foregroundDomain
     ),

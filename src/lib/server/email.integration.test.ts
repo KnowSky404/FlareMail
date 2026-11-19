@@ -520,6 +520,11 @@ describe('shared PRE and production inbound routing', () => {
     expect(await updateMailDomain(prod, 'user-1', 'domain-1', { unknownRecipientPolicy: 'collect' }))
       .toMatchObject({ enabled: 0, unknown_recipient_policy: 'collect' });
     expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBeNull();
+    production.database.query("UPDATE mail_domains SET catch_all_checked_at = '2000-01-01T00:00:00.000Z'").run();
+    await expect(updateMailDomain(prod, 'user-1', 'domain-1', { enabled: true }))
+      .rejects.toMatchObject({ code: 'MAIL_DOMAIN_COLLECT_NOT_READY' });
+    expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBeNull();
+    readyCatchAll(production.database);
     expect(await updateMailDomain(prod, 'user-1', 'domain-1', { enabled: true })).toMatchObject({ enabled: 1 });
     expect(await findInboundRoutingOwner(DB, 'catch_all', 'example.test')).toBe('production');
   });

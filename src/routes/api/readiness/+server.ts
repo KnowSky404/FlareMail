@@ -5,6 +5,7 @@ import { mailHealthState } from '$lib/domain/mail/health';
 import { listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
 import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
+import { readPreInboundBindings } from '$lib/server/inbound/pre-inbound';
 import { getRequestId, withApiHandler } from '$lib/server/http/api';
 import { requireWorkspaceSession } from '$lib/server/workspace-api';
 import type { RequestHandler } from './$types';
@@ -148,6 +149,10 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     try {
       const routing = readInboundRouting(env);
       if (routing) {
+        if (routing.environment === 'production') {
+          readPreInboundBindings(env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function',
+            typeof env.PRE_INBOUND_BUCKET?.put === 'function', true);
+        }
         await routing.db.prepare('SELECT kind FROM inbound_routing_ownership LIMIT 1').first();
         inboundRouting = { environment: routing.environment, readOnly: env.INBOUND_ROUTING_SCOPE?.readOnly === true };
       }
