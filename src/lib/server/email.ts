@@ -212,7 +212,10 @@ async function storeInboundEmail(
     console.log(JSON.stringify({ event, environment, ...detail }));
   };
   if (!env.DB) throw new Error('INBOUND_STORAGE_UNAVAILABLE');
-  const recipientRoute = await resolveInboundRecipient(env.DB, message.to, startedAt, environment === 'preview' || Boolean(requiredStatus));
+  const recipientRoute = await resolveInboundRecipient(env.DB, message.to, startedAt, {
+    requireRegisteredOwner: environment === 'preview' || Boolean(requiredStatus),
+    productionObservedCatchAll: environment === 'preview' && requiredStatus === 'unregistered'
+  });
   if (!recipientRoute.accepted) {
     const rejectionReasons = {
       invalid_recipient: 'The envelope recipient is invalid.',

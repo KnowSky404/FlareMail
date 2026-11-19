@@ -45,7 +45,8 @@ interface InboundRecipientRow {
 }
 
 export async function resolveInboundRecipient(
-  db: Pick<D1Database, 'prepare'>, rawRecipient: string, now = Date.now(), requireRegisteredOwner = false
+  db: Pick<D1Database, 'prepare'>, rawRecipient: string, now = Date.now(),
+  options: { requireRegisteredOwner?: boolean; productionObservedCatchAll?: boolean } = {}
 ): Promise<InboundRecipientResolution> {
   const parsed = parseInboundRecipient(rawRecipient);
   if (!parsed) return { accepted: false, reason: 'invalid_recipient' };
@@ -84,7 +85,7 @@ export async function resolveInboundRecipient(
 
   if (!row) return { accepted: false, reason: 'unknown_domain' };
   if (!row.mapped_owner_id || row.mapped_owner_id !== row.owner_user_id ||
-      (requireRegisteredOwner && row.registered_owner_id !== row.owner_user_id)) {
+      (options.requireRegisteredOwner && row.registered_owner_id !== row.owner_user_id)) {
     throw new Error('INBOUND_OWNER_MAPPING_UNAVAILABLE');
   }
   if (!row.domain_enabled) return { accepted: false, reason: 'domain_disabled' };
@@ -110,14 +111,15 @@ export async function resolveInboundRecipient(
   }
 
   const checkedAt = row.catch_all_checked_at ? Date.parse(row.catch_all_checked_at) : Number.NaN;
-  const catchAllError = previewCatchAllError(row.last_error_code, row.last_error_at);
-  const errorCode = catchAllError?.code ?? row.cloudflare_error_code;
-  const errorAt = Date.parse((catchAllError ? catchAllError.at : row.cloudflare_error_at) ?? '');
+  const catchAllError = options.productionObservedCatchAll
+    ? previewCatchAllError(row.last_error_code, row.last_error_at)
+    : { code: row.cloudflare_error_code, at: row.cloudflare_error_at };
+  const errorAt = Date.parse(catchAllError?.at ?? '');
   const catchAllWasRecentlyVerified = isMailHealthFresh(row.catch_all_checked_at, now);
   const transientFailureGrace = Number.isFinite(checkedAt) && checkedAt <= now &&
     now - checkedAt <= MAIL_HEALTH_MAX_AGE_MS + MAIL_HEALTH_TRANSIENT_COLLECT_GRACE_MS &&
     Number.isFinite(errorAt) && errorAt >= checkedAt && errorAt <= now &&
-    TRANSIENT_CLOUDFLARE_HEALTH_ERRORS.has(errorCode ?? '');
+    TRANSIENT_CLOUDFLARE_HEALTH_ERRORS.has(catchAllError?.code ?? '');
   if (
     row.unknown_recipient_policy === 'collect' && row.catch_all_target === 'this_worker' &&
     (catchAllWasRecentlyVerified || transientFailureGrace)

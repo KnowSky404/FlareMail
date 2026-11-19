@@ -125,13 +125,13 @@ describe('scheduled mail domain health refresh', () => {
       ...successfulFactory(...args),
       getCatchAll: async () => { throw new CloudflareEmailRoutingError('timeout'); }
     });
-    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: false });
+    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true })).toMatchObject({ accepted: false });
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
     expect(pre.readDomain()).toMatchObject({
       catch_all_checked_at: previouslyVerified, cloudflare_error_code: priorError,
       last_error_code: 'preview_catch_all:1:cloudflare_timeout', cloudflare_failure_count: 4
     });
-    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: true });
+    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true })).toMatchObject({ accepted: true });
     const firstRetry = Date.parse(String(pre.readDomain().cloudflare_next_check_at));
     pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
@@ -168,7 +168,7 @@ describe('scheduled mail domain health refresh', () => {
     expect(pre.readDomain()).toMatchObject({
       catch_all_target: 'unknown', last_error_code: 'preview_catch_all:cloudflare_zone_mapping_conflict'
     });
-    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: false });
+    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true })).toMatchObject({ accepted: false });
     expect(prod.readDomain().catch_all_checked_at).toBeNull();
     expect(pre.sqlite.query("SELECT catch_all_checked_at FROM mail_domains WHERE id='unowned'").get()).toEqual({ catch_all_checked_at: null });
     pre.sqlite.close();
