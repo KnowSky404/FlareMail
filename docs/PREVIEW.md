@@ -36,9 +36,9 @@
 
 原生 Preview 不继承生产 secrets；新 Preview 从 Previews Base 获取 secrets。仅在 JSON 中声明 secret 名称不会复制其值，发布成功也不能证明密钥齐全。检查已安装 cf 帮助、Base 和实际部署绑定；不要为了缺少配置改用生产 `cf deploy`，也不要为验收重置密钥。
 
-需要复用生产既有 secrets 时，可使用已有且获准的独立测试 D1/R2 上传版本供 HTTP 验收。两项资源都须与生产和 `mail-ai` 的存储不同，缺少该测试目标时使用原生 PRE。为版本预览准备仓库外的私有目标，用 `FLAREMAIL_CF_CONFIG` 传入，保留 `APP_ENV=preview`，关闭自动动作和 Cron。目标省略邮件路由 Worker、账号和 Cloudflare 路由 Token，隔离测试数据的本地编辑另行授权。先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。上传前核对已安装命令帮助、独立存储、实际将继承的 secrets 和版本域名，确认远端规则能力关闭。上传后复核实际存储、权限和生产 deployment 指针，通过后才访问预览 URL。仍使用旧存储的历史 URL 纳入对应环境的权限与存储清点。
+生产尚未建立 PRE 收信保护、且需要复用生产既有 secrets 时，可使用已有且获准的独立测试 D1/R2 上传版本供 HTTP 验收。两项资源都须与生产和 `mail-ai` 的存储不同，缺少该测试目标时使用原生 PRE。为版本预览准备仓库外的私有目标，用 `FLAREMAIL_CF_CONFIG` 传入，保留 `APP_ENV=preview`，关闭自动动作和 Cron。目标省略邮件路由 Worker、账号和 Cloudflare 路由 Token，隔离测试数据的本地编辑另行授权。先运行 `bun run build:app`，再在 `worker/` 使用全局 `cf workers versions create --mode preview --preview-alias <alias>`。上传前核对已安装命令帮助、独立存储、实际将继承的 secrets 和版本域名，确认远端规则能力关闭。上传后复核实际存储、权限和生产 deployment 指针，通过后才访问预览 URL。仍使用旧存储的历史 URL 纳入对应环境的权限与存储清点。
 
-上面的同 Worker 版本预览流程适用于生产尚未建立 PRE 收信保护时。建立保护后，旧版本 URL 须保持关闭，原生 `mail-ai` 继续承担 HTTP 验收。需要版本 URL 的独立测试应使用另外获准的 Worker。私有目标只声明已有且验收所需 secrets，路由验收继续使用授权的只读查询。
+生产建立 PRE 收信保护后，旧版本 URL 须保持关闭，原生 `mail-ai` 继续承担 HTTP 验收。需要版本 URL 的独立测试应使用另外获准的 Worker。私有目标只声明已有且验收所需 secrets，路由验收继续使用授权的只读查询。
 
 本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
 
