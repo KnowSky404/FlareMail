@@ -3,7 +3,7 @@ import { ApiError, apiSuccess, readJsonBody, withApiHandler } from '$lib/server/
 import { listManagedMailAddresses, listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { createManagedMailAddress } from '$lib/server/mail-identities/routing';
 import { domainOnboardingConfiguration } from '$lib/server/mail-identities/domains';
-import { isMailRoutingReadOnly } from '$lib/server/mail-identities/ownership';
+import { isMailRoutingReadOnly, isPreviewRoutingReadOnly } from '$lib/server/mail-identities/ownership';
 import { getRequestEnv, requireWorkspaceSession } from '$lib/server/workspace-api';
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
@@ -20,7 +20,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     addresses,
     domainOnboarding: domainOnboardingConfiguration(env),
     providerConfiguration: {
-      cloudflare: !readOnly && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
+      cloudflare: !isPreviewRoutingReadOnly(env) && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
       cloudflareManagement: !readOnly && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
       resend: Boolean(env.RESEND_API_KEY?.trim())
     }

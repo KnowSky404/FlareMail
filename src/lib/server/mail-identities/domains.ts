@@ -3,6 +3,7 @@ import { CloudflareEmailRoutingClient, CloudflareEmailRoutingError } from '$lib/
 import { getManagedMailDomain } from '$lib/server/db/mail-identities';
 import { ApiError } from '$lib/server/http/api';
 import { isMailHealthFresh } from '$lib/domain/mail/health';
+import { findInboundRoutingOwner, readInboundRouting } from '$lib/server/inbound/routing-ownership';
 import { isMailRoutingReadOnly, requireMailRoutingWrites, reserveMailRoutingOwnership } from './ownership';
 import { MailIdentityValidationError, normalizeCloudflareZoneId, normalizeEmailWorkerName, normalizeMailDomain } from './validation';
 
@@ -88,8 +89,14 @@ export async function updateMailDomain(
   if (!domain) throw new ApiError(404, 'MAIL_DOMAIN_NOT_FOUND', '邮件域名不存在。', undefined, undefined, false);
   const claimsCatchAll = (input.enabled ?? Boolean(domain.enabled)) && (input.unknownRecipientPolicy === 'collect' ||
     (input.enabled === true && input.unknownRecipientPolicy === undefined && domain.unknown_recipient_policy === 'collect'));
-  if (input.unknownRecipientPolicy === 'collect' && domain.unknown_recipient_policy !== 'collect' &&
-    (domain.catch_all_target !== 'this_worker' || !isMailHealthFresh(domain.catch_all_checked_at) || domain.cloudflare_error_code)) {
+  const switchingToCollect = input.unknownRecipientPolicy === 'collect' && domain.unknown_recipient_policy !== 'collect';
+  const cloudflareError = domain.cloudflare_error_code;
+  const providerReady = domain.catch_all_target === 'this_worker' && isMailHealthFresh(domain.catch_all_checked_at) &&
+    (!cloudflareError || cloudflareError === 'cloudflare_collect_catch_all_unassigned');
+  const reEnablingCollection = claimsCatchAll && !domain.enabled && input.enabled === true && !switchingToCollect;
+  const routing = reEnablingCollection && !providerReady ? readInboundRouting(env) : null;
+  if (!providerReady && (switchingToCollect ||
+      (routing && !await findInboundRoutingOwner(routing.db, 'catch_all', domain.domain_name)))) {
     throw new ApiError(409, 'MAIL_DOMAIN_COLLECT_NOT_READY', '请先检查域名，确认有效的 catch-all 指向本应用，再启用未知地址收集。', undefined, undefined, false);
   }
   if (claimsCatchAll) {

@@ -18,8 +18,15 @@ export function isMailRoutingReadOnly(env: CloudflareEnv) {
   return env.INBOUND_ROUTING_SCOPE?.readOnly === true || isStandaloneFixedPreview(env);
 }
 
+export function isPreviewRoutingReadOnly(env: CloudflareEnv) {
+  return env.INBOUND_ROUTING_SCOPE?.environment !== 'production' && isMailRoutingReadOnly(env);
+}
+
 export function requireMailRoutingWrites(env: CloudflareEnv) {
   if (env.INBOUND_ROUTING_SCOPE?.readOnly === true) {
+    if (env.INBOUND_ROUTING_SCOPE.environment === 'production') {
+      throw new ApiError(403, 'MAIL_ROUTING_CUTOVER_READ_ONLY', '收信切换期间的邮件身份配置为只读。', undefined, undefined, false);
+    }
     throw new ApiError(403, 'MAIL_ROUTING_PREVIEW_READ_ONLY', 'PRE 验收期间的邮件身份配置为只读。', undefined, undefined, false);
   }
   if (isStandaloneFixedPreview(env)) {

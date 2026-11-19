@@ -9,6 +9,52 @@ import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
 import { sharedInboundPreviewTargetHash } from './shared-inbound-preview';
 
+test('production activation requires the reviewed PRE and an active, paused protection deployment', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-shared-prod-'));
+  const file = join(directory, 'target.json');
+  const proof = join(directory, 'proof.json');
+  const env = { FLAREMAIL_CF_CONFIG: file, FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT: proof, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) };
+  const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+  const production = { databaseId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', bucket: 'prod-bucket', deploymentId: 'current-prod' };
+  const preview = { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', bucket: 'pre-bucket', deploymentId: 'accepted-pre', buildLabel: 'preview+' + 'c'.repeat(7) };
+  const candidate = {
+    ...localTarget, databaseId: production.databaseId, bucket: production.bucket,
+    preInbound: { databaseId: preview.databaseId, databaseName: 'pre', bucket: preview.bucket },
+    inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const },
+    vars: { ...localTarget.vars, APP_ENV: 'production', APP_VERSION: 'production+' + 'e'.repeat(7), PRE_INBOUND_ENABLED: 'false' }
+  };
+  const evidence = {
+    checkedAt: new Date().toISOString(), accountId: env.CLOUDFLARE_ACCOUNT_ID, previewName: 'mail-ai', workerName: candidate.name,
+    production, preview, routingDatabaseId: candidate.inboundRouting.databaseId, registryVerified: true, ownerAcceptanceVerified: true,
+    releaseCommit: 'e'.repeat(40), acceptedPreviewCommit: 'c'.repeat(40), versionUrlsDisabled: true, legacyOperationsQuiesced: true
+  };
+  Object.assign(process.env, env);
+  try {
+    await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
+    await writeFile(proof, JSON.stringify({ ...evidence, phase: 'protect', targetHash: sharedInboundPreviewTargetHash(candidate) }), { mode: 0o600 });
+    const guarded = await cloudflareConfig.worker({ mode: 'production', isPreview: false });
+    expect(guarded.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'production', readOnly: true });
+    expect(guarded.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: null, enabled: false });
+
+    const active = { ...candidate, vars: { ...candidate.vars, PRE_INBOUND_ENABLED: 'true' } };
+    await writeFile(file, JSON.stringify(active));
+    const activation = { ...evidence, phase: 'activate', targetHash: sharedInboundPreviewTargetHash(active),
+      protectVersionId: 'guarded-rollback', protectionActive: true, mailRoutesAndMappingsVerified: true };
+    await writeFile(proof, JSON.stringify({ ...activation, protectionActive: false }));
+    await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
+    await writeFile(proof, JSON.stringify(activation));
+    const activated = await cloudflareConfig.worker({ mode: 'production', isPreview: false });
+    expect(activated.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'production' });
+    expect(activated.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: null, enabled: true });
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('allows only a verified, native read-only shared PRE build', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-shared-pre-'));
   const file = join(directory, 'target.json');

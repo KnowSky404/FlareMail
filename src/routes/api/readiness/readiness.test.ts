@@ -82,6 +82,15 @@ describe('/api/readiness', () => {
     const ready = await health(database, bindings);
     expect(ready.status).toBe(200);
     expect(await ready.json()).toMatchObject({ inboundRouting: { environment: 'preview', readOnly: true } });
+    const production = { ...bindings, INBOUND_ROUTING_SCOPE: { environment: 'production' }, PRE_INBOUND_DB: new D1(registry) };
+    const malformed = await health(database, production);
+    expect(malformed.status).toBe(503);
+    expect(await malformed.json()).toMatchObject({ error: { code: 'INBOUND_ROUTING_NOT_READY' } });
+    const productionReady = await health(database, {
+      ...production, PRE_INBOUND_SETTINGS: { recipient: null, enabled: false }, PRE_INBOUND_BUCKET: { put() {} }
+    });
+    expect(productionReady.status).toBe(200);
+    expect(await productionReady.json()).toMatchObject({ inboundRouting: { environment: 'production', readOnly: false } });
   });
 
   test('exposes provider-specific health only through the authenticated readiness endpoint', async () => {

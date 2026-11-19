@@ -14,6 +14,7 @@ export default defineConfig({
     if (isPreview || remote) checkPreInboundRelease(target, isPreview && mode === 'preview');
     const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
     const preInboundSettings = cloudflarePreInboundSettings(target);
+    const pauseRoutingWrites = isPreview || (mode === 'production' && !preInboundSettings?.enabled);
     if (!remote && process.env.FLAREMAIL_E2E === 'true') {
       Object.assign(vars, {
         APP_ENV: 'development', AUTH_MODE: 'local', ALLOW_FAKE_SERVICES: 'true', OUTBOUND_PROVIDER: 'demo',
@@ -42,7 +43,7 @@ export default defineConfig({
         } : {}),
         ...(target.inboundRouting ? {
           INBOUND_ROUTING_DB: bindings.d1({ name: target.inboundRouting.databaseName, id: target.inboundRouting.databaseId }),
-          INBOUND_ROUTING_SCOPE: bindings.json({ environment: target.inboundRouting.environment, ...(isPreview ? { readOnly: true as const } : {}) })
+          INBOUND_ROUTING_SCOPE: bindings.json({ environment: target.inboundRouting.environment, ...(pauseRoutingWrites ? { readOnly: true as const } : {}) })
         } : {}),
         ASSETS: bindings.assets()
       }

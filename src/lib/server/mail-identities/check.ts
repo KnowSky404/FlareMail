@@ -12,7 +12,7 @@ import {
 import { listManagedMailAddresses, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { getExactResendDomain, canSendFromResendDomain, ResendDomainError } from '$lib/server/resend-domains';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, isMailRoutingReadOnly } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
 
 type CloudflareClient = Pick<CloudflareEmailRoutingClient, 'getZone' | 'listRules' | 'getCatchAll'>;
 type ResendLookup = typeof getExactResendDomain;
@@ -249,7 +249,7 @@ export async function checkManagedMailDomain(
     ? await acquireProviderCheckLease(env.DB, 'resend', domain, resendCheckToken, resendLeaseAt)
     : false;
   const routingToken = env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim();
-  const readOnly = isMailRoutingReadOnly(env);
+  const readOnly = isPreviewRoutingReadOnly(env);
   const cloudflare = readOnly ? null : dependencies?.cloudflareClient ?? (routingToken
     ? new CloudflareEmailRoutingClient({
         token: routingToken,
