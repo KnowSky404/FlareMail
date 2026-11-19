@@ -101,9 +101,12 @@ describe('scheduled mail domain health refresh', () => {
   test('production refreshes only enabled PRE-owned catch-all domains with read operations', async () => {
     const prod = createFixture();
     const pre = createFixture({ collect: true });
+    const previouslyVerified = new Date(defaultNow - 25 * 60 * 60 * 1000).toISOString();
     const priorFullCheck = new Date(defaultNow - 60_000).toISOString();
-    pre.sqlite.query(`UPDATE mail_domains SET cloudflare_checked_at = ?, cloudflare_error_code = 'cloudflare_managed_route_needs_review'`)
-      .run(priorFullCheck);
+    const priorError = 'cloudflare_managed_route_needs_review';
+    pre.sqlite.query(`UPDATE mail_domains SET catch_all_checked_at = ?, cloudflare_checked_at = ?, cloudflare_error_code = ?,
+      cloudflare_error_at = ?, last_error_code = ?, last_error_at = ?`)
+      .run(previouslyVerified, priorFullCheck, priorError, priorFullCheck, priorError, priorFullCheck);
     pre.sqlite.query(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, unknown_recipient_policy)
       VALUES ('unowned', ?, 'excluded.example.test', ?, 'flaremail-worker', 'collect')`).run(ownerId, zoneId);
     const deps = successDependencies();
@@ -117,10 +120,24 @@ describe('scheduled mail domain health refresh', () => {
         bind: () => ({ first: async () => ({ environment: 'preview' }) })
       }) } as unknown as D1Database
     };
+    const successfulFactory = deps.cloudflareClientFactory;
+    deps.cloudflareClientFactory = (...args) => ({
+      ...successfulFactory(...args),
+      getCatchAll: async () => { throw new CloudflareEmailRoutingError('timeout'); }
+    });
+    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: false });
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain()).toMatchObject({
+      catch_all_checked_at: previouslyVerified, cloudflare_error_code: priorError, last_error_code: 'preview_catch_all:cloudflare_timeout'
+    });
+    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow)).toMatchObject({ accepted: true });
+    pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+    deps.cloudflareClientFactory = successfulFactory;
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
     expect(pre.readDomain()).toMatchObject({
       catch_all_target: 'this_worker', catch_all_checked_at: new Date(defaultNow).toISOString(),
-      cloudflare_checked_at: priorFullCheck, cloudflare_error_code: 'cloudflare_managed_route_needs_review'
+      cloudflare_checked_at: priorFullCheck, cloudflare_error_code: priorError,
+      last_error_code: priorError, last_error_at: priorFullCheck
     });
     expect(prod.readDomain().catch_all_checked_at).toBeNull();
     expect(pre.sqlite.query("SELECT catch_all_checked_at FROM mail_domains WHERE id='unowned'").get()).toEqual({ catch_all_checked_at: null });

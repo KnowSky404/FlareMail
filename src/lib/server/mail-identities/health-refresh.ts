@@ -1,6 +1,6 @@
 import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRoutingClient, CloudflareEmailRoutingError, type CloudflareCatchAll, type CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { mailHealthNextCheckAt } from '$lib/domain/mail/health';
+import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_ERROR_PREFIX } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
 import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
@@ -247,11 +247,16 @@ async function saveCloudflareResult(
   const failureCount = result.errorCode && result.retryable ? Math.min(previousFailures + 1, 1000) : 0;
   const nextAt = mailHealthNextCheckAt(domain.id, nowMs, Math.max(1, failureCount), result.errorCode, result.retryable);
   if (catchAllOnly) {
+    const catchAllError = result.errorCode ? PREVIEW_CATCH_ALL_ERROR_PREFIX + result.errorCode : null;
+    // Reuse the legacy error mirror and restore it from the full observation on recovery.
     await db.prepare(`UPDATE mail_domains SET
         catch_all_target = COALESCE(?, catch_all_target), catch_all_checked_at = COALESCE(?, catch_all_checked_at),
+        last_error_code = COALESCE(?, cloudflare_error_code),
+        last_error_at = CASE WHEN ? IS NULL THEN cloudflare_error_at ELSE ? END,
         cloudflare_next_check_at = ?, cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
       WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`)
-      .bind(result.catchAllTarget ?? null, result.catchAllObservedAt ?? null, nextAt, isoAt(nowMs), domain.id, domain.owner_user_id, token).run();
+      .bind(result.catchAllTarget ?? null, result.catchAllObservedAt ?? null,
+        catchAllError, catchAllError, isoAt(nowMs), nextAt, isoAt(nowMs), domain.id, domain.owner_user_id, token).run();
     return;
   }
   await db.prepare(
