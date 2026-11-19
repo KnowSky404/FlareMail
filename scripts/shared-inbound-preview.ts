@@ -121,6 +121,7 @@ export function assertProductionReleaseSource(projectRoot: string, source: { rel
 
 interface WorkerBindingMetadata {
   name: string;
+  type?: string;
   database_id?: string;
   id?: string;
   bucket_name?: string;
@@ -154,15 +155,20 @@ function readActiveProduction(worker: string) {
       throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
     }
     const metadata = activeVersions.map(version => {
-      let bindings;
+      let details;
       try {
-        const metadata = cf(['workers', 'versions', 'get', version.version_id, '--worker', worker]);
-        bindings = metadata.bindings ?? metadata.resources?.bindings;
+        details = cf(['workers', 'versions', 'get', version.version_id, '--worker', worker]);
       } catch {
         throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
       }
+      const bindings = details.bindings ?? details.resources?.bindings;
+      const runtime = details.resources?.script_runtime ?? details;
       if (!Array.isArray(bindings)) throw new Error('INBOUND_PRODUCTION_ACTIVE_BINDINGS_UNAVAILABLE');
-      return { id: String(version.version_id), percentage: Number(version.percentage), bindings: bindings as WorkerBindingMetadata[] };
+      return {
+        id: String(version.version_id), percentage: Number(version.percentage), bindings: bindings as WorkerBindingMetadata[],
+        compatibilityDate: runtime.compatibility_date as string | undefined,
+        compatibilityFlags: (runtime.compatibility_flags ?? []) as string[]
+      };
     });
     return { deploymentId: String(deployments[0].id), versions: metadata };
   } finally {
@@ -209,20 +215,24 @@ function cloudflareSessionToken(projectRoot: string) {
   throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE');
 }
 
-async function readLiveNativePreview(workerName: string, projectRoot: string) {
+function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = cloudflareSessionToken(projectRoot);
-  const workers = '/accounts/' + account + '/workers/workers/';
-  const get = async <T>(path: string) => {
-    const response = await fetch('https://api.cloudflare.com/client/v4' + path, {
+  return async <T>(path: string) => {
+    const response = await fetch('https://api.cloudflare.com/client/v4/accounts/' + account + '/workers/' + path, {
       headers: { Authorization: 'Bearer ' + token }, signal: AbortSignal.timeout(8_000), redirect: 'error'
     });
-    if (!response.ok) throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+    if (!response.ok) throw new Error(errorCode);
     const envelope = await response.json() as { success: boolean; result: T };
-    if (!envelope.success) throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+    if (!envelope.success) throw new Error(errorCode);
     return envelope.result;
   };
+}
+
+async function readLiveNativePreview(workerName: string, projectRoot: string) {
+  const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+  const workers = 'workers/';
   const worker = await get<{ id?: string }>(workers + encodeURIComponent(workerName));
   if (!worker?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const path = workers + encodeURIComponent(worker.id) + '/previews';
@@ -278,6 +288,74 @@ export function assertActiveProductionForPreview(target: CloudflareTarget, sourc
   if (source.managementEnabled && settings?.enabled !== true) throw new Error('INBOUND_PREVIEW_MANAGEMENT_REQUIRES_ACTIVE_DELIVERY');
 }
 
+function sameStrings(left: string[], right: string[]) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
+export function assertPauseConfiguration(
+  target: CloudflareTarget,
+  active: { bindings: WorkerBindingMetadata[]; compatibilityDate?: string; compatibilityFlags: string[]; cron: string[] }
+) {
+  const { PRE_INBOUND_ENABLED: _enabled, PRE_INBOUND_RECIPIENT: _recipient, ...vars } = target.vars;
+  const activeVars = active.bindings.filter(binding => binding.type === 'plain_text');
+  const activeSecrets = active.bindings.filter(binding => binding.type === 'secret_text').map(binding => binding.name);
+  if (Object.keys(vars).length !== activeVars.length ||
+      activeVars.some(binding => !Object.hasOwn(vars, binding.name) || vars[binding.name] !== binding.text) ||
+      !sameStrings(target.secrets ?? [], activeSecrets) ||
+      target.compatibilityDate !== active.compatibilityDate ||
+      !sameStrings(target.compatibilityFlags, active.compatibilityFlags) || !sameStrings(target.cron, active.cron)) {
+    throw new Error('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_CHANGED');
+  }
+}
+
+interface ObservabilityMetadata {
+  enabled?: boolean;
+  head_sampling_rate?: number;
+  persist?: boolean;
+  invocation_logs?: boolean;
+  destinations?: string[];
+}
+
+export async function verifyProductionWorkerDev(target: CloudflareTarget, projectRoot: string) {
+  const errorCode = 'INBOUND_PRODUCTION_VERSION_URLS_NOT_DISABLED';
+  const get = cloudflareWorkerMetadata(projectRoot, errorCode);
+  const subdomain = await get<{ enabled?: boolean; previews_enabled?: boolean }>(
+    'scripts/' + encodeURIComponent(target.name) + '/subdomain'
+  );
+  if (subdomain?.previews_enabled !== false || typeof subdomain.enabled !== 'boolean') throw new Error(errorCode);
+  return subdomain.enabled;
+}
+
+export async function readPauseObservability(
+  target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string
+) {
+  const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PAUSE_CONFIGURATION_UNAVAILABLE');
+  const path = 'scripts/' + encodeURIComponent(target.name);
+  const [{ schedules }, { observability }] = await Promise.all([
+    get<{ schedules?: { cron: string }[] }>(path + '/schedules'),
+    get<{ observability?: ObservabilityMetadata & {
+      redact_query_string?: boolean;
+      issues?: { enabled?: boolean };
+      logs?: ObservabilityMetadata;
+      traces?: ObservabilityMetadata;
+    } }>(path + '/script-settings')
+  ]);
+  if (!Array.isArray(schedules) || schedules.some(schedule => typeof schedule.cron !== 'string')) {
+    throw new Error('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_UNAVAILABLE');
+  }
+  assertPauseConfiguration(target, { ...version, cron: schedules.map(schedule => schedule.cron) });
+  const sink = (value: ObservabilityMetadata) => ({
+    enabled: value.enabled, headSamplingRate: value.head_sampling_rate,
+    persist: value.persist, destinations: value.destinations
+  });
+  return observability ? {
+    enabled: observability.enabled ?? false, headSamplingRate: observability.head_sampling_rate,
+    redactQueryString: observability.redact_query_string, issues: observability.issues ?? undefined,
+    logs: observability.logs ? { ...sink(observability.logs), invocationLogs: observability.logs.invocation_logs } : undefined,
+    traces: observability.traces ? sink(observability.traces) : undefined
+  } : { enabled: false };
+}
+
 export function assertActiveProductionForRelease(target: CloudflareTarget, source: ReturnType<typeof assertSharedInboundProduction>) {
   const { version, binding, db, bucket, settings } = requireActiveProductionVersion(target.name, source.deploymentId);
   if (db('DB') !== routingD1Id(target.databaseId) || bucket('BUCKET') !== target.bucket) {
@@ -294,4 +372,5 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
       throw new Error('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
     }
   }
+  return version;
 }

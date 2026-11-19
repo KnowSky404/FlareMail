@@ -2,12 +2,12 @@ import { adapterOptions } from './adapter-config.mjs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalizeDeployArguments } from './deploy-command';
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash } from './shared-inbound-preview';
+import { assertPauseConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -32,6 +32,42 @@ test('production source must match the exact PRE acceptance tree', async () => {
       .toThrow('INBOUND_PRODUCTION_RELEASE_DIFFERS_FROM_PRE_ACCEPTANCE');
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('emergency pause keeps the same authentication variables, secrets and production cron', () => {
+  const target = {
+    ...localTarget, vars: { AUTH_MODE: 'access', PRE_INBOUND_ENABLED: 'false' },
+    secrets: ['RESEND_API_KEY'], cron: ['* * * * *']
+  };
+  const active = {
+    bindings: [{ name: 'AUTH_MODE', type: 'plain_text', text: 'access' }, { name: 'RESEND_API_KEY', type: 'secret_text' }],
+    compatibilityDate: target.compatibilityDate, compatibilityFlags: target.compatibilityFlags, cron: target.cron
+  };
+  expect(() => assertPauseConfiguration(target, active)).not.toThrow();
+  expect(() => assertPauseConfiguration({ ...target, vars: { ...target.vars, AUTH_MODE: 'local' } }, active))
+    .toThrow('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_CHANGED');
+  expect(() => assertPauseConfiguration({ ...target, cron: [] }, active))
+    .toThrow('INBOUND_PRODUCTION_PAUSE_CONFIGURATION_CHANGED');
+});
+
+test('production requires live historical URL isolation and keeps the main URL setting', async () => {
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const token = process.env.CLOUDFLARE_API_TOKEN;
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'a'.repeat(32);
+  process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
+  const fetch = spyOn(globalThis, 'fetch');
+  try {
+    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { enabled: true, previews_enabled: true } }));
+    await expect(verifyProductionWorkerDev(localTarget, projectRoot)).rejects.toThrow('INBOUND_PRODUCTION_VERSION_URLS_NOT_DISABLED');
+    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { enabled: true, previews_enabled: false } }));
+    await expect(verifyProductionWorkerDev(localTarget, projectRoot)).resolves.toBe(true);
+  } finally {
+    fetch.mockRestore();
+    if (account === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    else process.env.CLOUDFLARE_ACCOUNT_ID = account;
+    if (token === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = token;
   }
 });
 

@@ -60,7 +60,10 @@ if (command === 'typegen') {
   if (sharedPreview && (previewArgs.length !== 2 || previewArgs[0] !== '--preview-name' || previewArgs[1] !== 'mail-ai')) {
     throw new Error('Shared inbound PRE must deploy to mail-ai through a fresh build.');
   }
-  checkPreInboundRelease(target, sharedPreview);
+  const release = checkPreInboundRelease(target, sharedPreview);
+  if (release?.kind === 'production' && release.source.pauseOnly && forwardedArgs.some(argument => /^--secrets-file(?:=|$)/u.test(argument))) {
+    throw new Error('INBOUND_PRODUCTION_PAUSE_CANNOT_UPLOAD_SECRETS');
+  }
   const invocation = createDeployInvocation('deploy', environment, args);
   await run(command === 'deploy' ? [invocation.command, ...invocation.args] : ['cf', 'previews', 'deploy', '--mode', mode, ...forwardedArgs]);
 } else throw new Error('Usage: bun scripts/cloudflare.ts <build|preview|typegen|migrate|dry-run|deploy|pre>');

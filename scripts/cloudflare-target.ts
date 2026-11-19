@@ -130,8 +130,8 @@ export function checkPreInboundRelease(target: CloudflareTarget, nativePreview =
     const source = assertSharedInboundProduction(target, process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT);
     if (source.pauseOnly) assertReleaseCheckout(projectRoot, source.releaseCommit, 'INBOUND_PRODUCTION_RELEASE_SOURCE_NOT_VERIFIED');
     else assertProductionReleaseSource(projectRoot, source);
-    assertActiveProductionForRelease(target, source);
-    return { kind: 'production' as const, source };
+    const activeVersion = assertActiveProductionForRelease(target, source);
+    return { kind: 'production' as const, source, activeVersion };
   }
   throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
 }

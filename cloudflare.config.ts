@@ -12,9 +12,13 @@ export default defineConfig({
     const target = readCloudflareTarget(config, remote);
     if (remote && target.vars.APP_ENV !== mode) throw new Error(`The ${mode} build requires APP_ENV=${mode}.`);
     const release = isPreview || remote ? checkPreInboundRelease(target, isPreview && mode === 'preview') : undefined;
-    if (release?.kind === 'production' && !release.source.pauseOnly) {
-      const { assertLiveNativePreview } = await import('./scripts/shared-inbound-preview.ts');
-      await assertLiveNativePreview(target, release.source, projectRoot);
+    let workersDev: boolean | undefined;
+    let observability = target.observability;
+    if (release?.kind === 'production') {
+      const { assertLiveNativePreview, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
+      workersDev = await verifyProductionWorkerDev(target, projectRoot);
+      if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
+      else await assertLiveNativePreview(target, release.source, projectRoot);
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
       await assertLivePreviewForPublish(target, release.source, projectRoot);
@@ -37,7 +41,8 @@ export default defineConfig({
       entrypoint: fileURLToPath(new URL('./worker/index.ts', import.meta.url)),
       compatibilityDate: target.compatibilityDate,
       compatibilityFlags: target.compatibilityFlags,
-      observability: target.observability,
+      observability,
+      ...(workersDev === undefined ? {} : { workersDev, previewUrls: false }),
       triggers: target.cron.map((schedule) => triggers.scheduled({ schedule })),
       env: {
         ...env,
