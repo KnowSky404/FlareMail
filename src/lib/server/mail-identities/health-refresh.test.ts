@@ -107,7 +107,7 @@ describe('scheduled mail domain health refresh', () => {
     const factory = deps.cloudflareClientFactory!;
     deps.cloudflareClientFactory = (...args) => ({ ...factory(...args), listRules: async () => { throw new Error('exact rules are out of scope'); } });
     const env = {
-      ...prod.env, PRE_INBOUND_SETTINGS: { recipient: null, enabled: true }, PRE_INBOUND_DB: pre.db,
+      ...prod.env, PRE_INBOUND_SETTINGS: { recipient: null, enabled: false }, PRE_INBOUND_DB: pre.db,
       INBOUND_ROUTING_SCOPE: { environment: 'production' as const },
       INBOUND_ROUTING_DB: { prepare: () => ({
         all: async () => ({ results: [{ route_key: 'mail.example.test' }] }),

@@ -66,7 +66,7 @@ test('production activation requires the reviewed PRE and an active, paused prot
     const active = { ...candidate, vars: { ...candidate.vars, PRE_INBOUND_ENABLED: 'true' } };
     await writeFile(file, JSON.stringify(active));
     const activation = { ...evidence, phase: 'activate', targetHash: sharedInboundPreviewTargetHash(active),
-      protectVersionId: 'guarded-rollback', protectionActive: true, mailRoutesAndMappingsVerified: true };
+      protectVersionId: 'guarded-rollback', protectionActive: true, mailRoutesAndMappingsVerified: true, preCatchAllsVerified: true };
     await writeFile(proof, JSON.stringify({ ...activation, protectionActive: false }));
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
     await writeFile(proof, JSON.stringify(activation));
@@ -96,7 +96,7 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     targetHash: sharedInboundPreviewTargetHash(candidate), registryVerified: true, previewBaseVerified: true,
     routingDatabaseId: candidate.inboundRouting.databaseId,
     preview: { deploymentId: 'preview-version', databaseId: candidate.databaseId, bucket: candidate.bucket },
-    production: { deploymentId: 'prod-version', databaseId: localTarget.databaseId, bucket: 'production-bucket' }
+    production: { deploymentId: 'prod-version', databaseId: localTarget.databaseId, bucket: 'production-bucket', previewDelivery: null }
   };
   Object.assign(process.env, env);
   try {
@@ -106,6 +106,10 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     expect(preview.env.INBOUND_ROUTING_SCOPE?.value).toEqual({ environment: 'preview', readOnly: true });
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: false })).rejects.toThrow('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
     await writeFile(receiptPath, JSON.stringify({ ...receipt, production: { ...receipt.production, databaseId: candidate.databaseId.toUpperCase() } }));
+    await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
+    await writeFile(receiptPath, JSON.stringify({ ...receipt, production: { ...receipt.production, previewDelivery: {
+      databaseId: localTarget.databaseId, bucket: candidate.bucket, routingDatabaseId: candidate.inboundRouting.databaseId
+    } } }));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
     await writeFile(receiptPath, JSON.stringify({ ...receipt, checkedAt: '2000-01-01T00:00:00.000Z' }));
     await expect(cloudflareConfig.worker({ mode: 'preview', isPreview: true })).rejects.toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');

@@ -363,7 +363,7 @@ export async function refreshMailDomainHealth(
 /** Production observes PRE-owned catch-alls through its existing read operations. */
 export async function refreshPreviewCatchAllHealth(env: CloudflareEnv, dependencies: MailHealthRefreshDependencies = {}) {
   const routing = readInboundRouting(env);
-  if (routing?.environment !== 'production' || env.PRE_INBOUND_SETTINGS?.enabled !== true || !env.PRE_INBOUND_DB) return;
+  if (routing?.environment !== 'production' || !env.PRE_INBOUND_SETTINGS || !env.PRE_INBOUND_DB) return;
   const { results } = await routing.db.prepare(`SELECT route_key FROM inbound_routing_ownership
     WHERE kind = 'catch_all' AND environment = 'preview'`).all<{ route_key: string }>();
   if (!results.length) return;

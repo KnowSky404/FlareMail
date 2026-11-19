@@ -73,6 +73,7 @@ describe('/api/readiness', () => {
   test('checks the configured shared registry and reports the read-only preview scope', async () => {
     using database = new Database(':memory:');
     using registry = new Database(':memory:');
+    using previewDatabase = new Database(':memory:');
     applyMigrations(database);
     const bindings = { INBOUND_ROUTING_SCOPE: { environment: 'preview', readOnly: true }, INBOUND_ROUTING_DB: new D1(registry) };
     const missing = await health(database, bindings);
@@ -82,13 +83,18 @@ describe('/api/readiness', () => {
     const ready = await health(database, bindings);
     expect(ready.status).toBe(200);
     expect(await ready.json()).toMatchObject({ inboundRouting: { environment: 'preview', readOnly: true } });
-    const production = { ...bindings, INBOUND_ROUTING_SCOPE: { environment: 'production' }, PRE_INBOUND_DB: new D1(registry) };
+    const production = { ...bindings, INBOUND_ROUTING_SCOPE: { environment: 'production' }, PRE_INBOUND_DB: new D1(previewDatabase) };
     const malformed = await health(database, production);
     expect(malformed.status).toBe(503);
     expect(await malformed.json()).toMatchObject({ error: { code: 'INBOUND_ROUTING_NOT_READY' } });
-    const productionReady = await health(database, {
+    const productionBindings = {
       ...production, PRE_INBOUND_SETTINGS: { recipient: null, enabled: false }, PRE_INBOUND_BUCKET: { put() {} }
-    });
+    };
+    const missingPreviewSchema = await health(database, productionBindings);
+    expect(missingPreviewSchema.status).toBe(503);
+    expect(await missingPreviewSchema.json()).toMatchObject({ error: { code: 'INBOUND_ROUTING_NOT_READY' } });
+    applyMigrations(previewDatabase);
+    const productionReady = await health(database, productionBindings);
     expect(productionReady.status).toBe(200);
     expect(await productionReady.json()).toMatchObject({ inboundRouting: { environment: 'production', readOnly: false } });
   });
