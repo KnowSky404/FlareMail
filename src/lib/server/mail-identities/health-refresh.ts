@@ -5,6 +5,7 @@ import { normalizeMailDomain } from './validation';
 import { catchAllOwnershipError, filterOwnedMailboxes, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
 import { ApiError } from '$lib/server/http/api';
+import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
 
 const providerLeaseMs = 90 * 1000;
 const maxDomainsPerProvider = 1;
@@ -137,7 +138,8 @@ async function checkCloudflareDomain(
   env: CloudflareEnv,
   domain: HealthDomainRow,
   client: CloudflareHealthClient,
-  nowMs: number
+  nowMs: number,
+  catchAllOnly = false
 ): Promise<ProviderCheckResult> {
   const observations = await Promise.allSettled([
     client.getZone(domain.cloudflare_zone_id),
@@ -156,8 +158,7 @@ async function checkCloudflareDomain(
   const target = catchAllTarget(catchAll, domain.worker_name);
   const catchAllObservedAt = isoAt(nowMs);
   try {
-    const rules = await client.listRules(domain.cloudflare_zone_id);
-    const routeDrift = await checkManagedRouteDrift(env, domain, rules);
+    const routeDrift = !catchAllOnly && await checkManagedRouteDrift(env, domain, await client.listRules(domain.cloudflare_zone_id));
     const collectOwnershipError = domain.unknown_recipient_policy === 'collect'
       ? await catchAllOwnershipError(env, domain.domain_name) : null;
     const collectMismatch = domain.unknown_recipient_policy === 'collect' && target !== 'this_worker';
@@ -202,7 +203,7 @@ async function checkResendDomain(
   }
 }
 
-function selectCandidates(db: D1Database, provider: ProviderName, now: string) {
+function selectCandidates(db: D1Database, provider: ProviderName, now: string, catchAllDomains?: string[]) {
   const stem = provider === 'cloudflare' ? 'cloudflare' : 'resend';
   return db.prepare(
     `SELECT id, owner_user_id, domain_name, cloudflare_zone_id, cloudflare_account_id, worker_name,
@@ -212,9 +213,10 @@ function selectCandidates(db: D1Database, provider: ProviderName, now: string) {
      FROM mail_domains
      WHERE (${stem}_next_check_at IS NULL OR ${stem}_next_check_at <= ?)
        AND (${stem}_check_token IS NULL OR ${stem}_check_expires_at IS NULL OR ${stem}_check_expires_at <= ?)
+       ${catchAllDomains ? "AND enabled = 1 AND unknown_recipient_policy = 'collect' AND lower(domain_name) IN (SELECT value FROM json_each(?))" : ''}
      ORDER BY CASE WHEN ${stem}_next_check_at IS NULL THEN 0 ELSE 1 END, ${stem}_next_check_at, domain_name COLLATE NOCASE, id
      LIMIT ?`
-  ).bind(now, now, candidateReadLimit).all<HealthDomainRow>();
+  ).bind(now, now, ...(catchAllDomains ? [JSON.stringify(catchAllDomains)] : []), candidateReadLimit).all<HealthDomainRow>();
 }
 
 async function claimDomain(db: D1Database, provider: ProviderName, domain: HealthDomainRow, token: string, startedAt: string, foreground = false) {
@@ -297,14 +299,15 @@ async function runProvider(
   provider: ProviderName,
   credential: string | undefined,
   dependencies: MailHealthRefreshDependencies,
-  foregroundDomain?: HealthDomainRow
+  foregroundDomain?: HealthDomainRow,
+  catchAllDomains?: string[]
 ): Promise<ProviderRefreshSummary> {
   if (!credential?.trim()) return { state: 'not_configured', checked: 0, skippedBusy: 0, errorCode: null };
   if (!env.DB) return { state: 'unavailable', checked: 0, skippedBusy: 0, errorCode: 'd1_unavailable' };
   const nowMs = dependencies.nowMs ?? Date.now;
   const uuid = dependencies.randomUUID ?? (() => crypto.randomUUID());
   const startedAt = isoAt(nowMs());
-  const selected = foregroundDomain ? { results: [foregroundDomain] } : await selectCandidates(env.DB, provider, startedAt);
+  const selected = foregroundDomain ? { results: [foregroundDomain] } : await selectCandidates(env.DB, provider, startedAt, catchAllDomains);
   const limit = Math.max(1, Math.min(5, dependencies.maxDomainsPerProvider ?? maxDomainsPerProvider));
   let checked = 0;
   let skippedBusy = 0;
@@ -327,7 +330,7 @@ async function runProvider(
           maxRulePages: 10,
           deadlineAt: currentTime + 12_000
         });
-      result = await checkCloudflareDomain(env, domain, client, nowMs());
+      result = await checkCloudflareDomain(env, domain, client, nowMs(), Boolean(catchAllDomains));
       await saveCloudflareResult(env.DB, domain, token, result, nowMs());
     } else {
       result = await checkResendDomain(
@@ -355,6 +358,18 @@ export async function refreshMailDomainHealth(
   dependencies: MailHealthRefreshDependencies = {}
 ): Promise<MailHealthRefreshSummary> {
   return refreshProviders(env, dependencies);
+}
+
+/** Production observes PRE-owned catch-alls through its existing read operations. */
+export async function refreshPreviewCatchAllHealth(env: CloudflareEnv, dependencies: MailHealthRefreshDependencies = {}) {
+  const routing = readInboundRouting(env);
+  if (routing?.environment !== 'production' || env.PRE_INBOUND_SETTINGS?.enabled !== true || !env.PRE_INBOUND_DB) return;
+  const { results } = await routing.db.prepare(`SELECT route_key FROM inbound_routing_ownership
+    WHERE kind = 'catch_all' AND environment = 'preview'`).all<{ route_key: string }>();
+  if (!results.length) return;
+  const preview = { ...env, DB: env.PRE_INBOUND_DB, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const } };
+  const token = env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim();
+  return runProvider(preview, 'cloudflare', token, dependencies, undefined, results.map(row => row.route_key));
 }
 
 /** Foreground observations share Cron's locks but never reconcile address lifecycle. */

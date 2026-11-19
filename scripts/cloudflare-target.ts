@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertSharedInboundPreview, assertSharedInboundProduction } from './shared-inbound-preview.ts';
+import {
+  assertLegacyProductionHasNoActiveInboundProtection, assertProductionReleaseSource,
+  assertSharedInboundPreview, assertSharedInboundProduction
+} from './shared-inbound-preview.ts';
 import { normalizePreInboundRecipient, PRE_INBOUND_BINDING_NAMES, readPreInboundConfig } from '../src/lib/server/inbound/pre-inbound.ts';
 
 interface D1Target {
@@ -111,7 +114,10 @@ export function readCloudflareTarget(config = process.env.FLAREMAIL_CF_CONFIG ??
 }
 
 export function checkPreInboundRelease(target: CloudflareTarget, nativePreview = false) {
-  if (target.vars.PRE_INBOUND_RECIPIENT === undefined && !target.inboundRouting) return;
+  if (target.vars.PRE_INBOUND_RECIPIENT === undefined && !target.inboundRouting) {
+    if (target.vars.APP_ENV === 'production') assertLegacyProductionHasNoActiveInboundProtection(target.name);
+    return;
+  }
   if (nativePreview && target.vars.APP_ENV === 'preview' && target.inboundRouting &&
       target.vars.PRE_INBOUND_RECIPIENT === undefined && process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT) {
     assertSharedInboundPreview(target, process.env.FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT);
@@ -119,7 +125,8 @@ export function checkPreInboundRelease(target: CloudflareTarget, nativePreview =
   }
   if (!nativePreview && target.vars.APP_ENV === 'production' && target.inboundRouting &&
       target.vars.PRE_INBOUND_RECIPIENT === undefined && process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT) {
-    assertSharedInboundProduction(target, process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT);
+    const releaseCommit = assertSharedInboundProduction(target, process.env.FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT);
+    assertProductionReleaseSource(projectRoot, releaseCommit);
     return;
   }
   throw new Error('PRE_INBOUND_RELEASE_GUARDS_REQUIRED');
