@@ -238,6 +238,41 @@ describe('managed mail domain checks', () => {
     fixture.sqlite.close();
   });
 
+  test('reports an unavailable routing registry without skipping Resend or retaining either lease', async () => {
+    const fixture = createFixture();
+    const env = {
+      ...fixture.env,
+      INBOUND_ROUTING_SCOPE: { environment: 'production' as const },
+      INBOUND_ROUTING_DB: { prepare() { throw new Error('registry unavailable'); } } as unknown as D1Database
+    };
+    const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([], {
+      beforeList: async () => { throw new Error('Cloudflare was called with no ownership data'); }
+    }));
+    expect(result.cloudflare).toMatchObject({ state: 'error', errorCode: 'cloudflare_check_failed', addresses: [] });
+    expect(result.resend.state).toBe('verified');
+    expect(fixture.sqlite.query('SELECT cloudflare_check_token, resend_check_token, cloudflare_failure_count FROM mail_domains').get())
+      .toEqual({ cloudflare_check_token: null, resend_check_token: null, cloudflare_failure_count: 1 });
+    fixture.sqlite.close();
+  });
+
+  test('manual health reports a catch-all assigned to the other environment despite the shared Worker target', async () => {
+    const fixture = createFixture();
+    fixture.sqlite.query("UPDATE mail_domains SET unknown_recipient_policy = 'collect'").run();
+    const env = {
+      ...fixture.env,
+      INBOUND_ROUTING_SCOPE: { environment: 'production' as const },
+      INBOUND_ROUTING_DB: {
+        prepare: () => ({ bind: () => ({
+          first: async () => ({ environment: 'preview' }), all: async () => ({ results: [] })
+        }) })
+      } as unknown as D1Database
+    };
+    const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([]));
+    expect(result.cloudflare).toMatchObject({ catchAllTarget: 'this_worker', errorCode: 'cloudflare_collect_catch_all_owned_elsewhere' });
+    expect(result.resend.state).toBe('verified');
+    fixture.sqlite.close();
+  });
+
   test('keeps a deleted tombstone terminal across repeated checks when its managed route is absent', async () => {
     const fixture = createFixture();
     const deps = dependencies([]);

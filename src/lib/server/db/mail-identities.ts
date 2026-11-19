@@ -6,6 +6,7 @@ import {
   TRANSIENT_CLOUDFLARE_HEALTH_ERRORS
 } from '$lib/domain/mail/health';
 import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
+import { parseInboundRecipient } from '$lib/server/inbound/recipient';
 
 export type InboundRecipientResolution =
   | {
@@ -40,18 +41,9 @@ interface InboundRecipientRow {
 }
 
 export async function resolveInboundRecipient(db: Pick<D1Database, 'prepare'>, rawRecipient: string, now = Date.now()): Promise<InboundRecipientResolution> {
-  const recipient = rawRecipient.trim().toLowerCase();
-  const separator = recipient.lastIndexOf('@');
-  if (
-    separator <= 0 ||
-    separator === recipient.length - 1 ||
-    recipient.indexOf('@') !== separator ||
-    /\s/u.test(recipient)
-  ) return { accepted: false, reason: 'invalid_recipient' };
-
-  const domainName = recipient.slice(separator + 1);
-  const plusSeparator = recipient.slice(0, separator).indexOf('+');
-  const baseRecipient = plusSeparator > 0 ? `${recipient.slice(0, plusSeparator)}@${domainName}` : recipient;
+  const parsed = parseInboundRecipient(rawRecipient);
+  if (!parsed) return { accepted: false, reason: 'invalid_recipient' };
+  const { recipient, base: baseRecipient, domain: domainName } = parsed;
   const row = await db.prepare(`
     SELECT
       d.id AS domain_id,

@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "bun run build:app && bun scripts/cloudflare.ts build",
-    "preview": "bun run build && bun scripts/cloudflare.ts preview",
+    "preview": "bun run build:app && bun scripts/cloudflare.ts preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "bun test src scripts",
     "test:unit": "bun test src/lib/server/ai src/lib/client src/lib/components/mail/domain-capabilities.test.ts src/lib/components/ui src/lib/domain/mail src/lib/domain/utf8.test.ts src/lib/i18n src/lib/server/auth src/lib/server/config src/lib/server/body.test.ts src/lib/server/cloudflare-email-routing.test.ts src/lib/server/db/attachments.test.ts src/lib/server/db/capabilities.test.ts src/lib/server/db/deliveries.test.ts src/lib/server/db/mail-identities.test.ts src/lib/server/db/messages.test.ts src/lib/server/email.test.ts src/lib/server/inbound/parser.test.ts src/lib/server/mail-identities/check.test.ts src/lib/server/mail-identities/domains.test.ts src/lib/server/mail-identities/sync.test.ts src/lib/server/mail-identities/health-refresh.test.ts src/lib/server/mail-identities/routing.test.ts src/lib/server/mail-identities/sending.test.ts src/lib/server/mail-identities/validation.test.ts src/lib/server/mail/css-sanitize.test.ts src/lib/server/mail/html-sanitize.test.ts src/lib/server/outbound/gateway.test.ts src/lib/server/outbound/rate-limit.test.ts src/lib/server/outbound/system.test.ts src/lib/server/resend-domains.test.ts src/lib/server/search/fts.test.ts src/lib/server/workspace/compose-body.test.ts src/lib/server/telegram/api.test.ts src/lib/server/telegram/config.test.ts src/lib/server/telegram/message.test.ts src/lib/server/scheduled.test.ts",
@@ -37,6 +37,7 @@
     "mail:domain:configure": "bun ./scripts/configure-mail-domain.ts",
     "mail:identity:dry-run": "bun ./scripts/mail-identity-migration-dry-run.ts",
     "mail:identity:backfill": "bun ./scripts/mail-identity-backfill.ts",
+    "mail:routing:backfill": "bun ./scripts/inbound-routing-backfill.ts",
     "deploy:dry-run": "bun scripts/cloudflare.ts dry-run",
     "deploy": "bun run build:app && bun scripts/cloudflare.ts deploy",
     "maintenance": "bun ./scripts/maintenance.ts",

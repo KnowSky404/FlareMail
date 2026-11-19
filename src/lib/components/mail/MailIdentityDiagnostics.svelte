@@ -115,6 +115,8 @@
       return t(cloudflare ? 'settings.cloudflareCheckNeedsAttention' : 'settings.resendCheckNeedsAttention');
     }
     if (cloudflare) {
+      if (code === 'cloudflare_collect_catch_all_owned_elsewhere') return t('settings.catchAllOwnedByAnotherEnvironment');
+      if (code === 'cloudflare_collect_catch_all_unassigned') return t('settings.catchAllOwnershipMissing');
       return t(code === 'cloudflare_permission_denied'
         ? 'settings.cloudflareCheckAccessDenied'
         : 'settings.cloudflareCheckNeedsAttention');

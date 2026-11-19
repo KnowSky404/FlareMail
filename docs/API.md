@@ -143,7 +143,19 @@ Cloudflare before recording the mapping. The browser cannot choose a Worker,
 account, API origin, or Cloudflare endpoint. The operator command
 `bun run mail:domain:configure` remains available. Provider-configuration flags
 never return a token or key; `cloudflareManagement` separately reports whether
-the management credential is present.
+the management credential is available for the current environment.
+
+With shared PRE and PROD inbound routing configured, creating an address or
+enabling catch-all collection reserves a route for that environment. A
+conflicting claim returns HTTP 409 with `MAIL_ROUTING_OWNERSHIP_CONFLICT`.
+Sync imports only routes assigned to the current environment. Disabling or
+deleting a mailbox preserves its receiving ownership. See the
+[shared inbound routing SPEC](./specs/shared-inbound-routing.md).
+
+In standalone fixed-address PRE, the workspace can read saved identities.
+Identity and domain writes and discovery return HTTP 403 with
+`MAIL_ROUTING_FIXED_PRE_READ_ONLY`. Cloudflare identity checks are disabled
+for this local mode.
 
 Domain warnings on both management pages use the current `cloudflare_error_code`
 and `resend_error_code` independently, with provider-specific credential guidance

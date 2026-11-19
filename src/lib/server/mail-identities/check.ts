@@ -12,6 +12,7 @@ import {
 import { listManagedMailAddresses, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { getExactResendDomain, canSendFromResendDomain, ResendDomainError } from '$lib/server/resend-domains';
 import { normalizeMailDomain } from './validation';
+import { catchAllOwnershipError, filterOwnedMailboxes, isStandaloneFixedPreview } from './ownership';
 
 type CloudflareClient = Pick<CloudflareEmailRoutingClient, 'getZone' | 'listRules' | 'getCatchAll'>;
 type ResendLookup = typeof getExactResendDomain;
@@ -248,7 +249,8 @@ export async function checkManagedMailDomain(
     ? await acquireProviderCheckLease(env.DB, 'resend', domain, resendCheckToken, resendLeaseAt)
     : false;
   const routingToken = env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim();
-  const cloudflare = dependencies?.cloudflareClient ?? (routingToken
+  const fixedPreview = isStandaloneFixedPreview(env);
+  const cloudflare = fixedPreview ? null : dependencies?.cloudflareClient ?? (routingToken
     ? new CloudflareEmailRoutingClient({
         token: routingToken,
         timeoutMs: 4_000,
@@ -256,7 +258,9 @@ export async function checkManagedMailDomain(
         deadlineAt: Date.parse(now()) + 12_000
       })
     : null);
-  if (!cloudflare) {
+  if (fixedPreview) {
+    result.cloudflare.errorCode = 'cloudflare_token_missing';
+  } else if (!cloudflare) {
     result.cloudflare.errorCode = 'cloudflare_token_missing';
     await env.DB.prepare(
       'UPDATE mail_domains SET cloudflare_error_code = ?, cloudflare_error_at = ?, last_error_code = ?, last_error_at = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?'
@@ -267,11 +271,23 @@ export async function checkManagedMailDomain(
     const cloudflareLeaseAcquired = await acquireProviderCheckLease(
       env.DB, 'cloudflare', domain, cloudflareCheckToken, cloudflareLeaseAt
     );
+    let addresses: ManagedMailAddressRow[] = [];
+    let collectOwnershipError: string | null = null;
+    if (cloudflareLeaseAcquired) {
+      try {
+        if (domain.unknown_recipient_policy === 'collect') collectOwnershipError = await catchAllOwnershipError(env, domain.domain_name);
+        const domainAddresses = (await listManagedMailAddresses(env.DB, ownerUserId)).filter((address) => address.domain_id === domain.id);
+        addresses = await filterOwnedMailboxes(env, domainAddresses);
+      } catch (error) {
+        result.cloudflare.errorCode = classifyCloudflareError(error);
+        await recordProviderCheckFailure(
+          env.DB, 'cloudflare', domain, cloudflareCheckToken, result.cloudflare.errorCode, true, now()
+        );
+      }
+    }
     if (!cloudflareLeaseAcquired) {
       result.cloudflare.errorCode = 'cloudflare_check_in_progress';
-    } else {
-    const addresses = (await listManagedMailAddresses(env.DB, ownerUserId))
-      .filter((address) => address.domain_id === domain.id);
+    } else if (!result.cloudflare.errorCode) {
     const leaseAt = now();
     const leaseExpiry = new Date(Date.parse(leaseAt) + addressCheckLeaseMs).toISOString();
     const leases: Array<{ address: ManagedMailAddressRow; token: string }> = [];
@@ -353,9 +369,9 @@ export async function checkManagedMailDomain(
           address.routing_owner === 'flaremail' &&
           ['missing', 'conflict', 'duplicate', 'deleted_route'].includes(status)
         );
-        const cloudflareHealthError = domain.unknown_recipient_policy === 'collect' && target !== 'this_worker'
+        const cloudflareHealthError = collectOwnershipError ?? (domain.unknown_recipient_policy === 'collect' && target !== 'this_worker'
           ? 'cloudflare_collect_catch_all_unavailable'
-          : hasManagedRouteDrift ? 'cloudflare_managed_route_needs_review' : null;
+          : hasManagedRouteDrift ? 'cloudflare_managed_route_needs_review' : null);
         const statements = [
           env.DB.prepare(
             'UPDATE mail_domains SET cloudflare_account_id = COALESCE(cloudflare_account_id, ?), ' +

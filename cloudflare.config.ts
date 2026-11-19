@@ -6,13 +6,14 @@ export default defineConfig({
   // Resource API commands read account defaults without evaluating Worker bindings.
   worker: async ({ isPreview, mode }) => {
     // The Vite plugin blocks static config dependencies from serving as Worker modules.
-    const { checkPreInboundRelease, readCloudflareTarget } = await import('./scripts/cloudflare-target.ts');
+    const { checkPreInboundRelease, cloudflarePreInboundSettings, readCloudflareTarget } = await import('./scripts/cloudflare-target.ts');
     const remote = mode === 'production' || mode === 'preview';
     const config = process.env.FLAREMAIL_CF_CONFIG ?? (remote ? `cloudflare.${mode === 'production' ? 'deploy' : 'preview'}.json` : 'cloudflare.local.json');
     const target = readCloudflareTarget(config, remote);
     if (remote && target.vars.APP_ENV !== mode) throw new Error(`The ${mode} build requires APP_ENV=${mode}.`);
     if (isPreview || remote) checkPreInboundRelease(target);
-    const { PRE_INBOUND_RECIPIENT, PRE_INBOUND_ENABLED, ...vars } = target.vars;
+    const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
+    const preInboundSettings = cloudflarePreInboundSettings(target);
     if (!remote && process.env.FLAREMAIL_E2E === 'true') {
       Object.assign(vars, {
         APP_ENV: 'development', AUTH_MODE: 'local', ALLOW_FAKE_SERVICES: 'true', OUTBOUND_PROVIDER: 'demo',
@@ -34,10 +35,14 @@ export default defineConfig({
         ...Object.fromEntries((target.secrets ?? []).map((name) => [name, bindings.secret()])),
         DB: bindings.d1({ name: target.databaseName, id: target.databaseId }),
         BUCKET: bindings.r2({ name: target.bucket }),
+        ...(preInboundSettings ? { PRE_INBOUND_SETTINGS: bindings.json(preInboundSettings) } : {}),
         ...(target.preInbound ? {
-          PRE_INBOUND_SETTINGS: bindings.json({ recipient: PRE_INBOUND_RECIPIENT, enabled: PRE_INBOUND_ENABLED === 'true' }),
           PRE_INBOUND_DB: bindings.d1({ name: target.preInbound.databaseName, id: target.preInbound.databaseId }),
           PRE_INBOUND_BUCKET: bindings.r2({ name: target.preInbound.bucket })
+        } : {}),
+        ...(target.inboundRouting ? {
+          INBOUND_ROUTING_DB: bindings.d1({ name: target.inboundRouting.databaseName, id: target.inboundRouting.databaseId }),
+          INBOUND_ROUTING_SCOPE: bindings.json({ environment: target.inboundRouting.environment })
         } : {}),
         ASSETS: bindings.assets()
       }

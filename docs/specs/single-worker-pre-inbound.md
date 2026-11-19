@@ -1,5 +1,7 @@
 # 单 Worker 的 PRE 真实收信 SPEC
 
+动态配置多个邮箱和域名的收信归属见 [PRE 与 PROD 的收信归属 SPEC](shared-inbound-routing.md)。本文定义固定 PRE 地址及其兼容切换保护。
+
 设计基线为 `f020e6b0ed5918eccae6e555f9c9c41da19c3c25`。FlareMail 面向个人自托管，每套环境各有一个 Owner。此次整改让生产和 PRE 共用一个入站 Worker，同时保持各自的邮箱、原文和附件存储。
 
 独立 PRE 收信 Worker 的试验已结束。Cloudflare 在删除该 Worker 时禁用了它原来的一条精确规则，原生 PRE 网页和隔离存储继续保留。PRE 的邮箱记录及邮件身份目标配置仍可能引用旧规则或旧 Worker。切换时要核对 Cloudflare 实际状态并重新关联。
@@ -65,7 +67,7 @@
 
 在 `cloudflare.config.ts`、部署目标解析和生成的 Worker 类型中声明可选的 PRE 配置、D1 和 R2 绑定。私有配置填写真实资源，公开模板只提供占位和可选字段。每次部署校验生产与 PRE D1 ID、R2 桶名各自不同。正常部署和启用收信前，生产的 PRE 绑定还须与原生 PRE HTTP 实际绑定一致。两套 D1 的 schema 须与各自的入站版本兼容。生产和 PRE 的 Owner 映射由各自 D1 解析，依旧采用当前单 Owner 模型。
 
-下面是供本地双存储验证的目标文件片段，合并到现有本地配置的同名字段中。使用 `FLAREMAIL_CF_CONFIG` 选择该文件。之后在私有生产目标中，`preInbound` 对应原生 PRE 的实际 `databaseId`、`databaseName` 和 `bucket`。原生 PRE 目标只在 `vars` 加相同的 `PRE_INBOUND_RECIPIENT`，并继续使用该目标原有的主 D1/R2 字段。新字段均可省略，以便未配置该功能的实例继续使用现有模板。
+下面是供本地双存储验证的生产目标片段，合并到现有本地配置的同名字段中。使用 `FLAREMAIL_CF_CONFIG` 选择该文件。之后在私有生产目标中，`preInbound` 对应原生 PRE 的实际 `databaseId`、`databaseName` 和 `bucket`。本地及原生 PRE 目标只在 `vars` 加相同的 `PRE_INBOUND_RECIPIENT`，并使用 PRE 的主 D1/R2 字段。本地 PRE 目标沿用 `APP_ENV=development` 或 `test`，可运行自己的设置页面。新字段均可省略，以便未配置该功能的实例继续使用现有模板。
 
 ```json
 {
@@ -101,6 +103,7 @@
 - 生产侧的同步、创建、恢复、启停、编辑、删除，以及它们的重试和检查修复均使用同一保留地址判断，覆盖 `+tag` 变体。批量同步跳过这些地址，单地址管理在改动 D1 或 Cloudflare 前拒绝。删除入口须保护相同地址的旧记录和已关联规则，包括此前由 FlareMail 管理的规则。部署或运行中的跨环境冲突应给出可诊断错误。配置的地址值通过私有目标维护。
 - PRE 的身份健康检查先比较本地身份地址与配置的保留地址，再复用现有 `isExactWorkerEmailRule` 的匹配原则，核对已关联的当前规则 ID、启用状态、唯一 `literal to` 地址和唯一指向生产 `flaremail` 的 Worker 动作。缺项、重复、目标漂移或改成转发或丢弃时报告未匹配。即使生产 catch-all 的 Worker 名称相同，PRE 仍按外部兜底处理。首期 `MailIdentityManager.svelte` 将匹配显示为「精确规则已匹配」。PRE 页缺少生产开关的实时视图，因此对任何匹配结果均省略「收信已就绪」状态。实际入箱由授权的 SMTP 测试独立确认。
 - 先覆盖全量同步、手动域名检查、刷新和后台健康检查，再在原生 PRE 启用只读 Token。健康检查统一先从 PRE 的保留地址解析唯一允许核验的域名、Zone 和身份。其余记录只读本地状态，禁止为它们访问 Cloudflare 或写回路由结果。平台查询返回的其他规则在服务端丢弃。
+- 本地独立固定地址 PRE 供查询已有数据和验收收信。当前服务端禁用该模式下的身份配置写入、批量发现和外部路由检查。上面的原生 PRE 精确规则核验仍是远程发布门禁。
 
 ## 发布、切换和回退
 

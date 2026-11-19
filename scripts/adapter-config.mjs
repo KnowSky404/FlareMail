@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
-import { readCloudflareTarget } from './cloudflare-target.ts';
+import { cloudflarePreInboundSettings, readCloudflareTarget } from './cloudflare-target.ts';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -7,6 +7,8 @@ import { resolve } from 'node:path';
 export function adapterOptions(useSelectedTarget = false) {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const target = readCloudflareTarget(useSelectedTarget ? process.env.FLAREMAIL_CF_CONFIG ?? 'cloudflare.local.json' : 'cloudflare.local.json');
+  const routing = target.inboundRouting;
+  const preInboundSettings = cloudflarePreInboundSettings(target);
   const path = `${root}.cloudflare/adapter/config.json`;
   mkdirSync(`${root}.cloudflare/adapter`, { recursive: true, mode: 0o700 });
   chmodSync(`${root}.cloudflare/adapter`, 0o700);
@@ -16,9 +18,16 @@ export function adapterOptions(useSelectedTarget = false) {
     compatibility_date: target.compatibilityDate,
     compatibility_flags: target.compatibilityFlags,
     assets: { directory: `${root}build`, binding: 'ASSETS' },
-    vars: target.vars,
+    vars: {
+      ...target.vars,
+      ...(routing ? { INBOUND_ROUTING_SCOPE: { environment: routing.environment } } : {}),
+      ...(preInboundSettings ? { PRE_INBOUND_SETTINGS: preInboundSettings } : {})
+    },
     secrets: { required: target.secrets ?? [] },
-    d1_databases: [{ binding: 'DB', database_name: target.databaseName, database_id: target.databaseId }],
+    d1_databases: [
+      { binding: 'DB', database_name: target.databaseName, database_id: target.databaseId },
+      ...(routing ? [{ binding: 'INBOUND_ROUTING_DB', database_name: routing.databaseName, database_id: routing.databaseId }] : [])
+    ],
     r2_buckets: [{ binding: 'BUCKET', bucket_name: target.bucket }]
   }), { mode: 0o600 });
   chmodSync(path, 0o600);
