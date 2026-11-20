@@ -50,6 +50,17 @@ Owner 可以明确委托发布人完成候选提交的 PRE 验收。受托验收
 
 已启用的生产收信配置保持原绑定和保留地址时，日常发布使用 `phase: "maintain"`，继续交付。首次保护、开启交付及日常发布都在构建时再次读取实际 `mail-ai` 部署及其绑定。PRE 验收默认只读。生产已开启使用同一绑定的配送后，经独立授权可以在 PRE 预检中声明 `previewManagementAuthorized`，并核对所属账号和规则管理凭证范围后开启身份管理。
 
+保护版重新部署或回退后，用当前 100% 保护部署的 `created_on` 核对 PRE 兜底观测。成功观测早于该部署时，在已授权的切换窗口内将这些 PRE 域名的 Cloudflare 复查排到下一轮。只更新以下条件命中的记录，并等生产 Cron 用当前实际凭证重新核验。预检查先用相同条件读取，更新仅修改 PRE 邮件库，不改已有观测、租约或失败退避。
+
+```sql
+UPDATE mail_domains
+SET cloudflare_next_check_at = NULL
+WHERE enabled = 1 AND unknown_recipient_policy = 'collect'
+  AND last_error_code = 'preview_catch_all_cron_verified'
+  AND last_error_at = catch_all_checked_at
+  AND julianday(catch_all_checked_at) < julianday('<当前保护部署的 UTC created_on>');
+```
+
 紧急停收使用同一生产版本源码和相同绑定，只将交付开关置为 `false`，并记录 `phase: "pause"`。此时允许 PRE 元数据不可用，构建仍校验正在服务的生产保护版本、绑定、保留地址、运行配置和 Cron，并保留活动生产版本的可观测性与身份写入策略。恢复时，以停收版本为当前生产部署，使用同一源码和绑定，设置 `phase: "resume"` 并将交付开关置为 `true`。构建重新核对 PRE 部署及生产运行配置，并可沿用仍新鲜的生产兜底复查记录。首次启用仍要求只读保护版。生产构建核实历史版本直连 URL 已关闭，并保留生产主地址的设置。
 
 ### 本地运行
