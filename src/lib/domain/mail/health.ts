@@ -6,7 +6,8 @@ export const TRANSIENT_CLOUDFLARE_HEALTH_ERRORS = new Set([
   'cloudflare_rate_limited',
   'cloudflare_timeout',
   'cloudflare_network_failure',
-  'cloudflare_upstream_failed'
+  'cloudflare_upstream_failed',
+  'cloudflare_routing_registry_unavailable'
 ]);
 const healthyCheckMinDelayMs = 16 * 60 * 60 * 1000;
 const healthyCheckJitterMs = 4 * 60 * 60 * 1000;

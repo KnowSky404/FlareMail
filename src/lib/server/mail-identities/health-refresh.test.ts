@@ -112,12 +112,16 @@ describe('scheduled mail domain health refresh', () => {
     const deps = successDependencies();
     const factory = deps.cloudflareClientFactory!;
     deps.cloudflareClientFactory = (...args) => ({ ...factory(...args), listRules: async () => { throw new Error('exact rules are out of scope'); } });
+    let registryAvailable = true;
     const env = {
       ...prod.env, PRE_INBOUND_SETTINGS: { recipient: null, enabled: false }, PRE_INBOUND_DB: pre.db,
       INBOUND_ROUTING_SCOPE: { environment: 'production' as const, workerName: 'flaremail-worker' },
       INBOUND_ROUTING_DB: { prepare: () => ({
         all: async () => ({ results: [{ route_key: 'mail.example.test' }] }),
-        bind: () => ({ first: async () => ({ environment: 'preview' }) })
+        bind: () => ({ first: async () => {
+          if (!registryAvailable) throw new Error('registry temporarily unavailable');
+          return { environment: 'preview' };
+        } })
       }) } as unknown as D1Database
     };
     const successfulFactory = deps.cloudflareClientFactory;
@@ -151,6 +155,16 @@ describe('scheduled mail domain health refresh', () => {
       cloudflare_checked_at: priorFullCheck, cloudflare_error_code: priorError, cloudflare_error_at: priorFullCheck,
       last_error_code: 'preview_catch_all_cron_verified', last_error_at: new Date(defaultNow).toISOString()
     });
+    registryAvailable = false;
+    pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain()).toMatchObject({ catch_all_checked_at: new Date(defaultNow).toISOString(),
+      last_error_code: 'preview_catch_all:1:cloudflare_routing_registry_unavailable' });
+    registryAvailable = true;
+    expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true }))
+      .toMatchObject({ accepted: true });
+    pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
     for (const code of ['not_found', 'timeout'] as const) {
       deps.cloudflareClientFactory = (...args) => ({
         ...successfulFactory(...args),
