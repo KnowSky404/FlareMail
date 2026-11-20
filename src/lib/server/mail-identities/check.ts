@@ -61,15 +61,18 @@ type HealthProvider = 'cloudflare' | 'resend';
 async function acquireProviderCheckLease(
   db: D1Database,
   provider: HealthProvider,
-  domain: ManagedMailAddressRow | { id: string; owner_user_id: string },
+  domain: NonNullable<Awaited<ReturnType<typeof getManagedMailDomain>>>,
   token: string,
   timestamp: string
 ) {
   const expiresAt = new Date(Date.parse(timestamp) + domainCheckLeaseMs).toISOString();
   const result = await db.prepare(
     `UPDATE mail_domains SET ${provider}_check_token = ?, ${provider}_check_expires_at = ?, updated_at = ? ` +
-    `WHERE id = ? AND owner_user_id = ? AND (${provider}_check_token IS NULL OR ${provider}_check_expires_at IS NULL OR ${provider}_check_expires_at <= ?)`
-  ).bind(token, expiresAt, timestamp, domain.id, domain.owner_user_id, timestamp).run();
+    'WHERE id = ? AND owner_user_id = ? ' +
+    (provider === 'cloudflare' ? 'AND enabled = ? AND unknown_recipient_policy = ? ' : '') +
+    `AND (${provider}_check_token IS NULL OR ${provider}_check_expires_at IS NULL OR ${provider}_check_expires_at <= ?)`
+  ).bind(token, expiresAt, timestamp, domain.id, domain.owner_user_id,
+    ...(provider === 'cloudflare' ? [domain.enabled, domain.unknown_recipient_policy] : []), timestamp).run();
   return Number(result.meta?.changes ?? 0) === 1;
 }
 
@@ -269,9 +272,9 @@ export async function checkManagedMailDomain(
     await env.DB.prepare(
       'UPDATE mail_domains SET cloudflare_error_code = ?, cloudflare_error_at = ?, ' +
       (preserveCatchAllObservation ? '' : 'last_error_code = ?, last_error_at = ?, ') +
-      'updated_at = ? WHERE id = ? AND owner_user_id = ?'
+      'updated_at = ? WHERE id = ? AND owner_user_id = ? AND enabled = ? AND unknown_recipient_policy = ?'
     ).bind(result.cloudflare.errorCode, now(), ...(preserveCatchAllObservation ? [] : [result.cloudflare.errorCode, now()]),
-      now(), domain.id, ownerUserId).run();
+      now(), domain.id, ownerUserId, domain.enabled, domain.unknown_recipient_policy).run();
   } else {
     const cloudflareCheckToken = randomUUID();
     const cloudflareLeaseAt = now();

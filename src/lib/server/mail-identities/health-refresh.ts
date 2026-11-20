@@ -231,11 +231,13 @@ async function claimDomain(db: D1Database, provider: ProviderName, domain: Healt
   const result = await db.prepare(
     `UPDATE mail_domains SET ${stem}_check_token = ?, ${stem}_check_expires_at = ?, updated_at = ?
      WHERE id = ? AND owner_user_id = ?
+       ${provider === 'cloudflare' ? 'AND enabled = ? AND unknown_recipient_policy = ?' : ''}
        AND ${foreground
          ? `(${stem}_checked_at IS NULL OR ${stem}_checked_at <= ?) AND (${stem}_error_at IS NULL OR ${stem}_error_at <= ?)`
          : `(${stem}_next_check_at IS NULL OR ${stem}_next_check_at <= ?)`}
        AND (${stem}_check_token IS NULL OR ${stem}_check_expires_at IS NULL OR ${stem}_check_expires_at <= ?)`
   ).bind(token, expiresAt, startedAt, domain.id, domain.owner_user_id,
+    ...(provider === 'cloudflare' ? [domain.enabled, domain.unknown_recipient_policy] : []),
     ...(foreground ? [isoAt(Date.parse(startedAt) - 5 * 60 * 1000), isoAt(Date.parse(startedAt) - 5 * 60 * 1000)] : [startedAt]),
     startedAt).run();
   return Number(result.meta?.changes ?? 0) === 1;
