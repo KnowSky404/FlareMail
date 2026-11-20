@@ -32,6 +32,7 @@ test('uses the highest stable release reachable from the build commit', async ()
     git('commit', '--allow-empty', '-qm', 'follow-up change');
     git('config', 'column.tag', 'always');
     git('config', 'versionsort.suffix', '.10');
+    git('config', 'tag.sort', 'unsupported-sort-field');
     expect(readReleaseVersion(root)).toBe('1.10.0');
 
     const shallow = join(root, 'shallow');
@@ -42,6 +43,9 @@ test('uses the highest stable release reachable from the build commit', async ()
 
     git('checkout', '--quiet', '--detach', older);
     expect(readReleaseVersion(root)).toBe('1.9.0');
+
+    git('symbolic-ref', 'HEAD', 'refs/heads/no-commits');
+    expect(() => readReleaseVersion(root)).toThrow('Could not read Git release metadata.');
 
     const archive = join(root, 'source-archive');
     mkdirSync(archive);

@@ -10,11 +10,12 @@ function readCheckoutGit(root: string, args: string[]) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore']
   });
-  return result.status === 0 ? result.stdout.trim() : null;
+  if (result.status !== 0) throw new Error('Could not read Git release metadata.');
+  return result.stdout.trim();
 }
 
 export function readReleaseVersion(root: string): string {
-  const tags = readCheckoutGit(root, ['tag', '--no-column', '--merged', 'HEAD', '--list', 'v*']);
+  const tags = readCheckoutGit(root, ['for-each-ref', '--merged=HEAD', '--format=%(refname:strip=2)', 'refs/tags']);
   const releaseTag = tags?.split('\n')
     .filter(tag => /^v(?:0|[1-9]\d*)(?:\.(?:0|[1-9]\d*)){2}$/u.test(tag))
     .sort(compareReleaseTags)
