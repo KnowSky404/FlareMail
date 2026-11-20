@@ -151,6 +151,21 @@ describe('scheduled mail domain health refresh', () => {
       cloudflare_checked_at: priorFullCheck, cloudflare_error_code: priorError, cloudflare_error_at: priorFullCheck,
       last_error_code: 'preview_catch_all_cron_verified', last_error_at: new Date(defaultNow).toISOString()
     });
+    for (const code of ['not_found', 'timeout'] as const) {
+      deps.cloudflareClientFactory = (...args) => ({
+        ...successfulFactory(...args),
+        getZone: async () => { throw new CloudflareEmailRoutingError('timeout'); },
+        getCatchAll: async () => { throw new CloudflareEmailRoutingError(code); }
+      });
+      pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+      expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+      expect(pre.readDomain().catch_all_checked_at).toBeNull();
+      expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true }))
+        .toMatchObject({ accepted: false });
+    }
+    deps.cloudflareClientFactory = successfulFactory;
+    pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
     const scheduledAt = pre.readDomain().cloudflare_next_check_at;
     pre.sqlite.query("UPDATE mail_domains SET catch_all_target = 'external' WHERE id = ?").run(domainId);
     const preEnv = { ...pre.env, INBOUND_ROUTING_DB: env.INBOUND_ROUTING_DB, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const } };
