@@ -1,7 +1,7 @@
 import { isMailHealthFresh, type MailHealthState } from '$lib/domain/mail/health';
 import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
 
-export type DomainCapabilityState = 'ready' | 'catch_all_verified' | 'needs_check' | 'not_ready';
+export type DomainCapabilityState = 'ready' | 'exact_route_verified' | 'catch_all_verified' | 'needs_check' | 'not_ready';
 
 export interface DomainCapabilityAddress {
   lifecycleStatus: 'active' | 'disabled' | 'deleted';
@@ -39,6 +39,7 @@ export function summarizeDomainCapabilities(input: DomainCapabilityInput, nowMs 
   let receiving: DomainCapabilityState = 'not_ready';
   if (input.enabled && (input.catchAllCollects || hasExactRoute)) {
     if (catchAllReady && input.productionVerifiesCatchAll) receiving = 'catch_all_verified';
+    else if (exactReady && input.productionVerifiesCatchAll) receiving = 'exact_route_verified';
     else receiving = exactReady || catchAllReady ? 'ready' : 'needs_check';
   }
 

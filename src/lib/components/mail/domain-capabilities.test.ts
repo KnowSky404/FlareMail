@@ -39,6 +39,11 @@ describe('domain dashboard capability summary', () => {
       .toBe('needs_check');
   });
 
+  test('shows exact rule verification when PRE delivery depends on production', () => {
+    expect(summarizeDomainCapabilities({ ...ready, productionVerifiesCatchAll: true }, nowMs).receiving)
+      .toBe('exact_route_verified');
+  });
+
   test('recognizes an explicitly collecting Worker catch-all and imported routes', () => {
     expect(summarizeDomainCapabilities({ ...ready, catchAllCollects: true, addresses: [] }, nowMs))
       .toEqual({ receiving: 'needs_check', sending: 'not_ready' });
