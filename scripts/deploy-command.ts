@@ -12,15 +12,16 @@ export function requireDeployConfig(path = 'cloudflare.deploy.json', fileExists 
   return path;
 }
 export function normalizeDeployArguments(args: string[], callerDirectory = process.cwd()) {
-  return args.map((argument, index) => {
+  const normalized = args.map(argument => argument.replace(/^--secretsFile(?==|$)/u, '--secrets-file'));
+  return normalized.map((argument, index) => {
     if (/^(?:--(?:mode|prebuilt|worker|config|provision|profile|dispatch-namespace|dispatchNamespace)(?:=|$)|-m)/u.test(argument)) {
       throw new Error('The release mode, provisioning policy, deployment account and build target are controlled by this script.');
     }
     if (argument === '--secrets-file') {
-      if (!args[index + 1] || args[index + 1]!.startsWith('--')) throw new Error('--secrets-file requires a path.');
+      if (!normalized[index + 1] || normalized[index + 1]!.startsWith('--')) throw new Error('--secrets-file requires a path.');
       return argument;
     }
-    if (args[index - 1] === '--secrets-file') return resolve(callerDirectory, argument);
+    if (normalized[index - 1] === '--secrets-file') return resolve(callerDirectory, argument);
     if (argument.startsWith('--secrets-file=')) {
       const path = argument.slice('--secrets-file='.length);
       if (!path) throw new Error('--secrets-file requires a path.');

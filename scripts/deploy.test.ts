@@ -425,6 +425,13 @@ test('read-only recovery requires a missing Preview, a safe Base and the live ow
     mock({ id: 'worker-id' });
     mock([]);
     await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_ROUTING_REGISTRY_NOT_READY');
+    mock({ id: 'worker-id' });
+    mock([{ id: 'pre-id', slug: 'mail-ai' }]);
+    mock({ id: 'current-deployment', env: {
+      APP_ENV: { text: 'preview' }, DB: { database_id: target.databaseId }, BUCKET: { bucket_name: target.bucket }
+    } });
+    await expect(assertLivePreviewForPublish(target, { ...recovery, previewDeploymentId: 'current-deployment' }, projectRoot))
+      .rejects.toThrow('INBOUND_PREVIEW_ROUTING_REGISTRY_NOT_READY');
     await writeFile(cf, `#!/bin/sh\nprintf '%s\\n' '[{"success":true,"results":{"columns":["kind","route_key","environment"],"rows":[]}}]'\n`);
     mock({ id: 'worker-id', previews_base_config: { env: { AI_SETTINGS_KEY: { type: 'secret_text' } } } });
     mock([]);
@@ -560,6 +567,8 @@ test('native remote builds reject PRE reservations while local builds keep both 
 test('normalizes secret files from the caller directory and rejects policy overrides', () => {
   expect(normalizeDeployArguments(['--secrets-file', '../release-secrets.json'], '/workspace/app')).toEqual(['--secrets-file', '/workspace/release-secrets.json']);
   expect(normalizeDeployArguments(['--secrets-file=../release-secrets.json'], '/workspace/app')).toEqual(['--secrets-file=/workspace/release-secrets.json']);
+  expect(normalizeDeployArguments(['--secretsFile', '../release-secrets.json'], '/workspace/app')).toEqual(['--secrets-file', '/workspace/release-secrets.json']);
+  expect(normalizeDeployArguments(['--secretsFile=../release-secrets.json'], '/workspace/app')).toEqual(['--secrets-file=/workspace/release-secrets.json']);
   expect(() => normalizeDeployArguments(['--secrets-file'])).toThrow('requires a path');
   expect(() => normalizeDeployArguments(['--provision=true'])).toThrow('controlled by this script');
   expect(() => normalizeDeployArguments(['--dispatch-namespace=other'])).toThrow('controlled by this script');
