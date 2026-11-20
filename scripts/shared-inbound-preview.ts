@@ -238,14 +238,13 @@ function cloudflareSessionToken(projectRoot: string) {
   throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE');
 }
 
-function cloudflareAccountRequest(projectRoot: string, errorCode: string) {
+function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = cloudflareSessionToken(projectRoot);
-  return async <T>(path: string, sql?: string) => {
-    const response = await fetch('https://api.cloudflare.com/client/v4/accounts/' + account + '/' + path, {
-      headers: { Authorization: 'Bearer ' + token, ...(sql ? { 'Content-Type': 'application/json' } : {}) },
-      ...(sql ? { method: 'POST', body: JSON.stringify({ sql }) } : {}),
+  return async <T>(path: string) => {
+    const response = await fetch('https://api.cloudflare.com/client/v4/accounts/' + account + '/workers/' + path, {
+      headers: { Authorization: 'Bearer ' + token },
       signal: AbortSignal.timeout(8_000), redirect: 'error'
     });
     if (!response.ok) throw new Error(errorCode);
@@ -255,10 +254,6 @@ function cloudflareAccountRequest(projectRoot: string, errorCode: string) {
   };
 }
 
-function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
-  const request = cloudflareAccountRequest(projectRoot, errorCode);
-  return <T>(path: string) => request<T>('workers/' + path);
-}
 
 async function readLiveNativePreview(workerName: string, projectRoot: string) {
   const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
@@ -366,24 +361,34 @@ export async function assertProductionCatchAllActivation(
   target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string
 ) {
   const errorCode = 'INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED';
-  const request = cloudflareAccountRequest(projectRoot, errorCode);
-  const query = async <T>(databaseId: string | undefined, sql: string) => {
+  const get = cloudflareWorkerMetadata(projectRoot, errorCode);
+  const { normalizeD1Output } = await import('./cloudflare-target.ts');
+  const query = <T>(databaseId: string | undefined, sql: string) => {
     const id = routingD1Id(databaseId);
     if (!id) throw new Error(errorCode);
-    const [statement] = await request<{ success?: boolean; results?: T[] }[]>('d1/database/' + id + '/query', sql);
-    if (statement?.success !== true || !Array.isArray(statement.results)) throw new Error(errorCode);
-    return statement.results;
+    const directory = mkdtempSync(join(tmpdir(), 'flaremail-cutover-d1-'));
+    try {
+      const output = execFileSync('cf', ['d1', 'raw', id, '--sql', sql], {
+        cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
+      });
+      const result = normalizeD1Output(JSON.parse(output)) as { success?: boolean; results?: T[] }[];
+      const statement = result[0];
+      if (statement?.success !== true || !Array.isArray(statement.results)) throw new Error(errorCode);
+      return statement.results;
+    } catch {
+      throw new Error(errorCode);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   };
-  const [scheduleResult, domains, claims] = await Promise.all([
-    request<{ schedules?: { cron: string }[] }>('workers/scripts/' + encodeURIComponent(target.name) + '/schedules'),
-    query<{ domain_name: string; worker_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
-      target.preInbound?.databaseId,
-      `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
-       FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
-    ),
-    query<{ route_key: string }>(target.inboundRouting?.databaseId,
-      `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`)
-  ]);
+  const domains = query<{ domain_name: string; worker_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
+    target.preInbound?.databaseId,
+    `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
+     FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
+  );
+  const claims = query<{ route_key: string }>(target.inboundRouting?.databaseId,
+    `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`);
+  const scheduleResult = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');
   if (!Array.isArray(scheduleResult.schedules) || !scheduleResult.schedules.length ||
       scheduleResult.schedules.some(schedule => typeof schedule.cron !== 'string') || !Number.isFinite(version.deployedAt)) {
     throw new Error(errorCode);
