@@ -65,7 +65,7 @@ if (command === 'typegen') {
   environment.CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
   environment.CLOUDFLARE_AUTH_PROFILE = process.env.CLOUDFLARE_AUTH_PROFILE;
   const release = checkPreInboundRelease(target, sharedPreview);
-  if (release?.kind === 'production' && (release.source.pauseOnly || release.source.protectVersionId) &&
+  if (release?.kind === 'production' &&
       forwardedArgs.some(argument => /^--secrets-file(?:=|$)/u.test(argument))) {
     throw new Error('INBOUND_PRODUCTION_CUTOVER_CANNOT_UPLOAD_SECRETS');
   }

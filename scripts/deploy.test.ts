@@ -122,11 +122,13 @@ test('activation requires PRE catch-all observations produced after the protecti
   Object.assign(process.env, environment);
   const target = {
     ...localTarget, vars: { PRE_INBOUND_ENABLED: 'true' }, bucket: 'prod-bucket', cron: ['* * * * *'],
+    secrets: ['CLOUDFLARE_EMAIL_ROUTING_TOKEN'],
     preInbound: { databaseId: 'b'.repeat(8) + '-bbbb-4bbb-8bbb-bbbbbbbbbbbb', databaseName: 'pre', bucket: 'preview-bucket' },
     inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
   };
   const active = {
-    id: 'version', percentage: 100, bindings: [], routingReadOnly: true, deployedAt: Date.now() - 60_000,
+    id: 'version', percentage: 100, bindings: [{ name: 'CLOUDFLARE_EMAIL_ROUTING_TOKEN', type: 'secret_text' }],
+    routingReadOnly: true, deployedAt: Date.now() - 60_000,
     compatibilityDate: target.compatibilityDate, compatibilityFlags: target.compatibilityFlags
   };
   const domain = {
@@ -162,6 +164,8 @@ cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
     await expect(assertProductionCatchAllRelease({ ...target, cron: ['*/5 * * * *'] }, active, projectRoot, false))
       .resolves.toBeUndefined();
+    await expect(assertProductionCatchAllRelease({ ...target, secrets: ['CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN'] }, active, projectRoot, false))
+      .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
     await mockRequests();
     await expect(assertProductionCatchAllRelease(target, { ...active, routingReadOnly: false, deployedAt: Date.now() }, projectRoot))
       .resolves.toBeUndefined();

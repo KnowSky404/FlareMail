@@ -127,7 +127,9 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   Keep a recurring minute or hourly trigger with enough runs to refresh every
   enabled PRE catch-all domain within the four-hour margin before verification
   expires. The default `* * * * *` trigger checks one due domain per invocation.
-  Keep those read permissions when adding PRE collection or rotating the token.
+  Shared-inbound releases preserve the production Worker secret selected for
+  Cron and reject `--secrets-file`. Handle credential rotation separately and
+  verify PRE catch-all observations with the new credential.
 - [ ] `AUTH_MODE` is explicitly selected. In `cloudflare-access` mode, the
   issuer, AUD, JWKS URL, single allowed `sub`, and stable Owner ID match the
   Cloudflare Access application and controlled bootstrap record.
