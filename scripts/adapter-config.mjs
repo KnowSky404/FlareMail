@@ -20,7 +20,10 @@ export function adapterOptions(useSelectedTarget = false) {
     assets: { directory: `${root}build`, binding: 'ASSETS' },
     vars: {
       ...target.vars,
-      ...(routing ? { INBOUND_ROUTING_SCOPE: { environment: routing.environment } } : {}),
+      ...(routing ? { INBOUND_ROUTING_SCOPE: {
+        environment: routing.environment,
+        ...(routing.environment === 'production' ? { workerName: target.name } : {})
+      } } : {}),
       ...(preInboundSettings ? { PRE_INBOUND_SETTINGS: preInboundSettings } : {})
     },
     secrets: { required: target.secrets ?? [] },
