@@ -428,6 +428,15 @@ export async function assertProductionCatchAllRelease(
     const minutesPerRun = minute === '*' ? 1 : minute.startsWith('*/') ? Number(minute.slice(2)) : 60;
     return minutesPerRun > 0 && domains.length * minutesPerRun * 60_000 < MAIL_HEALTH_REFRESH_WINDOW_MS;
   })) throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
+  if (domains.length) {
+    const keys = ['CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', 'CLOUDFLARE_EMAIL_ROUTING_TOKEN'];
+    const current = keys.find(key => version.bindings.some(binding => binding.name === key));
+    const candidate = keys.find(key => target.secrets?.includes(key));
+    if (!candidate || candidate !== current || keys.some(key => Object.hasOwn(target.vars, key)) ||
+        !version.bindings.some(binding => binding.name === current && binding.type === 'secret_text')) {
+      throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
+    }
+  }
   if (!requireCurrentObservations) return;
   const claims = query<{ route_key: string }>(target.inboundRouting?.databaseId,
     `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`);
