@@ -242,6 +242,8 @@ describe('managed mail domain checks', () => {
 
   test('does not verify rules targeting the stale Worker mapping', async () => {
     const fixture = createFixture();
+    fixture.sqlite.query("UPDATE mail_domains SET unknown_recipient_policy = 'collect', catch_all_target = 'this_worker', catch_all_checked_at = ?")
+      .run('2026-09-20T11:59:00.000Z');
     const env = { ...fixture.env, INBOUND_ROUTING_SCOPE: { environment: 'production' as const, workerName: 'new-dispatcher' } };
     const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([], {
       beforeList: async () => { throw new Error('Cloudflare must not check the stale Worker'); }
@@ -250,6 +252,7 @@ describe('managed mail domain checks', () => {
     expect(result.resend.state).toBe('verified');
     expect(fixture.sqlite.query('SELECT cloudflare_error_code FROM mail_domains WHERE id = ?').get(domainId))
       .toEqual({ cloudflare_error_code: 'cloudflare_worker_mapping_conflict' });
+    expect(fixture.selectDomain()).toMatchObject({ catch_all_target: 'unknown', catch_all_checked_at: null });
     fixture.sqlite.close();
   });
 

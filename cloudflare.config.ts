@@ -24,7 +24,9 @@ export default defineConfig({
         const activePreviewCapacity = await assertLiveNativePreview(target, release.source, projectRoot);
         await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId) || release.source.resuming, activePreviewCapacity);
         if (release.source.resuming) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
-        if (release.source.protecting) await assertProductionOwnershipCoverage(target);
+        if (release.source.protecting || release.source.protectVersionId || release.source.resuming) {
+          await assertProductionOwnershipCoverage(target);
+        }
       }
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
