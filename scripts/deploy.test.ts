@@ -1,5 +1,5 @@
 import { adapterOptions } from './adapter-config.mjs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, spyOn, test } from 'bun:test';
@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -49,6 +49,34 @@ test('emergency pause keeps the same authentication variables, secrets and produ
     .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
   expect(() => assertUnchangedProductionConfiguration({ ...target, cron: [] }, active))
     .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
+});
+
+test('ordinary releases pin the account already selected by cf', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-cf-account-'));
+  const variables = ['PATH', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_AUTH_PROFILE'] as const;
+  const previous = Object.fromEntries(variables.map(name => [name, process.env[name]]));
+  const accounts = [{ id: 'a'.repeat(32) }, { id: 'b'.repeat(32) }];
+  try {
+    await mkdir(join(directory, 'bin'));
+    await mkdir(join(directory, 'dist'));
+    await writeFile(join(directory, 'package.json'), '{"name":"cf","version":"1.0.0-rc.1"}');
+    const identity = JSON.stringify({ authenticated: true, accounts, profile: { name: 'selected-profile' } });
+    await writeFile(join(directory, 'bin/cf'), `#!/bin/sh\nprintf '%s\\n' '${identity}'\n`, { mode: 0o700 });
+    await writeFile(join(directory, 'dist/context-BiFPu-hE.mjs'),
+      `export async function a() { return process.env.CLOUDFLARE_AUTH_PROFILE === 'selected-profile' ? '${accounts[1]!.id}' : undefined; }`);
+    process.env.PATH = join(directory, 'bin') + ':' + previous.PATH;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    delete process.env.CLOUDFLARE_AUTH_PROFILE;
+    expect(() => pinCloudflareReleaseIdentity(projectRoot, true)).not.toThrow();
+    expect(String(process.env.CLOUDFLARE_ACCOUNT_ID)).toBe(accounts[1]!.id);
+  } finally {
+    for (const name of variables) {
+      const value = previous[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('production requires live historical URL isolation and keeps the main URL setting', async () => {
