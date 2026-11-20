@@ -212,6 +212,14 @@ async function checkResendDomain(
   }
 }
 
+function nextProviderCheckDue(provider: ProviderName, observesPreviewCatchAll: boolean) {
+  const firstProductionCheck = observesPreviewCatchAll
+    ? ` OR (COALESCE(last_error_code, '') <> '${PREVIEW_CATCH_ALL_CRON_VERIFIED}'
+        AND INSTR(COALESCE(last_error_code, ''), '${PREVIEW_CATCH_ALL_ERROR_PREFIX}') <> 1)`
+    : '';
+  return `(${provider}_next_check_at IS NULL OR ${provider}_next_check_at <= ?${firstProductionCheck})`;
+}
+
 function selectCandidates(db: D1Database, provider: ProviderName, now: string, catchAllDomains?: string[]) {
   const stem = provider === 'cloudflare' ? 'cloudflare' : 'resend';
   return db.prepare(
@@ -220,7 +228,7 @@ function selectCandidates(db: D1Database, provider: ProviderName, now: string, c
             cloudflare_failure_count, last_error_code, last_error_at, resend_next_check_at, resend_check_token, resend_check_expires_at,
             resend_failure_count
      FROM mail_domains
-     WHERE (${stem}_next_check_at IS NULL OR ${stem}_next_check_at <= ?)
+     WHERE ${nextProviderCheckDue(provider, Boolean(catchAllDomains))}
        AND (${stem}_check_token IS NULL OR ${stem}_check_expires_at IS NULL OR ${stem}_check_expires_at <= ?)
        ${catchAllDomains ? "AND enabled = 1 AND unknown_recipient_policy = 'collect' AND lower(domain_name) IN (SELECT value FROM json_each(?))" : ''}
      ORDER BY CASE WHEN ${stem}_next_check_at IS NULL THEN 0 ELSE 1 END, ${stem}_next_check_at, domain_name COLLATE NOCASE, id
@@ -228,7 +236,10 @@ function selectCandidates(db: D1Database, provider: ProviderName, now: string, c
   ).bind(now, now, ...(catchAllDomains ? [JSON.stringify(catchAllDomains)] : []), candidateReadLimit).all<HealthDomainRow>();
 }
 
-async function claimDomain(db: D1Database, provider: ProviderName, domain: HealthDomainRow, token: string, startedAt: string, foreground = false) {
+async function claimDomain(
+  db: D1Database, provider: ProviderName, domain: HealthDomainRow, token: string, startedAt: string,
+  foreground: boolean, observesPreviewCatchAll: boolean
+) {
   const expiresAt = isoAt(Date.parse(startedAt) + providerLeaseMs);
   const stem = provider;
   const result = await db.prepare(
@@ -237,7 +248,7 @@ async function claimDomain(db: D1Database, provider: ProviderName, domain: Healt
        ${provider === 'cloudflare' ? 'AND enabled = ? AND unknown_recipient_policy = ?' : ''}
        AND ${foreground
          ? `(${stem}_checked_at IS NULL OR ${stem}_checked_at <= ?) AND (${stem}_error_at IS NULL OR ${stem}_error_at <= ?)`
-         : `(${stem}_next_check_at IS NULL OR ${stem}_next_check_at <= ?)`}
+         : nextProviderCheckDue(provider, observesPreviewCatchAll)}
        AND (${stem}_check_token IS NULL OR ${stem}_check_expires_at IS NULL OR ${stem}_check_expires_at <= ?)`
   ).bind(token, expiresAt, startedAt, domain.id, domain.owner_user_id,
     ...(provider === 'cloudflare' ? [domain.enabled, domain.unknown_recipient_policy] : []),
@@ -349,7 +360,7 @@ async function runProvider(
   for (const domain of selected.results ?? []) {
     if (checked >= limit) break;
     const token = uuid();
-    if (!await claimDomain(env.DB, provider, domain, token, startedAt, Boolean(foregroundDomain))) {
+    if (!await claimDomain(env.DB, provider, domain, token, startedAt, Boolean(foregroundDomain), Boolean(catchAll))) {
       skippedBusy += 1;
       continue;
     }
