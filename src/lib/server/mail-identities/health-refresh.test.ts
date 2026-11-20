@@ -185,12 +185,13 @@ describe('scheduled mail domain health refresh', () => {
       catch_all_target: 'external', catch_all_checked_at: new Date(defaultNow).toISOString()
     });
     deps.cloudflareClientFactory = (...args) => ({
-      ...successfulFactory(...args), getZone: async (id) => ({ id, name: 'another.example.test', accountId: 'account-1' })
+      ...successfulFactory(...args), getZone: async (id) => ({ id, name: 'another.example.test', accountId: 'account-1' }),
+      getCatchAll: async () => { throw new CloudflareEmailRoutingError('timeout'); }
     });
     pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
     expect(pre.readDomain()).toMatchObject({
-      catch_all_target: 'unknown', last_error_code: 'preview_catch_all:cloudflare_zone_mapping_conflict'
+      catch_all_target: 'unknown', catch_all_checked_at: null, last_error_code: 'preview_catch_all:cloudflare_zone_mapping_conflict'
     });
     expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true })).toMatchObject({ accepted: false });
     pre.sqlite.query(`UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?,

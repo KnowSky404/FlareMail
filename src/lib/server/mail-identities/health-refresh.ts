@@ -151,6 +151,9 @@ async function checkCloudflareDomain(
     client.getZone(domain.cloudflare_zone_id),
     client.getCatchAll(domain.cloudflare_zone_id)
   ]);
+  if (zoneObservation.status === 'fulfilled' && !validateZone(domain, zoneObservation.value)) {
+    return { errorCode: 'cloudflare_zone_mapping_conflict', retryable: false, observedAt: null, catchAllTarget: 'unknown' };
+  }
   if (zoneObservation.status === 'rejected' || catchAllObservation.status === 'rejected') {
     const errors = [zoneObservation, catchAllObservation].flatMap(observation =>
       observation.status === 'rejected' ? [classifyCloudflareError(observation.reason)] : []);
@@ -158,11 +161,7 @@ async function checkCloudflareDomain(
       ? catchAllTarget(catchAllObservation.value, productionWorker) : undefined;
     return { ...(errors.find(error => !error.retryable) ?? errors[0]!), observedAt: null, catchAllTarget: target };
   }
-  const zone = zoneObservation.value;
   const catchAll = catchAllObservation.value;
-  if (!validateZone(domain, zone)) {
-    return { errorCode: 'cloudflare_zone_mapping_conflict', retryable: false, observedAt: null, catchAllTarget: 'unknown' };
-  }
 
   const target = catchAllTarget(catchAll, productionWorker ?? domain.worker_name);
   const catchAllObservedAt = isoAt(nowMs);
