@@ -358,18 +358,15 @@ export async function assertLivePreviewForPublish(
       .some(name => Object.hasOwn(baseEnv ?? {}, name))) {
       throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
     }
-    await readReleaseD1Rows(target.inboundRouting?.databaseId,
-      'SELECT kind, route_key, environment FROM inbound_routing_ownership LIMIT 0',
-      'INBOUND_PREVIEW_ROUTING_REGISTRY_NOT_READY');
-    return 0;
-  }
-  const env = latest?.env;
-  const registry = routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id);
-  if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' ||
-      routingD1Id(env?.DB?.database_id ?? env?.DB?.id) !== routingD1Id(target.databaseId) || env?.BUCKET?.bucket_name !== target.bucket ||
-      (env?.INBOUND_ROUTING_DB && registry !== routingD1Id(target.inboundRouting?.databaseId)) ||
-      (!source.managementEnabled && (env?.CLOUDFLARE_EMAIL_ROUTING_TOKEN || baseEnv?.CLOUDFLARE_EMAIL_ROUTING_TOKEN))) {
-    throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
+  } else {
+    const env = latest?.env;
+    const registry = routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id);
+    if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' ||
+        routingD1Id(env?.DB?.database_id ?? env?.DB?.id) !== routingD1Id(target.databaseId) || env?.BUCKET?.bucket_name !== target.bucket ||
+        (env?.INBOUND_ROUTING_DB && registry !== routingD1Id(target.inboundRouting?.databaseId)) ||
+        (!source.managementEnabled && (env?.CLOUDFLARE_EMAIL_ROUTING_TOKEN || baseEnv?.CLOUDFLARE_EMAIL_ROUTING_TOKEN))) {
+      throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
+    }
   }
   if (source.managementEnabled) {
     const errorCode = 'INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED';
@@ -386,6 +383,9 @@ export async function assertLivePreviewForPublish(
     if (!claims || !Number.isSafeInteger(claims.count) || claims.count > capacity) throw new Error(errorCode);
     return capacity;
   }
+  await readReleaseD1Rows(target.inboundRouting?.databaseId,
+    'SELECT kind, route_key, environment FROM inbound_routing_ownership LIMIT 0',
+    'INBOUND_PREVIEW_ROUTING_REGISTRY_NOT_READY');
   return 0;
 }
 
