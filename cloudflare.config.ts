@@ -17,12 +17,13 @@ export default defineConfig({
     let previewCatchAllCapacity = 0;
     let observability = target.observability;
     if (release?.kind === 'production') {
-      const { assertLiveNativePreview, assertProductionCatchAllRelease, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
+      const { assertLiveNativePreview, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
       workersDev = await verifyProductionWorkerDev(target, projectRoot);
       if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
       else {
         const activePreviewCapacity = await assertLiveNativePreview(target, release.source, projectRoot);
         await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId), activePreviewCapacity);
+        if (release.source.protecting) await assertProductionOwnershipCoverage(target);
       }
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');

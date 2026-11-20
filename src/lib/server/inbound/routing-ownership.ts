@@ -1,5 +1,5 @@
-import type { CloudflareEnv } from '../cloudflare';
-import { parseInboundRecipient } from './recipient';
+import type { CloudflareEnv } from '../cloudflare.ts';
+import { parseInboundRecipient } from './recipient.ts';
 
 export type InboundRoutingEnvironment = 'production' | 'preview';
 export type InboundRoutingKind = 'mailbox' | 'catch_all';

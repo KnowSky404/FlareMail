@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -156,6 +156,48 @@ test('production verifies the live PRE address reservation as well as its bindin
     else process.env.CLOUDFLARE_ACCOUNT_ID = priorAccount;
     if (priorToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
     else process.env.CLOUDFLARE_API_TOKEN = priorToken;
+  }
+});
+
+test('protection requires fresh mailbox and catch-all ownership coverage in both mail databases', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-protection-inventory-'));
+  const previousPath = process.env.PATH;
+  process.env.PATH = directory + ':' + previousPath;
+  const target = {
+    ...localTarget, vars: { PRE_INBOUND_RECIPIENT: 'reserved@example.test' },
+    preInbound: { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', databaseName: 'pre', bucket: 'pre-bucket' },
+    inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
+  };
+  const fixture = (id: string, rows: string[][], registered = false) => writeFile(join(directory, id), JSON.stringify([
+    { success: true, results: { columns: registered ? ['kind', 'route_key', 'environment'] : ['kind', 'route_key'], rows } }
+  ]));
+  const mailbox = ['mailbox', 'new@example.test'];
+  const catchAll = ['catch_all', 'example.test'];
+  const reservation = ['mailbox', 'reserved@example.test', 'preview'];
+  const previewMailbox = ['mailbox', 'pre@example.test'];
+  const registry = (rows: string[][]) => fixture(target.inboundRouting.databaseId, rows, true);
+  const coverage = () => assertProductionOwnershipCoverage(target);
+  const blocked = 'INBOUND_PRODUCTION_ROUTING_INVENTORY_NOT_VERIFIED';
+  try {
+    await writeFile(join(directory, 'cf'), `#!/bin/sh
+[ "$1:$2:$4" = 'd1:raw:--sql' ] || exit 1
+cat '${directory}/'"$3"
+`, { mode: 0o700 });
+    await fixture(target.databaseId, [mailbox, catchAll]);
+    await fixture(target.preInbound.databaseId, [previewMailbox]);
+    await registry([[...catchAll, 'production'], [...previewMailbox, 'preview'], reservation]);
+    await expect(coverage()).rejects.toThrow(blocked);
+    const claims = [[...mailbox, 'production'], [...catchAll, 'production'], [...previewMailbox, 'preview']];
+    await registry(claims);
+    await expect(coverage()).rejects.toThrow(blocked);
+    await registry([...claims, reservation]);
+    await expect(coverage()).resolves.toBeUndefined();
+    await fixture(target.preInbound.databaseId, [previewMailbox, catchAll]);
+    await expect(coverage()).rejects.toThrow(blocked);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(directory, { recursive: true, force: true });
   }
 });
 
