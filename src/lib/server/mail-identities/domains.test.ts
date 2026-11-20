@@ -65,6 +65,16 @@ describe('domain enrollment and settings', () => {
     })).rejects.toMatchObject({ status: 403, code: 'MAIL_DOMAIN_ZONE_CHECK_FAILED', retryable: false });
   });
 
+  test('does not enroll a new domain when the configured Worker differs from the shared dispatcher', async () => {
+    const { db, env } = fixture();
+    const misconfigured = { ...env, INBOUND_ROUTING_SCOPE: { environment: 'production' as const, workerName: 'dispatcher' } };
+    expect(domainOnboardingConfiguration(misconfigured)).toMatchObject({ workerName: null, available: false, canManageRouting: false });
+    await expect(enrollMailDomain(misconfigured, owner, { domainName: 'example.com', zoneId }, {
+      getZone: async () => { throw new Error('Misconfigured routing must not reach Cloudflare'); }
+    })).rejects.toMatchObject({ code: 'MAIL_DOMAIN_ONBOARDING_NOT_CONFIGURED' });
+    expect(db.query('SELECT count(*) AS count FROM mail_domains').get()).toEqual({ count: 0 });
+  });
+
   test('does not replace an existing mapping or cross Owner boundaries', async () => {
     const { env, client } = fixture();
     const input = { domainName: 'example.com', zoneId };
