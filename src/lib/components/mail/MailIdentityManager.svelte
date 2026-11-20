@@ -643,6 +643,9 @@
   }
 
   function capabilitiesFor(domain: MailDomain, domainAddresses: MailAddress[]) {
+    const catchAllTarget = providerConfiguration.productionVerifiesCatchAll
+      ? domain.catch_all_target
+      : checks[domain.id]?.cloudflare?.catchAllTarget ?? domain.catch_all_target;
     const capabilities = summarizeDomainCapabilities({
       enabled: Boolean(domain.enabled),
       cloudflareHealth: mailHealthState({
@@ -651,8 +654,7 @@
         leaseExpiresAt: domain.cloudflare_check_expires_at,
         errorCode: domain.cloudflare_error_code, nowMs: now
       }),
-      catchAllCollects: domain.unknown_recipient_policy === 'collect' &&
-        (checks[domain.id]?.cloudflare?.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
+      catchAllCollects: domain.unknown_recipient_policy === 'collect' && catchAllTarget === 'this_worker',
       catchAllCheckedAt: domain.catch_all_checked_at,
       productionVerifiesCatchAll: providerConfiguration.productionVerifiesCatchAll,
       catchAllProductionVerified: domain.last_error_code === PREVIEW_CATCH_ALL_CRON_VERIFIED &&

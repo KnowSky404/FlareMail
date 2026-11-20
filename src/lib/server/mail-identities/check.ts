@@ -384,21 +384,24 @@ export async function checkManagedMailDomain(
         const cloudflareHealthError = collectOwnershipError ?? (domain.unknown_recipient_policy === 'collect' && target !== 'this_worker'
           ? 'cloudflare_collect_catch_all_unavailable'
           : hasManagedRouteDrift ? 'cloudflare_managed_route_needs_review' : null);
+        // An unassigned domain can use this check to claim ownership. PRE delivery still needs the production marker.
+        const preserveProductionObservation = preserveCatchAllObservation &&
+          collectOwnershipError !== 'cloudflare_collect_catch_all_unassigned';
         const statements = [
           env.DB.prepare(
             'UPDATE mail_domains SET cloudflare_account_id = COALESCE(cloudflare_account_id, ?), ' +
-            (preserveCatchAllObservation ? '' : 'catch_all_target = ?, catch_all_checked_at = ?, ') +
+            (preserveProductionObservation ? '' : 'catch_all_target = ?, catch_all_checked_at = ?, ') +
             'cloudflare_checked_at = ?, cloudflare_error_code = ?, cloudflare_error_at = ?, cloudflare_failure_count = 0, ' +
-            (preserveCatchAllObservation ? '' : 'cloudflare_next_check_at = ?, last_error_code = ?, last_error_at = ?, ') +
+            (preserveProductionObservation ? '' : 'cloudflare_next_check_at = ?, last_error_code = ?, last_error_at = ?, ') +
             'updated_at = ? ' +
             'WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ? AND cloudflare_check_expires_at > ?'
           ).bind(
             zone.accountId,
-            ...(preserveCatchAllObservation ? [] : [target, timestamp]),
+            ...(preserveProductionObservation ? [] : [target, timestamp]),
             timestamp,
             cloudflareHealthError,
             cloudflareHealthError ? timestamp : null,
-            ...(preserveCatchAllObservation ? [] : [
+            ...(preserveProductionObservation ? [] : [
               mailHealthNextCheckAt(domain.id, Date.parse(timestamp), 0, cloudflareHealthError, false),
               cloudflareHealthError, cloudflareHealthError ? timestamp : null
             ]),

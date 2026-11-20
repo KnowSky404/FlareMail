@@ -93,7 +93,8 @@ export async function updateMailDomain(
   const cloudflareError = domain.cloudflare_error_code;
   const providerReady = domain.catch_all_target === 'this_worker' && isMailHealthFresh(domain.catch_all_checked_at) &&
     (!cloudflareError || cloudflareError === 'cloudflare_collect_catch_all_unassigned');
-  const routing = claimsCatchAll && !providerReady ? readInboundRouting(env) : null;
+  const preview = env.INBOUND_ROUTING_SCOPE?.environment === 'preview';
+  const routing = claimsCatchAll && (preview || !providerReady) ? readInboundRouting(env) : null;
   const owner = routing ? await findInboundRoutingOwner(routing.db, 'catch_all', domain.domain_name) : null;
   if (owner && owner !== routing?.environment) throw ownershipConflict();
   if (claimsCatchAll && hasWorkerMappingConflict(env, domain.worker_name)) throw workerMappingConflict();
@@ -103,8 +104,7 @@ export async function updateMailDomain(
   if (claimsCatchAll) {
     await reserveMailRoutingOwnership(env, 'catch_all', domain.domain_name);
   }
-  const startsPreviewCollection = env.INBOUND_ROUTING_SCOPE?.environment === 'preview' &&
-    claimsCatchAll && (domain.enabled !== 1 || switchingToCollect);
+  const startsPreviewCollection = preview && claimsCatchAll && (!owner || domain.enabled !== 1 || switchingToCollect);
   // Production Cron verifies the catch-all after PRE starts collecting.
   const result = await env.DB.prepare(`UPDATE mail_domains SET
     enabled = COALESCE(?, enabled), unknown_recipient_policy = COALESCE(?, unknown_recipient_policy),
