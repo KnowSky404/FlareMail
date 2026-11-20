@@ -118,14 +118,15 @@ test('production verifies the live PRE address reservation as well as its bindin
   };
   const proof = { previewDeploymentId: 'pre-deploy', previewBuildLabel: 'preview+abcdef0' };
   const fetch = spyOn(globalThis, 'fetch');
-  const mockLive = (recipient: string) => {
+  const mockLive = (recipient: string, scope: { readOnly?: boolean; previewCatchAllCapacity?: number } = { readOnly: true }) => {
     const respond = (result: unknown) => fetch.mockResolvedValueOnce(Response.json({ success: true, result }));
     respond({ id: 'worker-id' });
     respond([{ id: 'pre-id', slug: 'mail-ai' }]);
     respond({ id: proof.previewDeploymentId, env: {
       APP_ENV: { text: 'preview' }, APP_VERSION: { text: proof.previewBuildLabel },
       DB: { database_id: target.preInbound.databaseId }, BUCKET: { bucket_name: target.preInbound.bucket },
-      INBOUND_ROUTING_DB: { database_id: target.inboundRouting.databaseId }, PRE_INBOUND_SETTINGS: { json: { recipient } }
+      INBOUND_ROUTING_DB: { database_id: target.inboundRouting.databaseId }, PRE_INBOUND_SETTINGS: { json: { recipient } },
+      INBOUND_ROUTING_SCOPE: { json: { environment: 'preview', ...scope } }
     } });
   };
   try {
@@ -133,6 +134,8 @@ test('production verifies the live PRE address reservation as well as its bindin
     await expect(assertLiveNativePreview(target, proof, projectRoot)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
     mockLive('expected@example.test');
     await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBe(0);
+    mockLive('expected@example.test', { previewCatchAllCapacity: 239 });
+    await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBe(239);
     const preview = { ...target, databaseId: target.preInbound.databaseId, bucket: target.preInbound.bucket };
     const management = { previewDeploymentId: proof.previewDeploymentId, managementEnabled: true };
     mockLive('expected@example.test');
