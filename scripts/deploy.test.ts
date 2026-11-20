@@ -77,7 +77,11 @@ test('production requires live historical URL isolation and keeps the main URL s
 });
 
 test('activation requires PRE catch-all observations produced after the protection deployment', async () => {
-  const environment = { CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: 'fixture-token' };
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-activation-'));
+  const environment = {
+    CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: 'fixture-token',
+    PATH: directory + ':' + process.env.PATH, FLAREMAIL_TEST_D1_FIXTURES: directory
+  };
   const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
   Object.assign(process.env, environment);
   const target = {
@@ -94,27 +98,36 @@ test('activation requires PRE catch-all observations produced after the protecti
     catch_all_checked_at: new Date(active.deployedAt - 1).toISOString(), last_error_code: null, last_error_at: null
   };
   const fetch = spyOn(globalThis, 'fetch');
-  const mockRequests = () => {
+  const mockRequests = async () => {
     fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: target.cron[0] }] } }));
-    fetch.mockResolvedValueOnce(Response.json({ success: true, result: [{ success: true, results: [domain] }] }));
-    fetch.mockResolvedValueOnce(Response.json({ success: true, result: [{ success: true, results: [{ route_key: domain.domain_name }] }] }));
+    await writeFile(join(directory, target.preInbound.databaseId), JSON.stringify([
+      { success: true, results: { columns: Object.keys(domain), rows: [Object.values(domain)] } }
+    ]));
   };
   try {
-    mockRequests();
+    await writeFile(join(directory, 'cf'), `#!/bin/sh
+[ "$1:$2:$4" = 'd1:raw:--sql' ] || exit 1
+cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
+`, { mode: 0o700 });
+    await writeFile(join(directory, target.inboundRouting.databaseId), JSON.stringify([
+      { success: true, results: { columns: ['route_key'], rows: [[domain.domain_name]] } }
+    ]));
+    await mockRequests();
     await expect(assertProductionCatchAllActivation(target, active, projectRoot))
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED');
     domain.catch_all_checked_at = new Date(active.deployedAt + 1).toISOString();
-    mockRequests();
+    await mockRequests();
     await expect(assertProductionCatchAllActivation(target, active, projectRoot))
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED');
     Object.assign(domain, { last_error_code: 'preview_catch_all_cron_verified', last_error_at: domain.catch_all_checked_at });
-    mockRequests();
+    await mockRequests();
     await expect(assertProductionCatchAllActivation(target, active, projectRoot)).resolves.toBeUndefined();
-    mockRequests();
+    await mockRequests();
     await expect(assertProductionCatchAllActivation(target, { ...active, routingReadOnly: false, deployedAt: Date.now() }, projectRoot))
       .resolves.toBeUndefined();
   } finally {
     fetch.mockRestore();
+    await rm(directory, { recursive: true, force: true });
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
