@@ -2,7 +2,7 @@ import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRout
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_CRON_VERIFIED, PREVIEW_CATCH_ALL_ERROR_PREFIX, previewCatchAllError, TRANSIENT_CLOUDFLARE_HEALTH_ERRORS } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, hasProductionCatchAllObserver, isPreviewRoutingReadOnly } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, hasProductionCatchAllObserver, hasWorkerMappingConflict, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
 import { ApiError } from '$lib/server/http/api';
 import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
@@ -144,7 +144,7 @@ async function checkCloudflareDomain(
   nowMs: number,
   productionWorker?: string
 ): Promise<ProviderCheckResult> {
-  if (productionWorker && domain.worker_name !== productionWorker) {
+  if (productionWorker ? domain.worker_name !== productionWorker : hasWorkerMappingConflict(env, domain.worker_name)) {
     return { errorCode: 'cloudflare_worker_mapping_conflict', retryable: false, observedAt: null, catchAllTarget: 'unknown' };
   }
   const [zoneObservation, catchAllObservation] = await Promise.allSettled([

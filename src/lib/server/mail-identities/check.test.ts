@@ -240,6 +240,19 @@ describe('managed mail domain checks', () => {
     fixture.sqlite.close();
   });
 
+  test('does not verify rules targeting the stale Worker mapping', async () => {
+    const fixture = createFixture();
+    const env = { ...fixture.env, INBOUND_ROUTING_SCOPE: { environment: 'production' as const, workerName: 'new-dispatcher' } };
+    const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([], {
+      beforeList: async () => { throw new Error('Cloudflare must not check the stale Worker'); }
+    }));
+    expect(result.cloudflare).toMatchObject({ state: 'error', errorCode: 'cloudflare_worker_mapping_conflict' });
+    expect(result.resend.state).toBe('verified');
+    expect(fixture.sqlite.query('SELECT cloudflare_error_code FROM mail_domains WHERE id = ?').get(domainId))
+      .toEqual({ cloudflare_error_code: 'cloudflare_worker_mapping_conflict' });
+    fixture.sqlite.close();
+  });
+
   test('reports an unavailable routing registry without skipping Resend or retaining either lease', async () => {
     const fixture = createFixture();
     const env = {
