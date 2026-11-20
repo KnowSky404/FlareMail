@@ -1,10 +1,11 @@
 import AxeBuilder from '@axe-core/playwright';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { readReleaseVersion } from '../../scripts/release-version';
 import { assertNoConsoleErrors, assertNoHorizontalOverflow, E2E_PASSWORD, E2E_USERNAME, expect, login, selectSettings, test } from './fixtures';
 
-const { version } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
+const version = readReleaseVersion(fileURLToPath(new URL('../..', import.meta.url)));
 
 test('opens a centered accessible About dialog in both themes without navigation or external requests', async ({ page, consoleErrors }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem('flaremail-theme', 'system'));

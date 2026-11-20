@@ -8,6 +8,8 @@ import type { RuntimeUnavailableState } from './lib/domain/runtime-state';
 import type { Locale } from './lib/i18n';
 
 declare global {
+  const __FLAREMAIL_RELEASE_VERSION__: string;
+
   namespace App {
     interface Platform {
       env: CloudflareEnv;

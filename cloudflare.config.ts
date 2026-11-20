@@ -9,6 +9,10 @@ export default defineConfig({
     // The Vite plugin blocks static config dependencies from serving as Worker modules.
     const { checkPreInboundRelease, cloudflarePreInboundSettings, projectRoot, readCloudflareTarget } = await import('./scripts/cloudflare-target.ts');
     const remote = mode === 'production' || mode === 'preview';
+    if (remote) {
+      const { assertReleaseHistory } = await import('./scripts/release-version.ts');
+      assertReleaseHistory(projectRoot);
+    }
     const config = process.env.FLAREMAIL_CF_CONFIG ?? (remote ? `cloudflare.${mode === 'production' ? 'deploy' : 'preview'}.json` : 'cloudflare.local.json');
     const target = readCloudflareTarget(config, remote);
     if (remote && target.vars.APP_ENV !== mode) throw new Error(`The ${mode} build requires APP_ENV=${mode}.`);

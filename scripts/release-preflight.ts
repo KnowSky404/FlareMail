@@ -1,4 +1,5 @@
 import { parseCloudflareTarget, localDatabaseId } from './cloudflare-target';
+import { assertReleaseHistory } from './release-version';
 import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -66,6 +67,7 @@ export interface GitState {
   exitCode: number;
   status: string;
   head: string;
+  historyError?: string;
 }
 
 export type GitInspector = (root: string) => Promise<GitState>;
@@ -186,11 +188,19 @@ async function checkBun(root: string): Promise<PreflightCheck> {
 export async function inspectGit(root: string, commandRunner: CommandRunner = runCommand): Promise<GitState> {
   const status = await commandRunner('git', ['-C', root, 'status', '--porcelain=v1']);
   const head = await commandRunner('git', ['-C', root, 'rev-parse', '--verify', 'HEAD']);
-  return {
+  const state: GitState = {
     exitCode: status.exitCode !== 0 ? status.exitCode : head.exitCode,
     status: status.stdout?.trim() ?? '',
     head: head.stdout?.trim() ?? ''
   };
+  if (state.exitCode === 0 && !state.status) {
+    try {
+      assertReleaseHistory(root);
+    } catch (error) {
+      state.historyError = error instanceof Error ? error.message : 'Could not verify Git history for deployment.';
+    }
+  }
+  return state;
 }
 
 async function checkGit(root: string, gitInspector: GitInspector): Promise<PreflightCheck> {
@@ -204,6 +214,7 @@ async function checkGit(root: string, gitInspector: GitInspector): Promise<Prefl
       dirty: true
     });
   }
+  if (state.historyError) return fail('git', state.historyError, { head: state.head });
   return pass('git', 'Git worktree is clean.', { head: state.head, dirty: false });
 }
 

@@ -57,6 +57,8 @@ bun run deploy:pre -- --preview-name mail-ai
 
 Run local `/review` before each push and separately before PR creation. Wait for the current head's Codex Code Review and Security Review; resolve feedback before rebase merge. Record the accepted commit, Preview URL/ID and business acceptance. See [repository workflow](AGENTS.md) and [production checklist](docs/PRODUCTION_CHECKLIST.md).
 
+About displays the highest stable `vMAJOR.MINOR.PATCH` Git tag reachable from the build commit. Before building for deployment, run `git fetch --tags`, or `git fetch --unshallow --tags` from a shallow checkout. Release preflight and deployment reject shallow checkouts. For a new release, create its tag locally on the verified commit before the production build, then publish the matching GitHub Release after deployment checks. A source checkout without release tags uses the version in `package.json`. Authenticated `/api/readiness` continues to report the configured `APP_VERSION` build label.
+
 Production is a separate, explicitly authorized step from a clean verified `origin/main` commit:
 
 ```sh
@@ -86,6 +88,8 @@ With single-Worker PRE inbound configured, verify the running production email h
 `bun run build` 会先构建 SvelteKit，再由全局 `cf` 原生打包 Worker。`bun run preview` 用于本地预览，`bun run deploy:pre -- --preview-name mail-ai` 用于授权后的远程 PRE，`bun run deploy` 用于另行授权的生产发布。私有配置分别为 `cloudflare.preview.json` 和 `cloudflare.deploy.json`，由对应公开示例填写，禁止提交真实资源标识或密钥。
 
 当前原生 PRE 使用独立 D1、R2 和 Owner 映射，默认只读验收。本地测试使用独立 `.cloudflare/state`。普通功能改动先完成对应提交的本地检查、PRE 业务验收、本地 `/review` 和当前 head 的两项机器人审查，再合并主分支。生产发布另行授权。参见 [Preview 指南](docs/PREVIEW.md)。
+
+「关于」显示构建提交历史中版本号最高的稳定 `v主版本.次版本.补丁版本` 标签。部署构建前执行 `git fetch --tags`，浅克隆应执行 `git fetch --unshallow --tags`，发版预检和部署脚本都会拒绝浅克隆。发新版本时，在核对过的提交上先创建本地标签，再构建和部署生产，验收后发布对应的 GitHub Release。PRE 验收后如果补打标签导致版本显示改变，上传前用新构建复核「关于」显示。拿不到发布标签时使用 `package.json` 中的版本。登录后访问 `/api/readiness` 仍能看到 `APP_VERSION` 构建标识。
 
 单 Worker 收信方案启用后，调整 PRE 存储须同时核对生产收信代码。生产回退使用保留地址拒收保护、且暂停 PRE 投递的版本。参见 [生产发布清单](docs/PRODUCTION_CHECKLIST.md)和[单 Worker SPEC](docs/specs/single-worker-pre-inbound.md)。
 

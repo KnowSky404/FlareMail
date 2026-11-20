@@ -11,6 +11,7 @@
    在发布之前检查 Previews Base、现有 Preview secrets 与候选目标的合并结果。当前方案尚未实施时，确认将生成的部署既不继承 Cloudflare 路由读取或写入权限，也没有可用于全量发现的身份配置。无法确认就停止发布，先按下文「当前 mail-ai 的邮箱身份验收」核对旧配置及权限。
    如果沿用 PRE D1 并更换 R2，在部署前先于授权维护窗口暂停并排空所有访问 PRE D1/R2 的入口和任务，包括只读入口和旧预览 URL。再清点原信、独立正文、草稿、附件和待处理记录依赖的对象，核对新桶上的对象和完整性。没有相关对象时记录空清单。涉及复制、修复或删除时取得相应授权。
 3. `bun run deploy:pre -- --preview-name mail-ai` 先构建 Svelte 应用，再在 `worker/` 通过全局 `cf previews deploy --mode preview` 构建并上传原生 Preview，不切换生产流量。使用合法稳定的名称。记录命令时间、提交 SHA、Preview URL 和部署/版本 ID。
+   原生 Preview 和版本预览构建前都要执行 `git fetch --tags`，浅克隆应先执行 `git fetch --unshallow --tags`。「关于」使用构建提交历史中的稳定发布标签，`/api/readiness` 仍使用 `APP_VERSION` 核对具体构建。
 4. 上传后先按下文「当前 mail-ai 的邮箱身份验收」检查 Cloudflare 实际绑定、规则权限、仍可访问的旧 URL 和生产 deployment。隔离核对通过后，才验收登录、业务页面/API 和已认证 `/api/readiness`。`/api/health` 仅证明存活，HTTP 验收和 `email()`、Cron、真实投递各自需要证据。
    更换 R2 后，在恢复常规访问前，用授权的验收入口和已读样本核对原文、正文与附件可读取，并验证所有将恢复的入口使用核定存储。
 5. **当前 D1 和 R2 独立，默认只读**。E2E seed、fixture、Owner bootstrap、数据库重置和迁移与默认验收分开。打开未读邮件会自动写入已读状态，使用已经读过的消息和只读 HTML/CID GET 接口进行预览验收。真实邮件、Telegram、数据写入及路由/DNS 修改必须在明确授权范围内。
