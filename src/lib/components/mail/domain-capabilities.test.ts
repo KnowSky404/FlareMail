@@ -7,6 +7,7 @@ const ready: DomainCapabilityInput = {
   cloudflareHealth: 'fresh',
   catchAllCollects: false,
   catchAllCheckedAt: null,
+  productionVerifiesCatchAll: false,
   catchAllProductionVerified: false,
   resendStatus: 'verified',
   resendSendingStatus: 'enabled',
@@ -44,7 +45,11 @@ describe('domain dashboard capability summary', () => {
     expect(summarizeDomainCapabilities({ ...ready, catchAllCollects: true, catchAllCheckedAt: new Date(nowMs).toISOString(), addresses: [] }, nowMs))
       .toEqual({ receiving: 'ready', sending: 'not_ready' });
     expect(summarizeDomainCapabilities({
-      ...ready, cloudflareHealth: 'not_configured', catchAllCollects: true,
+      ...ready, catchAllCollects: true, productionVerifiesCatchAll: true,
+      catchAllCheckedAt: new Date(nowMs).toISOString(), addresses: []
+    }, nowMs)).toEqual({ receiving: 'needs_check', sending: 'not_ready' });
+    expect(summarizeDomainCapabilities({
+      ...ready, cloudflareHealth: 'not_configured', catchAllCollects: true, productionVerifiesCatchAll: true,
       catchAllCheckedAt: new Date(nowMs).toISOString(), catchAllProductionVerified: true, addresses: []
     }, nowMs)).toEqual({ receiving: 'catch_all_verified', sending: 'not_ready' });
     expect(summarizeDomainCapabilities({ ...ready, addresses: [

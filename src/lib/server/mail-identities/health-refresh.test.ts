@@ -163,6 +163,15 @@ describe('scheduled mail domain health refresh', () => {
       expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true }))
         .toMatchObject({ accepted: false });
     }
+    deps.cloudflareClientFactory = (...args) => ({
+      ...successfulFactory(...args),
+      getCatchAll: async () => ({ enabled: true, actions: [
+        { type: 'worker', value: ['flaremail-worker'] }, { type: 'drop', value: [] }
+      ] })
+    });
+    pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
+    expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });
+    expect(pre.readDomain()).toMatchObject({ catch_all_checked_at: null, catch_all_target: 'external' });
     deps.cloudflareClientFactory = successfulFactory;
     pre.sqlite.query('UPDATE mail_domains SET cloudflare_next_check_at = NULL').run();
     expect(await refreshPreviewCatchAllHealth(env, deps)).toMatchObject({ checked: 1 });

@@ -15,6 +15,7 @@ export interface DomainCapabilityInput {
   cloudflareHealth: MailHealthState;
   catchAllCollects: boolean;
   catchAllCheckedAt: string | null;
+  productionVerifiesCatchAll: boolean;
   catchAllProductionVerified: boolean;
   resendStatus: 'unknown' | 'pending' | 'verified' | 'failed';
   resendSendingStatus: 'unknown' | 'enabled' | 'disabled';
@@ -34,10 +35,10 @@ export function summarizeDomainCapabilities(input: DomainCapabilityInput, nowMs 
   );
   const exactReady = hasExactRoute && input.cloudflareHealth === 'fresh';
   const catchAllReady = input.catchAllCollects && isMailHealthFresh(input.catchAllCheckedAt, nowMs) &&
-    (input.catchAllProductionVerified || input.cloudflareHealth === 'fresh');
+    (input.productionVerifiesCatchAll ? input.catchAllProductionVerified : input.cloudflareHealth === 'fresh');
   let receiving: DomainCapabilityState = 'not_ready';
   if (input.enabled && (input.catchAllCollects || hasExactRoute)) {
-    if (catchAllReady && input.catchAllProductionVerified) receiving = 'catch_all_verified';
+    if (catchAllReady && input.productionVerifiesCatchAll) receiving = 'catch_all_verified';
     else receiving = exactReady || catchAllReady ? 'ready' : 'needs_check';
   }
 

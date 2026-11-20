@@ -86,6 +86,10 @@ describe('domain enrollment and settings', () => {
     registry.exec(readFileSync(new URL('../../../../routing-migrations/0001_ownership.sql', import.meta.url), 'utf8'));
     env.INBOUND_ROUTING_SCOPE = { environment: 'preview' };
     env.INBOUND_ROUTING_DB = { prepare: (sql: string) => new Statement(registry, sql) } as unknown as D1Database;
+    registry.query("INSERT INTO inbound_routing_ownership (kind, route_key, environment) VALUES ('catch_all', 'example.com', 'production')").run();
+    await expect(updateMailDomain(env, owner, domain.id, { unknownRecipientPolicy: 'collect' }))
+      .rejects.toMatchObject({ code: 'MAIL_ROUTING_OWNERSHIP_CONFLICT' });
+    registry.query("DELETE FROM inbound_routing_ownership WHERE kind = 'catch_all' AND route_key = 'example.com'").run();
     db.query(`UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?, cloudflare_next_check_at = ?
       WHERE id = ?`).run(new Date().toISOString(), new Date(Date.now() + 16 * 60 * 60_000).toISOString(), domain.id);
     expect(await updateMailDomain(env, owner, domain.id, { unknownRecipientPolicy: 'collect' })).toMatchObject({

@@ -83,7 +83,7 @@ function catchAllTarget(catchAll: CloudflareCatchAll, workerName: string): Catch
   const action = catchAll.actions[0];
   if (!action) return 'unknown';
   if (action.type === 'drop') return 'drop';
-  if (action.type === 'worker' && action.value.length === 1 && action.value[0] === workerName) return 'this_worker';
+  if (catchAll.actions.length === 1 && action.type === 'worker' && action.value.length === 1 && action.value[0] === workerName) return 'this_worker';
   return 'external';
 }
 

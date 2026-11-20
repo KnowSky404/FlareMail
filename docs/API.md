@@ -144,6 +144,9 @@ account, API origin, or Cloudflare endpoint. The operator command
 `bun run mail:domain:configure` remains available. Provider-configuration flags
 never return a token or key; `cloudflareManagement` separately reports whether
 the management credential is available for the current environment.
+`providerConfiguration.productionVerifiesCatchAll` identifies shared-inbound
+PRE. Its catch-all status uses the production Cron observation to verify the
+rule. The production delivery switch is checked separately at SMTP ingress.
 
 With shared PRE and PROD inbound routing configured, creating an address or
 enabling catch-all collection reserves a route for that environment. A
