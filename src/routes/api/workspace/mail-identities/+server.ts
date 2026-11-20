@@ -18,6 +18,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   return apiSuccess(event, {
     domains,
     addresses,
+    routingReadOnly: readOnly,
     domainOnboarding: domainOnboardingConfiguration(env),
     providerConfiguration: {
       cloudflare: !isPreviewRoutingReadOnly(env) && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
