@@ -134,6 +134,8 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   Mailbox-only installations using externally managed rules can cut over with
   read-only PRE while the observer is absent. Enabling in-app PRE routing
   management requires the live production credential and a recurring Cron trigger.
+  The PRE deployment derives its catch-all reservation limit from that trigger.
+  Changing production Cron must preserve the limit of the active writable PRE.
 - [ ] `AUTH_MODE` is explicitly selected. In `cloudflare-access` mode, the
   issuer, AUD, JWKS URL, single allowed `sub`, and stable Owner ID match the
   Cloudflare Access application and controlled bootstrap record.

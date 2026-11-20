@@ -14,18 +14,19 @@ export default defineConfig({
     if (remote && target.vars.APP_ENV !== mode) throw new Error(`The ${mode} build requires APP_ENV=${mode}.`);
     const release = isPreview || remote ? checkPreInboundRelease(target, isPreview && mode === 'preview') : undefined;
     let workersDev: boolean | undefined;
+    let previewCatchAllCapacity = 0;
     let observability = target.observability;
     if (release?.kind === 'production') {
       const { assertLiveNativePreview, assertProductionCatchAllRelease, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
       workersDev = await verifyProductionWorkerDev(target, projectRoot);
       if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
       else {
-        const previewHasRoutingToken = await assertLiveNativePreview(target, release.source, projectRoot);
-        await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId), previewHasRoutingToken);
+        const activePreviewCapacity = await assertLiveNativePreview(target, release.source, projectRoot);
+        await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId), activePreviewCapacity);
       }
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
-      await assertLivePreviewForPublish(target, release.source, projectRoot);
+      previewCatchAllCapacity = await assertLivePreviewForPublish(target, release.source, projectRoot);
     }
     const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
     const preInboundSettings = cloudflarePreInboundSettings(target);
@@ -64,6 +65,7 @@ export default defineConfig({
           INBOUND_ROUTING_SCOPE: bindings.json({
             environment: target.inboundRouting.environment,
             ...(target.inboundRouting.environment === 'production' ? { workerName: target.name } : {}),
+            ...(previewCatchAllCapacity ? { previewCatchAllCapacity } : {}),
             ...(pauseRoutingWrites ? { readOnly: true as const } : {})
           })
         } : {}),

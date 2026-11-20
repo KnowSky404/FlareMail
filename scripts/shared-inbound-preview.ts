@@ -131,7 +131,7 @@ interface WorkerBindingMetadata {
   id?: string;
   bucket_name?: string;
   text?: string;
-  json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean } | string;
+  json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean; previewCatchAllCapacity?: number } | string;
 }
 
 function readActiveProduction(worker: string) {
@@ -328,7 +328,16 @@ export async function assertLiveNativePreview(
       routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id) !== routingD1Id(target.inboundRouting?.databaseId)) {
     throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   }
-  return Boolean(env.CLOUDFLARE_EMAIL_ROUTING_TOKEN);
+  if (!env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) return 0;
+  try {
+    const raw = env.INBOUND_ROUTING_SCOPE?.json;
+    const scope = typeof raw === 'string' ? JSON.parse(raw) as Exclude<WorkerBindingMetadata['json'], string> : raw;
+    const capacity = scope?.previewCatchAllCapacity;
+    if (typeof capacity === 'number' && Number.isSafeInteger(capacity) && capacity > 0) return capacity;
+  } catch {
+    // Invalid binding JSON cannot authorize writable PRE.
+  }
+  throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
 }
 
 export async function assertLivePreviewForPublish(
@@ -344,13 +353,21 @@ export async function assertLivePreviewForPublish(
     throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
   }
   if (source.managementEnabled) {
-    const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
+    const errorCode = 'INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED';
+    const get = cloudflareWorkerMetadata(projectRoot, errorCode);
     const { schedules } = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');
-    if (!Array.isArray(schedules) || !schedules.every(schedule => typeof schedule?.cron === 'string') ||
-        !refreshesCatchAllOnTime(schedules.map(schedule => schedule.cron), 1)) {
-      throw new Error('INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
-    }
+    if (!Array.isArray(schedules) || !schedules.every(schedule => typeof schedule?.cron === 'string')) throw new Error(errorCode);
+    const capacity = catchAllRefreshCapacity(schedules.map(schedule => schedule.cron));
+    if (!capacity) throw new Error(errorCode);
+    const [claims] = await readReleaseD1Rows<{ count: number }>(
+      target.inboundRouting?.databaseId,
+      "SELECT count(*) AS count FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'",
+      errorCode
+    );
+    if (!claims || !Number.isSafeInteger(claims.count) || claims.count > capacity) throw new Error(errorCode);
+    return capacity;
   }
+  return 0;
 }
 
 export function assertActiveProductionForPreview(target: CloudflareTarget, source: ReturnType<typeof assertSharedInboundPreview>) {
@@ -423,47 +440,50 @@ function currentCatchAllCredential(bindings: WorkerBindingMetadata[]) {
   return bindings.find(binding => binding.name === name);
 }
 
-function refreshesCatchAllOnTime(schedules: string[], domainCount: number) {
-  return schedules.some(schedule => {
+function catchAllRefreshCapacity(schedules: string[]) {
+  return Math.max(0, ...schedules.map(schedule => {
     const minute = /^(\*|\*\/[1-5]?\d|[1-5]?\d)(?:\s+\*){4}$/u.exec(schedule.trim())?.[1];
-    if (!minute) return false;
+    if (!minute) return 0;
     const minutesPerRun = minute === '*' ? 1 : minute.startsWith('*/') ? Number(minute.slice(2)) : 60;
-    return minutesPerRun > 0 && domainCount * minutesPerRun * 60_000 < MAIL_HEALTH_REFRESH_WINDOW_MS;
-  });
+    return minutesPerRun > 0 ? Math.floor((MAIL_HEALTH_REFRESH_WINDOW_MS - 1) / (minutesPerRun * 60_000)) : 0;
+  }));
+}
+
+async function readReleaseD1Rows<T>(databaseId: string | undefined, sql: string, errorCode: string) {
+  const { normalizeD1Output } = await import('./cloudflare-target.ts');
+  const id = routingD1Id(databaseId);
+  if (!id) throw new Error(errorCode);
+  const directory = mkdtempSync(join(tmpdir(), 'flaremail-cutover-d1-'));
+  try {
+    const output = execFileSync('cf', ['d1', 'raw', id, '--sql', sql], {
+      cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
+    });
+    const result = normalizeD1Output(JSON.parse(output)) as { success?: boolean; results?: T[] }[];
+    const statement = result[0];
+    if (statement?.success !== true || !Array.isArray(statement.results)) throw new Error(errorCode);
+    return statement.results;
+  } catch {
+    throw new Error(errorCode);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 export async function assertProductionCatchAllRelease(
   target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string,
-  requireCurrentObservations = true, previewHasRoutingToken = false
+  requireCurrentObservations = true, previewCatchAllCapacity = 0
 ) {
   const errorCode = 'INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED';
   const get = cloudflareWorkerMetadata(projectRoot, errorCode);
-  const { normalizeD1Output } = await import('./cloudflare-target.ts');
-  const query = <T>(databaseId: string | undefined, sql: string) => {
-    const id = routingD1Id(databaseId);
-    if (!id) throw new Error(errorCode);
-    const directory = mkdtempSync(join(tmpdir(), 'flaremail-cutover-d1-'));
-    try {
-      const output = execFileSync('cf', ['d1', 'raw', id, '--sql', sql], {
-        cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
-      });
-      const result = normalizeD1Output(JSON.parse(output)) as { success?: boolean; results?: T[] }[];
-      const statement = result[0];
-      if (statement?.success !== true || !Array.isArray(statement.results)) throw new Error(errorCode);
-      return statement.results;
-    } catch {
-      throw new Error(errorCode);
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  };
-  const domains = query<{ domain_name: string; worker_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
+  const domains = await readReleaseD1Rows<{ domain_name: string; worker_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
     target.preInbound?.databaseId,
     `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
-     FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
+     FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`,
+    errorCode
   );
-  if (domains.length || previewHasRoutingToken) {
-    if (!refreshesCatchAllOnTime(target.cron, Math.max(1, domains.length))) {
+  const requiredCapacity = Math.max(domains.length, previewCatchAllCapacity);
+  if (requiredCapacity) {
+    if (catchAllRefreshCapacity(target.cron) < requiredCapacity) {
       throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
     }
     const current = currentCatchAllCredential(version.bindings);
@@ -474,8 +494,8 @@ export async function assertProductionCatchAllRelease(
     }
   }
   if (!requireCurrentObservations) return;
-  const claims = query<{ route_key: string }>(target.inboundRouting?.databaseId,
-    `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`);
+  const claims = await readReleaseD1Rows<{ route_key: string }>(target.inboundRouting?.databaseId,
+    `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`, errorCode);
   const scheduleResult = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');
   if (!Array.isArray(scheduleResult.schedules) || !scheduleResult.schedules.length ||
       scheduleResult.schedules.some(schedule => typeof schedule.cron !== 'string') || !Number.isFinite(version.deployedAt)) {

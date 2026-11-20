@@ -31,13 +31,19 @@ export async function findInboundRoutingOwner(db: D1Database, kind: InboundRouti
   return row?.environment ?? null;
 }
 
-export async function claimInboundRoutingOwner(db: D1Database, kind: InboundRoutingKind, value: string, environment: InboundRoutingEnvironment) {
+export async function claimInboundRoutingOwner(
+  db: D1Database, kind: InboundRoutingKind, value: string, environment: InboundRoutingEnvironment, limit?: number
+) {
+  const key = inboundRoutingKey(kind, value);
   const claimed = await db.prepare(`
-    INSERT INTO inbound_routing_ownership (kind, route_key, environment) VALUES (?, ?, ?)
+    INSERT INTO inbound_routing_ownership (kind, route_key, environment)
+    SELECT ?, ?, ? WHERE ? IS NULL OR (
+      SELECT count(*) FROM inbound_routing_ownership WHERE kind = ? AND environment = ? AND route_key <> ?
+    ) < ?
     ON CONFLICT (kind, route_key) DO UPDATE SET environment = excluded.environment
       WHERE inbound_routing_ownership.environment = excluded.environment
     RETURNING environment
-  `).bind(kind, inboundRoutingKey(kind, value), environment).first<{ environment: InboundRoutingEnvironment }>();
+  `).bind(kind, key, environment, limit ?? null, kind, environment, key, limit ?? null).first<{ environment: InboundRoutingEnvironment }>();
   return claimed?.environment === environment;
 }
 

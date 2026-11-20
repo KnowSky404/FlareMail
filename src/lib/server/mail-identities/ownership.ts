@@ -108,7 +108,17 @@ export async function reserveMailRoutingOwnership(env: CloudflareEnv, kind: Inbo
   requireMailRoutingWrites(env);
   if (conflictsWithFixedPreviewReservation(env, kind, value)) throw ownershipConflict();
   const routing = readInboundRouting(env);
-  if (routing && !await claimInboundRoutingOwner(routing.db, kind, value, routing.environment)) {
+  if (!routing) return;
+  const limit = routing.environment === 'preview' && kind === 'catch_all'
+    ? env.INBOUND_ROUTING_SCOPE?.previewCatchAllCapacity ?? (env.APP_ENV === 'preview' ? 0 : undefined)
+    : undefined;
+  if (!await claimInboundRoutingOwner(routing.db, kind, value, routing.environment, limit)) {
+    if (limit !== undefined) {
+      const owner = await findInboundRoutingOwner(routing.db, kind, value);
+      if (!owner || owner === routing.environment) {
+        throw new ApiError(409, 'MAIL_PREVIEW_CATCH_ALL_CAPACITY_REACHED', '生产定时检查容量已满，暂不能为 PRE 启用更多兜底域名。', undefined, undefined, false);
+      }
+    }
     throw ownershipConflict();
   }
 }

@@ -95,6 +95,11 @@ describe('domain enrollment and settings', () => {
     await expect(updateMailDomain({ ...env, MAIL_IDENTITY_WORKER_NAME: 'new-dispatcher' }, owner, domain.id, { unknownRecipientPolicy: 'collect' }))
       .rejects.toMatchObject({ code: 'MAIL_DOMAIN_WORKER_MAPPING_CONFLICT' });
     expect(registry.query('SELECT kind FROM inbound_routing_ownership').get()).toBeNull();
+    env.INBOUND_ROUTING_SCOPE = { environment: 'preview', previewCatchAllCapacity: 1 };
+    registry.query("INSERT INTO inbound_routing_ownership (kind, route_key, environment) VALUES ('catch_all', 'other.example', 'preview')").run();
+    await expect(updateMailDomain(env, owner, domain.id, { unknownRecipientPolicy: 'collect' }))
+      .rejects.toMatchObject({ code: 'MAIL_PREVIEW_CATCH_ALL_CAPACITY_REACHED' });
+    registry.query("DELETE FROM inbound_routing_ownership WHERE route_key = 'other.example'").run();
     expect(await updateMailDomain(env, owner, domain.id, { unknownRecipientPolicy: 'collect' })).toMatchObject({
       unknown_recipient_policy: 'collect', catch_all_checked_at: null, cloudflare_next_check_at: null
     });
