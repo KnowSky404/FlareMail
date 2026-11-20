@@ -1,5 +1,4 @@
 import type { PageServerLoad } from './$types';
-import { version as projectVersion } from '../../package.json';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { MailboxSection } from '$lib/domain/mail';
 import { loadWorkspaceSnapshot } from '$lib/server/workspace';
@@ -34,6 +33,7 @@ function requestedFolder(value: string | null): MailboxSection {
 }
 
 export const load: PageServerLoad = async ({ platform, locals, url }) => {
+  const projectVersion = __FLAREMAIL_RELEASE_VERSION__;
   const env = platform?.env as CloudflareEnv | undefined;
   const dbBound = Boolean(env?.DB);
   const bucketBound = Boolean(env?.BUCKET);

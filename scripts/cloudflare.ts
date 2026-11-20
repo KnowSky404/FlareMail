@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pinCloudflareReleaseIdentity } from './shared-inbound-preview';
 import { checkPreInboundRelease, defaultStatePath, localStateArgs, projectRoot, readCloudflareTarget } from './cloudflare-target';
+import { assertReleaseHistory } from './release-version';
 
 const [command, ...args] = process.argv.slice(2);
 const cwd = command === 'build' || command === 'preview' || command === 'deploy' || command === 'pre' || command === 'dry-run' ? join(projectRoot, 'worker') : projectRoot;
@@ -51,6 +52,7 @@ if (command === 'typegen') {
   const invocation = createDeployInvocation('dry-run', environment);
   await run([invocation.command, ...invocation.args]);
 } else if (command === 'deploy' || command === 'pre') {
+  assertReleaseHistory(projectRoot);
   for (const key of ['FLAREMAIL_INBOUND_PREVIEW_PREFLIGHT', 'FLAREMAIL_INBOUND_PRODUCTION_PREFLIGHT']) {
     if (environment[key]) process.env[key] = environment[key] = resolve(environment[key]);
   }

@@ -45,6 +45,12 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   immutable release commit has been selected and recorded.
 - [ ] `git status --short` is empty.
 - [ ] The 40-character `git rev-parse HEAD` SHA is recorded.
+- [ ] Record the version shown in PRE's About dialog. If tags fetched or
+  created after PRE acceptance change the resolved version, verify the About
+  dialog in the new build against the planned release tag before upload.
+- [ ] When publishing a GitHub Release, push the reviewed tag after deployment
+  checks and verify that the remote tag resolves to the exact deployed SHA,
+  including dereferencing annotated tags, before publishing the Release.
 - [ ] The release SHA is reachable from `origin/main`:
 
   ```bash

@@ -1,11 +1,14 @@
 import { defineConfig } from 'vite';
+import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import adapter from '@sveltejs/adapter-cloudflare';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { adapterOptions } from './scripts/adapter-config.mjs';
+import { readReleaseVersion } from './scripts/release-version.ts';
 
 export default defineConfig(({ command }) => ({
+  define: { __FLAREMAIL_RELEASE_VERSION__: JSON.stringify(readReleaseVersion(fileURLToPath(new URL('.', import.meta.url)))) },
   // The portable ESM bundle embeds CSS grammar data instead of loading JSON
   // with createRequire, which breaks after bundling into a Worker.
   resolve: { alias: [{ find: /^css-tree$/, replacement: 'css-tree/dist/csstree.esm' }] },
