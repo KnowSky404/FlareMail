@@ -6,6 +6,7 @@ const ready: DomainCapabilityInput = {
   enabled: true,
   cloudflareHealth: 'fresh',
   catchAllCollects: false,
+  catchAllCheckedAt: null,
   resendStatus: 'verified',
   resendSendingStatus: 'enabled',
   resendCheckedAt: '2026-09-28T11:00:00.000Z',
@@ -38,6 +39,8 @@ describe('domain dashboard capability summary', () => {
 
   test('recognizes an explicitly collecting Worker catch-all and imported routes', () => {
     expect(summarizeDomainCapabilities({ ...ready, catchAllCollects: true, addresses: [] }, nowMs))
+      .toEqual({ receiving: 'needs_check', sending: 'not_ready' });
+    expect(summarizeDomainCapabilities({ ...ready, catchAllCollects: true, catchAllCheckedAt: new Date(nowMs).toISOString(), addresses: [] }, nowMs))
       .toEqual({ receiving: 'ready', sending: 'not_ready' });
     expect(summarizeDomainCapabilities({ ...ready, addresses: [
       { lifecycleStatus: 'active', routingState: 'imported', receiveEnabled: true, sendEnabled: false }

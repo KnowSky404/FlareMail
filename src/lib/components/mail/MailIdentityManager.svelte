@@ -651,6 +651,7 @@
       }),
       catchAllCollects: domain.unknown_recipient_policy === 'collect' &&
         (checks[domain.id]?.cloudflare?.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
+      catchAllCheckedAt: domain.catch_all_checked_at,
       resendStatus: domain.resend_status,
       resendSendingStatus: domain.resend_sending_status,
       resendCheckedAt: domain.resend_checked_at,
