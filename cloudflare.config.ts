@@ -20,8 +20,8 @@ export default defineConfig({
       workersDev = await verifyProductionWorkerDev(target, projectRoot);
       if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
       else {
-        await assertLiveNativePreview(target, release.source, projectRoot);
-        await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId));
+        const previewHasRoutingToken = await assertLiveNativePreview(target, release.source, projectRoot);
+        await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId), previewHasRoutingToken);
       }
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
