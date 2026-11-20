@@ -536,3 +536,22 @@ describe('managed route deletion ownership', () => {
     }
   });
 });
+test('shared mailbox creation rejects a legacy Worker mapping before taking ownership', async () => {
+  const fixture = createFixture();
+  const env = {
+    ...fixture.env,
+    INBOUND_ROUTING_SCOPE: { environment: 'preview' as const },
+    MAIL_IDENTITY_WORKER_NAME: 'current-production-worker',
+    INBOUND_ROUTING_DB: {
+      prepare() { throw new Error('Stale mappings must not access the ownership registry'); }
+    } as unknown as D1Database
+  };
+  try {
+    await expect(createManagedMailAddress(env, ownerId, { domainId, address: 'new@mail.example.test' }, {
+      cloudflareClient: () => { throw new Error('Stale mappings must not reach Cloudflare'); }
+    })).rejects.toMatchObject({ code: 'MAIL_DOMAIN_WORKER_MAPPING_CONFLICT' });
+    expect(fixture.sqlite.query("SELECT id FROM mail_addresses WHERE email = 'new@mail.example.test'").get()).toBeNull();
+  } finally {
+    fixture.sqlite.close();
+  }
+});
