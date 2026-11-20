@@ -2,6 +2,8 @@
 
 动态配置多个邮箱和域名的收信归属见 [PRE 与 PROD 的收信归属 SPEC](shared-inbound-routing.md)。本文定义固定 PRE 地址及其兼容切换保护。
 
+共享归属的只读 PRE 验收按新 SPEC 执行。发布人从 Cloudflare 控制面核对固定收件地址的精确规则，应用内不执行 Cloudflare 规则健康检查。
+
 设计基线为 `f020e6b0ed5918eccae6e555f9c9c41da19c3c25`。FlareMail 面向个人自托管，每套环境各有一个 Owner。此次整改让生产和 PRE 共用一个入站 Worker，同时保持各自的邮箱、原文和附件存储。
 
 独立 PRE 收信 Worker 的试验已结束。Cloudflare 在删除该 Worker 时禁用了它原来的一条精确规则，原生 PRE 网页和隔离存储继续保留。PRE 的邮箱记录及邮件身份目标配置仍可能引用旧规则或旧 Worker。切换时要核对 Cloudflare 实际状态并重新关联。

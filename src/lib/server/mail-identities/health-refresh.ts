@@ -179,7 +179,7 @@ async function checkCloudflareDomain(
     };
   } catch (error) {
     return {
-      ...classifyCloudflareError(error),
+      ...(productionWorker ? { errorCode: 'cloudflare_routing_registry_unavailable', retryable: true } : classifyCloudflareError(error)),
       observedAt: null,
       catchAllTarget: target,
       catchAllObservedAt
