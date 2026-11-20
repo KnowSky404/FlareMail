@@ -90,11 +90,13 @@ describe('/api/readiness', () => {
     const productionBindings = {
       ...production, PRE_INBOUND_SETTINGS: { recipient: null, enabled: false }, PRE_INBOUND_BUCKET: { put() {} }
     };
-    const missingPreviewSchema = await health(database, productionBindings);
+    expect((await health(database, productionBindings)).status).toBe(200);
+    const activePreview = { ...productionBindings, PRE_INBOUND_SETTINGS: { recipient: null, enabled: true } };
+    const missingPreviewSchema = await health(database, activePreview);
     expect(missingPreviewSchema.status).toBe(503);
     expect(await missingPreviewSchema.json()).toMatchObject({ error: { code: 'INBOUND_ROUTING_NOT_READY' } });
     applyMigrations(previewDatabase);
-    const productionReady = await health(database, productionBindings);
+    const productionReady = await health(database, activePreview);
     expect(productionReady.status).toBe(200);
     expect(await productionReady.json()).toMatchObject({ inboundRouting: { environment: 'production', readOnly: false } });
 
