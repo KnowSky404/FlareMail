@@ -671,7 +671,8 @@
 
   function capabilityLabel(state: DomainCapabilityState) {
     return state === 'ready' ? t('settings.ready') :
-      state === 'needs_check' ? t('settings.statusNeedsCheck') : t('settings.notReady');
+      state === 'catch_all_verified' ? t('settings.catchAllVerified') :
+        state === 'needs_check' ? t('settings.statusNeedsCheck') : t('settings.notReady');
   }
 
 </script>

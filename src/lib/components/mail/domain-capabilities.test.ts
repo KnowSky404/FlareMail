@@ -46,7 +46,7 @@ describe('domain dashboard capability summary', () => {
     expect(summarizeDomainCapabilities({
       ...ready, cloudflareHealth: 'not_configured', catchAllCollects: true,
       catchAllCheckedAt: new Date(nowMs).toISOString(), catchAllProductionVerified: true, addresses: []
-    }, nowMs)).toEqual({ receiving: 'ready', sending: 'not_ready' });
+    }, nowMs)).toEqual({ receiving: 'catch_all_verified', sending: 'not_ready' });
     expect(summarizeDomainCapabilities({ ...ready, addresses: [
       { lifecycleStatus: 'active', routingState: 'imported', receiveEnabled: true, sendEnabled: false }
     ] }, nowMs)).toEqual({ receiving: 'ready', sending: 'not_ready' });
