@@ -66,13 +66,11 @@ API when necessary; never infer that zero Builds records means there are no
 native Previews. Keep auth values out of output and preserve the current PRE
 until a usable replacement is confirmed.
 
-The shared-inbound release checks use the existing `cf` OAuth profile where the
-CLI makes its refreshed credentials available. `cf 1.0.0-rc.1` exposes neither
-the native Preview read commands needed here nor a command to pass keyring-backed
-credentials to those API calls. If the checks report
-`INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE` with a keyring-only
-profile, supply an authorized, scoped `CLOUDFLARE_API_TOKEN` in the process
-environment for the release. Keep the profile and keyring intact.
+The shared-inbound release checks reuse the credential store selected by `cf`,
+including the system keyring. For native Preview reads missing from the command
+surface, they use the authenticated read transport bundled with the pinned
+`cf 1.0.0-rc.1`. Check this integration before upgrading the CLI. An authorized,
+scoped `CLOUDFLARE_API_TOKEN` in the process environment also works.
 
 ## 邮件阅读页验收
 
