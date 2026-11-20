@@ -85,7 +85,8 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       !/^[a-f0-9]{40}$/u.test(receipt.releaseCommit) ||
       target.vars.APP_VERSION !== 'production+' + receipt.releaseCommit.slice(0, 7) ||
       (!pauseOnly && (!/^[a-f0-9]{40}$/u.test(receipt.acceptedPreviewCommit) ||
-        receipt.preview?.buildLabel !== 'preview+' + receipt.acceptedPreviewCommit.slice(0, 7) || receipt.ownerAcceptanceVerified !== true ||
+        receipt.preview?.buildLabel !== 'preview+' + receipt.acceptedPreviewCommit.slice(0, 7) ||
+        (receipt.ownerAcceptanceVerified !== true && receipt.ownerDelegatedAcceptance !== true) ||
         !receipt.preview?.deploymentId || routingD1Id(receipt.preview.databaseId) !== previewDb || receipt.preview.bucket !== target.preInbound?.bucket ||
         (receipt.preview.fixedReservationHash ?? null) !== reserved)) || !receipt.production?.deploymentId ||
       !productionDb || !previewDb || !registry || new Set([productionDb, previewDb, registry]).size !== 3 ||
@@ -579,6 +580,9 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
     throw new Error('INBOUND_PRODUCTION_DEPLOYMENT_CHANGED');
   }
   const existingRegistry = db('INBOUND_ROUTING_DB');
+  const scopeBinding = binding('INBOUND_ROUTING_SCOPE')?.json;
+  const scope = typeof scopeBinding === 'string' ? JSON.parse(scopeBinding) as Exclude<WorkerBindingMetadata['json'], string> : scopeBinding;
+  const routingReadOnly = scope?.environment === 'production' && scope.readOnly === true;
   const legacyFixedUpgrade = source.protecting && Boolean(settings?.recipient) &&
     !binding('INBOUND_ROUTING_DB') && !binding('INBOUND_ROUTING_SCOPE');
   if (source.protectVersionId || source.maintaining || source.pauseOnly ||
@@ -586,13 +590,11 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
     if (!settings || (!legacyFixedUpgrade && existingRegistry !== routingD1Id(target.inboundRouting?.databaseId)) ||
         db('PRE_INBOUND_DB') !== routingD1Id(target.preInbound?.databaseId) || bucket('PRE_INBOUND_BUCKET') !== target.preInbound?.bucket ||
         fixedReservationHash(settings.recipient ?? undefined) !== fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT) ||
-        (source.protectVersionId && (version.id !== source.protectVersionId || settings.enabled !== false)) ||
+        (source.protectVersionId && (version.id !== source.protectVersionId || settings.enabled !== false || !routingReadOnly)) ||
         (source.maintaining && settings.enabled !== true) ||
         (source.pauseOnly && (settings.enabled !== true || binding('APP_VERSION')?.text !== target.vars.APP_VERSION))) {
       throw new Error('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
     }
   }
-  const scopeBinding = binding('INBOUND_ROUTING_SCOPE')?.json;
-  const scope = typeof scopeBinding === 'string' ? JSON.parse(scopeBinding) as Exclude<WorkerBindingMetadata['json'], string> : scopeBinding;
-  return { ...version, routingReadOnly: scope?.readOnly === true };
+  return { ...version, routingReadOnly };
 }

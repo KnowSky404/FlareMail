@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertActiveProductionForRelease, assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -201,6 +201,45 @@ cat '${directory}/'"$3"
   }
 });
 
+test('activation requires the active protection version to block identity writes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-protection-release-'));
+  const environment = { PATH: directory + ':' + process.env.PATH, CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) };
+  const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+  Object.assign(process.env, environment);
+  const target = {
+    ...localTarget,
+    preInbound: { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', databaseName: 'pre', bucket: 'pre-bucket' },
+    inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
+  };
+  const protectVersionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const source = { protectVersionId, releaseCommit: '', acceptedPreviewCommit: '', deploymentId: 'deployment', previewDeploymentId: '', previewBuildLabel: '', protecting: false, maintaining: false, pauseOnly: false };
+  const deployments = { deployments: [{ id: source.deploymentId, versions: [{ version_id: protectVersionId, percentage: 100 }] }] };
+  const bindings = [
+    { name: 'DB', database_id: target.databaseId }, { name: 'BUCKET', bucket_name: target.bucket },
+    { name: 'PRE_INBOUND_DB', database_id: target.preInbound.databaseId }, { name: 'PRE_INBOUND_BUCKET', bucket_name: target.preInbound.bucket },
+    { name: 'INBOUND_ROUTING_DB', database_id: target.inboundRouting.databaseId },
+    { name: 'PRE_INBOUND_SETTINGS', json: { enabled: false } }
+  ];
+  const mockScope = (scope: { environment: string; readOnly?: boolean }) => writeFile(join(directory, 'versions'),
+    JSON.stringify({ bindings: [...bindings, { name: 'INBOUND_ROUTING_SCOPE', json: JSON.stringify(scope) }] }));
+  try {
+    await writeFile(join(directory, 'deployments'), JSON.stringify(deployments));
+    await writeFile(join(directory, 'cf'), `#!/bin/sh\n[ "$1" = 'workers' ] || exit 1\ncat '${directory}/'"$2"\n`, { mode: 0o700 });
+    for (const scope of [{ environment: 'production' }, { environment: 'preview', readOnly: true }]) {
+      await mockScope(scope);
+      expect(() => assertActiveProductionForRelease(target, source)).toThrow('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
+    }
+    await mockScope({ environment: 'production', readOnly: true });
+    expect(assertActiveProductionForRelease(target, source).routingReadOnly).toBe(true);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('activation requires PRE catch-all observations produced after the protection deployment', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-activation-'));
   const environment = {
@@ -315,6 +354,10 @@ test('production activation requires the reviewed PRE and an active, paused prot
       releaseCommit: evidence.releaseCommit, acceptedPreviewCommit: evidence.acceptedPreviewCommit
     });
     await expect(cloudflareConfig.worker({ mode: 'production', isPreview: false })).rejects.toThrow('INBOUND_PRODUCTION_RELEASE_SOURCE_NOT_VERIFIED');
+    await writeFile(proof, JSON.stringify({ ...protect, ownerAcceptanceVerified: false }));
+    expect(() => assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toThrow('INBOUND_PRODUCTION_PREFLIGHT_INVALID');
+    await writeFile(proof, JSON.stringify({ ...protect, ownerAcceptanceVerified: false, ownerDelegatedAcceptance: true }));
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ protecting: true });
 
     await writeFile(proof, JSON.stringify({ ...evidence, phase: 'pause', preview: undefined, acceptedPreviewCommit: undefined,
       ownerAcceptanceVerified: false, targetHash: sharedInboundPreviewTargetHash(candidate) }));

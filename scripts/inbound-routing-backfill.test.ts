@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inboundRoutingBackfillStatements } from './inbound-routing-backfill';
-import { buildInboundRoutingPlan, identityClaimsSql } from './inbound-routing-inventory';
+import { buildInboundRoutingPlan, identityClaimsSql, planIdentityClaims } from './inbound-routing-inventory';
 import { executeD1 } from './cloudflare-target';
 import { extractD1Rows } from './bootstrap-owner';
 
@@ -33,10 +33,17 @@ test('a disabled domain preference does not add or conflict with a catch-all cla
   db.exec(`INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name, enabled, unknown_recipient_policy)
     VALUES ('paused', 'fixture', 'example.test', 'zone', 'worker', 0, 'collect'),
            ('active', 'fixture', 'active.example.test', 'zone', 'worker', 1, 'collect')`);
-  const rows = db.query<{ kind: typeof catchAll.kind; route_key: string }, []>(identityClaimsSql).all();
-  expect(rows).toEqual([{ kind: 'catch_all', route_key: 'active.example.test' }]);
+  const rows = db.query<{ kind: typeof catchAll.kind; route_key: string; receiving: number }, []>(identityClaimsSql).all();
+  expect(rows).toEqual([{ kind: 'catch_all', route_key: 'active.example.test', receiving: 0 }]);
   const requested = rows.map(({ kind, route_key: key }) => ({ kind, key, environment: production.environment }));
   expect(buildInboundRoutingPlan([catchAll], requested)).toEqual({ additions: requested, conflicts: [] });
+});
+
+test('cutover detects a receiving PRE subaddress that the fixed reservation would always reject', () => {
+  const previewRows = [{ kind: 'mailbox', route_key: 'reserved+tag@example.test', receiving: 1 }];
+  expect(() => planIdentityClaims([], previewRows, [], 'reserved@example.test')).toThrow('INBOUND_ROUTING_RESERVED_SUBADDRESS_PRESENT');
+  expect(planIdentityClaims([], [{ ...previewRows[0], receiving: 0 }], [], 'reserved@example.test').additions)
+    .toEqual([{ kind: 'mailbox', key: 'reserved@example.test', environment: 'preview' }]);
 });
 
 test('a large local D1 backfill stays atomic across SQL statements', async () => {
