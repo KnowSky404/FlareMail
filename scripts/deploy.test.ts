@@ -208,16 +208,18 @@ test('activation requires the active protection version to block identity writes
   Object.assign(process.env, environment);
   const target = {
     ...localTarget,
+    vars: { ...localTarget.vars, APP_VERSION: 'production+abcd123' },
     preInbound: { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', databaseName: 'pre', bucket: 'pre-bucket' },
     inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
   };
   const protectVersionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
-  const source = { protectVersionId, releaseCommit: '', acceptedPreviewCommit: '', deploymentId: 'deployment', previewDeploymentId: '', previewBuildLabel: '', protecting: false, maintaining: false, pauseOnly: false };
+  const source = { protectVersionId, releaseCommit: '', acceptedPreviewCommit: '', deploymentId: 'deployment', previewDeploymentId: '', previewBuildLabel: '', protecting: false, maintaining: false, pauseOnly: false, resuming: false };
   const deployments = { deployments: [{ id: source.deploymentId, versions: [{ version_id: protectVersionId, percentage: 100 }] }] };
   const bindings = [
     { name: 'DB', database_id: target.databaseId }, { name: 'BUCKET', bucket_name: target.bucket },
     { name: 'PRE_INBOUND_DB', database_id: target.preInbound.databaseId }, { name: 'PRE_INBOUND_BUCKET', bucket_name: target.preInbound.bucket },
     { name: 'INBOUND_ROUTING_DB', database_id: target.inboundRouting.databaseId },
+    { name: 'APP_VERSION', text: target.vars.APP_VERSION },
     { name: 'PRE_INBOUND_SETTINGS', json: { enabled: false } }
   ];
   const mockScope = (scope: { environment: string; readOnly?: boolean }) => writeFile(join(directory, 'versions'),
@@ -231,6 +233,12 @@ test('activation requires the active protection version to block identity writes
     }
     await mockScope({ environment: 'production', readOnly: true });
     expect(assertActiveProductionForRelease(target, source).routingReadOnly).toBe(true);
+    const resume = { ...source, protectVersionId: null, resuming: true };
+    expect(() => assertActiveProductionForRelease(target, resume)).toThrow('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
+    await mockScope({ environment: 'production' });
+    expect(assertActiveProductionForRelease(target, resume).routingReadOnly).toBe(false);
+    expect(() => assertActiveProductionForRelease({ ...target, vars: { ...target.vars, APP_VERSION: 'production+different' } }, resume))
+      .toThrow('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
@@ -373,6 +381,8 @@ test('production activation requires the reviewed PRE and an active, paused prot
     expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ releaseCommit: evidence.releaseCommit });
     await writeFile(proof, JSON.stringify({ ...evidence, phase: 'maintain', targetHash: sharedInboundPreviewTargetHash(active) }));
     expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ maintaining: true, protectVersionId: null });
+    await writeFile(proof, JSON.stringify({ ...evidence, phase: 'resume', targetHash: sharedInboundPreviewTargetHash(active), legacyOperationsQuiesced: false }));
+    expect(assertSharedInboundProduction(readCloudflareTarget(file, true), proof)).toMatchObject({ resuming: true, protectVersionId: null });
 
     const { PRE_INBOUND_RECIPIENT: _recipient, ...unreservedVars } = candidate.vars;
     const unreserved = { ...candidate, vars: unreservedVars };
