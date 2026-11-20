@@ -21,10 +21,11 @@ export default defineConfig({
       workersDev = await verifyProductionWorkerDev(target, projectRoot);
       if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
       else {
-        const activePreviewCapacity = await assertLiveNativePreview(target, release.source, projectRoot);
+        const cutover = release.source.protecting || Boolean(release.source.protectVersionId);
+        const activePreviewCapacity = await assertLiveNativePreview(target, release.source, projectRoot, cutover);
         await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId) || release.source.resuming, activePreviewCapacity);
         if (release.source.resuming) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
-        if (release.source.protecting || release.source.protectVersionId || release.source.resuming) {
+        if (cutover || release.source.resuming) {
           await assertProductionOwnershipCoverage(target);
         }
       }

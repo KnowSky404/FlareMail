@@ -279,26 +279,22 @@ function runCloudflareCliModule(projectRoot: string, scriptPath: string, operati
   `, scriptPath, ...args], { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000 });
 }
 
+export const cloudflareMetadataTransport = {
+  async read(projectRoot: string, resource: string) {
+    return runCloudflareCliModule(projectRoot, cloudflareCliModule('raw-fetch-g83RSAGp.mjs'),
+      'process.stdout.write(await command.t(process.argv[2]));', [resource]);
+  }
+};
+
 function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim();
   if (!token) pinCloudflareReleaseIdentity(projectRoot, false);
-  const rawFetch = token ? undefined : cloudflareCliModule('raw-fetch-g83RSAGp.mjs');
   return async <T>(path: string) => {
     const resource = '/accounts/' + account + '/workers/' + path;
     try {
-      let output: string;
-      if (rawFetch) {
-        output = runCloudflareCliModule(projectRoot, rawFetch, 'process.stdout.write(await command.t(process.argv[2]));', [resource]);
-      } else {
-        const response = await fetch('https://api.cloudflare.com/client/v4' + resource, {
-          headers: { Authorization: 'Bearer ' + token },
-          signal: AbortSignal.timeout(8_000), redirect: 'error'
-        });
-        if (!response.ok) throw new Error(errorCode);
-        output = await response.text();
-      }
+      const output = await cloudflareMetadataTransport.read(projectRoot, resource);
       const envelope = JSON.parse(output) as { success: boolean; result: T };
       if (envelope.success === true) return envelope.result;
     } catch {
@@ -329,9 +325,10 @@ async function readLiveNativePreview(workerName: string, projectRoot: string) {
 }
 
 export async function assertLiveNativePreview(
-  target: CloudflareTarget, source: { previewDeploymentId: string; previewBuildLabel: string }, projectRoot: string
+  target: CloudflareTarget, source: { previewDeploymentId: string; previewBuildLabel: string }, projectRoot: string,
+  requireReadOnly = false
 ) {
-  const { latest } = await readLiveNativePreview(target.name, projectRoot);
+  const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
   const binding = env?.PRE_INBOUND_SETTINGS;
   const value = binding?.json;
@@ -355,9 +352,9 @@ export async function assertLiveNativePreview(
     const raw = env.INBOUND_ROUTING_SCOPE?.json;
     const scope = typeof raw === 'string' ? JSON.parse(raw) as Exclude<WorkerBindingMetadata['json'], string> : raw;
     if (scope?.environment === 'preview') {
-      if (scope.readOnly === true) return 0;
+      if (scope.readOnly === true && !env.CLOUDFLARE_EMAIL_ROUTING_TOKEN && !baseEnv?.CLOUDFLARE_EMAIL_ROUTING_TOKEN) return 0;
       const capacity = scope.previewCatchAllCapacity;
-      if (typeof capacity === 'number' && Number.isSafeInteger(capacity) && capacity > 0) return capacity;
+      if (!requireReadOnly && scope.readOnly !== true && typeof capacity === 'number' && Number.isSafeInteger(capacity) && capacity > 0) return capacity;
     }
   } catch {
     // Invalid binding JSON cannot authorize writable PRE.
