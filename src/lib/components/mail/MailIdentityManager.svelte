@@ -52,6 +52,7 @@
   let syncNotice = $state('');
   let syncError = $state('');
   let providerConfiguration = $state({ cloudflare: false, resend: false, productionVerifiesCatchAll: false });
+  let routingReadOnly = $state(false);
   let onboarding = $state({ available: false, workerName: null as string | null, canManageRouting: false });
   let domainSearch = $state('');
   let addressSearch = $state('');
@@ -149,7 +150,7 @@
   });
 
   type Identities = { domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[]; addresses: MailAddress[];
-    providerConfiguration: { cloudflare: boolean; resend: boolean; productionVerifiesCatchAll?: boolean }; domainOnboarding?: typeof onboarding };
+    providerConfiguration: { cloudflare: boolean; resend: boolean; productionVerifiesCatchAll?: boolean }; routingReadOnly?: boolean; domainOnboarding?: typeof onboarding };
 
   type FreshCheck = DomainCheck & { resend: DomainCheck['resend'] & { checkedAt: string | null } };
   type LoadOptions = { preserveChecks?: Record<string, Partial<DomainCheck>>; quiet?: boolean };
@@ -164,6 +165,7 @@
       if (options.quiet && !canAutoRefresh()) return false;
       const previousDomains = domains;
       providerConfiguration = { ...loaded.providerConfiguration, productionVerifiesCatchAll: loaded.providerConfiguration.productionVerifiesCatchAll === true };
+      routingReadOnly = loaded.routingReadOnly === true;
       onboarding = loaded.domainOnboarding ?? { available: false, workerName: null, canManageRouting: false };
       domains = loaded.domains.map((domain) => ({ ...domain, cloudflare_configured: loaded.providerConfiguration.cloudflare, resend_configured: loaded.providerConfiguration.resend }));
       addresses = loaded.addresses;
@@ -698,10 +700,10 @@
     {#if view === 'domains'}
       <div class="header-actions">
         <Button id="refresh-all-domains" variant="secondary" loading={pendingAction === 'check-all'} disabled={!loadedOnce || busy || loading || !domains.length} onclick={() => void refreshAllDomains()}>{#if pendingAction !== 'check-all'}<RefreshCw size={16} aria-hidden="true" />{/if}{t('settings.refreshAll')}</Button>
-        <Button id="add-mail-domain" disabled={!loadedOnce || busy} onclick={openAddDomain}><Plus size={16} aria-hidden="true" />{t('settings.addMailDomain')}</Button>
+        <Button id="add-mail-domain" disabled={routingReadOnly || !loadedOnce || busy} onclick={openAddDomain}><Plus size={16} aria-hidden="true" />{t('settings.addMailDomain')}</Button>
       </div>
     {:else}
-      <Button id="add-mail-address" disabled={!loadedOnce || busy || availableDomains.length === 0} onclick={(event) => openCreateAddress(domainFilter, event)}><Plus size={16} aria-hidden="true" />{t('settings.addMailAddress')}</Button>
+      <Button id="add-mail-address" disabled={routingReadOnly || !loadedOnce || busy || availableDomains.length === 0} onclick={(event) => openCreateAddress(domainFilter, event)}><Plus size={16} aria-hidden="true" />{t('settings.addMailAddress')}</Button>
     {/if}
   </header>
   <div class="resource-toolbar">
@@ -733,8 +735,8 @@
       <DropdownMenu id="mail-resources-menu" triggerAriaLabel={t('settings.moreActions')} align="end" showChevron={false}>
         {#snippet trigger()}<MoreHorizontal size={18} aria-hidden="true" />{/snippet}
         {#if view === 'domains'}<button role="menuitem" type="button" disabled={busy || loading} onclick={() => void load()}>{t('settings.refreshList')}</button>{/if}
-        <button role="menuitem" type="button" disabled={busy || !loadedOnce} onclick={(event) => { captureTrigger(event); syncNotice = ''; syncError = ''; syncOpen = true; }}>{t('settings.syncCloudflare')}</button>
-        {#if view === 'addresses'}<button role="menuitem" type="button" disabled={busy || !loadedOnce} onclick={openAddDomain}>{t('settings.addMailDomain')}</button>{/if}
+        <button role="menuitem" type="button" disabled={routingReadOnly || busy || !loadedOnce} onclick={(event) => { captureTrigger(event); syncNotice = ''; syncError = ''; syncOpen = true; }}>{t('settings.syncCloudflare')}</button>
+        {#if view === 'addresses'}<button role="menuitem" type="button" disabled={routingReadOnly || busy || !loadedOnce} onclick={openAddDomain}>{t('settings.addMailDomain')}</button>{/if}
         <button role="menuitem" type="button" onclick={() => { sortDescending = !sortDescending; pageNumber = 1; }}>{t(sortDescending ? 'settings.sortAscending' : 'settings.sortDescending')}</button>
         <button role="menuitem" type="button" onclick={clearFilters}>{t('settings.clearFilters')}</button>
       </DropdownMenu>
@@ -750,7 +752,7 @@
     <div class="table-loading" role="status"><span class="sr-only">{t('common.loading')}</span>{#each Array(5) as _, index (index)}<Skeleton height="2.75rem" />{/each}</div>
   {:else if loadedOnce}
     {#if view === 'addresses' && availableDomains.length === 0}
-      <p class="message" role="status">{t('settings.noAvailableDomains')} <button class="text-action" type="button" onclick={openAddDomain}>{t('settings.addMailDomain')}</button></p>
+      <p class="message" role="status">{t('settings.noAvailableDomains')} <button class="text-action" type="button" disabled={routingReadOnly} onclick={openAddDomain}>{t('settings.addMailDomain')}</button></p>
     {/if}
     <div class="table-wrap" aria-busy={loading}>
       {#if view === 'domains'}
@@ -771,11 +773,11 @@
                 <td class="secondary-column"><span class="state-badge">{domain.enabled ? t('settings.enabled') : t('settings.disabled')}</span></td>
                 <td class="capability-column">{@render stateBadge(capabilities.receiving)}</td><td class="capability-column">{@render stateBadge(capabilities.sending)}</td>
                 <td class="actions-column"><div class="row-actions" data-resource-actions>
-                  <IconButton ariaLabel={`${t('settings.domainSettings')}: ${domain.domain_name}`} disabled={busy} onclick={(event) => openDomainSettings(domain, event)}><Pencil size={16} aria-hidden="true" /></IconButton>
+                  <IconButton ariaLabel={`${t('settings.domainSettings')}: ${domain.domain_name}`} disabled={routingReadOnly || busy} onclick={(event) => openDomainSettings(domain, event)}><Pencil size={16} aria-hidden="true" /></IconButton>
                   <DropdownMenu id={`domain-menu-${domain.id}`} triggerAriaLabel={`${t('settings.moreActions')}: ${domain.domain_name}`} align="end" showChevron={false}>
                     {#snippet trigger()}<MoreHorizontal size={17} aria-hidden="true" />{/snippet}
                     <button role="menuitem" type="button" onclick={() => onViewAddressesForDomain?.(domain.id)}>{t('settings.viewAddresses')}</button>
-                    <button role="menuitem" type="button" disabled={!domain.enabled || busy} onclick={(event) => openCreateAddress(domain.id, event)}>{t('settings.createAddressForDomain')}</button>
+                    <button role="menuitem" type="button" disabled={routingReadOnly || !domain.enabled || busy} onclick={(event) => openCreateAddress(domain.id, event)}>{t('settings.createAddressForDomain')}</button>
                     <button role="menuitem" type="button" disabled={busy} onclick={(event) => openDiagnostics(domain, undefined, event)}>{t('settings.diagnostics')}</button>
                     <button role="menuitem" type="button" disabled={busy || unresolvedDomainChecks[domain.id]} onclick={() => void checkDomain(domain)}>{t('settings.checkMailDomain')}</button>
                   </DropdownMenu>
@@ -807,24 +809,24 @@
                 <td class="secondary-column">{domain?.domain_name ?? '—'}</td><td class="secondary-column"><span class="state-badge">{address.lifecycle_status === 'deleted' ? t('settings.routeDeleted') : address.lifecycle_status === 'active' ? t('settings.enabled') : t('settings.disabled')}</span></td>
                 <td class="capability-column">{@render stateBadge(receive)}</td><td class="capability-column">{@render stateBadge(send)}</td>
                 <td class="actions-column"><div class="row-actions" data-resource-actions>
-                  {#if address.lifecycle_status !== 'deleted'}<IconButton ariaLabel={`${t('settings.editAddressDetails')}: ${address.email}`} disabled={busy} onclick={(event) => openAddressSettings(address, event)}><Pencil size={16} aria-hidden="true" /></IconButton>{/if}
+                  {#if address.lifecycle_status !== 'deleted'}<IconButton ariaLabel={`${t('settings.editAddressDetails')}: ${address.email}`} disabled={routingReadOnly || busy} onclick={(event) => openAddressSettings(address, event)}><Pencil size={16} aria-hidden="true" /></IconButton>{/if}
                   <DropdownMenu id={`address-menu-${address.id}`} triggerAriaLabel={`${t('settings.moreActions')}: ${address.email}`} align="end" showChevron={false}>
                     {#snippet trigger()}<MoreHorizontal size={17} aria-hidden="true" />{/snippet}
                     <button role="menuitem" type="button" disabled={!domain || busy} onclick={(event) => { if (domain) openDiagnostics(domain, address, event); }}>{t('settings.diagnostics')}</button>
                     {#if address.lifecycle_status === 'deleted'}
-                      {#if canRestoreAddress(address)}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'restore')}>{t('settings.restoreAddress')}</button>{/if}
+                      {#if canRestoreAddress(address)}<button role="menuitem" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'restore')}>{t('settings.restoreAddress')}</button>{/if}
                     {:else}
-                      {#if route === 'importable'}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'import')}>{t('settings.importRule')}</button>{/if}
-                      <button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, address.lifecycle_status === 'active' ? 'disable' : 'enable')}>{t(address.lifecycle_status === 'active' ? 'settings.disableAddress' : 'settings.enableAddress')}</button>
+                      {#if route === 'importable'}<button role="menuitem" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'import')}>{t('settings.importRule')}</button>{/if}
+                      <button role="menuitem" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, address.lifecycle_status === 'active' ? 'disable' : 'enable')}>{t(address.lifecycle_status === 'active' ? 'settings.disableAddress' : 'settings.enableAddress')}</button>
                       {#if address.lifecycle_status === 'active'}
                         {#if address.send_enabled}
-                          <button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'disable_send')}>{t('settings.disableSending')}</button>
-                          {#if !address.is_default_sender}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id] || !canSendFrom(address)} onclick={() => void runAction(address, 'make_default')}>{t('settings.setDefaultSender')}</button>{/if}
-                        {:else}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id] || !canSendFrom({ ...address, send_enabled: 1 })} onclick={() => void runAction(address, 'enable_send')}>{t('settings.enableSending')}</button>{/if}
+                          <button role="menuitem" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'disable_send')}>{t('settings.disableSending')}</button>
+                          {#if !address.is_default_sender}<button role="menuitem" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id] || !canSendFrom(address)} onclick={() => void runAction(address, 'make_default')}>{t('settings.setDefaultSender')}</button>{/if}
+                        {:else}<button role="menuitem" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id] || !canSendFrom({ ...address, send_enabled: 1 })} onclick={() => void runAction(address, 'enable_send')}>{t('settings.enableSending')}</button>{/if}
                       {/if}
-                      <button role="menuitem" class="danger" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={(event) => void openDeletePreview(address, event)}>{t('settings.deleteAddress')}</button>
+                      <button role="menuitem" class="danger" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id]} onclick={(event) => void openDeletePreview(address, event)}>{t('settings.deleteAddress')}</button>
                     {/if}
-                    {#if canRetryRouting(address)}<button role="menuitem" type="button" disabled={busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'retry')}>{t('settings.retryRouting')}</button>{/if}
+                    {#if canRetryRouting(address)}<button role="menuitem" type="button" disabled={routingReadOnly || busy || unresolvedAddressActions[address.id]} onclick={() => void runAction(address, 'retry')}>{t('settings.retryRouting')}</button>{/if}
                   </DropdownMenu>
                 </div></td>
               </tr>
@@ -868,14 +870,14 @@
       {#if createError}<p class="message error" role="alert">{createError}</p>{/if}
       {#if unknownWrite}{#if !createExistingConflict}<p class="attention" role="status">{t('settings.writeOutcomeUnknown')}</p>{/if}<Button variant="secondary" loading={pendingAction === 'verify'} disabled={busy} onclick={() => void verifyWriteOutcome()}>{t('settings.verifyWriteOutcome')}</Button>{#if createFoundAddressId}<Button variant="secondary" disabled={busy} onclick={() => requestClose(() => { const address = addresses.find((item) => item.id === createFoundAddressId); const domain = domains.find((item) => item.id === address?.domain_id); createAddressOpen = false; if (domain && address) openDiagnostics(domain, address); })}>{t('settings.diagnostics')}</Button>{/if}{/if}
     </form>
-    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="create-mail-address-form" disabled={busy || unknownWrite || !selectedDomainId || !localPart.trim()} aria-busy={pendingAction === 'create'}>{t('settings.createMailAddress')}</button>{/snippet}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="create-mail-address-form" disabled={routingReadOnly || busy || unknownWrite || !selectedDomainId || !localPart.trim()} aria-busy={pendingAction === 'create'}>{t('settings.createMailAddress')}</button>{/snippet}
   </Dialog>
 {/if}
 
 {#if addDomainOpen}
   <Dialog open id="add-mail-domain-dialog" title={t('settings.addMailDomain')} dismissible={!busy} closeOnBackdrop={!busy} {restoreFocusElement} fallbackFocus="#add-mail-domain" initialFocus="#new-mail-domain" onClose={() => requestClose()}>
     <MailDomainSetup available={onboarding.available} workerName={onboarding.workerName} busy={Boolean(pendingAction)} onCreated={domainCreated} onRefresh={async () => { await load(); }} onDirtyChange={(value) => domainSetupDirty = value} onPendingChange={(value) => domainSetupBusy = value} onFormStateChange={(state) => domainFormCanSubmit = state.canSubmit} hideActions onError={onError} />
-    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="mail-domain-setup-form" disabled={!domainFormCanSubmit || busy} aria-busy={domainSetupBusy}>{t('settings.connectMailDomain')}</button>{/snippet}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="mail-domain-setup-form" disabled={routingReadOnly || !domainFormCanSubmit || busy} aria-busy={domainSetupBusy}>{t('settings.connectMailDomain')}</button>{/snippet}
   </Dialog>
 {/if}
 
@@ -905,7 +907,7 @@
       {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
       {#if unknownWrite}<p class="attention">{t('settings.writeOutcomeUnknown')}</p><Button variant="secondary" disabled={busy} onclick={() => void verifyWriteOutcome()}>{t('settings.verifyWriteOutcome')}</Button>{/if}
     </form>
-    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="domain-settings-form" disabled={busy || unknownWrite} aria-busy={pendingAction === 'domain-settings'}>{t('settings.saveIdentitySettings')}</button>{/snippet}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="domain-settings-form" disabled={routingReadOnly || busy || unknownWrite} aria-busy={pendingAction === 'domain-settings'}>{t('settings.saveIdentitySettings')}</button>{/snippet}
   </Dialog>
 {/if}
 
@@ -918,7 +920,7 @@
       {#if settingsError}<p class="message error" role="alert">{settingsError}</p>{/if}
       {#if unknownWrite}<p class="attention">{t('settings.writeOutcomeUnknown')}</p><Button variant="secondary" disabled={busy} onclick={() => void verifyWriteOutcome()}>{t('settings.verifyWriteOutcome')}</Button>{/if}
     </form>
-    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="address-settings-form" disabled={busy || unknownWrite} aria-busy={pendingAction === 'address-settings'}>{t('settings.saveIdentitySettings')}</button>{/snippet}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.cancel')}</Button><button class="submit-button" type="submit" form="address-settings-form" disabled={routingReadOnly || busy || unknownWrite} aria-busy={pendingAction === 'address-settings'}>{t('settings.saveIdentitySettings')}</button>{/snippet}
   </Dialog>
 {/if}
 
@@ -928,7 +930,7 @@
     <MailIdentityDiagnostics domain={diagnosticsDomain} address={diagnosticsAddress} check={checks[diagnosticsDomain.id]} {busy} showActions={false} />
     {#if errorMessage}<p class="error" role="alert">{errorMessage}</p>{/if}
     {#if notice}<p class="message" role="status">{notice}</p>{/if}
-    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button>{#if diagnosticsAddress && canRetryRouting(diagnosticsAddress)}<Button variant="secondary" disabled={busy || unresolvedAddressActions[diagnosticsAddress.id]} onclick={() => void runAction(diagnosticsAddress!, 'retry')}>{t('settings.retryRouting')}</Button>{/if}<Button loading={pendingAction === `check:${diagnosticsDomain.id}`} disabled={busy || unresolvedDomainChecks[diagnosticsDomain.id]} onclick={() => void checkDomain(diagnosticsDomain!)}>{t('settings.checkMailDomain')}</Button>{/snippet}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button>{#if diagnosticsAddress && canRetryRouting(diagnosticsAddress)}<Button variant="secondary" disabled={routingReadOnly || busy || unresolvedAddressActions[diagnosticsAddress.id]} onclick={() => void runAction(diagnosticsAddress!, 'retry')}>{t('settings.retryRouting')}</Button>{/if}<Button loading={pendingAction === `check:${diagnosticsDomain.id}`} disabled={busy || unresolvedDomainChecks[diagnosticsDomain.id]} onclick={() => void checkDomain(diagnosticsDomain!)}>{t('settings.checkMailDomain')}</Button>{/snippet}
   </Dialog>
 {/if}
 
@@ -938,7 +940,7 @@
     {#if !onboarding.available}<p class="attention" role="status">{t(onboarding.workerName ? 'settings.domainReadPermissionMissing' : 'settings.domainWorkerMissing')}</p>{/if}
     {#if syncNotice}<p class="message success" role="status">{syncNotice}</p>{/if}
     {#if syncError}<p class="message attention" role="alert">{syncError}</p>{/if}
-    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button><Button disabled={busy || !onboarding.available} loading={pendingAction === 'sync'} onclick={() => void syncResources()}>{t('settings.syncImportConfirm')}</Button>{/snippet}
+    {#snippet footer()}<Button variant="ghost" disabled={busy} onclick={() => requestClose()}>{t('common.close')}</Button><Button disabled={routingReadOnly || busy || !onboarding.available} loading={pendingAction === 'sync'} onclick={() => void syncResources()}>{t('settings.syncImportConfirm')}</Button>{/snippet}
   </Dialog>
 {/if}
 
@@ -1002,7 +1004,7 @@
     {/snippet}
     {#snippet footer()}
       <Button variant="ghost" disabled={pendingAction.endsWith(':delete')} onclick={closeDeletePreview}>{t('common.cancel')}</Button>
-      <Button variant="danger" loading={pendingAction.endsWith(':delete')} disabled={!canConfirmDelete()} onclick={deleteAddress}>{t('settings.deleteAddress')}</Button>
+      <Button variant="danger" loading={pendingAction.endsWith(':delete')} disabled={routingReadOnly || !canConfirmDelete()} onclick={deleteAddress}>{t('settings.deleteAddress')}</Button>
     {/snippet}
   </Dialog>
 {/if}

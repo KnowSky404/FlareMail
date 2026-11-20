@@ -137,6 +137,7 @@ Owner-authenticated workspace APIs use the standard JSON envelope and CSRF prote
 `GET /api/workspace/mail-identities` returns only the authenticated Owner's
 configured domains and addresses. `domainOnboarding` reports whether browser
 enrollment is available and whether route management credentials are configured.
+`routingReadOnly` indicates whether the current deployment allows identity writes.
 The deployment fixes `MAIL_IDENTITY_WORKER_NAME` and `MAIL_IDENTITY_ACCOUNT_ID`;
 the browser supplies a domain and Zone ID, which the server verifies against
 Cloudflare before recording the mapping. The browser cannot choose a Worker,
