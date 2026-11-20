@@ -7,6 +7,7 @@ import type { CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-ro
 import { checkManagedMailDomain, type ManagedMailDomainCheckDependencies } from './check';
 import { disableManagedMailAddress } from './routing';
 import { updateMailDomain } from './domains';
+import { resolveInboundRecipient } from '$lib/server/db/mail-identities';
 
 const schema = readFileSync(resolve(import.meta.dir, '../../../../schema.sql'), 'utf8');
 const ownerId = 'owner-0000-0000-0000-000000000001';
@@ -302,6 +303,33 @@ describe('managed mail domain checks', () => {
     await checkManagedMailDomain(env, ownerId, domainId, dependencies([], { now }));
     expect(fixture.selectDomain()).toMatchObject({ catch_all_target: 'this_worker', catch_all_checked_at: now() });
     fixture.sqlite.close();
+  });
+
+  test('manual PRE checks allow an unassigned collector to recover without authorizing delivery', async () => {
+    const fixture = createFixture();
+    using registry = new Database(':memory:');
+    registry.exec(readFileSync(new URL('../../../../routing-migrations/0001_ownership.sql', import.meta.url), 'utf8'));
+    fixture.sqlite.query(`UPDATE mail_domains SET unknown_recipient_policy = 'collect', catch_all_target = 'external',
+      catch_all_checked_at = '2020-01-01T00:00:00.000Z', cloudflare_next_check_at = '2099-01-01T00:00:00.000Z'`).run();
+    const env = {
+      ...fixture.env,
+      INBOUND_ROUTING_SCOPE: { environment: 'preview' as const, previewCatchAllCapacity: 1 },
+      INBOUND_ROUTING_DB: { prepare: (sql: string) => new SqliteD1Statement(registry, sql) } as unknown as D1Database
+    };
+    const collect = () => updateMailDomain(env, ownerId, domainId, { unknownRecipientPolicy: 'collect' });
+    const resolve = () => resolveInboundRecipient(env.DB, 'new@mail.example.test', Date.now(), { productionObservedCatchAll: true });
+    try {
+      await expect(collect()).rejects.toMatchObject({ code: 'MAIL_DOMAIN_COLLECT_NOT_READY' });
+      const now = new Date().toISOString();
+      const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([], { now: () => now }));
+      expect(result.cloudflare).toMatchObject({ catchAllTarget: 'this_worker', errorCode: 'cloudflare_collect_catch_all_unassigned' });
+      expect(await resolve()).toMatchObject({ accepted: false });
+      expect(await collect()).toMatchObject({ catch_all_checked_at: null, cloudflare_next_check_at: null });
+      expect(registry.query('SELECT environment FROM inbound_routing_ownership').get()).toEqual({ environment: 'preview' });
+      expect(await resolve()).toMatchObject({ accepted: false });
+    } finally {
+      fixture.sqlite.close();
+    }
   });
 
   test('enabling PRE collection invalidates an in-flight foreground check', async () => {

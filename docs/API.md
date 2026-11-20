@@ -163,6 +163,9 @@ deleting a mailbox preserves its receiving ownership. See the
 Enable catch-all collection in workspace domain settings when shared inbound
 routing is configured. The domain configuration CLI only accepts `reject` in
 that configuration.
+For a collecting PRE domain without an ownership entry, check the domain and
+save the collection setting again. After claiming the domain, production Cron
+must verify the route before PRE accepts unknown recipients.
 
 In standalone fixed-address PRE, the workspace can read saved identities.
 Identity and domain writes and discovery return HTTP 403 with
