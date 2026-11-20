@@ -216,14 +216,23 @@ export function pinCloudflareReleaseIdentity(projectRoot: string, discoverAccoun
   const profile = auth.profile?.name;
   if (!process.env.CLOUDFLARE_AUTH_PROFILE && profile && /^[\w-]+$/u.test(profile)) process.env.CLOUDFLARE_AUTH_PROFILE = profile;
   if (discoverAccount && !process.env.CLOUDFLARE_ACCOUNT_ID) {
-    const account = auth.accounts?.length === 1 ? auth.accounts[0]?.id : undefined;
+    let selected: string | undefined;
+    try {
+      selected = execFileSync('node', ['--input-type=module', '-e',
+        "import { pathToFileURL } from 'node:url'; const { a: account } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(await account() || '');",
+        cloudflareCliModule('context-BiFPu-hE.mjs')], {
+        cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
+      }).trim();
+    } catch {
+      // Fall back only when cf reports a single accessible account.
+    }
+    const account = selected || (auth.accounts?.length === 1 ? auth.accounts[0]?.id : undefined);
     if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
     process.env.CLOUDFLARE_ACCOUNT_ID = account;
   }
 }
 
-function cloudflareCliRawFetch(projectRoot: string) {
-  pinCloudflareReleaseIdentity(projectRoot, false);
+function cloudflareCliModule(name: string) {
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     const cli = join(dir, 'cf');
     try {
@@ -234,10 +243,10 @@ function cloudflareCliRawFetch(projectRoot: string) {
     }
     try {
       const root = dirname(dirname(realpathSync(cli)));
-      const { name, version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-      if (name === 'cf' && version === '1.0.0-rc.1') {
-        // shortcut: this CLI has no generic API command, use its read transport until it exposes a public one.
-        return join(root, 'dist', 'raw-fetch-g83RSAGp.mjs');
+      const { name: packageName, version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+      if (packageName === 'cf' && version === '1.0.0-rc.1') {
+        // shortcut: use the pinned CLI's modules until account selection and generic reads have public commands.
+        return join(root, 'dist', name);
       }
     } catch {
       // An unrecognized executable cannot provide the pinned metadata transport.
@@ -251,7 +260,8 @@ function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim();
-  const rawFetch = token ? undefined : cloudflareCliRawFetch(projectRoot);
+  if (!token) pinCloudflareReleaseIdentity(projectRoot, false);
+  const rawFetch = token ? undefined : cloudflareCliModule('raw-fetch-g83RSAGp.mjs');
   return async <T>(path: string) => {
     const resource = '/accounts/' + account + '/workers/' + path;
     try {
