@@ -39,8 +39,12 @@ export function assertSharedInboundPreview(target: CloudflareTarget, receiptPath
   const legacyFixedDelivery = delivery?.routingDatabaseId === null;
   const reserved = fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT);
   const managementEnabled = receipt.previewManagementAuthorized === true;
+  const previewDeploymentId = receipt.preview?.deploymentId;
+  const recovering = previewDeploymentId === null;
   if (receipt.previewName !== 'mail-ai' || receipt.workerName !== target.name ||
-      !receipt.production?.deploymentId || !receipt.preview?.deploymentId ||
+      !receipt.production?.deploymentId ||
+      (recovering ? managementEnabled || !delivery || legacyFixedDelivery
+        : typeof previewDeploymentId !== 'string' || !previewDeploymentId) ||
       !/^[a-f0-9]{40}$/u.test(receipt.previewCommit) || target.vars.APP_VERSION !== 'preview+' + receipt.previewCommit.slice(0, 7) ||
       receipt.targetHash !== sharedInboundPreviewTargetHash(target) ||
       !previewDb || !productionDb || !registry || new Set([previewDb, productionDb, registry]).size !== 3 ||
@@ -61,7 +65,7 @@ export function assertSharedInboundPreview(target: CloudflareTarget, receiptPath
   return {
     previewCommit: receipt.previewCommit as string, deploymentId: receipt.production.deploymentId as string,
     productionDb, productionBucket: receipt.production.bucket as string, expectsDelivery: delivery !== null, legacyFixedDelivery, managementEnabled,
-    previewDeploymentId: receipt.preview.deploymentId as string
+    previewDeploymentId: previewDeploymentId as string | null
   };
 }
 
@@ -297,12 +301,14 @@ async function readLiveNativePreview(workerName: string, projectRoot: string) {
   if (!worker?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const path = workers + encodeURIComponent(worker.id) + '/previews';
   const previews = await get<Array<{ id?: string; slug?: string }>>(path + '?slug=mail-ai');
+  const baseEnv = worker.previews_base_config?.env;
+  if (Array.isArray(previews) && !previews.length) return { latest: null, baseEnv };
   const preview = Array.isArray(previews) ? previews.find(entry => entry.slug === 'mail-ai') : null;
   if (!preview?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const latest = await get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string; json?: WorkerBindingMetadata['json'] }> }>(
     path + '/' + encodeURIComponent(preview.id) + '/deployments/latest?include=bindings'
   );
-  return { latest, baseEnv: worker.previews_base_config?.env };
+  return { latest, baseEnv };
 }
 
 export async function assertLiveNativePreview(
@@ -343,9 +349,20 @@ export async function assertLiveNativePreview(
 }
 
 export async function assertLivePreviewForPublish(
-  target: CloudflareTarget, source: { previewDeploymentId: string; managementEnabled: boolean }, projectRoot: string
+  target: CloudflareTarget, source: { previewDeploymentId: string | null; managementEnabled: boolean }, projectRoot: string
 ) {
   const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot);
+  if (source.previewDeploymentId === null) {
+    if (latest || source.managementEnabled || ['CLOUDFLARE_EMAIL_ROUTING_TOKEN', 'DB', 'BUCKET',
+      'INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE', 'PRE_INBOUND_DB', 'PRE_INBOUND_BUCKET', 'PRE_INBOUND_SETTINGS']
+      .some(name => Object.hasOwn(baseEnv ?? {}, name))) {
+      throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
+    }
+    await readReleaseD1Rows(target.inboundRouting?.databaseId,
+      'SELECT kind, route_key, environment FROM inbound_routing_ownership LIMIT 0',
+      'INBOUND_PREVIEW_ROUTING_REGISTRY_NOT_READY');
+    return 0;
+  }
   const env = latest?.env;
   const registry = routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id);
   if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' ||
