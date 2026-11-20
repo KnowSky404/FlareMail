@@ -138,7 +138,15 @@ interface WorkerBindingMetadata {
   id?: string;
   bucket_name?: string;
   text?: string;
-  json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean; environment?: string; previewCatchAllCapacity?: number } | string;
+  json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean; environment?: string; workerName?: string; previewCatchAllCapacity?: number } | string;
+}
+
+function readRoutingScope(value: WorkerBindingMetadata['json']) {
+  try {
+    return typeof value === 'string' ? JSON.parse(value) as Exclude<WorkerBindingMetadata['json'], string> : value;
+  } catch {
+    return null;
+  }
 }
 
 function readActiveProduction(worker: string) {
@@ -225,11 +233,8 @@ export function pinCloudflareReleaseIdentity(projectRoot: string, discoverAccoun
   if (discoverAccount && !process.env.CLOUDFLARE_ACCOUNT_ID) {
     let selected: string | undefined;
     try {
-      selected = execFileSync('node', ['--input-type=module', '-e',
-        "import { pathToFileURL } from 'node:url'; const { a: account } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(await account() || '');",
-        cloudflareCliModule('context-BiFPu-hE.mjs')], {
-        cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000
-      }).trim();
+      selected = runCloudflareCliModule(projectRoot, cloudflareCliModule('context-BiFPu-hE.mjs'),
+        "process.stdout.write(await command.a() || '');").trim();
     } catch {
       // Fall back only when cf reports a single accessible account.
     }
@@ -263,6 +268,17 @@ function cloudflareCliModule(name: string) {
   throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE');
 }
 
+function runCloudflareCliModule(projectRoot: string, scriptPath: string, operation: string, args: string[] = []) {
+  return execFileSync('node', ['--input-type=module', '-e', `
+    import { pathToFileURL } from 'node:url';
+    const script = pathToFileURL(process.argv[1]);
+    const { m: selectProfile } = await import(new URL('./oauth-DOqdE0PG.mjs', script));
+    selectProfile();
+    const command = await import(script);
+    ${operation}
+  `, scriptPath, ...args], { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000 });
+}
+
 function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
@@ -274,10 +290,7 @@ function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
     try {
       let output: string;
       if (rawFetch) {
-        output = execFileSync('node', ['--input-type=module', '-e',
-          "import { pathToFileURL } from 'node:url'; const { m: selectProfile } = await import(pathToFileURL(process.argv[2]).href); selectProfile(); const { t: get } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(await get(process.argv[3]));",
-          rawFetch, join(dirname(rawFetch), 'oauth-DOqdE0PG.mjs'), resource],
-        { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000 });
+        output = runCloudflareCliModule(projectRoot, rawFetch, 'process.stdout.write(await command.t(process.argv[2]));', [resource]);
       } else {
         const response = await fetch('https://api.cloudflare.com/client/v4' + resource, {
           headers: { Authorization: 'Bearer ' + token },
@@ -415,6 +428,10 @@ export function assertActiveProductionForPreview(target: CloudflareTarget, sourc
     if (currentCatchAllCredential(version.bindings)?.type !== 'secret_text') {
       throw new Error('INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
     }
+    const scope = readRoutingScope(binding('INBOUND_ROUTING_SCOPE')?.json);
+    if (scope?.environment !== 'production' || scope.workerName !== target.name || scope.readOnly === true) {
+      throw new Error('INBOUND_PREVIEW_MANAGEMENT_REQUIRES_ACTIVE_DELIVERY');
+    }
   }
 }
 
@@ -495,16 +512,16 @@ async function readReleaseD1Rows<T>(databaseId: string | undefined, sql: string,
 export async function assertProductionOwnershipCoverage(target: CloudflareTarget) {
   const errorCode = 'INBOUND_PRODUCTION_ROUTING_INVENTORY_NOT_VERIFIED';
   const [production, preview, ownership] = await Promise.all([
-    readReleaseD1Rows<Record<string, unknown>>(target.databaseId, identityClaimsSql, errorCode),
-    readReleaseD1Rows<Record<string, unknown>>(target.preInbound?.databaseId, identityClaimsSql, errorCode),
-    readReleaseD1Rows<Record<string, unknown>>(target.inboundRouting?.databaseId, ownershipClaimsSql, errorCode)
+    readReleaseInventory<Record<string, unknown>>(target.databaseId, identityClaimsSql, errorCode),
+    readReleaseInventory<Record<string, unknown>>(target.preInbound?.databaseId, identityClaimsSql, errorCode),
+    readReleaseInventory<Record<string, unknown>>(target.inboundRouting?.databaseId, ownershipClaimsSql, errorCode)
   ]);
   const reservation = target.vars.PRE_INBOUND_RECIPIENT ? normalizePreInboundRecipient(target.vars.PRE_INBOUND_RECIPIENT) : null;
   const plan = planIdentityClaims(production, preview, ownership, reservation);
   if (plan.additions.length || plan.conflicts.length) throw new Error(errorCode);
   if (reservation && target.vars.PRE_INBOUND_ENABLED === 'true') {
     const mailboxError = 'INBOUND_PRODUCTION_FIXED_PRE_MAILBOX_UNAVAILABLE';
-    const eligible = await readReleaseD1Rows<{ email: string; worker_name: string }>(target.preInbound?.databaseId, `
+    const eligible = await readReleaseInventory<{ email: string; worker_name: string }>(target.preInbound?.databaseId, `
       SELECT lower(a.email) AS email, d.worker_name
       FROM mail_addresses a
       JOIN mail_domains d ON d.id = a.domain_id AND d.owner_user_id = a.owner_user_id
@@ -513,6 +530,18 @@ export async function assertProductionOwnershipCoverage(target: CloudflareTarget
       WHERE a.lifecycle_status = 'active' AND a.receive_enabled = 1 AND a.routing_state IN ('active', 'imported')
         AND d.enabled = 1 AND lower(d.domain_name) = lower(substr(a.email, instr(a.email, '@') + 1))`, mailboxError);
     if (!eligible.some(row => row.email === reservation && row.worker_name === target.name)) throw new Error(mailboxError);
+  }
+}
+
+async function readReleaseInventory<T>(databaseId: string | undefined, sql: string, errorCode: string) {
+  const pageSize = 500;
+  const rows: T[] = [];
+  for (;;) {
+    const page = await readReleaseD1Rows<T>(databaseId,
+      `SELECT * FROM (${sql}) ORDER BY 1 COLLATE BINARY, 2 COLLATE BINARY LIMIT ${pageSize} OFFSET ${rows.length}`, errorCode);
+    if (page.length > pageSize) throw new Error(errorCode);
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
   }
 }
 
@@ -594,8 +623,7 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
     throw new Error('INBOUND_PRODUCTION_DEPLOYMENT_CHANGED');
   }
   const existingRegistry = db('INBOUND_ROUTING_DB');
-  const scopeBinding = binding('INBOUND_ROUTING_SCOPE')?.json;
-  const scope = typeof scopeBinding === 'string' ? JSON.parse(scopeBinding) as Exclude<WorkerBindingMetadata['json'], string> : scopeBinding;
+  const scope = readRoutingScope(binding('INBOUND_ROUTING_SCOPE')?.json);
   const routingReadOnly = scope?.environment === 'production' && scope.readOnly === true;
   const legacyFixedUpgrade = source.protecting && Boolean(settings?.recipient) &&
     !binding('INBOUND_ROUTING_DB') && !binding('INBOUND_ROUTING_SCOPE');

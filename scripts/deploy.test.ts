@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertActiveProductionForRelease, assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertActiveProductionForPreview, assertActiveProductionForRelease, assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -62,15 +62,15 @@ test('ordinary releases pin the account already selected by cf', async () => {
     await writeFile(join(directory, 'package.json'), '{"name":"cf","version":"1.0.0-rc.1"}');
     const identity = JSON.stringify({ authenticated: true, accounts, profile: { name: 'selected-profile' } });
     await writeFile(join(directory, 'bin/cf'), `#!/bin/sh\nprintf '%s\\n' '${identity}'\n`, { mode: 0o700 });
+    await writeFile(join(directory, 'dist/oauth-DOqdE0PG.mjs'),
+      `export function m() { if (process.env.CLOUDFLARE_AUTH_PROFILE === 'selected-profile') process.env.FLAREMAIL_TEST_OAUTH_SELECTED = 'true'; }`);
     await writeFile(join(directory, 'dist/context-BiFPu-hE.mjs'),
-      `export async function a() { return process.env.CLOUDFLARE_AUTH_PROFILE === 'selected-profile' ? '${accounts[1]!.id}' : undefined; }`);
+      `export async function a() { return process.env.FLAREMAIL_TEST_OAUTH_SELECTED === 'true' ? '${accounts[1]!.id}' : '${accounts[0]!.id}'; }`);
     process.env.PATH = join(directory, 'bin') + ':' + previous.PATH;
     delete process.env.CLOUDFLARE_ACCOUNT_ID;
     delete process.env.CLOUDFLARE_AUTH_PROFILE;
     expect(() => pinCloudflareReleaseIdentity(projectRoot, true)).not.toThrow();
     expect(String(process.env.CLOUDFLARE_ACCOUNT_ID)).toBe(accounts[1]!.id);
-    await writeFile(join(directory, 'dist/oauth-DOqdE0PG.mjs'),
-      `export function m() { if (process.env.CLOUDFLARE_AUTH_PROFILE === 'selected-profile') process.env.FLAREMAIL_TEST_OAUTH_SELECTED = 'true'; }`);
     await writeFile(join(directory, 'dist/raw-fetch-g83RSAGp.mjs'),
       `export async function t() { if (process.env.FLAREMAIL_TEST_OAUTH_SELECTED !== 'true') throw new Error('profile not selected'); return JSON.stringify({success: true, result: {enabled: true, previews_enabled: false}}); }`);
     delete process.env.CLOUDFLARE_API_TOKEN;
@@ -190,6 +190,7 @@ test('protection requires fresh mailbox and catch-all ownership coverage in both
 [ "$1:$2:$4" = 'd1:raw:--sql' ] || exit 1
 case "$5" in
   *workspace_owner*) cat '${directory}/fixed-mailbox' ;;
+  *'OFFSET 500') cat '${directory}/'"$3"'.next' ;;
   *) cat '${directory}/'"$3" ;;
 esac
 `, { mode: 0o700 });
@@ -201,6 +202,10 @@ esac
     await registry(claims);
     await expect(coverage()).rejects.toThrow(blocked);
     await registry([...claims, reservation]);
+    await expect(coverage()).resolves.toBeUndefined();
+    const firstPage = Array.from({ length: 500 }, (_, index) => ['mailbox', `retained-${index}@example.test`, 'production']);
+    await registry(firstPage);
+    await fixture(target.inboundRouting.databaseId + '.next', [...claims, reservation], true);
     await expect(coverage()).resolves.toBeUndefined();
     const activating = { ...target, vars: { ...target.vars, PRE_INBOUND_ENABLED: 'true' } };
     const fixedMailbox = (rows: string[][]) => writeFile(join(directory, 'fixed-mailbox'), JSON.stringify([
@@ -238,10 +243,11 @@ test('activation requires the active protection version to block identity writes
     { name: 'PRE_INBOUND_DB', database_id: target.preInbound.databaseId }, { name: 'PRE_INBOUND_BUCKET', bucket_name: target.preInbound.bucket },
     { name: 'INBOUND_ROUTING_DB', database_id: target.inboundRouting.databaseId },
     { name: 'APP_VERSION', text: target.vars.APP_VERSION },
-    { name: 'PRE_INBOUND_SETTINGS', json: { enabled: false } }
+    { name: 'CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', type: 'secret_text' }
   ];
-  const mockScope = (scope: { environment: string; readOnly?: boolean }) => writeFile(join(directory, 'versions'),
-    JSON.stringify({ bindings: [...bindings, { name: 'INBOUND_ROUTING_SCOPE', json: JSON.stringify(scope) }] }));
+  const mockScope = (scope: { environment: string; readOnly?: boolean; workerName?: string }, enabled = false) => writeFile(join(directory, 'versions'),
+    JSON.stringify({ bindings: [...bindings, { name: 'PRE_INBOUND_SETTINGS', json: { enabled } },
+      { name: 'INBOUND_ROUTING_SCOPE', json: JSON.stringify(scope) }] }));
   try {
     await writeFile(join(directory, 'deployments'), JSON.stringify(deployments));
     await writeFile(join(directory, 'cf'), `#!/bin/sh\n[ "$1" = 'workers' ] || exit 1\ncat '${directory}/'"$2"\n`, { mode: 0o700 });
@@ -257,6 +263,13 @@ test('activation requires the active protection version to block identity writes
     expect(assertActiveProductionForRelease(target, resume).routingReadOnly).toBe(false);
     expect(() => assertActiveProductionForRelease({ ...target, vars: { ...target.vars, APP_VERSION: 'production+different' } }, resume))
       .toThrow('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
+    const nativePreview = { ...target, databaseId: target.preInbound.databaseId, bucket: target.preInbound.bucket };
+    const management = { previewCommit: '', previewDeploymentId: 'pre', deploymentId: source.deploymentId, productionDb: target.databaseId,
+      productionBucket: target.bucket, expectsDelivery: true, legacyFixedDelivery: false, managementEnabled: true };
+    await mockScope({ environment: 'preview', workerName: target.name }, true);
+    expect(() => assertActiveProductionForPreview(nativePreview, management)).toThrow('INBOUND_PREVIEW_MANAGEMENT_REQUIRES_ACTIVE_DELIVERY');
+    await mockScope({ environment: 'production', workerName: target.name }, true);
+    expect(() => assertActiveProductionForPreview(nativePreview, management)).not.toThrow();
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
