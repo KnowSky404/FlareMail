@@ -4,7 +4,7 @@ import { getManagedMailDomain } from '$lib/server/db/mail-identities';
 import { ApiError } from '$lib/server/http/api';
 import { isMailHealthFresh } from '$lib/domain/mail/health';
 import { findInboundRoutingOwner, readInboundRouting } from '$lib/server/inbound/routing-ownership';
-import { isMailRoutingReadOnly, ownershipConflict, requireMailRoutingWrites, reserveMailRoutingOwnership } from './ownership';
+import { hasWorkerMappingConflict, isMailRoutingReadOnly, ownershipConflict, requireMailRoutingWrites, reserveMailRoutingOwnership, workerMappingConflict } from './ownership';
 import { MailIdentityValidationError, normalizeCloudflareZoneId, normalizeEmailWorkerName, normalizeMailDomain } from './validation';
 
 export function domainOnboardingConfiguration(env: CloudflareEnv) {
@@ -96,6 +96,7 @@ export async function updateMailDomain(
   const routing = claimsCatchAll && !providerReady ? readInboundRouting(env) : null;
   const owner = routing ? await findInboundRoutingOwner(routing.db, 'catch_all', domain.domain_name) : null;
   if (owner && owner !== routing?.environment) throw ownershipConflict();
+  if (claimsCatchAll && hasWorkerMappingConflict(env, domain.worker_name)) throw workerMappingConflict();
   if (!providerReady && (switchingToCollect || (routing && !owner))) {
     throw new ApiError(409, 'MAIL_DOMAIN_COLLECT_NOT_READY', '请先检查域名，确认有效的 catch-all 指向本应用，再启用未知地址收集。', undefined, undefined, false);
   }

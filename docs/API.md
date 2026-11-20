@@ -151,8 +151,8 @@ rule. The production delivery switch is checked separately at SMTP ingress.
 With shared PRE and PROD inbound routing configured, creating an address or
 enabling catch-all collection reserves a route for that environment. A
 conflicting claim returns HTTP 409 with `MAIL_ROUTING_OWNERSHIP_CONFLICT`.
-An exact route whose stored mail domain still points to a different Worker
-returns HTTP 409 with `MAIL_DOMAIN_WORKER_MAPPING_CONFLICT` before provisioning.
+If a stored domain points to a different Worker, exact route provisioning and
+catch-all enrollment return HTTP 409 with `MAIL_DOMAIN_WORKER_MAPPING_CONFLICT`.
 Sync imports only routes assigned to the current environment. Disabling or
 deleting a mailbox preserves its receiving ownership. See the
 [shared inbound routing SPEC](./specs/shared-inbound-routing.md).

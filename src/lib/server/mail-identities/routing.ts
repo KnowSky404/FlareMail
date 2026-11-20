@@ -1,5 +1,5 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { requireExistingMailboxOwnership, requireMailRoutingOwnership, requireMailRoutingWrites, reserveMailRoutingOwnership } from './ownership';
+import { hasWorkerMappingConflict, requireExistingMailboxOwnership, requireMailRoutingOwnership, requireMailRoutingWrites, reserveMailRoutingOwnership, workerMappingConflict } from './ownership';
 import { getManagedMailAddress, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { isMailHealthFresh } from '$lib/domain/mail/health';
 import { ApiError } from '$lib/server/http/api';
@@ -434,16 +434,6 @@ async function saveActiveRoute(
   const updated = await getManagedMailAddress(db, ownerUserId, address.id);
   if (!updated) throw new ApiError(404, 'MAIL_ADDRESS_NOT_FOUND', '邮件地址不存在。', undefined, undefined, false);
   return updated;
-}
-
-function hasWorkerMappingConflict(env: CloudflareEnv, workerName: string) {
-  const scope = env.INBOUND_ROUTING_SCOPE;
-  const expected = scope?.workerName ?? env.MAIL_IDENTITY_WORKER_NAME?.trim();
-  return Boolean(scope && expected && expected !== workerName);
-}
-
-function workerMappingConflict() {
-  return new ApiError(409, 'MAIL_DOMAIN_WORKER_MAPPING_CONFLICT', '此邮件域名仍指向其他 Worker，请先核对并更新域名映射。', undefined, undefined, false);
 }
 
 async function runRoutingOperation(

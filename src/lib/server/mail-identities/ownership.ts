@@ -78,6 +78,16 @@ export async function catchAllOwnershipError(env: CloudflareEnv, domain: string)
   return owner !== routing.environment ? 'cloudflare_collect_catch_all_owned_elsewhere' : null;
 }
 
+export function hasWorkerMappingConflict(env: CloudflareEnv, workerName: string) {
+  const scope = env.INBOUND_ROUTING_SCOPE;
+  const expected = scope?.workerName ?? env.MAIL_IDENTITY_WORKER_NAME?.trim();
+  return Boolean(scope && expected && expected !== workerName);
+}
+
+export function workerMappingConflict() {
+  return new ApiError(409, 'MAIL_DOMAIN_WORKER_MAPPING_CONFLICT', '此邮件域名仍指向其他 Worker，请先核对并更新域名映射。', undefined, undefined, false);
+}
+
 export function ownershipConflict() {
   return new ApiError(409, 'MAIL_ROUTING_OWNERSHIP_CONFLICT', '该收信地址或兜底规则未归属当前环境。', undefined, undefined, false);
 }
