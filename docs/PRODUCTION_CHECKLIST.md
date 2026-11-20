@@ -124,6 +124,9 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   credential with read access to every PRE zone collecting unknown recipients.
   For the initial cutover, wait for the active protection deployment to record
   a fresh catch-all observation for each of these zones before activation.
+  Keep a recurring minute or hourly trigger with enough runs to refresh every
+  enabled PRE catch-all domain within the four-hour margin before verification
+  expires. The default `* * * * *` trigger checks one due domain per invocation.
   Keep those read permissions when adding PRE collection or rotating the token.
 - [ ] `AUTH_MODE` is explicitly selected. In `cloudflare-access` mode, the
   issuer, AUD, JWKS URL, single allowed `sub`, and stable Owner ID match the

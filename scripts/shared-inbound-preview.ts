@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import type { CloudflareTarget } from './cloudflare-target.ts';
 import { normalizePreInboundRecipient } from '../src/lib/server/inbound/pre-inbound.ts';
-import { isMailHealthFresh, PREVIEW_CATCH_ALL_CRON_VERIFIED } from '../src/lib/domain/mail/health.ts';
+import { isMailHealthFresh, MAIL_HEALTH_REFRESH_WINDOW_MS, PREVIEW_CATCH_ALL_CRON_VERIFIED } from '../src/lib/domain/mail/health.ts';
 
 export function sharedInboundPreviewTargetHash(target: CloudflareTarget) {
   return createHash('sha256').update(JSON.stringify(target)).digest('hex');
@@ -357,8 +357,9 @@ export async function verifyProductionWorkerDev(target: CloudflareTarget, projec
   return subdomain.enabled;
 }
 
-export async function assertProductionCatchAllActivation(
-  target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string
+export async function assertProductionCatchAllRelease(
+  target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string,
+  requireCurrentObservations = true
 ) {
   const errorCode = 'INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED';
   const get = cloudflareWorkerMetadata(projectRoot, errorCode);
@@ -386,6 +387,13 @@ export async function assertProductionCatchAllActivation(
     `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
      FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
   );
+  if (domains.length && !target.cron.some(schedule => {
+    const minute = /^(\*|\*\/[1-5]?\d|[1-5]?\d)(?:\s+\*){4}$/u.exec(schedule.trim())?.[1];
+    if (!minute) return false;
+    const minutesPerRun = minute === '*' ? 1 : minute.startsWith('*/') ? Number(minute.slice(2)) : 60;
+    return minutesPerRun > 0 && domains.length * minutesPerRun * 60_000 < MAIL_HEALTH_REFRESH_WINDOW_MS;
+  })) throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
+  if (!requireCurrentObservations) return;
   const claims = query<{ route_key: string }>(target.inboundRouting?.databaseId,
     `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`);
   const scheduleResult = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');

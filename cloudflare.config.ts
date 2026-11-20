@@ -16,12 +16,12 @@ export default defineConfig({
     let workersDev: boolean | undefined;
     let observability = target.observability;
     if (release?.kind === 'production') {
-      const { assertLiveNativePreview, assertProductionCatchAllActivation, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
+      const { assertLiveNativePreview, assertProductionCatchAllRelease, readPauseObservability, verifyProductionWorkerDev } = await import('./scripts/shared-inbound-preview.ts');
       workersDev = await verifyProductionWorkerDev(target, projectRoot);
       if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
       else {
         await assertLiveNativePreview(target, release.source, projectRoot);
-        if (release.source.protectVersionId) await assertProductionCatchAllActivation(target, release.activeVersion, projectRoot);
+        await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId));
       }
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
