@@ -334,6 +334,16 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     await writeFile(file, JSON.stringify(candidate), { mode: 0o600 });
     await writeFile(receiptPath, JSON.stringify(receipt), { mode: 0o600 });
     expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({ previewCommit, managementEnabled: false });
+    const recovery = { ...receipt, preview: { ...receipt.preview, deploymentId: null }, production: {
+      ...receipt.production, previewDelivery: { databaseId: candidate.databaseId, bucket: candidate.bucket, routingDatabaseId: candidate.inboundRouting.databaseId }
+    } };
+    await writeFile(receiptPath, JSON.stringify(recovery));
+    expect(assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toMatchObject({
+      previewDeploymentId: null, expectsDelivery: true, managementEnabled: false
+    });
+    await writeFile(receiptPath, JSON.stringify({ ...recovery, production: receipt.production }));
+    expect(() => assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
+    await writeFile(receiptPath, JSON.stringify(receipt));
     const fetch = spyOn(globalThis, 'fetch');
     try {
       fetch.mockResolvedValueOnce(Response.json({ success: true, result: {
@@ -385,6 +395,42 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     await writeFile(receiptPath, JSON.stringify({ ...oldFixed, previewManagementAuthorized: true }));
     expect(() => assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
   } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('read-only recovery requires a missing Preview, a safe Base and the live ownership table', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'flaremail-preview-recovery-'));
+  const env = { CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32), CLOUDFLARE_API_TOKEN: 'fixture-token', PATH: directory + ':' + process.env.PATH };
+  const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+  const target = { ...localTarget, inboundRouting: { databaseId: '33333333-3333-4333-8333-333333333333', databaseName: 'routing', environment: 'preview' as const } };
+  const recovery = { previewDeploymentId: null, managementEnabled: false };
+  const fetch = spyOn(globalThis, 'fetch');
+  const mock = (result: unknown) => fetch.mockResolvedValueOnce(Response.json({ success: true, result }));
+  try {
+    Object.assign(process.env, env);
+    mock({ id: 'worker-id', previews_base_config: { env: { DB: { type: 'd1' } } } });
+    mock([]);
+    await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
+    mock({ id: 'worker-id' });
+    mock([{ id: 'pre-id', slug: 'mail-ai' }]);
+    mock({ id: 'its-current-deployment' });
+    await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
+    const cf = join(directory, 'cf');
+    await writeFile(cf, '#!/bin/sh\nexit 1\n', { mode: 0o700 });
+    mock({ id: 'worker-id' });
+    mock([]);
+    await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_ROUTING_REGISTRY_NOT_READY');
+    await writeFile(cf, `#!/bin/sh\nprintf '%s\\n' '[{"success":true,"results":{"columns":["kind","route_key","environment"],"rows":[]}}]'\n`);
+    mock({ id: 'worker-id', previews_base_config: { env: { AI_SETTINGS_KEY: { type: 'secret_text' } } } });
+    mock([]);
+    await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).resolves.toBe(0);
+  } finally {
+    fetch.mockRestore();
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
