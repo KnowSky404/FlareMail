@@ -21,7 +21,7 @@
   import { AUTH_EXPIRED_EVENT, isClientAuthExpired } from '$lib/client/auth-session';
   import { LatestRequest } from '$lib/client/latest-request';
   import { DEFAULT_RESOURCE_PAGE_SIZE, RESOURCE_PAGE_SIZE_OPTIONS, filterMailDomains, filterMailAddresses, paginateMailResources, type MailDomainStatusFilter, type MailAddressLifecycleFilter } from '$lib/client/mail-resource-list';
-  import { mailHealthState } from '$lib/domain/mail/health';
+  import { mailHealthState, PREVIEW_CATCH_ALL_CRON_VERIFIED } from '$lib/domain/mail/health';
   import { mailSenderSendBlockReason } from '$lib/domain/mail/sender-readiness';
   import { summarizeDomainCapabilities, type DomainCapabilityState } from './domain-capabilities';
   import type { MailDomain, MailAddress, DomainCheck, DeletePreview, DeletePolicy, RouteStatus } from './mail-resource-types';
@@ -652,6 +652,8 @@
       catchAllCollects: domain.unknown_recipient_policy === 'collect' &&
         (checks[domain.id]?.cloudflare?.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
       catchAllCheckedAt: domain.catch_all_checked_at,
+      catchAllProductionVerified: domain.last_error_code === PREVIEW_CATCH_ALL_CRON_VERIFIED &&
+        domain.last_error_at === domain.catch_all_checked_at,
       resendStatus: domain.resend_status,
       resendSendingStatus: domain.resend_sending_status,
       resendCheckedAt: domain.resend_checked_at,

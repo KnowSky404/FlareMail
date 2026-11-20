@@ -15,6 +15,7 @@ export interface DomainCapabilityInput {
   cloudflareHealth: MailHealthState;
   catchAllCollects: boolean;
   catchAllCheckedAt: string | null;
+  catchAllProductionVerified: boolean;
   resendStatus: 'unknown' | 'pending' | 'verified' | 'failed';
   resendSendingStatus: 'unknown' | 'enabled' | 'disabled';
   resendCheckedAt: string | null;
@@ -31,10 +32,12 @@ export function summarizeDomainCapabilities(input: DomainCapabilityInput, nowMs 
     address.lifecycleStatus === 'active' && address.receiveEnabled &&
     (address.routingState === 'active' || address.routingState === 'imported')
   );
+  const exactReady = hasExactRoute && input.cloudflareHealth === 'fresh';
+  const catchAllReady = input.catchAllCollects && isMailHealthFresh(input.catchAllCheckedAt, nowMs) &&
+    (input.catchAllProductionVerified || input.cloudflareHealth === 'fresh');
   const receiving = !input.enabled || (!input.catchAllCollects && !hasExactRoute)
     ? 'not_ready'
-    : input.cloudflareHealth === 'fresh' && (hasExactRoute || isMailHealthFresh(input.catchAllCheckedAt, nowMs))
-      ? 'ready' : 'needs_check';
+    : exactReady || catchAllReady ? 'ready' : 'needs_check';
 
   const sendReasons = input.addresses.map((address) => mailSenderSendBlockReason({
     lifecycleStatus: address.lifecycleStatus,
