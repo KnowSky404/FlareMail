@@ -131,7 +131,7 @@ interface WorkerBindingMetadata {
   id?: string;
   bucket_name?: string;
   text?: string;
-  json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean; previewCatchAllCapacity?: number } | string;
+  json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean; environment?: string; previewCatchAllCapacity?: number } | string;
 }
 
 function readActiveProduction(worker: string) {
@@ -328,12 +328,14 @@ export async function assertLiveNativePreview(
       routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id) !== routingD1Id(target.inboundRouting?.databaseId)) {
     throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   }
-  if (!env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) return 0;
   try {
     const raw = env.INBOUND_ROUTING_SCOPE?.json;
     const scope = typeof raw === 'string' ? JSON.parse(raw) as Exclude<WorkerBindingMetadata['json'], string> : raw;
-    const capacity = scope?.previewCatchAllCapacity;
-    if (typeof capacity === 'number' && Number.isSafeInteger(capacity) && capacity > 0) return capacity;
+    if (scope?.environment === 'preview') {
+      if (scope.readOnly === true) return 0;
+      const capacity = scope.previewCatchAllCapacity;
+      if (typeof capacity === 'number' && Number.isSafeInteger(capacity) && capacity > 0) return capacity;
+    }
   } catch {
     // Invalid binding JSON cannot authorize writable PRE.
   }
