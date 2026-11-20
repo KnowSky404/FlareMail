@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertActiveProductionForPreview, assertActiveProductionForRelease, assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertActiveProductionForPreview, assertActiveProductionForRelease, assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, cloudflareMetadataTransport, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -53,7 +53,7 @@ test('emergency pause keeps the same authentication variables, secrets and produ
 
 test('ordinary releases pin the account already selected by cf', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-cf-account-'));
-  const variables = ['PATH', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_AUTH_PROFILE', 'CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN'] as const;
+  const variables = ['PATH', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_AUTH_PROFILE', 'CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN', 'CLOUDFLARE_API_BASE_URL'] as const;
   const previous = Object.fromEntries(variables.map(name => [name, process.env[name]]));
   const accounts = [{ id: 'a'.repeat(32) }, { id: 'b'.repeat(32) }];
   try {
@@ -76,6 +76,9 @@ test('ordinary releases pin the account already selected by cf', async () => {
     delete process.env.CLOUDFLARE_API_TOKEN;
     delete process.env.CF_API_TOKEN;
     await expect(verifyProductionWorkerDev(localTarget, projectRoot)).resolves.toBe(true);
+    process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
+    process.env.CLOUDFLARE_API_BASE_URL = 'https://cloudflare.test/client/v4';
+    await expect(verifyProductionWorkerDev(localTarget, projectRoot)).resolves.toBe(true);
   } finally {
     for (const name of variables) {
       const value = previous[name];
@@ -93,15 +96,15 @@ test('production requires live historical URL isolation and keeps the main URL s
   const legacyToken = process.env.CF_API_TOKEN;
   delete process.env.CLOUDFLARE_API_TOKEN;
   process.env.CF_API_TOKEN = 'fixture-token';
-  const fetch = spyOn(globalThis, 'fetch');
+  const metadata = spyOn(cloudflareMetadataTransport, 'read');
   try {
-    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { enabled: true, previews_enabled: true } }));
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: { enabled: true, previews_enabled: true } }));
     await expect(verifyProductionWorkerDev(localTarget, projectRoot)).rejects.toThrow('INBOUND_PRODUCTION_VERSION_URLS_NOT_DISABLED');
-    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { enabled: true, previews_enabled: false } }));
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: { enabled: true, previews_enabled: false } }));
     await expect(verifyProductionWorkerDev(localTarget, projectRoot)).resolves.toBe(true);
-    expect(fetch.mock.calls[0]?.[1]?.headers).toEqual({ Authorization: 'Bearer fixture-token' });
+    expect(metadata.mock.calls[0]).toEqual([projectRoot, '/accounts/' + 'a'.repeat(32) + '/workers/scripts/flaremail/subdomain']);
   } finally {
-    fetch.mockRestore();
+    metadata.mockRestore();
     if (account === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
     else process.env.CLOUDFLARE_ACCOUNT_ID = account;
     if (token === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
@@ -124,9 +127,9 @@ test('production verifies the live PRE address reservation as well as its bindin
     inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
   };
   const proof = { previewDeploymentId: 'pre-deploy', previewBuildLabel: 'preview+abcdef0' };
-  const fetch = spyOn(globalThis, 'fetch');
+  const metadata = spyOn(cloudflareMetadataTransport, 'read');
   const mockLive = (recipient: string, scope: { readOnly?: boolean; previewCatchAllCapacity?: number } = { readOnly: true }) => {
-    const respond = (result: unknown) => fetch.mockResolvedValueOnce(Response.json({ success: true, result }));
+    const respond = (result: unknown) => metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result }));
     respond({ id: 'worker-id' });
     respond([{ id: 'pre-id', slug: 'mail-ai' }]);
     respond({ id: proof.previewDeploymentId, env: {
@@ -143,22 +146,24 @@ test('production verifies the live PRE address reservation as well as its bindin
     await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBe(0);
     mockLive('expected@example.test', { previewCatchAllCapacity: 239 });
     await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBe(239);
+    mockLive('expected@example.test', { previewCatchAllCapacity: 239 });
+    await expect(assertLiveNativePreview(target, proof, projectRoot, true)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
     const preview = { ...target, databaseId: target.preInbound.databaseId, bucket: target.preInbound.bucket };
     const management = { previewDeploymentId: proof.previewDeploymentId, managementEnabled: true };
     mockLive('expected@example.test');
-    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: '0 0 * * *' }] } }));
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: { schedules: [{ cron: '0 0 * * *' }] } }));
     await expect(assertLivePreviewForPublish(preview, management, projectRoot)).rejects
       .toThrow('INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
     await writeFile(join(runDirectory, 'cf'), `#!/bin/sh\nprintf '%s\\n' '[{"success":true,"results":{"columns":["count"],"rows":[[0]]}}]'\n`, { mode: 0o700 });
     process.env.PATH = runDirectory + ':' + priorPath;
     mockLive('expected@example.test');
-    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: '* * * * *' }] } }));
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: { schedules: [{ cron: '* * * * *' }] } }));
     await expect(assertLivePreviewForPublish(preview, management, projectRoot)).resolves.toBe(239);
   } finally {
     if (priorPath === undefined) delete process.env.PATH;
     else process.env.PATH = priorPath;
     await rm(runDirectory, { recursive: true, force: true });
-    fetch.mockRestore();
+    metadata.mockRestore();
     if (priorAccount === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
     else process.env.CLOUDFLARE_ACCOUNT_ID = priorAccount;
     if (priorToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
@@ -302,9 +307,9 @@ test('activation requires PRE catch-all observations produced after the protecti
     domain_name: 'mail.example.test', worker_name: target.name, catch_all_target: 'this_worker',
     catch_all_checked_at: new Date(active.deployedAt - 1).toISOString(), last_error_code: null, last_error_at: null
   };
-  const fetch = spyOn(globalThis, 'fetch');
+  const metadata = spyOn(cloudflareMetadataTransport, 'read');
   const mockRequests = async () => {
-    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: target.cron[0] }] } }));
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: { schedules: [{ cron: target.cron[0] }] } }));
     await writeFile(join(directory, target.preInbound.databaseId), JSON.stringify([
       { success: true, results: { columns: Object.keys(domain), rows: [Object.values(domain)] } }
     ]));
@@ -350,7 +355,7 @@ cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
     await expect(assertProductionCatchAllRelease(target, active, projectRoot, false)).resolves.toBeUndefined();
   } finally {
-    fetch.mockRestore();
+    metadata.mockRestore();
     await rm(directory, { recursive: true, force: true });
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
@@ -470,13 +475,13 @@ test('allows only a verified, native read-only shared PRE build', async () => {
     await writeFile(receiptPath, JSON.stringify({ ...recovery, production: receipt.production }));
     expect(() => assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
     await writeFile(receiptPath, JSON.stringify(receipt));
-    const fetch = spyOn(globalThis, 'fetch');
+    const metadata = spyOn(cloudflareMetadataTransport, 'read');
     try {
-      fetch.mockResolvedValueOnce(Response.json({ success: true, result: {
+      metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: {
         id: 'worker-id', previews_base_config: { env: { CLOUDFLARE_EMAIL_ROUTING_TOKEN: { type: 'secret_text' } } }
       } }));
-      fetch.mockResolvedValueOnce(Response.json({ success: true, result: [{ id: 'preview-id', slug: 'mail-ai' }] }));
-      fetch.mockResolvedValueOnce(Response.json({ success: true, result: {
+      metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: [{ id: 'preview-id', slug: 'mail-ai' }] }));
+      metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: {
         id: receipt.preview.deploymentId, env: {
           APP_ENV: { text: 'preview' }, DB: { database_id: candidate.databaseId }, BUCKET: { bucket_name: candidate.bucket }
         }
@@ -485,7 +490,7 @@ test('allows only a verified, native read-only shared PRE build', async () => {
         previewDeploymentId: receipt.preview.deploymentId, managementEnabled: false
       }, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
     } finally {
-      fetch.mockRestore();
+      metadata.mockRestore();
     }
     await writeFile(receiptPath, JSON.stringify({ ...receipt, previewManagementAuthorized: true }));
     expect(() => assertSharedInboundPreview(readCloudflareTarget(file, true), receiptPath)).toThrow('INBOUND_PREVIEW_PREFLIGHT_INVALID');
@@ -535,8 +540,8 @@ test('read-only recovery requires a missing Preview, a safe Base and the live ow
   const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   const target = { ...localTarget, inboundRouting: { databaseId: '33333333-3333-4333-8333-333333333333', databaseName: 'routing', environment: 'preview' as const } };
   const recovery = { previewDeploymentId: null, managementEnabled: false };
-  const fetch = spyOn(globalThis, 'fetch');
-  const mock = (result: unknown) => fetch.mockResolvedValueOnce(Response.json({ success: true, result }));
+  const metadata = spyOn(cloudflareMetadataTransport, 'read');
+  const mock = (result: unknown) => metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result }));
   try {
     Object.assign(process.env, env);
     mock({ id: 'worker-id', previews_base_config: { env: { DB: { type: 'd1' } } } });
@@ -563,7 +568,7 @@ test('read-only recovery requires a missing Preview, a safe Base and the live ow
     mock([]);
     await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).resolves.toBe(0);
   } finally {
-    fetch.mockRestore();
+    metadata.mockRestore();
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
