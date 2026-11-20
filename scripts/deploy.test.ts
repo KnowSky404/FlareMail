@@ -658,6 +658,8 @@ test('native remote builds reject PRE reservations while local builds keep both 
     const dynamicBuild = await cloudflareConfig.worker({ mode: 'development', isPreview: false });
     expect(dynamicBuild.env.INBOUND_ROUTING_DB?.id).toBe(inboundRouting.databaseId);
     expect(dynamicBuild.env.PRE_INBOUND_SETTINGS?.value).toEqual({ recipient: null, enabled: true });
+    expect(JSON.parse(await readFile(adapterOptions(true).config, 'utf8')).vars.INBOUND_ROUTING_SCOPE)
+      .toEqual(dynamicBuild.env.INBOUND_ROUTING_SCOPE?.value);
     await expect(cloudflareConfig.worker({ mode: 'development', isPreview: true })).rejects.toThrow('NATIVE_PREVIEW_REQUIRES_PREVIEW_MODE');
     const child = Bun.spawn(['cf', 'build', '--mode', 'development'], {
       cwd: join(projectRoot, 'worker'),

@@ -153,7 +153,11 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   if (env) {
     try {
       const routing = readInboundRouting(env);
-      if (routing?.environment !== 'preview' && env.PRE_INBOUND_SETTINGS?.previewApp !== true && env.APP_ENV !== 'preview') {
+      const { appEnv } = validation.config;
+      if (routing && (appEnv === 'production' || appEnv === 'preview') && routing.environment !== appEnv) {
+        throw new Error('INBOUND_ROUTING_CONFIGURATION_INVALID');
+      }
+      if (appEnv === 'production' || (routing?.environment !== 'preview' && env.PRE_INBOUND_SETTINGS?.previewApp !== true && appEnv !== 'preview')) {
         const delivery = readPreInboundBindings(env.PRE_INBOUND_SETTINGS, typeof env.PRE_INBOUND_DB?.prepare === 'function',
           typeof env.PRE_INBOUND_BUCKET?.put === 'function', routing?.environment === 'production');
         if (delivery?.enabled && (!env.PRE_INBOUND_DB || !await hasSupportedWorkspaceSchema(env.PRE_INBOUND_DB))) {

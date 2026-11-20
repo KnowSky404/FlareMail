@@ -83,6 +83,9 @@ describe('/api/readiness', () => {
     const ready = await health(database, bindings);
     expect(ready.status).toBe(200);
     expect(await ready.json()).toMatchObject({ inboundRouting: { environment: 'preview', readOnly: true } });
+    const wrongProductionScope = await health(database, { ...bindings, APP_ENV: 'production' });
+    expect(wrongProductionScope.status).toBe(503);
+    expect(await wrongProductionScope.json()).toMatchObject({ error: { code: 'INBOUND_ROUTING_NOT_READY' } });
     const production = { ...bindings, INBOUND_ROUTING_SCOPE: { environment: 'production' }, PRE_INBOUND_DB: new D1(previewDatabase) };
     const malformed = await health(database, production);
     expect(malformed.status).toBe(503);
@@ -99,6 +102,9 @@ describe('/api/readiness', () => {
     const productionReady = await health(database, activePreview);
     expect(productionReady.status).toBe(200);
     expect(await productionReady.json()).toMatchObject({ inboundRouting: { environment: 'production', readOnly: false } });
+    const wrongPreviewScope = await health(database, { ...activePreview, APP_ENV: 'preview' });
+    expect(wrongPreviewScope.status).toBe(503);
+    expect(await wrongPreviewScope.json()).toMatchObject({ error: { code: 'INBOUND_ROUTING_NOT_READY' } });
 
     const settings = { recipient: 'pre@example.test', enabled: false };
     const preDb = new D1(previewDatabase);
