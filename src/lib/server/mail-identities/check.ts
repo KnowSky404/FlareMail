@@ -273,6 +273,7 @@ export async function checkManagedMailDomain(
     await env.DB.prepare(
       'UPDATE mail_domains SET cloudflare_error_code = ?, cloudflare_error_at = ?, ' +
       (preserveCatchAllObservation ? '' : 'last_error_code = ?, last_error_at = ?, ') +
+      (mappingConflict && !preserveCatchAllObservation ? "catch_all_target = 'unknown', catch_all_checked_at = NULL, " : '') +
       'updated_at = ? WHERE id = ? AND owner_user_id = ? AND enabled = ? AND unknown_recipient_policy = ? AND worker_name = ?'
     ).bind(result.cloudflare.errorCode, now(), ...(preserveCatchAllObservation ? [] : [result.cloudflare.errorCode, now()]),
       now(), domain.id, ownerUserId, domain.enabled, domain.unknown_recipient_policy, domain.worker_name).run();
