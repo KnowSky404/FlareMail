@@ -336,6 +336,26 @@ describe('managed mail domain checks', () => {
     fixture.sqlite.close();
   });
 
+  test('a stale PRE policy cannot acquire a Cloudflare health lease after collection starts', async () => {
+    const fixture = createFixture();
+    const prepare = fixture.env.DB.prepare.bind(fixture.env.DB);
+    fixture.env.DB.prepare = (sql: string) => {
+      if (sql.includes('SET cloudflare_check_token = ?')) {
+        fixture.sqlite.query("UPDATE mail_domains SET unknown_recipient_policy = 'collect' WHERE id = ?").run(domainId);
+      }
+      return prepare(sql);
+    };
+    const env = { ...fixture.env, INBOUND_ROUTING_SCOPE: { environment: 'preview' as const } };
+    try {
+      const result = await checkManagedMailDomain(env, ownerId, domainId, dependencies([]));
+      expect(result.cloudflare.errorCode).toBe('cloudflare_check_in_progress');
+      expect(fixture.sqlite.query('SELECT cloudflare_next_check_at, catch_all_checked_at FROM mail_domains WHERE id = ?').get(domainId))
+        .toEqual({ cloudflare_next_check_at: null, catch_all_checked_at: null });
+    } finally {
+      fixture.sqlite.close();
+    }
+  });
+
   test('the production protection phase checks provider health without reconciling mailboxes', async () => {
     const fixture = createFixture();
     const env = {
