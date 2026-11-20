@@ -38,13 +38,32 @@ export function buildInboundRoutingPlan(existing: Claim[], requested: Claim[]) {
   return { additions: [...additions.values()], conflicts: [...conflicts.values()] };
 }
 
-export function inboundRoutingBackfillSql(claims: Claim[]) {
+export function inboundRoutingBackfillStatements(claims: Claim[]) {
   const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
-  const rows = claims.map(({ kind, key, environment }) => `(${literal(kind)}, ${literal(key)}, ${literal(environment)})`);
-  // A concurrent claim by the other environment aborts the entire statement.
-  return `INSERT INTO inbound_routing_ownership (kind, route_key, environment) VALUES ${rows.join(', ')}
+  const prefix = 'INSERT INTO inbound_routing_ownership (kind, route_key, environment) VALUES ';
+  // A concurrent foreign claim aborts the entire D1 batch.
+  const suffix = `
     ON CONFLICT (kind, route_key) DO UPDATE SET environment =
       CASE WHEN inbound_routing_ownership.environment = excluded.environment THEN excluded.environment ELSE NULL END;`;
+  const maxStatementBytes = 100_000;
+  const fixedBytes = Buffer.byteLength(prefix) + Buffer.byteLength(suffix);
+  const statements: string[] = [];
+  let rows: string[] = [];
+  let byteLength = fixedBytes;
+  for (const { kind, key, environment } of claims) {
+    const row = `(${literal(kind)}, ${literal(key)}, ${literal(environment)})`;
+    const rowBytes = Buffer.byteLength(row);
+    if (fixedBytes + rowBytes > maxStatementBytes) throw new Error('INBOUND_ROUTING_BACKFILL_ROW_TOO_LARGE');
+    if (byteLength + (rows.length ? 2 : 0) + rowBytes > maxStatementBytes) {
+      statements.push(prefix + rows.join(', ') + suffix);
+      rows = [];
+      byteLength = fixedBytes;
+    }
+    byteLength += (rows.length ? 2 : 0) + rowBytes;
+    rows.push(row);
+  }
+  if (rows.length) statements.push(prefix + rows.join(', ') + suffix);
+  return statements.map(sql => ({ sql }));
 }
 
 export const identityClaimsSql = `
@@ -98,9 +117,9 @@ async function backfill() {
   if (values.apply && plan.additions.length) {
     const directory = await mkdtemp(join(tmpdir(), 'flaremail-inbound-routing-'));
     try {
-      const path = join(directory, 'ownership.sql');
-      await writeFile(path, inboundRoutingBackfillSql(plan.additions), { mode: 0o600 });
-      await executeD1(registry, `@${path}`);
+      const batchFile = join(directory, 'ownership.json');
+      await writeFile(batchFile, JSON.stringify(inboundRoutingBackfillStatements(plan.additions)), { mode: 0o600 });
+      await executeD1(registry, { batchFile });
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
