@@ -10,6 +10,7 @@ import { MailIdentityValidationError, normalizeCloudflareZoneId, normalizeEmailW
 export function domainOnboardingConfiguration(env: CloudflareEnv) {
   if (isMailRoutingReadOnly(env)) return { workerName: null, available: false, canManageRouting: false };
   const workerName = env.MAIL_IDENTITY_WORKER_NAME?.trim() ?? '';
+  if (hasWorkerMappingConflict(env, workerName)) return { workerName: null, available: false, canManageRouting: false };
   let workerConfigured = false;
   try {
     workerConfigured = Boolean(workerName && normalizeEmailWorkerName(workerName) && /^[a-f0-9]{32}$/u.test(env.MAIL_IDENTITY_ACCOUNT_ID?.trim() ?? ''));
