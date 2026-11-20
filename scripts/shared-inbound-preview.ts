@@ -422,20 +422,19 @@ export async function assertProductionCatchAllRelease(
     `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
      FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
   );
-  if (domains.length && !target.cron.some(schedule => {
+  const collectorCount = Math.max(1, domains.length);
+  if (!target.cron.some(schedule => {
     const minute = /^(\*|\*\/[1-5]?\d|[1-5]?\d)(?:\s+\*){4}$/u.exec(schedule.trim())?.[1];
     if (!minute) return false;
     const minutesPerRun = minute === '*' ? 1 : minute.startsWith('*/') ? Number(minute.slice(2)) : 60;
-    return minutesPerRun > 0 && domains.length * minutesPerRun * 60_000 < MAIL_HEALTH_REFRESH_WINDOW_MS;
+    return minutesPerRun > 0 && collectorCount * minutesPerRun * 60_000 < MAIL_HEALTH_REFRESH_WINDOW_MS;
   })) throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
-  if (domains.length) {
-    const keys = ['CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', 'CLOUDFLARE_EMAIL_ROUTING_TOKEN'];
-    const current = keys.find(key => version.bindings.some(binding => binding.name === key));
-    const candidate = keys.find(key => target.secrets?.includes(key));
-    if (!candidate || candidate !== current || keys.some(key => Object.hasOwn(target.vars, key)) ||
-        !version.bindings.some(binding => binding.name === current && binding.type === 'secret_text')) {
-      throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
-    }
+  const keys = ['CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', 'CLOUDFLARE_EMAIL_ROUTING_TOKEN'];
+  const current = keys.find(key => version.bindings.some(binding => binding.name === key));
+  const candidate = keys.find(key => target.secrets?.includes(key));
+  if (!candidate || candidate !== current || keys.some(key => Object.hasOwn(target.vars, key)) ||
+      !version.bindings.some(binding => binding.name === current && binding.type === 'secret_text')) {
+    throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
   }
   if (!requireCurrentObservations) return;
   const claims = query<{ route_key: string }>(target.inboundRouting?.databaseId,

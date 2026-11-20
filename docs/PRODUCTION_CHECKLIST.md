@@ -130,6 +130,7 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   Shared-inbound releases preserve the production Worker secret selected for
   Cron and reject `--secrets-file`. Handle credential rotation separately and
   verify PRE catch-all observations with the new credential.
+  Provision and verify the observer before onboarding the first PRE collector.
 - [ ] `AUTH_MODE` is explicitly selected. In `cloudflare-access` mode, the
   issuer, AUD, JWKS URL, single allowed `sub`, and stable Owner ID match the
   Cloudflare Access application and controlled bootstrap record.

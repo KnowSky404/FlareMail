@@ -169,6 +169,12 @@ cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
     await mockRequests();
     await expect(assertProductionCatchAllRelease(target, { ...active, routingReadOnly: false, deployedAt: Date.now() }, projectRoot))
       .resolves.toBeUndefined();
+    await writeFile(join(directory, target.preInbound.databaseId), JSON.stringify([
+      { success: true, results: { columns: Object.keys(domain), rows: [] } }
+    ]));
+    await expect(assertProductionCatchAllRelease({ ...target, secrets: [] }, { ...active, bindings: [] }, projectRoot, false))
+      .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
+    await expect(assertProductionCatchAllRelease(target, active, projectRoot, false)).resolves.toBeUndefined();
   } finally {
     fetch.mockRestore();
     await rm(directory, { recursive: true, force: true });
