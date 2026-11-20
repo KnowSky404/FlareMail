@@ -499,9 +499,21 @@ export async function assertProductionOwnershipCoverage(target: CloudflareTarget
     readReleaseD1Rows<Record<string, unknown>>(target.preInbound?.databaseId, identityClaimsSql, errorCode),
     readReleaseD1Rows<Record<string, unknown>>(target.inboundRouting?.databaseId, ownershipClaimsSql, errorCode)
   ]);
-  const reservation = target.vars.PRE_INBOUND_RECIPIENT;
-  const plan = planIdentityClaims(production, preview, ownership, reservation ? normalizePreInboundRecipient(reservation) : null);
+  const reservation = target.vars.PRE_INBOUND_RECIPIENT ? normalizePreInboundRecipient(target.vars.PRE_INBOUND_RECIPIENT) : null;
+  const plan = planIdentityClaims(production, preview, ownership, reservation);
   if (plan.additions.length || plan.conflicts.length) throw new Error(errorCode);
+  if (reservation && target.vars.PRE_INBOUND_ENABLED === 'true') {
+    const mailboxError = 'INBOUND_PRODUCTION_FIXED_PRE_MAILBOX_UNAVAILABLE';
+    const eligible = await readReleaseD1Rows<{ email: string; worker_name: string }>(target.preInbound?.databaseId, `
+      SELECT lower(a.email) AS email, d.worker_name
+      FROM mail_addresses a
+      JOIN mail_domains d ON d.id = a.domain_id AND d.owner_user_id = a.owner_user_id
+      JOIN workspace_owner o ON o.singleton = 1 AND o.user_id = d.owner_user_id
+      JOIN workspace_users u ON u.id = o.user_id
+      WHERE a.lifecycle_status = 'active' AND a.receive_enabled = 1 AND a.routing_state IN ('active', 'imported')
+        AND d.enabled = 1 AND lower(d.domain_name) = lower(substr(a.email, instr(a.email, '@') + 1))`, mailboxError);
+    if (!eligible.some(row => row.email === reservation && row.worker_name === target.name)) throw new Error(mailboxError);
+  }
 }
 
 export async function assertProductionCatchAllRelease(

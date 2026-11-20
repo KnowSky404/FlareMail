@@ -188,7 +188,10 @@ test('protection requires fresh mailbox and catch-all ownership coverage in both
   try {
     await writeFile(join(directory, 'cf'), `#!/bin/sh
 [ "$1:$2:$4" = 'd1:raw:--sql' ] || exit 1
-cat '${directory}/'"$3"
+case "$5" in
+  *workspace_owner*) cat '${directory}/fixed-mailbox' ;;
+  *) cat '${directory}/'"$3" ;;
+esac
 `, { mode: 0o700 });
     await fixture(target.databaseId, [mailbox, catchAll]);
     await fixture(target.preInbound.databaseId, [previewMailbox]);
@@ -199,6 +202,14 @@ cat '${directory}/'"$3"
     await expect(coverage()).rejects.toThrow(blocked);
     await registry([...claims, reservation]);
     await expect(coverage()).resolves.toBeUndefined();
+    const activating = { ...target, vars: { ...target.vars, PRE_INBOUND_ENABLED: 'true' } };
+    const fixedMailbox = (rows: string[][]) => writeFile(join(directory, 'fixed-mailbox'), JSON.stringify([
+      { success: true, results: { columns: ['email', 'worker_name'], rows } }
+    ]));
+    await fixedMailbox([[reservation[1]!, 'legacy-worker']]);
+    await expect(assertProductionOwnershipCoverage(activating)).rejects.toThrow('INBOUND_PRODUCTION_FIXED_PRE_MAILBOX_UNAVAILABLE');
+    await fixedMailbox([[reservation[1]!, target.name]]);
+    await expect(assertProductionOwnershipCoverage(activating)).resolves.toBeUndefined();
     await fixture(target.preInbound.databaseId, [previewMailbox, catchAll]);
     await expect(coverage()).rejects.toThrow(blocked);
   } finally {
