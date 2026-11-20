@@ -10,6 +10,7 @@ export const TRANSIENT_CLOUDFLARE_HEALTH_ERRORS = new Set([
 ]);
 const healthyCheckMinDelayMs = 16 * 60 * 60 * 1000;
 const healthyCheckJitterMs = 4 * 60 * 60 * 1000;
+export const MAIL_HEALTH_REFRESH_WINDOW_MS = MAIL_HEALTH_MAX_AGE_MS - healthyCheckMinDelayMs - healthyCheckJitterMs;
 const retryBaseDelayMs = 5 * 60 * 1000;
 const maxRetryDelayMs = 20 * 60 * 60 * 1000;
 const configurationRetryDelayMs = 6 * 60 * 60 * 1000;

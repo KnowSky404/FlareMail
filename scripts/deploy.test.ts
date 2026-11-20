@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertLivePreviewForPublish, assertProductionCatchAllActivation, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertLivePreviewForPublish, assertProductionCatchAllRelease, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -113,17 +113,21 @@ cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
       { success: true, results: { columns: ['route_key'], rows: [[domain.domain_name]] } }
     ]));
     await mockRequests();
-    await expect(assertProductionCatchAllActivation(target, active, projectRoot))
+    await expect(assertProductionCatchAllRelease(target, active, projectRoot))
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED');
     domain.catch_all_checked_at = new Date(active.deployedAt + 1).toISOString();
     await mockRequests();
-    await expect(assertProductionCatchAllActivation(target, active, projectRoot))
+    await expect(assertProductionCatchAllRelease(target, active, projectRoot))
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED');
     Object.assign(domain, { last_error_code: 'preview_catch_all_cron_verified', last_error_at: domain.catch_all_checked_at });
     await mockRequests();
-    await expect(assertProductionCatchAllActivation(target, active, projectRoot)).resolves.toBeUndefined();
+    await expect(assertProductionCatchAllRelease(target, active, projectRoot)).resolves.toBeUndefined();
+    await expect(assertProductionCatchAllRelease({ ...target, cron: ['0 0 * * *'] }, active, projectRoot, false))
+      .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
+    await expect(assertProductionCatchAllRelease({ ...target, cron: ['*/5 * * * *'] }, active, projectRoot, false))
+      .resolves.toBeUndefined();
     await mockRequests();
-    await expect(assertProductionCatchAllActivation(target, { ...active, routingReadOnly: false, deployedAt: Date.now() }, projectRoot))
+    await expect(assertProductionCatchAllRelease(target, { ...active, routingReadOnly: false, deployedAt: Date.now() }, projectRoot))
       .resolves.toBeUndefined();
   } finally {
     fetch.mockRestore();
