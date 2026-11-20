@@ -51,7 +51,7 @@
   let noticeNeedsAttention = $state(false);
   let syncNotice = $state('');
   let syncError = $state('');
-  let providerConfiguration = $state({ cloudflare: false, resend: false });
+  let providerConfiguration = $state({ cloudflare: false, resend: false, productionVerifiesCatchAll: false });
   let onboarding = $state({ available: false, workerName: null as string | null, canManageRouting: false });
   let domainSearch = $state('');
   let addressSearch = $state('');
@@ -149,7 +149,7 @@
   });
 
   type Identities = { domains: Omit<MailDomain, 'cloudflare_configured' | 'resend_configured'>[]; addresses: MailAddress[];
-    providerConfiguration: { cloudflare: boolean; resend: boolean }; domainOnboarding?: typeof onboarding };
+    providerConfiguration: { cloudflare: boolean; resend: boolean; productionVerifiesCatchAll?: boolean }; domainOnboarding?: typeof onboarding };
 
   type FreshCheck = DomainCheck & { resend: DomainCheck['resend'] & { checkedAt: string | null } };
   type LoadOptions = { preserveChecks?: Record<string, Partial<DomainCheck>>; quiet?: boolean };
@@ -163,7 +163,7 @@
       if (!request.isCurrent()) return false;
       if (options.quiet && !canAutoRefresh()) return false;
       const previousDomains = domains;
-      providerConfiguration = loaded.providerConfiguration;
+      providerConfiguration = { ...loaded.providerConfiguration, productionVerifiesCatchAll: loaded.providerConfiguration.productionVerifiesCatchAll === true };
       onboarding = loaded.domainOnboarding ?? { available: false, workerName: null, canManageRouting: false };
       domains = loaded.domains.map((domain) => ({ ...domain, cloudflare_configured: loaded.providerConfiguration.cloudflare, resend_configured: loaded.providerConfiguration.resend }));
       addresses = loaded.addresses;
@@ -652,6 +652,7 @@
       catchAllCollects: domain.unknown_recipient_policy === 'collect' &&
         (checks[domain.id]?.cloudflare?.catchAllTarget ?? domain.catch_all_target) === 'this_worker',
       catchAllCheckedAt: domain.catch_all_checked_at,
+      productionVerifiesCatchAll: providerConfiguration.productionVerifiesCatchAll,
       catchAllProductionVerified: domain.last_error_code === PREVIEW_CATCH_ALL_CRON_VERIFIED &&
         domain.last_error_at === domain.catch_all_checked_at,
       resendStatus: domain.resend_status,

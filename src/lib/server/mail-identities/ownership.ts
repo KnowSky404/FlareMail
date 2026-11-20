@@ -78,7 +78,7 @@ export async function catchAllOwnershipError(env: CloudflareEnv, domain: string)
   return owner !== routing.environment ? 'cloudflare_collect_catch_all_owned_elsewhere' : null;
 }
 
-function ownershipConflict() {
+export function ownershipConflict() {
   return new ApiError(409, 'MAIL_ROUTING_OWNERSHIP_CONFLICT', '该收信地址或兜底规则未归属当前环境。', undefined, undefined, false);
 }
 

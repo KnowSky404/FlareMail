@@ -21,6 +21,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     domainOnboarding: domainOnboardingConfiguration(env),
     providerConfiguration: {
       cloudflare: !isPreviewRoutingReadOnly(env) && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN?.trim() || env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
+      productionVerifiesCatchAll: env.INBOUND_ROUTING_SCOPE?.environment === 'preview',
       cloudflareManagement: !readOnly && Boolean(env.CLOUDFLARE_EMAIL_ROUTING_TOKEN?.trim()),
       resend: Boolean(env.RESEND_API_KEY?.trim())
     }
