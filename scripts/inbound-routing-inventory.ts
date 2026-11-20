@@ -1,4 +1,5 @@
 import { inboundRoutingKey, type InboundRoutingEnvironment, type InboundRoutingKind } from '../src/lib/server/inbound/routing-ownership.ts';
+import { resolvePreInboundMatch } from '../src/lib/server/inbound/pre-inbound.ts';
 
 export interface Claim {
   kind: InboundRoutingKind;
@@ -7,9 +8,9 @@ export interface Claim {
 }
 
 export const identityClaimsSql = `
-  SELECT 'mailbox' AS kind, email AS route_key FROM mail_addresses
+  SELECT 'mailbox' AS kind, email AS route_key, (lifecycle_status = 'active' AND receive_enabled = 1) AS receiving FROM mail_addresses
   UNION ALL
-  SELECT 'catch_all' AS kind, domain_name AS route_key FROM mail_domains
+  SELECT 'catch_all' AS kind, domain_name AS route_key, 0 AS receiving FROM mail_domains
   WHERE enabled = 1 AND unknown_recipient_policy = 'collect'
 `;
 
@@ -44,6 +45,10 @@ export function buildInboundRoutingPlan(existing: Claim[], requested: Claim[]) {
 export function planIdentityClaims(
   production: Record<string, unknown>[], preview: Record<string, unknown>[], ownership: Record<string, unknown>[], reservation: string | null
 ) {
+  if (reservation && preview.some(row => row.kind === 'mailbox' && row.receiving === 1 &&
+      typeof row.route_key === 'string' && resolvePreInboundMatch(reservation, row.route_key) === 'subaddress')) {
+    throw new Error('INBOUND_ROUTING_RESERVED_SUBADDRESS_PRESENT');
+  }
   const requested: Record<string, unknown>[] = [
     ...production.map(row => ({ ...row, environment: 'production' })),
     ...preview.map(row => ({ ...row, environment: 'preview' }))
