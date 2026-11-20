@@ -12,7 +12,7 @@ import {
 import { listManagedMailAddresses, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { getExactResendDomain, canSendFromResendDomain, ResendDomainError } from '$lib/server/resend-domains';
 import { normalizeMailDomain } from './validation';
-import { catchAllOwnershipError, filterOwnedMailboxes, hasProductionCatchAllObserver, isMailRoutingReadOnly, isPreviewRoutingReadOnly } from './ownership';
+import { catchAllOwnershipError, filterOwnedMailboxes, hasProductionCatchAllObserver, hasWorkerMappingConflict, isMailRoutingReadOnly, isPreviewRoutingReadOnly } from './ownership';
 
 type CloudflareClient = Pick<CloudflareEmailRoutingClient, 'getZone' | 'listRules' | 'getCatchAll'>;
 type ResendLookup = typeof getExactResendDomain;
@@ -265,16 +265,17 @@ export async function checkManagedMailDomain(
         deadlineAt: Date.parse(now()) + 12_000
       })
     : null);
+  const mappingConflict = hasWorkerMappingConflict(env, domain.worker_name);
   if (readOnly) {
     result.cloudflare.errorCode = 'cloudflare_token_missing';
-  } else if (!cloudflare) {
-    result.cloudflare.errorCode = 'cloudflare_token_missing';
+  } else if (!cloudflare || mappingConflict) {
+    result.cloudflare.errorCode = mappingConflict ? 'cloudflare_worker_mapping_conflict' : 'cloudflare_token_missing';
     await env.DB.prepare(
       'UPDATE mail_domains SET cloudflare_error_code = ?, cloudflare_error_at = ?, ' +
       (preserveCatchAllObservation ? '' : 'last_error_code = ?, last_error_at = ?, ') +
-      'updated_at = ? WHERE id = ? AND owner_user_id = ? AND enabled = ? AND unknown_recipient_policy = ?'
+      'updated_at = ? WHERE id = ? AND owner_user_id = ? AND enabled = ? AND unknown_recipient_policy = ? AND worker_name = ?'
     ).bind(result.cloudflare.errorCode, now(), ...(preserveCatchAllObservation ? [] : [result.cloudflare.errorCode, now()]),
-      now(), domain.id, ownerUserId, domain.enabled, domain.unknown_recipient_policy).run();
+      now(), domain.id, ownerUserId, domain.enabled, domain.unknown_recipient_policy, domain.worker_name).run();
   } else {
     const cloudflareCheckToken = randomUUID();
     const cloudflareLeaseAt = now();

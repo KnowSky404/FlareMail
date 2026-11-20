@@ -222,6 +222,17 @@ describe('scheduled mail domain health refresh', () => {
     }
   });
 
+  test('scheduled health refuses to verify a stale Worker mapping', async () => {
+    const fixture = createFixture({ collect: true });
+    fixture.env.INBOUND_ROUTING_SCOPE = { environment: 'production', workerName: 'new-dispatcher' };
+    try {
+      await refreshMailDomainHealth(fixture.env, successDependencies());
+      expect(fixture.readDomain()).toMatchObject({ cloudflare_error_code: 'cloudflare_worker_mapping_conflict' });
+    } finally {
+      fixture.sqlite.close();
+    }
+  });
+
   test('scheduled health distinguishes current, unassigned and other-environment catch-all ownership', async () => {
     for (const [owner, code] of [
       ['production', null], ['preview', 'cloudflare_collect_catch_all_owned_elsewhere'], [null, 'cloudflare_collect_catch_all_unassigned']
