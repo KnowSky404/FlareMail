@@ -476,7 +476,9 @@ export async function assertProductionCatchAllRelease(
   requireCurrentObservations = true, previewCatchAllCapacity = 0
 ) {
   const errorCode = 'INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED';
-  const get = cloudflareWorkerMetadata(projectRoot, errorCode);
+  const claims = await readReleaseD1Rows<{ route_key: string }>(target.inboundRouting?.databaseId,
+    `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`,
+    'INBOUND_PRODUCTION_ROUTING_REGISTRY_NOT_READY');
   const domains = await readReleaseD1Rows<{ domain_name: string; worker_name: string; catch_all_target: string; catch_all_checked_at: string | null; last_error_code: string | null; last_error_at: string | null }>(
     target.preInbound?.databaseId,
     `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
@@ -496,8 +498,7 @@ export async function assertProductionCatchAllRelease(
     }
   }
   if (!requireCurrentObservations) return;
-  const claims = await readReleaseD1Rows<{ route_key: string }>(target.inboundRouting?.databaseId,
-    `SELECT route_key FROM inbound_routing_ownership WHERE kind = 'catch_all' AND environment = 'preview'`, errorCode);
+  const get = cloudflareWorkerMetadata(projectRoot, errorCode);
   const scheduleResult = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');
   if (!Array.isArray(scheduleResult.schedules) || !scheduleResult.schedules.length ||
       scheduleResult.schedules.some(schedule => typeof schedule.cron !== 'string') || !Number.isFinite(version.deployedAt)) {

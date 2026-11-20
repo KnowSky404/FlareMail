@@ -122,7 +122,8 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   `Email Routing Rules Edit` (write). No deployment token or
   destination-address permissions are reused. The production scheduler uses a
   credential with read access to every PRE zone collecting unknown recipients.
-  For the initial cutover, wait for the active protection deployment to record
+  The protection build verifies it can query the live ownership table before
+  upload. Wait for the active protection deployment to record
   a fresh catch-all observation for each of these zones before activation.
   Keep a recurring minute or hourly trigger with enough runs to refresh every
   enabled PRE catch-all domain within the four-hour margin before verification
