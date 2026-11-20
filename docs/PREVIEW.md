@@ -45,8 +45,12 @@
 ## Keep one current PRE
 
 Reuse the stable native Preview name `mail-ai` at
-`https://mail-ai-flaremail.littlecontrol.workers.dev/`. Keep one latest usable
-PRE; after checking its availability, remove other confirmed native Previews.
+`https://mail-ai.preview.ziteng.li/`. The custom base `preview.ziteng.li` serves
+Preview traffic only. The existing `mail-ai-flaremail.littlecontrol.workers.dev`
+address is available while the parent Worker's `workers.dev` Preview URLs are enabled.
+Before disabling them for production cutover, check TLS and authenticated readiness
+on the custom address. Keep one latest usable PRE. After checking its availability,
+remove other confirmed native Previews.
 The user has authorized this Preview cleanup as the default. Verify the parent
 Worker and Preview IDs, run `cf previews delete <id> --worker <parent> --dry-run`,
 then use `--force` only to skip the confirmation for that verified Preview.
@@ -61,6 +65,14 @@ the native Preview inventory. Use the authenticated native Preview collection
 API when necessary; never infer that zero Builds records means there are no
 native Previews. Keep auth values out of output and preserve the current PRE
 until a usable replacement is confirmed.
+
+The shared-inbound release checks use the existing `cf` OAuth profile where the
+CLI makes its refreshed credentials available. `cf 1.0.0-rc.1` exposes neither
+the native Preview read commands needed here nor a command to pass keyring-backed
+credentials to those API calls. If the checks report
+`INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE` with a keyring-only
+profile, supply an authorized, scoped `CLOUDFLARE_API_TOKEN` in the process
+environment for the release. Keep the profile and keyring intact.
 
 ## 邮件阅读页验收
 
