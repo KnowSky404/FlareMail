@@ -194,6 +194,8 @@ test('activation requires PRE catch-all observations produced after the protecti
 [ "$1:$2:$4" = 'd1:raw:--sql' ] || exit 1
 cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
 `, { mode: 0o700 });
+    await expect(assertProductionCatchAllRelease(target, active, projectRoot, false))
+      .rejects.toThrow('INBOUND_PRODUCTION_ROUTING_REGISTRY_NOT_READY');
     await writeFile(join(directory, target.inboundRouting.databaseId), JSON.stringify([
       { success: true, results: { columns: ['route_key'], rows: [[domain.domain_name]] } }
     ]));
