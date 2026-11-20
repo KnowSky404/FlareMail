@@ -63,3 +63,5 @@
 ```
 
 分别对两个目标运行 `bun run db:migrate:local`。选择生产目标运行 `bun run db:migrate:local -- --inbound-routing` 初始化共享归属库。对已有身份先运行 `bun run mail:routing:backfill -- --production <PROD 本地目标> --preview <PRE 本地目标>`。冲突报告包含规则类型及 `JSON.stringify([kind, key])` 的 SHA-256，供在本地核对已知地址。存在冲突时退出码非零，归属库保持原样。停住两边的本地身份写入并核对目标后，加 `--apply` 写入共享归属库。邮箱和域名设置使用各自选定的本地目标，模拟收信使用生产目标运行 `bun run preview`。
+
+本地回填将大批量清单拆成满足 D1 字节限制的语句，在同一个批次内提交。若写入时出现跨环境冲突，整个批次会回滚。参见 [D1 单条语句限制](https://developers.cloudflare.com/d1/platform/limits/)。

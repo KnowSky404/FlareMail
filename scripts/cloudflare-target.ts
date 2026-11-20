@@ -141,14 +141,16 @@ export function localStateArgs(persistTo?: string) {
   return ['--local', '--persist-to', resolve(projectRoot, persistTo ?? process.env.FLAREMAIL_STATE_DIR ?? defaultStatePath)];
 }
 
-export function createD1Command(options: { remote?: boolean; config?: string; database?: string; persistTo?: string; inboundRouting?: boolean }, sql: string | string[]) {
+export function createD1Command(options: { remote?: boolean; config?: string; database?: string; persistTo?: string; inboundRouting?: boolean }, sql: string | string[] | { batchFile: string }) {
   const target = readCloudflareTarget(options.config, options.remote);
   const binding = options.inboundRouting ? target.inboundRouting : target;
   if (!binding || (options.inboundRouting && options.remote)) throw new Error('INBOUND_ROUTING_CONFIGURATION_INVALID');
   if (options.database && ![binding.databaseId, binding.databaseName, options.inboundRouting ? 'INBOUND_ROUTING_DB' : 'DB'].includes(options.database)) {
     throw new Error('--database must match the selected target D1 binding.');
   }
-  return ['cf', 'd1', 'raw', binding.databaseId, ...(Array.isArray(sql) ? ['--batch', JSON.stringify(sql.map((statement) => ({ sql: statement })))] : ['--sql', sql]),
+  const query = typeof sql === 'string' ? ['--sql', sql] : ['--batch', Array.isArray(sql)
+    ? JSON.stringify(sql.map((statement) => ({ sql: statement }))) : '@' + sql.batchFile];
+  return ['cf', 'd1', 'raw', binding.databaseId, ...query,
     ...(options.remote ? [] : localStateArgs(options.persistTo))];
 }
 
@@ -169,7 +171,7 @@ export function normalizeD1Output(value: unknown): unknown {
   return Object.fromEntries(Object.entries(item).map(([key, nested]) => [key, normalizeD1Output(nested)]));
 }
 
-export async function executeD1(options: Parameters<typeof createD1Command>[0], sql: string | string[]) {
+export async function executeD1(options: Parameters<typeof createD1Command>[0], sql: Parameters<typeof createD1Command>[1]) {
   const child = Bun.spawn(createD1Command(options, sql), { stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited
