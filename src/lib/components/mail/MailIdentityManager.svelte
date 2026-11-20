@@ -599,7 +599,7 @@
     if ((route !== undefined && route !== 'managed' && route !== 'imported') || address.last_error_code || !['active', 'imported'].includes(address.routing_state)) return 'needs_check';
     const health = mailHealthState({ configured: domain.cloudflare_configured, checkedAt: domain.cloudflare_checked_at, errorCode: domain.cloudflare_error_code, leaseExpiresAt: domain.cloudflare_check_expires_at, nowMs: now });
     if (health !== 'fresh') return 'needs_check';
-    return providerConfiguration.productionVerifiesCatchAll ? 'exact_route_verified' : 'ready';
+    return providerConfiguration.productionVerifiesCatchAll ? 'mailbox_configured' : 'ready';
   }
   function sendingState(address: MailAddress): DomainCapabilityState {
     if (canSendFrom(address)) return 'ready';
@@ -677,7 +677,7 @@
   }
 
   function capabilityLabel(state: DomainCapabilityState) {
-    if (state === 'exact_route_verified') return t('settings.exactRouteVerified');
+    if (state === 'mailbox_configured') return t('settings.mailboxConfigured');
     return state === 'ready' ? t('settings.ready') :
       state === 'catch_all_verified' ? t('settings.catchAllVerified') :
         state === 'needs_check' ? t('settings.statusNeedsCheck') : t('settings.notReady');

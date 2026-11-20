@@ -39,9 +39,9 @@ describe('domain dashboard capability summary', () => {
       .toBe('needs_check');
   });
 
-  test('shows exact rule verification when PRE delivery depends on production', () => {
+  test('shows saved mailbox configuration when PRE delivery depends on production', () => {
     expect(summarizeDomainCapabilities({ ...ready, productionVerifiesCatchAll: true }, nowMs).receiving)
-      .toBe('exact_route_verified');
+      .toBe('mailbox_configured');
   });
 
   test('recognizes an explicitly collecting Worker catch-all and imported routes', () => {
