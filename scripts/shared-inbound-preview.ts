@@ -275,8 +275,9 @@ function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
       let output: string;
       if (rawFetch) {
         output = execFileSync('node', ['--input-type=module', '-e',
-          "import { pathToFileURL } from 'node:url'; const { t: get } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(await get(process.argv[2]));",
-          rawFetch, resource], { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000 });
+          "import { pathToFileURL } from 'node:url'; const { m: selectProfile } = await import(pathToFileURL(process.argv[2]).href); selectProfile(); const { t: get } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(await get(process.argv[3]));",
+          rawFetch, join(dirname(rawFetch), 'oauth-DOqdE0PG.mjs'), resource],
+        { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000 });
       } else {
         const response = await fetch('https://api.cloudflare.com/client/v4' + resource, {
           headers: { Authorization: 'Bearer ' + token },
