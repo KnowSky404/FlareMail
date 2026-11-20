@@ -92,6 +92,9 @@ describe('domain enrollment and settings', () => {
     registry.query("DELETE FROM inbound_routing_ownership WHERE kind = 'catch_all' AND route_key = 'example.com'").run();
     db.query(`UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?, cloudflare_next_check_at = ?
       WHERE id = ?`).run(new Date().toISOString(), new Date(Date.now() + 16 * 60 * 60_000).toISOString(), domain.id);
+    await expect(updateMailDomain({ ...env, MAIL_IDENTITY_WORKER_NAME: 'new-dispatcher' }, owner, domain.id, { unknownRecipientPolicy: 'collect' }))
+      .rejects.toMatchObject({ code: 'MAIL_DOMAIN_WORKER_MAPPING_CONFLICT' });
+    expect(registry.query('SELECT kind FROM inbound_routing_ownership').get()).toBeNull();
     expect(await updateMailDomain(env, owner, domain.id, { unknownRecipientPolicy: 'collect' })).toMatchObject({
       unknown_recipient_policy: 'collect', catch_all_checked_at: null, cloudflare_next_check_at: null
     });
