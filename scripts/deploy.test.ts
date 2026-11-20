@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertLivePreviewForPublish, assertProductionCatchAllRelease, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, fixedReservationHash, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -73,6 +73,42 @@ test('production requires live historical URL isolation and keeps the main URL s
     else process.env.CLOUDFLARE_API_TOKEN = token;
     if (legacyToken === undefined) delete process.env.CF_API_TOKEN;
     else process.env.CF_API_TOKEN = legacyToken;
+  }
+});
+
+test('production verifies the live PRE address reservation as well as its bindings', async () => {
+  const priorAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const priorToken = process.env.CLOUDFLARE_API_TOKEN;
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'a'.repeat(32);
+  process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
+  const target = {
+    ...localTarget, vars: { PRE_INBOUND_RECIPIENT: 'expected@example.test' },
+    preInbound: { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', databaseName: 'pre', bucket: 'pre-bucket' },
+    inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
+  };
+  const proof = { previewDeploymentId: 'pre-deploy', previewBuildLabel: 'preview+abcdef0' };
+  const fetch = spyOn(globalThis, 'fetch');
+  const mockLive = (recipient: string) => {
+    const respond = (result: unknown) => fetch.mockResolvedValueOnce(Response.json({ success: true, result }));
+    respond({ id: 'worker-id' });
+    respond([{ id: 'pre-id', slug: 'mail-ai' }]);
+    respond({ id: proof.previewDeploymentId, env: {
+      APP_ENV: { text: 'preview' }, APP_VERSION: { text: proof.previewBuildLabel },
+      DB: { database_id: target.preInbound.databaseId }, BUCKET: { bucket_name: target.preInbound.bucket },
+      INBOUND_ROUTING_DB: { database_id: target.inboundRouting.databaseId }, PRE_INBOUND_SETTINGS: { json: { recipient } }
+    } });
+  };
+  try {
+    mockLive('another@example.test');
+    await expect(assertLiveNativePreview(target, proof, projectRoot)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
+    mockLive('expected@example.test');
+    await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBeUndefined();
+  } finally {
+    fetch.mockRestore();
+    if (priorAccount === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    else process.env.CLOUDFLARE_ACCOUNT_ID = priorAccount;
+    if (priorToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = priorToken;
   }
 });
 

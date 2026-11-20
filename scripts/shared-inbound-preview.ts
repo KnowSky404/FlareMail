@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { accessSync, constants, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { delimiter, dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { CloudflareTarget } from './cloudflare-target.ts';
 import { normalizePreInboundRecipient } from '../src/lib/server/inbound/pre-inbound.ts';
 import { isMailHealthFresh, MAIL_HEALTH_REFRESH_WINDOW_MS, PREVIEW_CATCH_ALL_CRON_VERIFIED } from '../src/lib/domain/mail/health.ts';
@@ -222,18 +222,27 @@ export function pinCloudflareReleaseIdentity(projectRoot: string, discoverAccoun
   }
 }
 
-function cloudflareSessionToken(projectRoot: string) {
-  const configured = process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim();
-  if (configured) return configured;
-  try {
-    const auth = cloudflareReleaseIdentity(projectRoot);
-    const name = auth.profile?.name;
-    if (!auth.authenticated || typeof name !== 'string' || !/^[\w-]+$/u.test(name)) throw new Error();
-    const configDir = process.env.XDG_CONFIG_HOME || join(homedir(), '.config');
-    const profile = JSON.parse(readFileSync(join(configDir, 'cloudflare', 'config', name + '.json'), 'utf8'));
-    if (typeof profile.oauth_token === 'string' && profile.oauth_token.trim()) return profile.oauth_token.trim();
-  } catch {
-    // Do not expose authentication errors or profile data from this probe.
+function cloudflareCliRawFetch(projectRoot: string) {
+  pinCloudflareReleaseIdentity(projectRoot, false);
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    const cli = join(dir, 'cf');
+    try {
+      accessSync(cli, constants.X_OK);
+      if (!statSync(cli).isFile()) continue;
+    } catch {
+      continue;
+    }
+    try {
+      const root = dirname(dirname(realpathSync(cli)));
+      const { name, version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+      if (name === 'cf' && version === '1.0.0-rc.1') {
+        // shortcut: this CLI has no generic API command, use its read transport until it exposes a public one.
+        return join(root, 'dist', 'raw-fetch-g83RSAGp.mjs');
+      }
+    } catch {
+      // An unrecognized executable cannot provide the pinned metadata transport.
+    }
+    break;
   }
   throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE');
 }
@@ -241,16 +250,30 @@ function cloudflareSessionToken(projectRoot: string) {
 function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
-  const token = cloudflareSessionToken(projectRoot);
+  const token = process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim();
+  const rawFetch = token ? undefined : cloudflareCliRawFetch(projectRoot);
   return async <T>(path: string) => {
-    const response = await fetch('https://api.cloudflare.com/client/v4/accounts/' + account + '/workers/' + path, {
-      headers: { Authorization: 'Bearer ' + token },
-      signal: AbortSignal.timeout(8_000), redirect: 'error'
-    });
-    if (!response.ok) throw new Error(errorCode);
-    const envelope = await response.json() as { success: boolean; result: T };
-    if (!envelope.success) throw new Error(errorCode);
-    return envelope.result;
+    const resource = '/accounts/' + account + '/workers/' + path;
+    try {
+      let output: string;
+      if (rawFetch) {
+        output = execFileSync('node', ['--input-type=module', '-e',
+          "import { pathToFileURL } from 'node:url'; const { t: get } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(await get(process.argv[2]));",
+          rawFetch, resource], { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000 });
+      } else {
+        const response = await fetch('https://api.cloudflare.com/client/v4' + resource, {
+          headers: { Authorization: 'Bearer ' + token },
+          signal: AbortSignal.timeout(8_000), redirect: 'error'
+        });
+        if (!response.ok) throw new Error(errorCode);
+        output = await response.text();
+      }
+      const envelope = JSON.parse(output) as { success: boolean; result: T };
+      if (envelope.success === true) return envelope.result;
+    } catch {
+      // The transport can include sensitive provider metadata in errors.
+    }
+    throw new Error(errorCode);
   };
 }
 
@@ -266,7 +289,7 @@ async function readLiveNativePreview(workerName: string, projectRoot: string) {
   const previews = await get<Array<{ id?: string; slug?: string }>>(path + '?slug=mail-ai');
   const preview = Array.isArray(previews) ? previews.find(entry => entry.slug === 'mail-ai') : null;
   if (!preview?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
-  const latest = await get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string }> }>(
+  const latest = await get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string; json?: WorkerBindingMetadata['json'] }> }>(
     path + '/' + encodeURIComponent(preview.id) + '/deployments/latest?include=bindings'
   );
   return { latest, baseEnv: worker.previews_base_config?.env };
@@ -277,7 +300,19 @@ export async function assertLiveNativePreview(
 ) {
   const { latest } = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
+  const binding = env?.PRE_INBOUND_SETTINGS;
+  const value = binding?.json;
+  let reservationMatches = false;
+  try {
+    const settings = typeof value === 'string' ? JSON.parse(value) as Exclude<WorkerBindingMetadata['json'], string> : value;
+    if (!binding || (settings && (settings.recipient === null || typeof settings.recipient === 'string'))) {
+      reservationMatches = fixedReservationHash(settings?.recipient ?? undefined) === fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT);
+    }
+  } catch {
+    // Treat invalid reservation metadata as a deployment mismatch.
+  }
   if (latest?.id !== source.previewDeploymentId || env?.APP_ENV?.text !== 'preview' || env?.APP_VERSION?.text !== source.previewBuildLabel ||
+      !reservationMatches ||
       routingD1Id(env?.DB?.database_id ?? env?.DB?.id) !== routingD1Id(target.preInbound?.databaseId) ||
       env?.BUCKET?.bucket_name !== target.preInbound?.bucket ||
       routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id) !== routingD1Id(target.inboundRouting?.databaseId)) {
