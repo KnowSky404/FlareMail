@@ -1,6 +1,6 @@
 import { isFlareMailManagedWorkerRule, isExactRecipientRule, CloudflareEmailRoutingClient, CloudflareEmailRoutingError, type CloudflareCatchAll, type CloudflareEmailRoutingRule } from '$lib/server/cloudflare-email-routing';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_CRON_VERIFIED, PREVIEW_CATCH_ALL_ERROR_PREFIX, previewCatchAllError } from '$lib/domain/mail/health';
+import { mailHealthNextCheckAt, PREVIEW_CATCH_ALL_CRON_VERIFIED, PREVIEW_CATCH_ALL_ERROR_PREFIX, previewCatchAllError, TRANSIENT_CLOUDFLARE_HEALTH_ERRORS } from '$lib/domain/mail/health';
 import { normalizeMailDomain } from './validation';
 import { catchAllOwnershipError, filterOwnedMailboxes, hasProductionCatchAllObserver, isPreviewRoutingReadOnly } from './ownership';
 import { canSendFromResendDomain, getExactResendDomain, ResendDomainError, type ResendDomainStatus } from '$lib/server/resend-domains';
@@ -147,16 +147,19 @@ async function checkCloudflareDomain(
   if (productionWorker && domain.worker_name !== productionWorker) {
     return { errorCode: 'cloudflare_worker_mapping_conflict', retryable: false, observedAt: null, catchAllTarget: 'unknown' };
   }
-  const observations = await Promise.allSettled([
+  const [zoneObservation, catchAllObservation] = await Promise.allSettled([
     client.getZone(domain.cloudflare_zone_id),
     client.getCatchAll(domain.cloudflare_zone_id)
   ]);
-  const rejected = observations.find((result) => result.status === 'rejected');
-  if (rejected?.status === 'rejected') {
-    return { ...classifyCloudflareError(rejected.reason), observedAt: null };
+  if (zoneObservation.status === 'rejected' || catchAllObservation.status === 'rejected') {
+    const errors = [zoneObservation, catchAllObservation].flatMap(observation =>
+      observation.status === 'rejected' ? [classifyCloudflareError(observation.reason)] : []);
+    const target = productionWorker && catchAllObservation.status === 'fulfilled'
+      ? catchAllTarget(catchAllObservation.value, productionWorker) : undefined;
+    return { ...(errors.find(error => !error.retryable) ?? errors[0]!), observedAt: null, catchAllTarget: target };
   }
-  const zone = (observations[0] as PromiseFulfilledResult<Awaited<ReturnType<CloudflareHealthClient['getZone']>>>).value;
-  const catchAll = (observations[1] as PromiseFulfilledResult<CloudflareCatchAll>).value;
+  const zone = zoneObservation.value;
+  const catchAll = catchAllObservation.value;
   if (!validateZone(domain, zone)) {
     return { errorCode: 'cloudflare_zone_mapping_conflict', retryable: false, observedAt: null, catchAllTarget: 'unknown' };
   }
@@ -262,15 +265,17 @@ async function saveCloudflareResult(
     const observationCode = verifiedAt ? PREVIEW_CATCH_ALL_CRON_VERIFIED
       : result.errorCode ? PREVIEW_CATCH_ALL_ERROR_PREFIX + retry + result.errorCode : null;
     const hadProductionObservation = domain.last_error_code === PREVIEW_CATCH_ALL_CRON_VERIFIED || Boolean(previousCatchAllError);
+    const keepVerification = hadProductionObservation && TRANSIENT_CLOUDFLARE_HEALTH_ERRORS.has(result.errorCode ?? '') &&
+      (result.catchAllTarget === undefined || result.catchAllTarget === 'this_worker');
     // The legacy mirror holds the narrower observation; full mailbox diagnostics use the Cloudflare columns.
     await db.prepare(`UPDATE mail_domains SET
         catch_all_target = COALESCE(?, catch_all_target),
-        catch_all_checked_at = CASE WHEN ? THEN COALESCE(?, catch_all_checked_at) ELSE ? END,
+        catch_all_checked_at = CASE WHEN ? THEN catch_all_checked_at ELSE ? END,
         last_error_code = COALESCE(?, cloudflare_error_code),
         last_error_at = CASE WHEN ? IS NULL THEN cloudflare_error_at ELSE ? END,
         cloudflare_next_check_at = ?, cloudflare_check_token = NULL, cloudflare_check_expires_at = NULL, updated_at = ?
       WHERE id = ? AND owner_user_id = ? AND cloudflare_check_token = ?`)
-      .bind(result.catchAllTarget ?? null, hadProductionObservation ? 1 : 0, verifiedAt ?? null, verifiedAt ?? null,
+      .bind(result.catchAllTarget ?? null, keepVerification ? 1 : 0, verifiedAt ?? null,
         observationCode, observationCode, verifiedAt ?? isoAt(nowMs), nextAt, isoAt(nowMs), domain.id, domain.owner_user_id, token).run();
     return;
   }

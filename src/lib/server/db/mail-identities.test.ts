@@ -219,6 +219,10 @@ describe('trusted inbound address resolution', () => {
       .toMatchObject({ accepted: false, reason: 'address_unavailable' });
     expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinGrace, preview))
       .toMatchObject({ accepted: false, reason: 'address_unavailable' });
+    db.query(`UPDATE mail_domains SET last_error_code = 'preview_catch_all:cloudflare_not_found',
+      last_error_at = '2026-09-20T10:00:00.000Z'`).run();
+    expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinFreshness, preview))
+      .toMatchObject({ accepted: false, reason: 'address_unavailable' });
     db.query(`UPDATE mail_domains SET last_error_code = 'preview_catch_all:1:cloudflare_timeout',
       last_error_at = '2026-09-20T12:00:00.000Z'`).run();
     expect(await resolveInboundRecipient(new D1(db), 'unlisted@one.example.test', withinGrace, preview))
