@@ -105,6 +105,8 @@ test('production requires live historical URL isolation and keeps the main URL s
 });
 
 test('production verifies the live PRE address reservation as well as its bindings', async () => {
+  const runDirectory = await mkdtemp(join(tmpdir(), 'flaremail-preview-capacity-'));
+  const priorPath = process.env.PATH;
   const priorAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
   const priorToken = process.env.CLOUDFLARE_API_TOKEN;
   process.env.CLOUDFLARE_ACCOUNT_ID = 'a'.repeat(32);
@@ -130,17 +132,22 @@ test('production verifies the live PRE address reservation as well as its bindin
     mockLive('another@example.test');
     await expect(assertLiveNativePreview(target, proof, projectRoot)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
     mockLive('expected@example.test');
-    await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBe(false);
+    await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBe(0);
     const preview = { ...target, databaseId: target.preInbound.databaseId, bucket: target.preInbound.bucket };
     const management = { previewDeploymentId: proof.previewDeploymentId, managementEnabled: true };
     mockLive('expected@example.test');
     fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: '0 0 * * *' }] } }));
     await expect(assertLivePreviewForPublish(preview, management, projectRoot)).rejects
       .toThrow('INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
+    await writeFile(join(runDirectory, 'cf'), `#!/bin/sh\nprintf '%s\\n' '[{"success":true,"results":{"columns":["count"],"rows":[[0]]}}]'\n`, { mode: 0o700 });
+    process.env.PATH = runDirectory + ':' + priorPath;
     mockLive('expected@example.test');
     fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: '* * * * *' }] } }));
-    await expect(assertLivePreviewForPublish(preview, management, projectRoot)).resolves.toBeUndefined();
+    await expect(assertLivePreviewForPublish(preview, management, projectRoot)).resolves.toBe(239);
   } finally {
+    if (priorPath === undefined) delete process.env.PATH;
+    else process.env.PATH = priorPath;
+    await rm(runDirectory, { recursive: true, force: true });
     fetch.mockRestore();
     if (priorAccount === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
     else process.env.CLOUDFLARE_ACCOUNT_ID = priorAccount;
@@ -212,8 +219,10 @@ cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
     const mailboxOnly = { ...target, secrets: [] };
     const mailboxOnlyActive = { ...active, bindings: [] };
     await expect(assertProductionCatchAllRelease(mailboxOnly, mailboxOnlyActive, projectRoot, false)).resolves.toBeUndefined();
-    await expect(assertProductionCatchAllRelease(mailboxOnly, mailboxOnlyActive, projectRoot, false, true))
+    await expect(assertProductionCatchAllRelease(mailboxOnly, mailboxOnlyActive, projectRoot, false, 3))
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
+    await expect(assertProductionCatchAllRelease({ ...target, cron: ['0 * * * *'] }, active, projectRoot, false, 4))
+      .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
     await expect(assertProductionCatchAllRelease(target, active, projectRoot, false)).resolves.toBeUndefined();
   } finally {
     fetch.mockRestore();

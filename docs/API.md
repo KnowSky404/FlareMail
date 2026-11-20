@@ -153,6 +153,9 @@ enabling catch-all collection reserves a route for that environment. A
 conflicting claim returns HTTP 409 with `MAIL_ROUTING_OWNERSHIP_CONFLICT`.
 If a stored domain points to a different Worker, exact route provisioning and
 catch-all enrollment return HTTP 409 with `MAIL_DOMAIN_WORKER_MAPPING_CONFLICT`.
+Exceeding the PRE catch-all reservation limit returns HTTP 409 with
+`MAIL_PREVIEW_CATCH_ALL_CAPACITY_REACHED`. Disabled domains retain ownership
+and count toward the limit.
 Sync imports only routes assigned to the current environment. Disabling or
 deleting a mailbox preserves its receiving ownership. See the
 [shared inbound routing SPEC](./specs/shared-inbound-routing.md).
