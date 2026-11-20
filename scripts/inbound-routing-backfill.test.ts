@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildInboundRoutingPlan, identityClaimsSql, inboundRoutingBackfillStatements } from './inbound-routing-backfill';
+import { inboundRoutingBackfillStatements } from './inbound-routing-backfill';
+import { buildInboundRoutingPlan, identityClaimsSql } from './inbound-routing-inventory';
 import { executeD1 } from './cloudflare-target';
 import { extractD1Rows } from './bootstrap-owner';
 

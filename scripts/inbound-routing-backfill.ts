@@ -6,37 +6,7 @@ import { createHash } from 'node:crypto';
 import { extractD1Rows } from './bootstrap-owner';
 import { executeD1, readCloudflareTarget } from './cloudflare-target';
 import { normalizePreInboundRecipient } from '../src/lib/server/inbound/pre-inbound';
-import { inboundRoutingKey, type InboundRoutingEnvironment, type InboundRoutingKind } from '../src/lib/server/inbound/routing-ownership';
-
-interface Claim {
-  kind: InboundRoutingKind;
-  key: string;
-  environment: InboundRoutingEnvironment;
-}
-
-function parseClaims(rows: Record<string, unknown>[]) {
-  return rows.map((row): Claim => {
-    if ((row.kind !== 'mailbox' && row.kind !== 'catch_all') || typeof row.route_key !== 'string' ||
-        (row.environment !== 'production' && row.environment !== 'preview')) {
-      throw new Error('INBOUND_ROUTING_BACKFILL_INVALID_ROW');
-    }
-    return { kind: row.kind, key: inboundRoutingKey(row.kind, row.route_key), environment: row.environment };
-  });
-}
-
-export function buildInboundRoutingPlan(existing: Claim[], requested: Claim[]) {
-  const id = (claim: Claim) => JSON.stringify([claim.kind, claim.key]);
-  const current = new Map(existing.map((claim) => [id(claim), claim]));
-  const additions = new Map<string, Claim>();
-  const conflicts = new Map<string, Claim>();
-  for (const claim of requested) {
-    const key = id(claim);
-    const previous = current.get(key) ?? additions.get(key);
-    if (previous && previous.environment !== claim.environment) conflicts.set(key, claim);
-    if (!previous) additions.set(key, claim);
-  }
-  return { additions: [...additions.values()], conflicts: [...conflicts.values()] };
-}
+import { identityClaimsSql, ownershipClaimsSql, planIdentityClaims, type Claim } from './inbound-routing-inventory';
 
 export function inboundRoutingBackfillStatements(claims: Claim[]) {
   const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
@@ -66,13 +36,6 @@ export function inboundRoutingBackfillStatements(claims: Claim[]) {
   return statements.map(sql => ({ sql }));
 }
 
-export const identityClaimsSql = `
-  SELECT 'mailbox' AS kind, email AS route_key FROM mail_addresses
-  UNION ALL
-  SELECT 'catch_all' AS kind, domain_name AS route_key FROM mail_domains
-  WHERE enabled = 1 AND unknown_recipient_policy = 'collect'
-`;
-
 async function backfill() {
   const { values } = parseArgs({ options: {
     production: { type: 'string' },
@@ -95,16 +58,9 @@ async function backfill() {
   const [prodRows, preRows, ownershipRows] = await Promise.all([
     executeD1({ config: values.production }, identityClaimsSql),
     executeD1({ config: values.preview }, identityClaimsSql),
-    executeD1(registry, 'SELECT kind, route_key, environment FROM inbound_routing_ownership')
+    executeD1(registry, ownershipClaimsSql)
   ]);
-  const requested: Record<string, unknown>[] = [
-    ...extractD1Rows(prodRows).map((row) => ({ ...row, environment: 'production' })),
-    ...extractD1Rows(preRows).map((row) => ({ ...row, environment: 'preview' }))
-  ];
-  if (reservation) {
-    requested.push({ kind: 'mailbox', route_key: reservation, environment: 'preview' });
-  }
-  const plan = buildInboundRoutingPlan(parseClaims(extractD1Rows(ownershipRows)), parseClaims(requested));
+  const plan = planIdentityClaims(extractD1Rows(prodRows), extractD1Rows(preRows), extractD1Rows(ownershipRows), reservation);
   if (plan.conflicts.length > 0) {
     const conflicts = plan.conflicts.map(({ kind, key }) => ({
       kind,

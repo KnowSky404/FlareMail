@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import type { CloudflareTarget } from './cloudflare-target.ts';
 import { normalizePreInboundRecipient } from '../src/lib/server/inbound/pre-inbound.ts';
 import { isMailHealthFresh, MAIL_HEALTH_REFRESH_WINDOW_MS, PREVIEW_CATCH_ALL_CRON_VERIFIED } from '../src/lib/domain/mail/health.ts';
+import { identityClaimsSql, ownershipClaimsSql, planIdentityClaims } from './inbound-routing-inventory.ts';
 
 export function sharedInboundPreviewTargetHash(target: CloudflareTarget) {
   return createHash('sha256').update(JSON.stringify(target)).digest('hex');
@@ -486,6 +487,18 @@ async function readReleaseD1Rows<T>(databaseId: string | undefined, sql: string,
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+}
+
+export async function assertProductionOwnershipCoverage(target: CloudflareTarget) {
+  const errorCode = 'INBOUND_PRODUCTION_ROUTING_INVENTORY_NOT_VERIFIED';
+  const [production, preview, ownership] = await Promise.all([
+    readReleaseD1Rows<Record<string, unknown>>(target.databaseId, identityClaimsSql, errorCode),
+    readReleaseD1Rows<Record<string, unknown>>(target.preInbound?.databaseId, identityClaimsSql, errorCode),
+    readReleaseD1Rows<Record<string, unknown>>(target.inboundRouting?.databaseId, ownershipClaimsSql, errorCode)
+  ]);
+  const reservation = target.vars.PRE_INBOUND_RECIPIENT;
+  const plan = planIdentityClaims(production, preview, ownership, reservation ? normalizePreInboundRecipient(reservation) : null);
+  if (plan.additions.length || plan.conflicts.length) throw new Error(errorCode);
 }
 
 export async function assertProductionCatchAllRelease(
