@@ -30,6 +30,8 @@
 
 共享生产收信已配置但原生 `mail-ai` 缺失时，可用同一命令补发只读 PRE。预检记录显式设置 `preview.deploymentId: null`，沿用活动生产配置中的 PRE D1/R2、归属库及保留地址。发布程序实时确认该 Preview 缺失、归属表可查询，以及 Previews Base 未提供邮件存储、归属或收信绑定和邮件规则管理凭证。已有 `mail-ai` 时使用它的实际部署 ID。补发后核对实际部署与 Owner 就绪状态。
 
+从可写 PRE 回到只读模式时，先核对并关闭旧可写部署及其专属 URL，再按缺失 Preview 的恢复流程发布。将 `mail-ai` 的稳定 URL 指到新版本仍会留下历史部署 URL，旧版本可能继续使用已有的写凭证。
+
 该阶段只发布 `mail-ai`，以 Owner 会话访问只读域名、邮箱和 `/api/readiness`。就绪响应包含 `inboundRouting.environment=preview` 和 `inboundRouting.readOnly=true`。部署后重新核对 PRE 实际绑定和生产部署指针。预约的 SMTP 验收和生产规则切换按共享收信 SPEC 的后续环节执行。
 
 单 Worker 收信方案启用后，PRE 的 D1 迁移与 D1/R2 换绑须同时检查生产 `email()`、目标 PRE 版本和所有可访问该存储的入口，包括稳定 PRE URL、部署专属 URL 和版本预览 URL。线上迁移要求所有相关版本兼容前后 schema；不兼容时先发布兼容版本，或按授权暂停并排空受影响的请求。换绑也需暂停、排空并核对两侧绑定和已有数据。逐个重新核验实际绑定与 schema 后才恢复本次维护涉及的入口。此要求适用于下文各项 PRE 迁移。参见 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md)。
@@ -42,7 +44,7 @@
 
 生产建立 PRE 收信保护后，旧版本 URL 须保持关闭，原生 `mail-ai` 继续承担 HTTP 验收。需要版本 URL 的独立测试应使用另外获准的 Worker。私有目标只声明已有且验收所需 secrets，路由验收继续使用授权的只读查询。
 
-本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
+本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。Owner 明确委托验收时，按[共享收信 SPEC](specs/shared-inbound-routing.md#兼容切换)记录实际绑定、HTTP 和自动化业务验证。其他情况下，环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
 
 ## Keep one current PRE
 

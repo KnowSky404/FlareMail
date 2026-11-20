@@ -53,7 +53,7 @@ test('emergency pause keeps the same authentication variables, secrets and produ
 
 test('ordinary releases pin the account already selected by cf', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-cf-account-'));
-  const variables = ['PATH', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_AUTH_PROFILE'] as const;
+  const variables = ['PATH', 'CLOUDFLARE_ACCOUNT_ID', 'CLOUDFLARE_AUTH_PROFILE', 'CLOUDFLARE_API_TOKEN', 'CF_API_TOKEN'] as const;
   const previous = Object.fromEntries(variables.map(name => [name, process.env[name]]));
   const accounts = [{ id: 'a'.repeat(32) }, { id: 'b'.repeat(32) }];
   try {
@@ -69,6 +69,13 @@ test('ordinary releases pin the account already selected by cf', async () => {
     delete process.env.CLOUDFLARE_AUTH_PROFILE;
     expect(() => pinCloudflareReleaseIdentity(projectRoot, true)).not.toThrow();
     expect(String(process.env.CLOUDFLARE_ACCOUNT_ID)).toBe(accounts[1]!.id);
+    await writeFile(join(directory, 'dist/oauth-DOqdE0PG.mjs'),
+      `export function m() { if (process.env.CLOUDFLARE_AUTH_PROFILE === 'selected-profile') process.env.FLAREMAIL_TEST_OAUTH_SELECTED = 'true'; }`);
+    await writeFile(join(directory, 'dist/raw-fetch-g83RSAGp.mjs'),
+      `export async function t() { if (process.env.FLAREMAIL_TEST_OAUTH_SELECTED !== 'true') throw new Error('profile not selected'); return JSON.stringify({success: true, result: {enabled: true, previews_enabled: false}}); }`);
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.CF_API_TOKEN;
+    await expect(verifyProductionWorkerDev(localTarget, projectRoot)).resolves.toBe(true);
   } finally {
     for (const name of variables) {
       const value = previous[name];
