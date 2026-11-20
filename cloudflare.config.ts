@@ -22,7 +22,8 @@ export default defineConfig({
       if (release.source.pauseOnly) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
       else {
         const activePreviewCapacity = await assertLiveNativePreview(target, release.source, projectRoot);
-        await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId), activePreviewCapacity);
+        await assertProductionCatchAllRelease(target, release.activeVersion, projectRoot, Boolean(release.source.protectVersionId) || release.source.resuming, activePreviewCapacity);
+        if (release.source.resuming) observability = await readPauseObservability(target, release.activeVersion, projectRoot);
         if (release.source.protecting) await assertProductionOwnershipCoverage(target);
       }
     } else if (release?.kind === 'preview') {

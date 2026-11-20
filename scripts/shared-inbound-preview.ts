@@ -78,8 +78,9 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
   const registry = routingD1Id(target.inboundRouting?.databaseId);
   const phase = receipt.phase;
   const pauseOnly = phase === 'pause';
+  const resuming = phase === 'resume';
   const reserved = fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT);
-  if (!['protect', 'activate', 'maintain', 'pause'].includes(phase) || (target.vars.PRE_INBOUND_ENABLED === 'false') !== (phase === 'protect' || pauseOnly) ||
+  if (!['protect', 'activate', 'maintain', 'pause', 'resume'].includes(phase) || (target.vars.PRE_INBOUND_ENABLED === 'false') !== (phase === 'protect' || pauseOnly) ||
       receipt.workerName !== target.name || receipt.previewName !== 'mail-ai' ||
       receipt.targetHash !== sharedInboundPreviewTargetHash(target) ||
       !/^[a-f0-9]{40}$/u.test(receipt.releaseCommit) ||
@@ -97,7 +98,7 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
       (phase === 'protect' && (receipt.production.fixedReservationHash !== reserved ||
         (!reserved && receipt.legacyFixedRecipientAbsent !== true))) ||
       receipt.registryVerified !== true || receipt.versionUrlsDisabled !== true || (!pauseOnly && !target.cron.length) ||
-      (!pauseOnly && phase !== 'maintain' && receipt.legacyOperationsQuiesced !== true) ||
+      (!pauseOnly && !resuming && phase !== 'maintain' && receipt.legacyOperationsQuiesced !== true) ||
       (phase === 'activate' && (!routingD1Id(receipt.protectVersionId) || receipt.protectionActive !== true ||
         receipt.mailRoutesAndMappingsVerified !== true || receipt.preCatchAllsVerified !== true))) {
     throw new Error(errorCode);
@@ -105,7 +106,7 @@ export function assertSharedInboundProduction(target: CloudflareTarget, receiptP
   return {
     releaseCommit: receipt.releaseCommit as string, acceptedPreviewCommit: receipt.acceptedPreviewCommit as string,
     deploymentId: receipt.production.deploymentId as string, protectVersionId: phase === 'activate' ? receipt.protectVersionId as string : null,
-    protecting: phase === 'protect', maintaining: phase === 'maintain', pauseOnly,
+    protecting: phase === 'protect', maintaining: phase === 'maintain', pauseOnly, resuming,
     previewDeploymentId: (receipt.preview?.deploymentId ?? '') as string, previewBuildLabel: (receipt.preview?.buildLabel ?? '') as string
   };
 }
@@ -585,13 +586,14 @@ export function assertActiveProductionForRelease(target: CloudflareTarget, sourc
   const routingReadOnly = scope?.environment === 'production' && scope.readOnly === true;
   const legacyFixedUpgrade = source.protecting && Boolean(settings?.recipient) &&
     !binding('INBOUND_ROUTING_DB') && !binding('INBOUND_ROUTING_SCOPE');
-  if (source.protectVersionId || source.maintaining || source.pauseOnly ||
+  if (source.protectVersionId || source.maintaining || source.pauseOnly || source.resuming ||
       ['INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE', 'PRE_INBOUND_SETTINGS'].some(name => binding(name))) {
     if (!settings || (!legacyFixedUpgrade && existingRegistry !== routingD1Id(target.inboundRouting?.databaseId)) ||
         db('PRE_INBOUND_DB') !== routingD1Id(target.preInbound?.databaseId) || bucket('PRE_INBOUND_BUCKET') !== target.preInbound?.bucket ||
         fixedReservationHash(settings.recipient ?? undefined) !== fixedReservationHash(target.vars.PRE_INBOUND_RECIPIENT) ||
         (source.protectVersionId && (version.id !== source.protectVersionId || settings.enabled !== false || !routingReadOnly)) ||
         (source.maintaining && settings.enabled !== true) ||
+        (source.resuming && (settings.enabled !== false || scope?.environment !== 'production' || routingReadOnly || binding('APP_VERSION')?.text !== target.vars.APP_VERSION)) ||
         (source.pauseOnly && (settings.enabled !== true || binding('APP_VERSION')?.text !== target.vars.APP_VERSION))) {
       throw new Error('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
     }
