@@ -1,5 +1,5 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
-import { requireExistingMailboxOwnership, requireMailRoutingOwnership, reserveMailRoutingOwnership } from './ownership';
+import { requireExistingMailboxOwnership, requireMailRoutingOwnership, requireMailRoutingWrites, reserveMailRoutingOwnership } from './ownership';
 import { getManagedMailAddress, getManagedMailDomain, type ManagedMailAddressRow } from '$lib/server/db/mail-identities';
 import { isMailHealthFresh } from '$lib/domain/mail/health';
 import { ApiError } from '$lib/server/http/api';
@@ -436,6 +436,16 @@ async function saveActiveRoute(
   return updated;
 }
 
+function hasWorkerMappingConflict(env: CloudflareEnv, workerName: string) {
+  const scope = env.INBOUND_ROUTING_SCOPE;
+  const expected = scope?.workerName ?? env.MAIL_IDENTITY_WORKER_NAME?.trim();
+  return Boolean(scope && expected && expected !== workerName);
+}
+
+function workerMappingConflict() {
+  return new ApiError(409, 'MAIL_DOMAIN_WORKER_MAPPING_CONFLICT', '此邮件域名仍指向其他 Worker，请先核对并更新域名映射。', undefined, undefined, false);
+}
+
 async function runRoutingOperation(
   env: CloudflareEnv,
   ownerUserId: string,
@@ -456,6 +466,10 @@ async function runRoutingOperation(
   if (!domain || !domain.enabled) {
     if (options.token) await markRoutingError(env.DB, address.id, ownerUserId, options.token, 'mail_domain_disabled', 'error', dependencies);
     throw new ApiError(409, 'MAIL_DOMAIN_DISABLED', '此邮件域名未启用。', undefined, undefined, false);
+  }
+  if (hasWorkerMappingConflict(env, domain.worker_name)) {
+    if (options.token) await markRoutingError(env.DB, address.id, ownerUserId, options.token, 'cloudflare_worker_mapping_conflict', 'error', dependencies);
+    throw workerMappingConflict();
   }
   const token = options.token ?? (dependencies?.randomUUID ?? defaultDependencies.randomUUID)();
   if (!options.token) await acquireRoutingOperation(env.DB, address, ownerUserId, token, 'provisioning', dependencies);
@@ -516,9 +530,11 @@ export async function createManagedMailAddress(
   dependencies?: MailIdentityRoutingDependencies
 ) {
   if (!env.DB) throw new ApiError(503, 'D1_UNAVAILABLE', '工作区数据服务暂时不可用。');
+  requireMailRoutingWrites(env);
   const domain = await getManagedMailDomain(env.DB, ownerUserId, input.domainId);
   if (!domain) throw new ApiError(404, 'MAIL_DOMAIN_NOT_FOUND', '已配置的邮件域名不存在。', undefined, undefined, false);
   if (!domain.enabled) throw new ApiError(409, 'MAIL_DOMAIN_DISABLED', '邮件域名未启用。', undefined, undefined, false);
+  if (hasWorkerMappingConflict(env, domain.worker_name)) throw workerMappingConflict();
   let normalized: { email: string; localPart: string };
   let displayName: string;
   let signature: string;
@@ -917,6 +933,7 @@ export async function importExistingWorkerRule(
   const domain = await getManagedMailDomain(env.DB, ownerUserId, address.domain_id);
   if (!domain) throw new ApiError(404, 'MAIL_DOMAIN_NOT_FOUND', '已配置的邮件域名不存在。', undefined, undefined, false);
   if (!domain.enabled) throw new ApiError(409, 'MAIL_DOMAIN_DISABLED', '邮件域名未启用。', undefined, undefined, false);
+  if (hasWorkerMappingConflict(env, domain.worker_name)) throw workerMappingConflict();
   const token = (dependencies?.randomUUID ?? defaultDependencies.randomUUID)();
   await acquireRoutingOperation(env.DB, address, ownerUserId, token, 'provisioning', dependencies);
   try {
