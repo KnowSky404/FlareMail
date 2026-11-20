@@ -328,6 +328,7 @@ export async function assertLiveNativePreview(
       routingD1Id(env?.INBOUND_ROUTING_DB?.database_id ?? env?.INBOUND_ROUTING_DB?.id) !== routingD1Id(target.inboundRouting?.databaseId)) {
     throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   }
+  return Boolean(env.CLOUDFLARE_EMAIL_ROUTING_TOKEN);
 }
 
 export async function assertLivePreviewForPublish(
@@ -342,10 +343,18 @@ export async function assertLivePreviewForPublish(
       (!source.managementEnabled && (env?.CLOUDFLARE_EMAIL_ROUTING_TOKEN || baseEnv?.CLOUDFLARE_EMAIL_ROUTING_TOKEN))) {
     throw new Error('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
   }
+  if (source.managementEnabled) {
+    const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
+    const { schedules } = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');
+    if (!Array.isArray(schedules) || !schedules.every(schedule => typeof schedule?.cron === 'string') ||
+        !refreshesCatchAllOnTime(schedules.map(schedule => schedule.cron), 1)) {
+      throw new Error('INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
+    }
+  }
 }
 
 export function assertActiveProductionForPreview(target: CloudflareTarget, source: ReturnType<typeof assertSharedInboundPreview>) {
-  const { binding, db, bucket, settings } = requireActiveProductionVersion(target.name, source.deploymentId);
+  const { version, binding, db, bucket, settings } = requireActiveProductionVersion(target.name, source.deploymentId);
   if (db('DB') !== source.productionDb || bucket('BUCKET') !== source.productionBucket) {
     throw new Error('INBOUND_PREVIEW_PREFLIGHT_INVALID');
   }
@@ -361,7 +370,12 @@ export function assertActiveProductionForPreview(target: CloudflareTarget, sourc
   } else if (['INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE', 'PRE_INBOUND_SETTINGS', 'PRE_INBOUND_DB', 'PRE_INBOUND_BUCKET'].some(name => binding(name))) {
     throw new Error('INBOUND_PREVIEW_PREFLIGHT_INVALID');
   }
-  if (source.managementEnabled && settings?.enabled !== true) throw new Error('INBOUND_PREVIEW_MANAGEMENT_REQUIRES_ACTIVE_DELIVERY');
+  if (source.managementEnabled) {
+    if (settings?.enabled !== true) throw new Error('INBOUND_PREVIEW_MANAGEMENT_REQUIRES_ACTIVE_DELIVERY');
+    if (currentCatchAllCredential(version.bindings)?.type !== 'secret_text') {
+      throw new Error('INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
+    }
+  }
 }
 
 function sameStrings(left: string[], right: string[]) {
@@ -402,9 +416,25 @@ export async function verifyProductionWorkerDev(target: CloudflareTarget, projec
   return subdomain.enabled;
 }
 
+const catchAllCredentialNames = ['CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', 'CLOUDFLARE_EMAIL_ROUTING_TOKEN'];
+
+function currentCatchAllCredential(bindings: WorkerBindingMetadata[]) {
+  const name = catchAllCredentialNames.find(key => bindings.some(binding => binding.name === key));
+  return bindings.find(binding => binding.name === name);
+}
+
+function refreshesCatchAllOnTime(schedules: string[], domainCount: number) {
+  return schedules.some(schedule => {
+    const minute = /^(\*|\*\/[1-5]?\d|[1-5]?\d)(?:\s+\*){4}$/u.exec(schedule.trim())?.[1];
+    if (!minute) return false;
+    const minutesPerRun = minute === '*' ? 1 : minute.startsWith('*/') ? Number(minute.slice(2)) : 60;
+    return minutesPerRun > 0 && domainCount * minutesPerRun * 60_000 < MAIL_HEALTH_REFRESH_WINDOW_MS;
+  });
+}
+
 export async function assertProductionCatchAllRelease(
   target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string,
-  requireCurrentObservations = true
+  requireCurrentObservations = true, previewHasRoutingToken = false
 ) {
   const errorCode = 'INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_REFRESH_NOT_VERIFIED';
   const get = cloudflareWorkerMetadata(projectRoot, errorCode);
@@ -432,19 +462,16 @@ export async function assertProductionCatchAllRelease(
     `SELECT lower(domain_name) AS domain_name, worker_name, catch_all_target, catch_all_checked_at, last_error_code, last_error_at
      FROM mail_domains WHERE enabled = 1 AND unknown_recipient_policy = 'collect'`
   );
-  const collectorCount = Math.max(1, domains.length);
-  if (!target.cron.some(schedule => {
-    const minute = /^(\*|\*\/[1-5]?\d|[1-5]?\d)(?:\s+\*){4}$/u.exec(schedule.trim())?.[1];
-    if (!minute) return false;
-    const minutesPerRun = minute === '*' ? 1 : minute.startsWith('*/') ? Number(minute.slice(2)) : 60;
-    return minutesPerRun > 0 && collectorCount * minutesPerRun * 60_000 < MAIL_HEALTH_REFRESH_WINDOW_MS;
-  })) throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
-  const keys = ['CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', 'CLOUDFLARE_EMAIL_ROUTING_TOKEN'];
-  const current = keys.find(key => version.bindings.some(binding => binding.name === key));
-  const candidate = keys.find(key => target.secrets?.includes(key));
-  if (!candidate || candidate !== current || keys.some(key => Object.hasOwn(target.vars, key)) ||
-      !version.bindings.some(binding => binding.name === current && binding.type === 'secret_text')) {
-    throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
+  if (domains.length || previewHasRoutingToken) {
+    if (!refreshesCatchAllOnTime(target.cron, Math.max(1, domains.length))) {
+      throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CRON_CAPACITY');
+    }
+    const current = currentCatchAllCredential(version.bindings);
+    const candidate = catchAllCredentialNames.find(key => target.secrets?.includes(key));
+    if (current?.type !== 'secret_text' || candidate !== current.name ||
+        catchAllCredentialNames.some(key => Object.hasOwn(target.vars, key))) {
+      throw new Error('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
+    }
   }
   if (!requireCurrentObservations) return;
   const claims = query<{ route_key: string }>(target.inboundRouting?.databaseId,

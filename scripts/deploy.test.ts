@@ -130,7 +130,16 @@ test('production verifies the live PRE address reservation as well as its bindin
     mockLive('another@example.test');
     await expect(assertLiveNativePreview(target, proof, projectRoot)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
     mockLive('expected@example.test');
-    await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBeUndefined();
+    await expect(assertLiveNativePreview(target, proof, projectRoot)).resolves.toBe(false);
+    const preview = { ...target, databaseId: target.preInbound.databaseId, bucket: target.preInbound.bucket };
+    const management = { previewDeploymentId: proof.previewDeploymentId, managementEnabled: true };
+    mockLive('expected@example.test');
+    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: '0 0 * * *' }] } }));
+    await expect(assertLivePreviewForPublish(preview, management, projectRoot)).rejects
+      .toThrow('INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED');
+    mockLive('expected@example.test');
+    fetch.mockResolvedValueOnce(Response.json({ success: true, result: { schedules: [{ cron: '* * * * *' }] } }));
+    await expect(assertLivePreviewForPublish(preview, management, projectRoot)).resolves.toBeUndefined();
   } finally {
     fetch.mockRestore();
     if (priorAccount === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -200,7 +209,10 @@ cat "$FLAREMAIL_TEST_D1_FIXTURES/$3"
     await writeFile(join(directory, target.preInbound.databaseId), JSON.stringify([
       { success: true, results: { columns: Object.keys(domain), rows: [] } }
     ]));
-    await expect(assertProductionCatchAllRelease({ ...target, secrets: [] }, { ...active, bindings: [] }, projectRoot, false))
+    const mailboxOnly = { ...target, secrets: [] };
+    const mailboxOnlyActive = { ...active, bindings: [] };
+    await expect(assertProductionCatchAllRelease(mailboxOnly, mailboxOnlyActive, projectRoot, false)).resolves.toBeUndefined();
+    await expect(assertProductionCatchAllRelease(mailboxOnly, mailboxOnlyActive, projectRoot, false, true))
       .rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_CATCH_ALL_CREDENTIAL_CHANGED');
     await expect(assertProductionCatchAllRelease(target, active, projectRoot, false)).resolves.toBeUndefined();
   } finally {
