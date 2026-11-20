@@ -194,8 +194,8 @@ describe('scheduled mail domain health refresh', () => {
     });
     expect(await resolveInboundRecipient(pre.db, 'unlisted@mail.example.test', defaultNow, { productionObservedCatchAll: true })).toMatchObject({ accepted: false });
     pre.sqlite.query(`UPDATE mail_domains SET catch_all_target = 'this_worker', catch_all_checked_at = ?,
-      last_error_code = NULL, last_error_at = NULL, cloudflare_next_check_at = NULL WHERE id = ?`)
-      .run(new Date(defaultNow - 60_000).toISOString(), domainId);
+      last_error_code = NULL, last_error_at = NULL, cloudflare_next_check_at = ? WHERE id = ?`)
+      .run(new Date(defaultNow - 60_000).toISOString(), new Date(defaultNow + 20 * 60 * 60_000).toISOString(), domainId);
     deps.cloudflareClientFactory = (...args) => ({
       ...successfulFactory(...args), getCatchAll: async () => { throw new CloudflareEmailRoutingError('timeout'); }
     });
