@@ -614,33 +614,43 @@ for (const from of ['Inbox', 'deep link']) {
   });
 }
 
-test('refreshes a deep-linked reader when an archive conflicts with another device', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop reader actions.');
-  await login(page);
-  const id = 'e2e-bulk-44';
-  await page.goto('/?folder=inbox&message=' + id);
-  const detail = page.getByRole('region', { name: '邮件详情' });
-  const archive = detail.getByRole('button', { name: '归档', exact: true });
-  await expect(archive).toBeVisible();
-  try {
-    const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
-      headers: { origin: new URL(page.url()).origin },
-      data: {
-        action: 'archive', ids: [id], threadKeys: [],
-        scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+for (const from of ['deep link', 'bulk toolbar']) {
+  test(`refreshes the ${from} when an archive conflicts with another device`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'This scenario covers desktop archive controls.');
+    await login(page);
+    const reader = from === 'deep link';
+    const id = reader ? 'e2e-bulk-44' : 'e2e-bulk-14';
+    const target = row(page, 'E2E Bulk 14');
+    const detail = page.getByRole('region', { name: '邮件详情' });
+    const toolbar = page.getByLabel('批量邮件操作');
+    if (reader) await page.goto('/?folder=inbox&message=' + id);
+    else await target.getByRole('checkbox').check();
+    const archive = (reader ? detail : toolbar).getByRole('button', { name: '归档', exact: true });
+    await expect(archive).toBeVisible();
+    try {
+      const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+        headers: { origin: new URL(page.url()).origin },
+        data: {
+          action: 'archive', ids: [id], threadKeys: [],
+          scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+        }
+      });
+      expect(movedElsewhere.ok()).toBe(true);
+      const conflict = page.waitForResponse((response) =>
+        response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
+      await archive.press('Enter');
+      await conflict;
+      if (reader) await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
+      else {
+        await expect(target).toHaveCount(0);
+        await expect(toolbar).not.toContainText('已选 1 封');
       }
-    });
-    expect(movedElsewhere.ok()).toBe(true);
-    const conflict = page.waitForResponse((response) =>
-      response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
-    await archive.press('Enter');
-    await conflict;
-    await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
-    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
-  } finally {
-    await restoreArchivedFixture(page, id);
-  }
-});
+      await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
+    } finally {
+      await restoreArchivedFixture(page, id);
+    }
+  });
+}
 
 for (const { openFrom, target, updated } of [
   { openFrom: 'deep link', target: '44', updated: '08' },
