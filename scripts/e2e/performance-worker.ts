@@ -29,4 +29,5 @@ export async function requirePerformanceWorker(origin: URL) {
   if (!response.ok || !body.success || !marker?.success || marker.results?.rows[0]?.[0] !== id) {
     throw new Error('The local Worker does not own this benchmark run. Mailbox data has not been touched.');
   }
+  return id;
 }
