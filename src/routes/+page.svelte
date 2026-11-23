@@ -564,8 +564,10 @@
       clearMailboxRefreshTimer();
       if (section === 'profile' || section === 'trash') { mailboxController.cancel(); return; }
       const navigate = () => { void mailboxController.navigate(section, query, filter, identity, label, category); };
-      if (mailboxPages?.[section]?.query !== query && query.trim()) mailboxRefreshTimer = setTimeout(navigate, 250);
-      else navigate();
+      if (mailboxPages?.[section]?.query !== query && query.trim()) {
+        mailboxController.cancel();
+        mailboxRefreshTimer = setTimeout(navigate, 250);
+      } else navigate();
     });
   });
 
@@ -1603,14 +1605,18 @@
     finally { categoryPending = false; }
   }
 
-  async function refreshArchiveScope() {
-    const page = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
-    const currentScope = page && page.folder === activeSection && page.query === searchQuery.trim() && page.filter === mailFilter &&
+  function matchesActiveMailboxScope(page: MailboxPage | undefined) {
+    const section = activeSection === 'profile' ? 'inbox' : activeSection;
+    return page && page.folder === section && page.query === searchQuery.trim() && page.filter === mailFilter &&
       (page.category ?? 'all') === (activeSection === 'inbox' ? inboxCategory : 'all') &&
       (page.labelId ?? null) === (activeSection === 'label' ? activeLabelId : null) &&
       sameIdentityScope(page.identityFilter, mailIdentityFilter);
-    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible && !isTurningCurrentPage() && currentScope
-      ? selectedMessage : null;
+  }
+
+  async function refreshArchiveScope() {
+    const page = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
+    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible &&
+      !isTurningCurrentPage() && matchesActiveMailboxScope(page) ? selectedMessage : null;
     if (openMessage?.folder === 'inbox') {
       selectedMessageId = openMessage.id;
       deepLinkedMessage = openMessage;
@@ -1998,6 +2004,7 @@
 
   const mailboxController = new MailboxController(fetchMailboxPage, {
     onPage: (page, append, pageNumber) => {
+      if (!matchesActiveMailboxScope(page)) return;
       reconcileSplitSelectionScope();
       mailboxPageNumber = pageNumber ?? 1;
       applyMailboxPage(page, append);

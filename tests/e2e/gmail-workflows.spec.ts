@@ -920,6 +920,73 @@ test('does not retain a split reader after clearing search after a late archive 
   }
 });
 
+test('keeps the split reader from selecting an old page while search is debounced', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
+  await login(page);
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  const nextPage = page.getByRole('button', { name: '下一页', exact: true });
+  const previousPage = page.getByRole('button', { name: '上一页', exact: true });
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const emptyReader = detail.getByText('选择一封邮件开始阅读', { exact: true });
+  await nextPage.click();
+  await previousPage.click();
+  await expect(emptyReader).toBeVisible();
+  const firstPageRefreshed = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh' });
+    channel.close();
+  });
+  await (await firstPageRefreshed).finished();
+  await expect(page.getByRole('status').filter({ hasText: '正在更新邮件…' })).toHaveCount(0);
+  await expect(emptyReader).toBeVisible();
+
+  let signalCursor = () => {};
+  let releaseCursor = () => {};
+  let releaseSearch = () => {};
+  const cursorReady = new Promise<void>((resolve) => { signalCursor = resolve; });
+  const holdCursor = new Promise<void>((resolve) => { releaseCursor = resolve; });
+  const holdSearch = new Promise<void>((resolve) => { releaseSearch = resolve; });
+  const query = 'subject:"E2E Bulk 18"';
+  const mailboxPattern = '**/api/workspace/mailbox?**';
+  const readWrites: string[] = [];
+  const watchFlags = (request: { url(): string; method(): string }) => {
+    const pathname = new URL(request.url()).pathname;
+    if (request.method() === 'PATCH' && pathname.endsWith('/flags')) readWrites.push(pathname);
+  };
+  await page.route(mailboxPattern, async (route) => {
+    const { searchParams } = new URL(route.request().url());
+    if (searchParams.has('cursor')) {
+      const response = await route.fetch();
+      signalCursor();
+      await holdCursor;
+      await route.fulfill({ response }).catch(() => {});
+    } else {
+      if (searchParams.get('q') === query) await holdSearch;
+      await route.continue().catch(() => {});
+    }
+  });
+
+  try {
+    await nextPage.click();
+    await cursorReady;
+    page.on('request', watchFlags);
+    const searchStarted = page.waitForRequest((request) => new URL(request.url()).searchParams.get('q') === query);
+    await page.locator('#mail-search-desktop').fill(query);
+    releaseCursor();
+    await searchStarted;
+    await expect(emptyReader).toBeVisible();
+    releaseSearch();
+    await expect(detail.getByRole('heading', { name: 'E2E Bulk 18', exact: true })).toBeVisible();
+    expect(readWrites).toEqual([]);
+  } finally {
+    page.off('request', watchFlags);
+    releaseCursor();
+    releaseSearch();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
+});
+
 test('keeps a split reader from auto-reading a cached replacement outside the refreshed Inbox', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);
