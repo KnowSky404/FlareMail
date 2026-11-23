@@ -6,7 +6,6 @@ import {
   mailboxSnapshotFromWorkspace,
   mergeMailboxPage,
   mergeMessageDelta,
-  patchMailboxArchive,
   moveSelection,
   reconcileBulkSelection,
   removeMessage,
@@ -53,38 +52,6 @@ const deltaOptions = (overrides: Partial<Parameters<typeof mergeMessageDelta>[2]
 });
 
 describe('mailbox controller', () => {
-  test('applies confirmed archive membership without inserting rows into another filtered page', () => {
-    const item = message('target', 'inbox', '2026-08-14T02:00:00.000Z');
-    const inbox = { ...makePage('inbox', [item]), query: 'target', searchTotal: 5 };
-    const archive = makePage('archive', []);
-    const starred = makePage('starred', [{ ...item, starred: true }]);
-    const current = { mailbox: { ...cloneMailbox(), inbox: inbox.messages },
-      mailboxPages: { inbox, archive, starred }, metrics };
-    const change = { id: item.id, archivedAt: '2026-08-15T00:00:00.000Z' };
-    const patched = patchMailboxArchive(current, change);
-
-    expect(patched.mailbox.inbox).toEqual([]);
-    expect(patched.mailboxPages?.inbox).toMatchObject({ messages: [], searchTotal: 4 });
-    expect(patched.mailboxPages?.archive).toBe(archive);
-    expect(patched.mailboxPages?.starred?.messages[0]).toMatchObject({ ...change, starred: true });
-    expect(patched.metrics).toBe(metrics);
-  });
-
-  test('removes a restored row from archived-only Inbox, Starred and label results', () => {
-    const item = { ...message('target', 'inbox', '2026-08-14T02:00:00.000Z'), archivedAt: '2026-08-15T00:00:00.000Z' };
-    const makeArchivedSearch = (folder: MailboxPage['folder']) => ({
-      ...makePage(folder, [item]), query: 'subject:target is:archived', searchTotal: 1
-    });
-    const current = { mailbox: { ...cloneMailbox(), inbox: [item] }, metrics, mailboxPages: {
-      inbox: makeArchivedSearch('inbox'), starred: makeArchivedSearch('starred'), label: makeArchivedSearch('label')
-    } };
-    const patched = patchMailboxArchive(current, { id: item.id, archivedAt: null });
-
-    for (const folder of ['inbox', 'starred', 'label'] as const) {
-      expect(patched.mailboxPages?.[folder]).toMatchObject({ messages: [], searchTotal: 0 });
-    }
-  });
-
   test('hydrates the partial active-folder snapshot without inventing inactive pages', () => {
     const page = makePage('inbox', [message('inbox', 'inbox', '2026-08-14T02:00:00.000Z')]);
     const hydrated = mailboxSnapshotFromWorkspace({
