@@ -40,7 +40,7 @@ FLAREMAIL_PERF_ORIGIN="$perf_origin" FLAREMAIL_PERF_REPLACE_E2E_MAIL=yes FLAREMA
 | P2 后续 | `+page.server.ts`、`+page.svelte`、`MailIdentityManager.svelte` | SSR 已复用统计并行加载独立数据。首次设置及域名表格在慢网仍受代码分包和随后读取资源列表影响。首次地址切换复用已加载表格数据。已保存资源先于手动诊断显示。自动供应商检查沿用可见性、冷却期、并发限额和卸载失效。 |
 | P2 后续 | `MessageDetail.svelte`、`MailAiPanel.svelte` | 读取已测样本通常有正文、AI 状态和自动已读三个请求，缓存再打开时仍读 AI 状态，正文缓存命中不重复加载。后续评估状态读取何时可延后，同时保留正文、附件和 HTML 权限。 |
 
-认证结果始终由每个请求针对当前 D1 Owner、有效期、撤销状态、认证方式和 Access principal 查询得出。Access 配置里的 Owner 必须匹配，已有 JWKS 冷却 30 秒、缓存 5 分钟及最多 4 组配置的边界。每次 Access 请求均验证签名和 claims，密钥不可用时拒绝。此次将 Access 验签计入 `auth` 阶段，真实远端 JWKS 延迟需要独立测量。没有新增 schema 或 dependency，也没有缓存 Owner 或会话授权。
+认证结果始终由每个请求针对当前 D1 Owner、有效期、撤销状态、认证方式和 Access principal 查询得出。Access 配置里的 Owner 必须匹配，已有 JWKS 冷却 30 秒、缓存 5 分钟及最多 4 组配置的边界。每次 Access 请求均验证签名和 claims，密钥不可用时拒绝。请求 Hook 回归使用合成签名，验证有效断言复用原会话且只执行两条 D1 语句，Owner 映射变化时返回 503 并保持 Cookie 未更新。此次将 Access 验签计入 `auth` 阶段，真实远端 JWKS 延迟需要独立测量。没有新增 schema 或 dependency，也没有缓存 Owner 或会话授权。
 
 浏览器列表缓存继续沿用 30 秒新鲜期、会话内存、分页与筛选键以及迟到响应隔离。单封归档和取消归档根据 D1 写入结果确认成功。若写入时邮件已经离开操作范围，显示现有错误提示并重新读取。回读失败时使用现有重试入口。单个优化可通过回退相应代码恢复原路径，无数据库回退步骤。生产、远程迁移与真实发信遵循各自的授权流程。
 
@@ -127,8 +127,8 @@ FLAREMAIL_PERF_ORIGIN="$perf_origin" FLAREMAIL_PERF_REPLACE_E2E_MAIL=yes FLAREMA
 
 ## 本地回归
 
-- `bun run test` 通过 1,002 项，`bun run check` 无错误或警告，`bun run build` 与 `bun run deploy:dry-run` 通过。全量单测用系统临时目录运行，因为既有 fixture 测试会断言该默认路径。
+- `bun run test` 通过 1,003 项，`bun run check` 无错误或警告，`bun run build` 与 `bun run deploy:dry-run` 通过。全量单测用系统临时目录运行，因为既有 fixture 测试会断言该默认路径。
 - 使用 Playwright 跑定向场景，去重后 Chromium 桌面 37 项、390 px 手机 13 项、320 px 窄屏 3 项、Firefox 桌面 5 项、Linux WebKit 桌面 6 项通过。窄屏的两个通用 axe 场景由桌面和 390 px 项覆盖。WebKit 桌面启用 reduced motion。
 - 验证分页失败重试、延迟响应丢弃、浏览器历史、邮箱身份和跨文件夹计数、归档写入确认与随后回读、跨标签页的迟到归档响应、会话恢复后处理迟到成功和 404，重新读取收件箱及深链接阅读栏且不重放旧通知、同一与无关邮件变动时从深链接和当前页打开的归档阅读栏更新、服务端回读前分栏不提前选择缓存行、其他设备已归档的候选邮件保持未读、写入前离开标签范围时返回 404、其他设备先归档时刷新阅读栏和批量工具栏、从设置返回时的归档缓存失效、系统时区切换、标签批量操作、草稿续写和会话恢复、回复身份、demo 出站以及安全 HTML、CID 和撤销远程图片权限。桌面与手机分别通过亮色与暗色主题的 axe 检查。当前本地范围未发现 P0 级回归。
-- 初跑发现现有浏览器测试有三类旧断言。清除搜索应按 URL 与焦点验证，回到第一页应按有序邮件身份核对，撤销远程图片权限应使用显示选项菜单。按实际交互修正后各自补测。测试日志保留初跑和复跑记录。
+- 初跑发现现有浏览器测试有三类旧断言。清除搜索应核对 URL、焦点和被过滤掉的邮件重新出现，回到第一页应按有序邮件身份核对，撤销远程图片权限应使用显示选项菜单。按实际交互修正后各自补测。测试日志保留初跑和复跑记录。
 - 浏览器与 SQL 数字仅代表本地 Worker、模拟 D1/R2、合成邮件和 demo provider。真实生产 API p95、投递、实体 Safari 和人工屏幕阅读器仍需对应环境的独立证据。
