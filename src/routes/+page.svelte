@@ -1889,7 +1889,7 @@
       (!selectedMessageId || !currentMessages.some((message) => message.id === selectedMessageId)) &&
       !(selectedMessageId && deepLinkedMessage?.id === selectedMessageId && (readerOpen || mobileDetailOpen || readingLayout === 'split'))
     ) {
-      if (!turningPage && readingLayout === 'split') selectedMessageId = currentMessages[0]?.id ?? null;
+      if (!turningPage && readingLayout === 'split' && (!suppressDefaultSelection || selectedMessageId)) selectedMessageId = currentMessages[0]?.id ?? null;
       else if (selectedMessageId && !urlMessageId) selectedMessageId = null;
     }
   }
