@@ -1,7 +1,7 @@
 import { readCloudflareTarget, localStateArgs, executeD1 } from '../cloudflare-target';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createLocalCloudflareEnvironment } from '../cloudflare-environment';
 import { performanceMarkerTable, readPerformanceRunId } from './performance-worker';
 
@@ -15,11 +15,10 @@ const argument = (name: string, fallback: string) => {
 const port = argument('--port', '4173');
 const performanceRunId = readPerformanceRunId();
 const persistenceRoot = resolve(join(tmpdir(), 'flaremail-e2e'));
-const defaultPersistence = join(persistenceRoot, performanceRunId ? 'performance-' + performanceRunId : 'state');
-const persistTo = resolve(argument(
-  '--persist-to',
-  process.env.FLAREMAIL_E2E_STATE_DIR ?? defaultPersistence
-));
+const defaultPersistence = performanceRunId
+  ? join(persistenceRoot, 'performance-' + performanceRunId)
+  : process.env.FLAREMAIL_E2E_STATE_DIR ?? join(persistenceRoot, 'state');
+const persistTo = resolve(argument('--persist-to', defaultPersistence));
 const relativePersistencePath = relative(persistenceRoot, persistTo);
 if (
   !relativePersistencePath ||
@@ -94,7 +93,12 @@ const draftSeed = draftSubjects.map((subject, index) => `INSERT OR IGNORE INTO w
   ${sql(`Initial body for ${subject}`)}, 0, ${sql(timestamp)}, ${sql(timestamp)}
 );`).join('\n');
 
-await rm(persistTo, { recursive: true, force: true });
+if (performanceRunId) {
+  await mkdir(dirname(persistTo), { recursive: true });
+  await mkdir(persistTo);
+} else {
+  await rm(persistTo, { recursive: true, force: true });
+}
 await run('bun', ['run', 'build']);
 await run('cf', ['d1', 'migrations', 'apply', localTarget.databaseId, '--dir', 'migrations', ...localStateArgs(persistTo)]);
 

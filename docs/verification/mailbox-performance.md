@@ -4,7 +4,7 @@
 
 ## 复现
 
-使用 Bun 1.4.4、cf 1.0.0-rc.1、Ubuntu 24.04 arm64 和 Chromium 156。按 [开发指南](../DEVELOPMENT.md#diagnose-mailbox-navigation) 安装锁定依赖与 Playwright 浏览器。将两个测量脚本、`performance-worker.ts` 和 `start-local.ts` 复制到基线 worktree 的相同相对路径，在两个源码版本上分别使用独立的本地临时目录和端口。启动前确认使用已签入的本地绑定及 demo provider。基准 Worker 默认按运行标记使用独立的本地状态目录。
+使用 Bun 1.4.4、cf 1.0.0-rc.1、Ubuntu 24.04 arm64 和 Chromium 156。按 [开发指南](../DEVELOPMENT.md#diagnose-mailbox-navigation) 安装锁定依赖与 Playwright 浏览器。将两个测量脚本、`performance-worker.ts` 和 `start-local.ts` 复制到基线 worktree 的相同相对路径，在两个源码版本上分别使用独立的本地临时目录和端口。启动前确认使用已签入的本地绑定及 demo provider。基准 Worker 默认按运行标记使用独立的本地状态目录。启动时仅创建新目录，已存在的路径会报错并保留原数据。基准模式的默认路径不继承普通 E2E 的状态目录。
 
 ```bash
 task_tmp=$(mktemp -d)
