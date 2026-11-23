@@ -753,7 +753,12 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bu
           } else await expect(badge).toHaveText(optimisticUnread);
           expect(recoveryRequests).toEqual(Array(settleReadDuringRecovery ? 4 : 2).fill('/api/workspace/mailbox'));
           if (emptySplitReader) {
+            await page.clock.install();
+            await page.clock.pauseAt(new Date(Date.now() + 1_000));
             await page.locator('#mail-search-desktop').fill('subject:"E2E Bulk 18"');
+            await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeDisabled();
+            await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeDisabled();
+            await page.clock.resume();
             await expect(detail.getByRole('heading', { name: 'E2E Bulk 18', exact: true })).toBeVisible();
           }
         } else {

@@ -30,6 +30,7 @@
     refreshing = false,
     viewKey = '',
     loadingMore = false,
+    pagingDisabled = false,
     error = '',
     pageNumber = 1,
     totalPages,
@@ -64,6 +65,7 @@
     refreshing?: boolean;
     viewKey?: string;
     loadingMore?: boolean;
+    pagingDisabled?: boolean;
     error?: string;
     pageNumber?: number;
     totalPages?: number;
@@ -219,7 +221,7 @@
     </div>
   {/if}
   {#if !loading}
-    <Pagination page={pageNumber} {totalPages} hasPrevious={pageNumber > 1} hasNext={hasMore}
+    <Pagination page={pageNumber} {totalPages} hasPrevious={!pagingDisabled && pageNumber > 1} hasNext={!pagingDisabled && hasMore}
       pending={pending || loadingMore || refreshing} empty={visibleItems.length === 0}
       onPrevious={onPreviousPage} onNext={onLoadMore} />
   {/if}

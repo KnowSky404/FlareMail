@@ -538,6 +538,8 @@
   const mailboxViewScope = $derived(JSON.stringify([activeSection, inboxCategory, urlQuery.trim(),
     mailFilter, identityKey(mailIdentityFilter), activeLabelId]));
   const isTurningCurrentPage = () => turningPageScope === mailboxViewScope;
+  const displayedMailboxPage = $derived(activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection]);
+  const pagingDisabled = $derived(activeSection !== 'trash' && !matchesActiveMailboxScope(displayedMailboxPage));
 
   $effect(() => {
     activeSection = urlSection;
@@ -1616,8 +1618,7 @@
   }
 
   async function refreshArchiveScope() {
-    const page = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
-    const sameScope = matchesActiveMailboxScope(page);
+    const sameScope = matchesActiveMailboxScope(displayedMailboxPage);
     const openMessage = authenticated && !authExpired && messageReaderVisible &&
       !isTurningCurrentPage() && sameScope ? selectedMessage : null;
     if (openMessage && openMessage.folder !== 'drafts') {
@@ -2033,7 +2034,7 @@
   }
 
   async function turnListPage(load: () => Promise<boolean>) {
-    if (turningPageScope !== null || !authenticated || authExpired || pending) return;
+    if (pagingDisabled || turningPageScope !== null || !authenticated || authExpired || pending) return;
     const scope = mailboxViewScope;
     turningPageScope = scope;
     try {
@@ -3536,6 +3537,7 @@
                     refreshing={mailboxRefreshing}
                     loading={activeSection === 'trash' ? trashLoading && !trashLoaded : mailboxLoading}
                     loadingMore={activeSection === 'trash' ? trashLoading : mailboxLoadingMore}
+                    {pagingDisabled}
                     error={activeSection === 'trash' ? trashError : mailboxError}
                     hasMore={activeSection === 'trash' ? trashHasMore : mailboxPages?.[activeSection]?.hasMore ?? false}
                     onSelect={handleSelectMessage}
