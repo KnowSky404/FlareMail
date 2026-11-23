@@ -562,6 +562,51 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
   }
 });
 
+test('closes a deep-linked reader after archive despite another message changing in a different tab', async ({ page }, testInfo) => {
+  test.skip(!['desktop', 'mobile'].includes(testInfo.project.name), 'This scenario covers desktop and phone readers.');
+  await login(page);
+  const id = 'e2e-bulk-44';
+  const mutationPath = '**/api/workspace/mailbox/mutate';
+  await page.goto('/?folder=inbox&message=' + id);
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.getByRole('heading', { name: 'E2E Bulk 44' })).toBeVisible();
+  let releaseArchive = () => {};
+  const gate = new Promise<void>((resolve) => { releaseArchive = resolve; });
+  await page.route(mutationPath, async (route) => {
+    await gate;
+    await route.continue();
+  });
+
+  try {
+    const mutation = page.waitForRequest(mutationPath);
+    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    await mutation;
+    const refreshed = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'message-updated', id: 'e2e-bulk-08' });
+      channel.close();
+    });
+    await (await refreshed).finished();
+
+    releaseArchive();
+    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+    await expect(detail).toBeHidden();
+    await expect(page).not.toHaveURL(/message=/u);
+  } finally {
+    releaseArchive();
+    await page.unroute(mutationPath);
+    const response = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
+    const payload = await response.json() as { data: { page: { messages: Message[] } } };
+    if (payload.data.page.messages.some((message) => message.id === id)) {
+      await mutateLocal(page, '/api/workspace/mailbox/mutate', 'POST', {
+        action: 'unarchive', ids: [id], threadKeys: [],
+        scope: { section: 'archive', identityFilter: null, threadScope: 'selected' }
+      });
+    }
+  }
+});
+
 test('formats returning list rows in the current system time zone', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Changing the browser time zone requires Chromium CDP.');
   const cdp = await page.context().newCDPSession(page);

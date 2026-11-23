@@ -10,7 +10,7 @@ class Statement {
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this as unknown as D1PreparedStatement; }
   async first<T>() { return (this.db.query(this.sql).get(...this.values) as T | null) ?? null; }
   async all<T>() { return { results: this.db.query(this.sql).all(...this.values) as T[] }; }
-  async run() { const result = this.db.query(this.sql).run(...this.values); return { meta: { changes: Number(result.changes) } }; }
+  run() { const result = this.db.query(this.sql).run(...this.values); return { meta: { changes: Number(result.changes) } }; }
 }
 
 class D1 {
@@ -107,6 +107,27 @@ describe('mailbox mutation API scope', () => {
     });
     expect(db.query(`SELECT is_read FROM workspace_email_states WHERE email_message_id = 'inbound-a'`).get()).toEqual({ is_read: 1 });
     expect(db.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'inbound-b'`).get()).toEqual({ count: 0 });
+  });
+
+  test('reports that a single archive was not applied when its label scope changes before the write', async () => {
+    const { db, env } = fixture();
+    db.query(`INSERT INTO mail_labels (id, owner_user_id, name, name_key, created_at, updated_at)
+      VALUES ('label-a', 'user-1', 'Follow Up', 'follow up', '2026-09-20T00:00:00Z', '2026-09-20T00:00:00Z')`).run();
+    db.query(`INSERT INTO mail_message_labels (owner_user_id, label_id, message_kind, message_id, created_at)
+      VALUES ('user-1', 'label-a', 'inbound', 'inbound-a', '2026-09-20T00:00:00Z')`).run();
+    const batch = env.DB.batch.bind(env.DB);
+    env.DB.batch = (statements) => {
+      db.query("DELETE FROM mail_message_labels WHERE label_id = 'label-a'").run();
+      return batch(statements);
+    };
+
+    const response = await POST(event(env, {
+      action: 'archive', ids: ['email:inbound-a'],
+      scope: { section: 'label', labelId: 'label-a', identityFilter: null, threadScope: 'selected' }
+    }));
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { code: 'MAILBOX_MESSAGE_NOT_FOUND' } });
+    expect(db.query('SELECT count(*) AS count FROM workspace_email_states').get()).toEqual({ count: 0 });
   });
 
   test('requires an owned label and selected-only scope for cross-folder mutations', async () => {

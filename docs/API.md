@@ -688,8 +688,9 @@ only inbox rows; drafts are not bulk-thread targets.
 All IDs are resolved and capped at 100 before the transaction. Oversized or
 partially invalid requests fail before any write. The write is one D1
 `batch()` transaction. Archive and unarchive only operate on inbox-owned rows
-and change `archived_at`; they never rewrite `folder` to manufacture an archive
-folder.
+and change `archived_at` while retaining the inbox folder. A single-message
+archive or unarchive returns
+`404 MAILBOX_MESSAGE_NOT_FOUND` when the scoped write matches zero rows.
 
 The response returns affected summaries, movement information, the resolved
 scope, and metrics with an explicit `metricsScope.identityFilter`. A null

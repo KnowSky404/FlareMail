@@ -51,9 +51,9 @@ class TestD1 {
   async batch(statements: D1PreparedStatement[]) {
     this.database.exec('BEGIN');
     try {
-      for (const statement of statements) (statement as unknown as TestStatement).run();
+      const results = statements.map((statement) => (statement as unknown as TestStatement).run());
       this.database.exec('COMMIT');
-      return [];
+      return results;
     } catch (error) {
       this.database.exec('ROLLBACK');
       throw error;
