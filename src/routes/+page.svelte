@@ -1611,7 +1611,11 @@
         threadScope: 'selected', ...(section === 'inbox' ? { category } : {}),
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
-      if (authGeneration !== workspaceAuthGeneration) return;
+      if (authGeneration !== workspaceAuthGeneration) {
+        workspaceSync?.publish({ type: 'mailbox-refresh' });
+        await refreshWorkspace(false);
+        return;
+      }
       notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
       if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
         clearRetainedMessage(message.id);
@@ -1620,7 +1624,7 @@
         updateRetainedArchive(result.summaries);
       }
       await refreshWorkspace(false);
-      if (authGeneration === workspaceAuthGeneration) workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
+      workspaceSync?.publish({ type: 'mailbox-refresh', ...(authGeneration === workspaceAuthGeneration ? { id: message.id } : {}) });
     } catch (error) {
       if (authGeneration === workspaceAuthGeneration) {
         notifyError(error, t('notify.bulkFailed'));
