@@ -1011,6 +1011,66 @@ test('does not retain a split reader after clearing search after a late archive 
   }
 });
 
+test('starts a previous search at page one when a late archive conflicts', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop split reader.');
+  await login(page);
+  const [message] = await readMessages(page);
+  const query = 'from:bulk@flaremail.test';
+  const isSearch = (request: { url(): string }) => new URL(request.url()).searchParams.get('q') === query;
+  const search = page.locator('#mail-search-desktop');
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  await search.fill(query);
+  await expect(row(page, 'E2E Bulk 01')).toBeVisible();
+  await page.getByRole('button', { name: '下一页', exact: true }).click();
+  await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeEnabled();
+  await openFolder(page, '已发送');
+  await openFolder(page, '收件箱');
+  await expect(detail.getByRole('heading', { name: message.subject, exact: true })).toBeVisible();
+
+  let signalConflict = () => {};
+  let releaseConflict = () => {};
+  const conflictReady = new Promise<void>((resolve) => { signalConflict = resolve; });
+  const holdConflict = new Promise<void>((resolve) => { releaseConflict = resolve; });
+  await page.route(archiveMutationPath, async (route) => {
+    const response = await route.fetch();
+    signalConflict();
+    await holdConflict;
+    await route.fulfill({ response }).catch(() => {});
+  });
+
+  try {
+    const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+      headers: { origin: new URL(page.url()).origin },
+      data: {
+        action: 'archive', ids: [message.id], threadKeys: [],
+        scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+      }
+    });
+    expect(movedElsewhere.ok()).toBe(true);
+    await page.clock.install();
+    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    await conflictReady;
+    await page.clock.pauseAt(new Date(Date.now() + 1_000));
+    await page.evaluate(() => history.go(-2));
+    await expect(search).toHaveValue(query);
+
+    const requestForSearch = page.waitForRequest(isSearch);
+    const conflict = page.waitForResponse(archiveMutationPath);
+    releaseConflict();
+    expect((await conflict).status()).toBe(404);
+    const request = await requestForSearch;
+    expect(new URL(request.url()).searchParams.has('cursor')).toBe(false);
+    await page.clock.resume();
+    await expect(row(page, 'E2E Bulk 01')).toBeVisible();
+    await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeDisabled();
+  } finally {
+    releaseConflict();
+    await page.unroute(archiveMutationPath);
+    await restoreArchivedFixture(page, message.id);
+  }
+});
+
 test('keeps the split reader from selecting an old page while search is debounced despite a late Trash response', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);

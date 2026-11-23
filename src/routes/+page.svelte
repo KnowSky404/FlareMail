@@ -1609,21 +1609,22 @@
 
   function matchesActiveMailboxScope(page: MailboxPage | undefined) {
     const section = activeSection === 'profile' ? 'inbox' : activeSection;
-    return page && page.folder === section && page.query === urlQuery.trim() && page.filter === mailFilter &&
+    return Boolean(page && page.folder === section && page.query === urlQuery.trim() && page.filter === mailFilter &&
       (page.category ?? 'all') === (activeSection === 'inbox' ? inboxCategory : 'all') &&
       (page.labelId ?? null) === (activeSection === 'label' ? activeLabelId : null) &&
-      sameIdentityScope(page.identityFilter, mailIdentityFilter);
+      sameIdentityScope(page.identityFilter, mailIdentityFilter));
   }
 
   async function refreshArchiveScope() {
     const page = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
+    const sameScope = matchesActiveMailboxScope(page);
     const openMessage = authenticated && !authExpired && messageReaderVisible &&
-      !isTurningCurrentPage() && matchesActiveMailboxScope(page) ? selectedMessage : null;
+      !isTurningCurrentPage() && sameScope ? selectedMessage : null;
     if (openMessage && openMessage.folder !== 'drafts') {
       selectedMessageId = openMessage.id;
       deepLinkedMessage = openMessage;
     }
-    await refreshWorkspace(false, true);
+    await refreshWorkspace(false, sameScope);
     const retained = deepLinkedMessage;
     if (retained && retained.id === selectedMessageId) void refreshDeepLinkedMessage(retained);
   }
