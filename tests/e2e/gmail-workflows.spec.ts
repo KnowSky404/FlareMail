@@ -612,36 +612,61 @@ for (const { openFrom, target, updated } of [
   });
 }
 
-test('keeps a valid split-pane selection while refreshing after archive', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
-  await login(page);
-  const first = (await readMessages(page))[0];
-  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
-  await page.goto('/?folder=inbox');
-  await expect(page).not.toHaveURL(/message=/u);
-  const detail = page.getByRole('region', { name: '邮件详情' });
-  await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
-  const mailboxUrl = '**/api/workspace/mailbox?**';
-  let releaseRefresh = () => {};
-  const gate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
-  await page.route(mailboxUrl, async (route) => {
-    await gate;
-    await route.continue();
-  });
+for (const sync of ['none', 'other message', 'selected message']) {
+  test(`keeps a valid split-pane selection after archive with sync from ${sync}`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
+    await login(page);
+    const first = (await readMessages(page))[0];
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    await page.goto('/?folder=inbox');
+    await expect(page).not.toHaveURL(/message=/u);
+    const detail = page.getByRole('region', { name: '邮件详情' });
+    await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+    const mailboxUrl = '**/api/workspace/mailbox?**';
+    const mutationPath = '**/api/workspace/mailbox/mutate';
+    let releaseArchive = () => {};
+    let releaseRefresh = () => {};
+    const mutationGate = new Promise<void>((resolve) => { releaseArchive = resolve; });
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    await page.route(mutationPath, async (route) => {
+      await mutationGate;
+      await route.continue();
+    });
 
-  try {
-    const refill = page.waitForRequest(mailboxUrl);
-    await detail.getByRole('button', { name: '归档', exact: true }).click();
-    await refill;
-    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
-    await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeHidden();
-    await expect(detail.getByRole('heading').first()).toBeVisible();
-  } finally {
-    releaseRefresh();
-    await page.unroute(mailboxUrl);
-    await restoreArchivedFixture(page, first.id);
-  }
-});
+    try {
+      const requested = page.waitForRequest(mutationPath);
+      await detail.getByRole('button', { name: '归档', exact: true }).click();
+      await requested;
+      if (sync !== 'none') {
+        const synced = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+        await page.evaluate((id) => {
+          const channel = new BroadcastChannel('flaremail-workspace-v1');
+          channel.postMessage({ type: 'message-updated', id });
+          channel.close();
+        }, sync === 'selected message' ? first.id : 'e2e-bulk-08');
+        await (await synced).finished();
+      }
+
+      await page.route(mailboxUrl, async (route) => {
+        await refreshGate;
+        await route.continue();
+      });
+      const refill = page.waitForRequest(mailboxUrl);
+      releaseArchive();
+      await refill;
+      await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+      if (sync === 'selected message') releaseRefresh();
+      await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeHidden();
+      await expect(detail.getByRole('heading').first()).toBeVisible();
+    } finally {
+      releaseArchive();
+      releaseRefresh();
+      await page.unroute(mutationPath);
+      await page.unroute(mailboxUrl);
+      await restoreArchivedFixture(page, first.id);
+    }
+  });
+}
 
 test('formats returning list rows in the current system time zone', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Changing the browser time zone requires Chromium CDP.');
