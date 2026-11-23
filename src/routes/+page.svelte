@@ -1598,7 +1598,7 @@
   }
 
   async function refreshArchiveScope() {
-    await refreshWorkspace(false);
+    await refreshWorkspace(false, true);
     const retained = deepLinkedMessage;
     if (retained && retained.id === selectedMessageId) await refreshDeepLinkedMessage(retained);
   }
@@ -1669,7 +1669,7 @@
     updateWorkspaceUrl({ query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null }, true);
   }
 
-  async function refreshWorkspace(announce = true) {
+  async function refreshWorkspace(announce = true, preservePage = false) {
     mailboxController.invalidate();
     metricsCache.clear();
     metricsRequest.cancel();
@@ -1690,10 +1690,12 @@
       mailFilter,
       mailIdentityFilter,
       activeSection === 'label' ? activeLabelId : null,
-      activeSection === 'inbox' ? inboxCategory : 'all'
+      activeSection === 'inbox' ? inboxCategory : 'all',
+      preservePage
     );
     if (refreshed) {
       runtimeOperationError = false;
+      if (preservePage && mailboxPageNumber > 1) await refreshMetrics();
       if (announce) {
         const current = selectedMessage;
         if (current && current.id === retainedId) await refreshDeepLinkedMessage(current);
