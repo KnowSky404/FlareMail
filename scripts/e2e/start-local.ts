@@ -223,7 +223,7 @@ INSERT INTO ${performanceMarkerTable} (id) VALUES (${sql(performanceRunId)});` :
 
 await executeD1({ config: 'cloudflare.local.json', persistTo }, seed);
 
-const htmlCidFile = join(persistenceRoot, 'html-cid.png');
+const htmlCidFile = join(persistTo, 'html-cid.png');
 await Bun.write(htmlCidFile, htmlCidBytes);
 await run('cf', ['r2', 'objects', 'put', htmlCidKey, '--bucket-name', localTarget.bucket, '--file', htmlCidFile, '--content-type', 'image/png', ...localStateArgs(persistTo)]);
 
