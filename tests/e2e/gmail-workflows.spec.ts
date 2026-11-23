@@ -441,9 +441,18 @@ test('keeps row read, star, archive, trash and undo actions in the list and pres
       await route.continue();
     });
     try {
+      await page.evaluate((messageId) => {
+        const channel = new BroadcastChannel('flaremail-workspace-v1');
+        channel.addEventListener('message', ({ data }) => {
+          if (data.type !== 'mailbox-refresh' || data.id !== messageId) return;
+          document.body.dataset.archiveNotice = messageId;
+          channel.close();
+        });
+      }, id);
       await target.getByRole('button', { name: '归档', exact: true }).press('Enter');
       await expect.poll(() => refreshHeld).toBe(true);
       await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+      await expect(page.locator('body')).toHaveAttribute('data-archive-notice', id);
       await expect(target).toBeVisible();
     } finally {
       releaseRefresh();
