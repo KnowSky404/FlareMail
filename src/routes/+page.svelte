@@ -313,6 +313,7 @@
   let mailboxLoadingMore = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaceSync: WorkspaceSyncController | null = null;
+  let mailboxSyncRevision = 0;
   let authSessionSync: ReturnType<typeof createAuthSessionChannel> | null = null;
   let authRecoveryPromise: Promise<boolean> | null = null;
   let composeSavePromise: Promise<void> | null = null;
@@ -1601,6 +1602,7 @@
   async function handleRowArchive(message: MailMessage) {
     if (pending || message.folder !== 'inbox') return;
     const authGeneration = workspaceAuthGeneration;
+    const syncRevision = mailboxSyncRevision;
     const metricsAtStart = metrics;
     pending = true;
     try {
@@ -1614,25 +1616,29 @@
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
       if (authGeneration !== workspaceAuthGeneration) return;
-      if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
-        clearRetainedMessage(message.id);
-        await closeMobileDetail();
-      } else {
-        updateRetainedArchive(result.summaries);
+      if (syncRevision === mailboxSyncRevision) {
+        if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
+          clearRetainedMessage(message.id);
+          await closeMobileDetail();
+        } else {
+          updateRetainedArchive(result.summaries);
+        }
       }
       if (authGeneration !== workspaceAuthGeneration) return;
-      const change = result.summaries.find(({ id }) => id === message.id);
+      const responseCurrent = syncRevision === mailboxSyncRevision;
+      const change = responseCurrent ? result.summaries.find(({ id }) => id === message.id) : undefined;
       if (change) {
         const patched = patchMailboxArchive({ mailbox, mailboxPages, metrics }, change);
         mailboxController.patchArchive(change);
         mailbox = patched.mailbox;
         mailboxPages = patched.mailboxPages;
-        if (activeSection === (change.archivedAt ? 'inbox' : 'archive')) {
+        const activePage = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
+        if (activePage && !activePage.messages.some(({ id }) => id === change.id)) {
           selectedMessageIds = selectedMessageIds.filter((id) => id !== change.id);
           if (!selectedMessageIds.length) bulkThreadScope = 'selected';
         }
       }
-      const metricsCurrent = !flagController.busy && metrics === metricsAtStart;
+      const metricsCurrent = responseCurrent && !flagController.busy && metrics === metricsAtStart;
       if (activeSection === 'profile' || activeSection === 'trash') {
         metricsCache.clear();
         metricsRequest.cancel();
@@ -1836,6 +1842,7 @@
 
     if (!authenticated || authExpired) return;
 
+    mailboxSyncRevision += 1;
     mailboxController.invalidate();
     metricsCache.clear();
     if (event.id) invalidateMessageCaches(event.id);

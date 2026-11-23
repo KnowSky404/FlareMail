@@ -10,12 +10,16 @@
     let formats = rowDateFormats.get(locale);
     if (!formats) {
       formats = {
-        time: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
-        day: new Intl.DateTimeFormat(locale, { month: 'numeric', day: 'numeric' })
+        time: new Intl.DateTimeFormat(locale, { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false }),
+        day: new Intl.DateTimeFormat(locale, { timeZone: 'UTC', month: 'numeric', day: 'numeric' })
       };
       rowDateFormats.set(locale, formats);
     }
-    return (date.toDateString() === new Date().toDateString() ? formats.time : formats.day).format(date);
+    // Convert local calendar fields at render time so the cached formatters never retain the old system zone.
+    const localTime = new Date(0);
+    localTime.setUTCFullYear(date.getFullYear(), date.getMonth(), date.getDate());
+    localTime.setUTCHours(date.getHours(), date.getMinutes());
+    return (date.toDateString() === new Date().toDateString() ? formats.time : formats.day).format(localTime);
   }
 </script>
 

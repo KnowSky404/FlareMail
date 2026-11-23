@@ -53,6 +53,7 @@ async function seed(size: number) {
     const end = Math.min(size, start + 249);
     const numbers = `WITH RECURSIVE n(i) AS (VALUES(${start}) UNION ALL SELECT i+1 FROM n WHERE i < ${end})`;
     const address = `CASE i%3 WHEN 0 THEN '${addresses[0]}' WHEN 1 THEN '${addresses[1]}' ELSE '${addresses[2]}' END`;
+    const domain = `CASE i%3 WHEN 2 THEN '00000000-0000-4000-8000-000000000012' ELSE '00000000-0000-4000-8000-000000000011' END`;
     const sentAt = `strftime('%Y-%m-%dT%H:%M:%fZ', '${day}', '+'||i||' seconds')`;
     await d1({ batch: [
       { sql: `${numbers}
@@ -61,14 +62,14 @@ async function seed(size: number) {
         SELECT 'perf-w-'||i, '${owner}', CASE WHEN i%3=0 THEN 'sent' ELSE 'inbox' END,
           CASE WHEN i%3=0 THEN 'outbound' ELSE 'inbound' END, 'Fixture', 'sender@fixture.test', 'Fixture', 'recipient@fixture.test',
           'Performance fixture '||i, CASE WHEN i%4=0 THEN 'benchmark match' ELSE 'fixture' END, ${sentAt},
-          'perf-w-'||i, i%2, i%11=0, CASE WHEN i%10=0 AND i%3<>0 THEN ${sentAt} END,
+          'perf-w-'||i, i%4=3, i%11=0, CASE WHEN i%10=1 AND i%3<>0 THEN ${sentAt} END,
           CASE WHEN i%19=0 THEN ${sentAt} END, CASE WHEN i%3=0 THEN ${address} END, CASE WHEN i%3<>0 THEN ${address} END
         FROM n WHERE i%2=1` },
       { sql: `${numbers}
-        INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, snippet, raw_key, "timestamp", mail_address_id, recipient_status)
+        INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, snippet, raw_key, "timestamp", mail_address_id, mail_domain_id, recipient_status)
         SELECT 'perf-i-'||i, '${owner}', 'sender@fixture.test', 'recipient@fixture.test',
           'Performance fixture '||i, CASE WHEN i%4=0 THEN 'benchmark match' ELSE 'fixture' END,
-          'fixture/'||i, ${sentAt}, ${address}, 'managed' FROM n WHERE i%2=0` },
+          'fixture/'||i, ${sentAt}, ${address}, ${domain}, 'managed' FROM n WHERE i%2=0` },
       { sql: `${numbers}
         INSERT INTO workspace_email_states (id, user_id, email_message_id, is_read, is_starred, archived_at, deleted_at)
         SELECT 'perf-state-'||i, '${owner}', 'perf-i-'||i, i%4=0, i%11=0,
