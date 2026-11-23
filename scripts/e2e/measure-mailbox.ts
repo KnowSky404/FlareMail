@@ -26,6 +26,7 @@ type ActionMeasurement = {
   domNodes: number;
   probeMs: number;
 };
+type ActionResult = ActionMeasurement | { error: string };
 type RequestMeasurement = { operation: string; method: string; status?: number; ttfb?: number; duration?: number; bytes?: number; timing?: string };
 const panel = '.mail-workspace:not(.list-layout.detail-open) .mail-list-panel';
 const reader = '.mail-workspace.detail-open .mail-detail-panel';
@@ -81,17 +82,25 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Performance.enable');
   await control.evaluate((element, { ready, feedback, eventType }) => {
-    const state = window as unknown as { measuredAction: Promise<ActionMeasurement> };
+    const state = window as unknown as { measuredAction: Promise<ActionResult> };
     const visible = (target: { selector: string; text?: string }) =>
       [...document.querySelectorAll<HTMLElement>(target.selector)].some((node) =>
         !node.closest('[hidden], [aria-hidden="true"]') && (!target.text || node.textContent?.includes(target.text))
       );
-    state.measuredAction = new Promise((resolve, reject) => {
+    state.measuredAction = new Promise((resolve) => {
+      const action = new AbortController();
+      let observer: MutationObserver | undefined;
+      let pendingFrame = 0;
+      const timeout = window.setTimeout(() => {
+        action.abort();
+        observer?.disconnect();
+        cancelAnimationFrame(pendingFrame);
+        resolve({ error: observer ? 'The expected mailbox content did not render.' : 'The input event was not delivered.' });
+      }, 8_000);
       element.addEventListener(eventType, () => {
         const start = performance.now();
         let firstFeedback: number | undefined;
         let probeMs = 0;
-        let pendingFrame = 0;
         const sample = () => {
           pendingFrame = 0;
           const now = performance.now();
@@ -100,9 +109,9 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
           if (firstFeedback === undefined && (isReady || feedback.some(visible))) firstFeedback = elapsed;
           probeMs += performance.now() - now;
           if (isReady) {
-            observer.disconnect();
-            window.clearTimeout(timeout);
-            requestAnimationFrame(() => {
+            observer?.disconnect();
+            pendingFrame = requestAnimationFrame(() => {
+              window.clearTimeout(timeout);
               const end = performance.now();
               const tasks = (performance.getEntriesByName('mailbox-long-task')).filter(({ startTime, duration }) =>
                 startTime + duration > start && startTime < end);
@@ -116,23 +125,18 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
         const scheduleSample = () => {
           if (!pendingFrame) pendingFrame = requestAnimationFrame(sample);
         };
-        const observer = new MutationObserver(scheduleSample);
-        const timeout = window.setTimeout(() => {
-          observer.disconnect();
-          cancelAnimationFrame(pendingFrame);
-          reject(new Error('The expected mailbox content did not render.'));
-        }, 8_000);
+        observer = new MutationObserver(scheduleSample);
         observer.observe(document.documentElement, { childList: true, attributes: true, characterData: true, subtree: true });
         scheduleSample();
-      }, { capture: true, once: true });
+      }, { capture: true, once: true, signal: action.signal });
     });
   }, { ready, feedback, eventType: input === undefined ? 'click' : 'input' });
   const before = await cdp.send('Performance.getMetrics');
-  if (input !== undefined) await control.fill(input);
-  else if (keyboard) await control.press('Enter');
+  if (input !== undefined) await control.fill(input, { timeout: 5_000 });
+  else if (keyboard) await control.press('Enter', { timeout: 5_000 });
   else await control.click({ timeout: 5_000 });
-  const elapsed = await page.evaluate(() => (window as unknown as { measuredAction: Promise<ActionMeasurement> }).measuredAction)
-    .catch((error) => { throw new Error(`Mailbox action ${name} failed: ${error.message}`); });
+  const elapsed = await page.evaluate(() => (window as unknown as { measuredAction: Promise<ActionResult> }).measuredAction);
+  if ('error' in elapsed) throw new Error(`Mailbox action ${name} failed: ${elapsed.error}`);
   const after = await cdp.send('Performance.getMetrics');
   await cdp.detach();
   const previous = new Map(before.metrics.map(({ name, value }) => [name, value]));
