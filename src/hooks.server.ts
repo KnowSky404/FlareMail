@@ -5,14 +5,13 @@ import { validateEnvironment } from '$lib/server/config/env';
 import { hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
 import {
   getWorkspaceSessionCookieName,
-  getWorkspaceSession,
   isSecureSessionRequest,
   legacyWorkspaceSessionCookie,
   sessionCookieOptions,
   secureWorkspaceSessionCookie,
   workspaceSessionCookie
 } from '$lib/server/workspace';
-import { createAccessWorkspaceSession, WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
+import { createAccessWorkspaceSession, getWorkspaceSession, WorkspaceAuthUnavailableError } from '$lib/server/workspace/session';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError, apiFailure, classifyRuntimeError, getRequestId, runtimeUnavailableState } from '$lib/server/http/api';
 import { resolveLocale } from '$lib/client/locale-preferences';
@@ -78,6 +77,7 @@ export const handle: Handle = async ({ event, resolve }) => {
     }), secure, requestId);
   }
 
+  const authStarted = performance.now();
   let accessPrincipalId: string | null = null;
   let accessExpiresAt: number | null = null;
   if (!isAccessExempt && environment.ok && environment.config.authMode === 'cloudflare-access') {
@@ -112,7 +112,6 @@ export const handle: Handle = async ({ event, resolve }) => {
     accessExpiresAt = verified.expiresAt;
   }
 
-  const authStarted = performance.now();
   let session: Awaited<ReturnType<typeof getWorkspaceSession>> = null;
   let authConfigured = false;
   let sessionToken = sessionCookieNamesForRequest(event.url)
@@ -132,22 +131,22 @@ export const handle: Handle = async ({ event, resolve }) => {
       } else {
         if (environment.config.authMode === 'cloudflare-access') {
           const ownerId = environment.config.accessOwnerUserId!;
-          const mappedOwnerId = await findWorkspaceOwnerId(env.DB);
-          if (mappedOwnerId !== ownerId) {
-            const error = new ApiError(503, 'OWNER_MAPPING_REQUIRED', '工作区 Owner 尚未初始化或与受信配置不匹配。');
-            markUnavailable(error);
-            if (isApi) return failApi(error);
-            return setSecurityHeaders(new Response('Owner mapping is not ready.', {
-              status: 503,
-              headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }
-            }), secure, requestId);
-          } else if (accessPrincipalId && accessExpiresAt) {
+          if (accessPrincipalId && accessExpiresAt) {
             authConfigured = true;
             session = await getWorkspaceSession(env, sessionToken, {
               authMethod: 'cloudflare-access',
               principalId: accessPrincipalId
-            });
+            }, ownerId);
             if (!session) {
+              if ((await findWorkspaceOwnerId(env.DB)) !== ownerId) {
+                const error = new ApiError(503, 'OWNER_MAPPING_REQUIRED', '工作区 Owner 尚未初始化或与受信配置不匹配。');
+                markUnavailable(error);
+                if (isApi) return failApi(error);
+                return setSecurityHeaders(new Response('Owner mapping is not ready.', {
+                  status: 503,
+                  headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'private, no-store' }
+                }), secure, requestId);
+              }
               const authenticated = await createAccessWorkspaceSession(
                 env,
                 ownerId,

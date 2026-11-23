@@ -1,3 +1,24 @@
+<script module lang="ts">
+  import type { Locale } from '$lib/i18n';
+
+  const rowDateFormats = new Map<Locale, { time: Intl.DateTimeFormat; day: Intl.DateTimeFormat }>();
+
+  function formatRowDate(value: string | undefined, locale: Locale) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.valueOf())) return '';
+    let formats = rowDateFormats.get(locale);
+    if (!formats) {
+      formats = {
+        time: new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }),
+        day: new Intl.DateTimeFormat(locale, { month: 'numeric', day: 'numeric' })
+      };
+      rowDateFormats.set(locale, formats);
+    }
+    return (date.toDateString() === new Date().toDateString() ? formats.time : formats.day).format(date);
+  }
+</script>
+
 <script lang="ts">
   import {
     Archive,
@@ -99,15 +120,6 @@
     : itemMessage?.folder === 'sent' ? t('shell.sent')
     : itemMessage?.archivedAt ? t('shell.archive') : t('shell.inbox'));
 
-  const formatDate = (value?: string) => {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.valueOf())) return '';
-    const now = new Date();
-    const sameDay = date.toDateString() === now.toDateString();
-    return new Intl.DateTimeFormat(i18n.locale, sameDay ? { hour: '2-digit', minute: '2-digit', hour12: false } : { month: 'numeric', day: 'numeric' }).format(date);
-  };
-
   const formatDelivery = (status?: MailMessage['deliveryStatus'] | null) => {
     const labels: Record<string, string> = {
       queued: t('mail.statusQueued'),
@@ -197,7 +209,7 @@
       <span class="row-content min-w-0 flex-1 self-stretch py-0.5">
         <span class="row-sender-line flex min-w-0 items-center gap-2">
           <span class={`min-w-0 flex-1 truncate text-[13px] ${isUnread ? 'font-bold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>{counterpart}</span>
-          <time class="row-date shrink-0 text-xs tabular-nums text-[var(--fm-text-muted)]" datetime={itemMessage.sentAt}>{formatDate(thread?.sentAt || itemMessage.sentAt)}</time>
+          <time class="row-date shrink-0 text-xs tabular-nums text-[var(--fm-text-muted)]" datetime={itemMessage.sentAt}>{formatRowDate(thread?.sentAt || itemMessage.sentAt, i18n.locale)}</time>
         </span>
         <span class={`row-subject mt-0.5 flex min-w-0 items-center gap-1 text-[15px] leading-5 ${isUnread ? 'font-semibold text-[var(--fm-text)]' : 'font-medium text-[var(--fm-text-secondary)]'}`}>
           <span class="truncate">{itemSubject}</span>

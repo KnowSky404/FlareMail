@@ -401,8 +401,24 @@ test('keeps row read, star, archive, trash and undo actions in the list and pres
     await target.getByRole('button', { name: before.starred ? '取消星标' : '加星', exact: true }).click();
     await expect(target.getByRole('button', { name: before.starred ? '加星' : '取消星标', exact: true })).toHaveAttribute('aria-pressed', before.starred ? 'false' : 'true');
     await target.hover();
-    await target.getByRole('button', { name: '归档', exact: true }).click();
-    await expect(target).toHaveCount(0);
+    let releaseRefresh = () => {};
+    let refreshHeld = false;
+    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    const mailboxUrl = '**/api/workspace/mailbox?**';
+    await page.route(mailboxUrl, async (route) => {
+      refreshHeld = true;
+      await refreshGate;
+      await route.continue();
+    });
+    try {
+      await target.getByRole('button', { name: '归档', exact: true }).press('Enter');
+      await expect.poll(() => refreshHeld).toBe(true);
+      await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+      await expect(target).toHaveCount(0);
+    } finally {
+      releaseRefresh();
+      await page.unroute(mailboxUrl);
+    }
     await expect(page).not.toHaveURL(/message=/u);
     await openFolder(page, '归档');
     await expect(target).toBeVisible();
