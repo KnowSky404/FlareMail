@@ -63,6 +63,24 @@ async function readMessages(page: Page, category: Category = 'all') {
   return (await response.json() as { data: { page: { messages: Message[] } } }).data.page.messages;
 }
 
+const archiveMutationPath = '**/api/workspace/mailbox/mutate';
+
+async function holdArchiveRequest(page: Page) {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(archiveMutationPath, async (route) => {
+    await gate;
+    await route.fulfill({ response: await route.fetch() });
+  });
+  return {
+    release,
+    async finish() {
+      release();
+      await page.unrouteAll({ behavior: 'wait' });
+    }
+  };
+}
+
 async function restoreArchivedFixture(page: Page, id: string) {
   const response = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
   const payload = await response.json() as { data: { page: { messages: Message[] } } };
@@ -529,13 +547,7 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
   await login(page);
   const id = 'e2e-bulk-04';
   const target = row(page, 'E2E Bulk 04');
-  const mutationPath = '**/api/workspace/mailbox/mutate';
-  let releaseArchive = () => {};
-  const gate = new Promise<void>((resolve) => { releaseArchive = resolve; });
-  await page.route(mutationPath, async (route) => {
-    await gate;
-    await route.continue();
-  });
+  const archive = await holdArchiveRequest(page);
 
   try {
     const requested = page.waitForRequest((request) => request.url().endsWith('/api/workspace/mailbox/mutate'));
@@ -554,14 +566,42 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
     await selectSettings(page);
     await expect(page.locator('.settings-main [role="tabpanel"]')).toBeVisible();
 
-    releaseArchive();
+    archive.release();
     await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
     await openFolder(page, '收件箱');
     await expect(target).toHaveCount(0);
   } finally {
-    releaseArchive();
-    await page.unroute(mutationPath);
+    await archive.finish();
     await restoreArchivedFixture(page, id);
+  }
+});
+
+test('refreshes a recovered Inbox when a pending archive completes', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop row actions.');
+  await login(page);
+  const target = row(page, 'E2E Bulk 12');
+  const archive = await holdArchiveRequest(page);
+  const recover = page.getByRole('button', { name: '检查登录状态' });
+  try {
+    const requested = page.waitForRequest(archiveMutationPath);
+    await target.hover();
+    await target.getByRole('button', { name: '归档', exact: true }).press('Enter');
+    await requested;
+
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('flaremail:auth-expired', { detail: { source: 'other-tab' } })));
+    await expect(recover).toBeVisible();
+    const recovered = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await recover.click();
+    await (await recovered).finished();
+    await expect(recover).toBeHidden();
+    await expect(target).toBeVisible();
+
+    archive.release();
+    await expect(target).toHaveCount(0);
+    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
+  } finally {
+    await archive.finish();
+    await restoreArchivedFixture(page, 'e2e-bulk-12');
   }
 });
 
@@ -575,20 +615,14 @@ for (const { openFrom, target, updated } of [
     await login(page);
     const id = 'e2e-bulk-' + target;
     const subject = 'E2E Bulk ' + target;
-    const mutationPath = '**/api/workspace/mailbox/mutate';
     if (openFrom === 'deep link') await page.goto('/?folder=inbox&message=' + id);
     else await row(page, subject).getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
     const detail = page.getByRole('region', { name: '邮件详情' });
     await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
-    let releaseArchive = () => {};
-    const gate = new Promise<void>((resolve) => { releaseArchive = resolve; });
-    await page.route(mutationPath, async (route) => {
-      await gate;
-      await route.continue();
-    });
+    const archive = await holdArchiveRequest(page);
 
     try {
-      const mutation = page.waitForRequest(mutationPath);
+      const mutation = page.waitForRequest(archiveMutationPath);
       await detail.getByRole('button', { name: '归档', exact: true }).click();
       await mutation;
       const refreshed = page.waitForResponse((response) => mailboxResponse(response, 'all'));
@@ -599,13 +633,12 @@ for (const { openFrom, target, updated } of [
       }, 'e2e-bulk-' + updated);
       await (await refreshed).finished();
 
-      releaseArchive();
+      archive.release();
       await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
       await expect(detail).toBeHidden();
       await expect(page).not.toHaveURL(/message=/u);
     } finally {
-      releaseArchive();
-      await page.unroute(mutationPath);
+      await archive.finish();
       await restoreArchivedFixture(page, id);
     }
   });
