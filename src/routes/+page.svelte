@@ -1626,7 +1626,11 @@
       };
       if (!operation.messageChanged) {
         if (!await closeArchivedReader()) updateRetainedArchive(result.summaries);
-      } else if (deepLinkedMessage?.id === message.id && selectedMessageId === message.id) {
+      } else if (selectedMessageId === message.id) {
+        if (deepLinkedMessage?.id !== message.id) {
+          const current = selectedMessage;
+          deepLinkedMessage = current?.id === message.id ? current : message;
+        }
         void refreshDeepLinkedMessage(deepLinkedMessage)?.then((refreshed) => {
           if (refreshed && Boolean(refreshed.archivedAt) !== Boolean(message.archivedAt)) return closeArchivedReader();
         });

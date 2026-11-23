@@ -566,15 +566,21 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
   }
 });
 
-for (const syncId of ['e2e-bulk-08', 'e2e-bulk-44']) {
-  test(`closes a deep-linked reader after confirmed archive and a cross-tab update to ${syncId}`, async ({ page }, testInfo) => {
+for (const { openFrom, target, updated } of [
+  { openFrom: 'deep link', target: '44', updated: '08' },
+  { openFrom: 'deep link', target: '44', updated: '44' },
+  { openFrom: 'current page', target: '16', updated: '16' }
+]) {
+  test(`closes a list reader after confirmed archive from ${openFrom} and a cross-tab update to bulk ${updated}`, async ({ page }, testInfo) => {
     test.skip(!['desktop', 'mobile'].includes(testInfo.project.name), 'This scenario covers desktop and phone readers.');
     await login(page);
-    const id = 'e2e-bulk-44';
+    const id = 'e2e-bulk-' + target;
+    const subject = 'E2E Bulk ' + target;
     const mutationPath = '**/api/workspace/mailbox/mutate';
-    await page.goto('/?folder=inbox&message=' + id);
+    if (openFrom === 'deep link') await page.goto('/?folder=inbox&message=' + id);
+    else await row(page, subject).getByRole('button', { name: new RegExp(subject, 'u') }).first().click();
     const detail = page.getByRole('region', { name: '邮件详情' });
-    await expect(detail.getByRole('heading', { name: 'E2E Bulk 44' })).toBeVisible();
+    await expect(detail.getByRole('heading', { name: subject, exact: true })).toBeVisible();
     let releaseArchive = () => {};
     const gate = new Promise<void>((resolve) => { releaseArchive = resolve; });
     await page.route(mutationPath, async (route) => {
@@ -591,7 +597,7 @@ for (const syncId of ['e2e-bulk-08', 'e2e-bulk-44']) {
         const channel = new BroadcastChannel('flaremail-workspace-v1');
         channel.postMessage({ type: 'message-updated', id });
         channel.close();
-      }, syncId);
+      }, 'e2e-bulk-' + updated);
       await (await refreshed).finished();
 
       releaseArchive();
