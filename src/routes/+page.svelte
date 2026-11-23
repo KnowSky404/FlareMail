@@ -1695,7 +1695,6 @@
     );
     if (refreshed) {
       runtimeOperationError = false;
-      if (preservePage && mailboxPageNumber > 1) await refreshMetrics();
       if (announce) {
         const current = selectedMessage;
         if (current && current.id === retainedId) await refreshDeepLinkedMessage(current);
