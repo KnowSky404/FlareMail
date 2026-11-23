@@ -844,6 +844,63 @@ test('keeps a split reader on the original message when its archive conflicts', 
   }
 });
 
+test('does not retain a split reader after clearing search after a late archive conflict', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
+  await login(page);
+  const inbox = await readMessages(page);
+  const original = inbox.find(({ id }) => id === 'e2e-bulk-18')!;
+  const [next] = inbox;
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  await page.goto('/?folder=inbox&q=' + encodeURIComponent('subject:"E2E Bulk 18"'));
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.getByRole('heading', { name: original.subject, exact: true })).toBeVisible();
+  const matchesSearch = (request: { url(): string }) => {
+    const url = new URL(request.url());
+    return url.pathname === '/api/workspace/mailbox' && url.searchParams.get('folder') === 'inbox' && !url.searchParams.has('q');
+  };
+  const archive = await holdArchiveRequest(page);
+  let releaseSearch = () => {};
+  const holdSearch = new Promise<void>((resolve) => { releaseSearch = resolve; });
+  await page.route('**/api/workspace/mailbox?**', async (route) => {
+    if (matchesSearch(route.request())) await holdSearch;
+    await route.continue().catch(() => {});
+  });
+
+  try {
+    const started = page.waitForRequest(archiveMutationPath);
+    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    await started;
+    const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+      headers: { origin: new URL(page.url()).origin },
+      data: {
+        action: 'archive', ids: [original.id], threadKeys: [],
+        scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+      }
+    });
+    expect(movedElsewhere.ok()).toBe(true);
+
+    const firstSearch = page.waitForRequest(matchesSearch);
+    await page.getByRole('button', { name: '清除搜索', exact: true }).click();
+    await firstSearch;
+    await expect(detail.getByRole('heading', { name: original.subject, exact: true })).toBeVisible();
+    const retrySearch = page.waitForRequest(matchesSearch);
+    const conflict = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
+    archive.release();
+    await conflict;
+    await retrySearch;
+    releaseSearch();
+    await expect(row(page, next.subject)).toBeVisible();
+    await expect(detail.getByRole('heading', { name: next.subject, exact: true })).toBeVisible();
+    await expect(detail.getByRole('heading', { name: original.subject, exact: true })).toHaveCount(0);
+  } finally {
+    releaseSearch();
+    await archive.finish();
+    await restoreArchivedFixture(page, original.id);
+    await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(original.id)}/flags`, 'PATCH', { read: original.read });
+    await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`, 'PATCH', { read: next.read });
+  }
+});
+
 test('keeps a split reader from auto-reading a cached replacement outside the refreshed Inbox', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);
