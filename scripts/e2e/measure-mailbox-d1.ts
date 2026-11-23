@@ -2,7 +2,9 @@ import { request } from '@playwright/test';
 import target from '../../cloudflare.local.json';
 import { E2E_PASSWORD, E2E_USERNAME } from '../../tests/e2e/fixtures';
 
-const origin = new URL(process.env.FLAREMAIL_PERF_ORIGIN ?? 'http://127.0.0.1:4188');
+const perfOrigin = process.env.FLAREMAIL_PERF_ORIGIN;
+if (!perfOrigin) throw new Error('Set FLAREMAIL_PERF_ORIGIN to the isolated local E2E Worker.');
+const origin = new URL(perfOrigin);
 if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port ||
     process.env.FLAREMAIL_PERF_REPLACE_E2E_MAIL !== 'yes') {
   throw new Error('Use a dedicated local E2E Worker and explicitly allow replacing its synthetic mailbox.');

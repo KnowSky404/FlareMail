@@ -1640,6 +1640,7 @@
       }
       const metricsCurrent = responseCurrent && !flagController.busy && metrics === metricsAtStart;
       if (activeSection === 'profile' || activeSection === 'trash') {
+        if (!change) mailboxController.invalidate();
         metricsCache.clear();
         metricsRequest.cancel();
         if (!flagController.busy && (!metricsCurrent || !sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter))) {
