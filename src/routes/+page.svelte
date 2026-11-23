@@ -1598,6 +1598,11 @@
   }
 
   async function refreshArchiveScope() {
+    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible ? selectedMessage : null;
+    if (openMessage?.folder === 'inbox') {
+      selectedMessageId = openMessage.id;
+      deepLinkedMessage = openMessage;
+    }
     await refreshWorkspace(false, true);
     const retained = deepLinkedMessage;
     if (retained && retained.id === selectedMessageId) await refreshDeepLinkedMessage(retained);
