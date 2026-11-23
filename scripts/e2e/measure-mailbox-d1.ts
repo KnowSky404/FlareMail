@@ -1,7 +1,7 @@
 import { request } from '@playwright/test';
 import target from '../../cloudflare.local.json';
 import { E2E_PASSWORD, E2E_USERNAME } from '../../tests/e2e/fixtures';
-import { requirePerformanceWorker } from './performance-worker';
+import { performanceMarkerTable, requirePerformanceWorker } from './performance-worker';
 
 const perfOrigin = process.env.FLAREMAIL_PERF_ORIGIN;
 if (!perfOrigin) throw new Error('Set FLAREMAIL_PERF_ORIGIN to the isolated local E2E Worker.');
@@ -42,24 +42,35 @@ async function d1(query: RawQuery | { batch: RawQuery[] }) {
   }[];
 }
 
+async function writeFixtures(runId: string, statements: RawQuery[]) {
+  const scope = `EXISTS (SELECT 1 FROM ${performanceMarkerTable} WHERE id = ?)
+    AND EXISTS (SELECT 1 FROM workspace_owner WHERE singleton = 1 AND user_id = ?)`;
+  // Checking the marker in each write also protects a batch API that executes statements separately.
+  const result = await d1({ batch: [
+    { sql: `SELECT 1 WHERE ${scope}`, params: [runId, owner] },
+    ...statements.map(({ sql, params = [] }) => ({ sql: `${sql} AND ${scope}`, params: [...params, runId, owner] }))
+  ] });
+  if (result.length !== statements.length + 1 || result.some(({ success }) => !success) || result[0]?.results.rows[0]?.[0] !== 1) {
+    throw new Error('Fixture batch did not match its benchmark run and synthetic Owner.');
+  }
+}
+
 async function seed(size: number) {
-  await requirePerformanceWorker(origin);
-  const ownership = await d1({ sql: 'SELECT user_id FROM workspace_owner WHERE singleton = 1' });
-  if (ownership[0].results.rows[0]?.[0] !== owner) throw new Error('Synthetic E2E Owner is missing.');
-  await d1({ batch: [
+  const runId = await requirePerformanceWorker(origin);
+  await writeFixtures(runId, [
     ...['workspace_messages', 'workspace_drafts', 'workspace_email_states', 'mail_labels'].map((table) =>
       ({ sql: `DELETE FROM ${table} WHERE ${table === 'mail_labels' ? 'owner_user_id' : 'user_id'} = ?`, params: [owner] })),
     { sql: 'DELETE FROM email_messages WHERE owner_user_id = ?', params: [owner] },
-    { sql: 'INSERT INTO mail_labels (id, owner_user_id, name, name_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    { sql: 'INSERT INTO mail_labels (id, owner_user_id, name, name_key, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ? WHERE 1',
       params: [label, owner, 'Performance fixture', 'performance fixture', day, day] }
-  ] });
+  ]);
   for (let start = 1; start <= size; start += 250) {
     const end = Math.min(size, start + 249);
     const numbers = `WITH RECURSIVE n(i) AS (VALUES(${start}) UNION ALL SELECT i+1 FROM n WHERE i < ${end})`;
     const address = `CASE i%3 WHEN 0 THEN '${addresses[0]}' WHEN 1 THEN '${addresses[1]}' ELSE '${addresses[2]}' END`;
     const domain = `CASE i%3 WHEN 2 THEN '00000000-0000-4000-8000-000000000012' ELSE '00000000-0000-4000-8000-000000000011' END`;
     const sentAt = `strftime('%Y-%m-%dT%H:%M:%fZ', '${day}', '+'||i||' seconds')`;
-    await d1({ batch: [
+    await writeFixtures(runId, [
       { sql: `${numbers}
         INSERT INTO workspace_messages (id, user_id, folder, direction, from_name, from_email, to_name, to_email, subject,
           preview, sent_at, thread_key, is_read, is_starred, archived_at, deleted_at, sender_address_id, recipient_address_id)
@@ -83,7 +94,7 @@ async function seed(size: number) {
         INSERT INTO mail_message_labels (owner_user_id, label_id, message_kind, message_id, created_at)
         SELECT '${owner}', '${label}', CASE WHEN i%2=0 THEN 'inbound' ELSE 'workspace' END,
           CASE WHEN i%2=0 THEN 'perf-i-'||i ELSE 'perf-w-'||i END, ${sentAt} FROM n WHERE i%5=0` }
-    ] });
+    ]);
   }
   const counts = await d1({ sql: `SELECT (SELECT count(*) FROM workspace_messages WHERE user_id=?) +
     (SELECT count(*) FROM email_messages WHERE owner_user_id=?)`, params: [owner, owner] });
@@ -124,21 +135,30 @@ function sqlPhase(sql: string | null) {
 }
 
 async function sampleEndpoint(path: string, method = 'GET', data?: object) {
+  if (method !== 'GET') await requirePerformanceWorker(origin);
   const url = new URL(path, origin);
   const sampleId = crypto.randomUUID();
   url.searchParams.set('perf_sample', sampleId);
   const start = Date.now();
   const response = await client.fetch(url.href, { method, data, headers: { origin: origin.origin } });
-  if (!response.ok()) throw new Error(`Local benchmark returned ${response.status()}`);
-  const body = await response.body();
-  const wallMs = Date.now() - start;
+  let body: Buffer;
+  let wallMs: number;
+  let timing: string | undefined;
+  try {
+    if (!response.ok()) throw new Error(`Local benchmark returned ${response.status()}`);
+    body = await response.body();
+    wallMs = Date.now() - start;
+    timing = response.headers()['server-timing'];
+  } finally {
+    await response.dispose();
+  }
   const rows = await trace(url, method);
   const statements = rows.filter(([name]) => name.startsWith('d1_'));
   const sessionIndex = statements.findIndex(([, , , , , , sql]) => sqlPhase(sql) === 'auth.session');
   return {
     result: JSON.parse(body.toString()),
     measurement: {
-      sampleId, wallMs, bytes: body.byteLength, timing: response.headers()['server-timing'],
+      sampleId, wallMs, bytes: body.byteLength, timing,
       queries: statements.map(([name, , wallMs, rowsRead, rowsWritten, sqlMs, sql], index) => {
         const group = sqlPhase(sql);
         const phase = group === 'schema' ? (index < sessionIndex ? 'auth.schema' : 'workspace.schema') : group;
