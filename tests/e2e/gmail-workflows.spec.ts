@@ -576,8 +576,12 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
   }
 });
 
-for (const from of ['Inbox', 'deep link']) {
-  test(`refreshes a recovered ${from} when a pending archive completes`, async ({ page }, testInfo) => {
+for (const { from, settledStatus } of [
+  { from: 'Inbox', settledStatus: 200 },
+  { from: 'deep link', settledStatus: 200 },
+  { from: 'deep link', settledStatus: 404 }
+]) {
+  test(`refreshes a recovered ${from} when a pending archive returns ${settledStatus}`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop row and reader actions.');
     await login(page);
     const deepLink = from === 'deep link';
@@ -602,8 +606,20 @@ for (const from of ['Inbox', 'deep link']) {
       await expect(recover).toBeHidden();
       await expect(target).toBeVisible();
       if (deepLink) await expect(archiveAction).toBeVisible();
+      if (settledStatus === 404) {
+        const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+          headers: { origin: new URL(page.url()).origin },
+          data: {
+            action: 'archive', ids: [id], threadKeys: [],
+            scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+          }
+        });
+        expect(movedElsewhere.ok()).toBe(true);
+      }
 
+      const settled = page.waitForResponse(archiveMutationPath);
       archive.release();
+      expect((await settled).status()).toBe(settledStatus);
       if (deepLink) await expect(target.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
       else await expect(target).toHaveCount(0);
       await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);

@@ -1632,10 +1632,8 @@
       await refreshWorkspace(false);
       workspaceSync?.publish({ type: 'mailbox-refresh', ...(authGeneration === workspaceAuthGeneration ? { id: message.id } : {}) });
     } catch (error) {
-      if (authGeneration === workspaceAuthGeneration) {
-        notifyError(error, t('notify.bulkFailed'));
-        if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope();
-      }
+      if (authGeneration === workspaceAuthGeneration) notifyError(error, t('notify.bulkFailed'));
+      if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope();
     } finally {
       pending = false;
     }
