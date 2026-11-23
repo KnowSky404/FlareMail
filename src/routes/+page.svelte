@@ -1617,15 +1617,19 @@
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
       if (authGeneration !== workspaceAuthGeneration) return;
+      const closeArchivedReader = async () => {
+        if (authGeneration !== workspaceAuthGeneration || selectedMessageId !== message.id ||
+          (readingLayout !== 'list' && (activeSection !== 'archive' || !message.archivedAt))) return false;
+        clearRetainedMessage(message.id);
+        await closeMobileDetail();
+        return true;
+      };
       if (!operation.messageChanged) {
-        if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
-          clearRetainedMessage(message.id);
-          await closeMobileDetail();
-        } else {
-          updateRetainedArchive(result.summaries);
-        }
+        if (!await closeArchivedReader()) updateRetainedArchive(result.summaries);
       } else if (deepLinkedMessage?.id === message.id && selectedMessageId === message.id) {
-        void refreshDeepLinkedMessage(deepLinkedMessage);
+        void refreshDeepLinkedMessage(deepLinkedMessage)?.then((refreshed) => {
+          if (refreshed && Boolean(refreshed.archivedAt) !== Boolean(message.archivedAt)) return closeArchivedReader();
+        });
       }
       if (authGeneration !== workspaceAuthGeneration) return;
       const responseCurrent = !operation.mailboxChanged;
@@ -1639,6 +1643,11 @@
         if (activePage && !activePage.messages.some(({ id }) => id === change.id)) {
           selectedMessageIds = selectedMessageIds.filter((id) => id !== change.id);
           if (!selectedMessageIds.length) bulkThreadScope = 'selected';
+          if (selectedMessageId === change.id && readingLayout === 'split' &&
+            !readerOpen && !mobileDetailOpen && urlMessageId !== change.id) {
+            clearRetainedMessage(change.id);
+            selectedMessageId = activePage.messages[0]?.id ?? null;
+          }
         }
       }
       const metricsCurrent = responseCurrent && !flagController.busy && metrics === metricsAtStart;
@@ -1813,6 +1822,7 @@
         starred: (latestRevision?.starred ?? 0) === flagRevision.starred ? refreshed.starred : deepLinkedMessage.starred
       };
       if (deepLinkedRefreshError === current.id) deepLinkedRefreshError = null;
+      return deepLinkedMessage;
     }).catch((error) => {
       if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
       const stillSelected = activeSection === section && selectedMessageId === current.id;
