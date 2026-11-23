@@ -1606,7 +1606,7 @@
     }
     await refreshWorkspace(false, true);
     const retained = deepLinkedMessage;
-    if (retained && retained.id === selectedMessageId) await refreshDeepLinkedMessage(retained);
+    if (retained && retained.id === selectedMessageId) void refreshDeepLinkedMessage(retained);
   }
 
   async function handleRowArchive(message: MailMessage) {
@@ -1910,6 +1910,8 @@
       return;
     }
     if (activeSection === 'label' && !activeLabelId) return;
+    const archiveAction = action === 'archive' || action === 'unarchive';
+    const authGeneration = workspaceAuthGeneration;
     pending = true;
     try {
       const selected = bulkSelectedMessages;
@@ -1933,6 +1935,11 @@
       };
       if (action === 'read' || action === 'unread') await flagController.flush();
       const result = await mutateMailbox(action, validSelectedIds, threadKeys, scope);
+      if (archiveAction && authGeneration !== workspaceAuthGeneration) {
+        workspaceSync?.publish({ type: 'mailbox-refresh' });
+        await refreshArchiveScope();
+        return;
+      }
       const metricsScope = result.result.metricsScope.identityFilter;
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
         acceptMetrics(result.result.metrics, metricsScope);
@@ -1944,7 +1951,7 @@
         const retained = deepLinkedMessage;
         if (retained && removed.some((message) => message.id === retained.id)) clearRetainedMessage(retained.id);
         if (removed.some((message) => message.id === selectedMessageId)) await closeMobileDetail();
-      } else if (action === 'archive' || action === 'unarchive') {
+      } else if (archiveAction) {
         updateRetainedArchive(result.result.summaries);
       } else if (deepLinkedMessage && result.result.summaries.some(({ id }) => id === deepLinkedMessage?.id)) {
         await refreshDeepLinkedMessage(deepLinkedMessage);
@@ -1953,6 +1960,7 @@
       bulkThreadScope = 'selected';
       await refreshWorkspace(false);
       workspaceSync?.publish({ type: 'mailbox-refresh' });
+      if (archiveAction && authGeneration !== workspaceAuthGeneration) return;
       toastController.dismissPassive();
       notify(
         action === 'archive'
@@ -1965,9 +1973,8 @@
         'success'
       );
     } catch (error) {
-      notifyError(error, t('notify.bulkFailed'));
-      if ((action === 'archive' || action === 'unarchive') &&
-        error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope();
+      if (!archiveAction || authGeneration === workspaceAuthGeneration) notifyError(error, t('notify.bulkFailed'));
+      if (archiveAction && error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope();
     } finally {
       pending = false;
     }
