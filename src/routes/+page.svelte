@@ -1614,6 +1614,8 @@
       if (authGeneration !== workspaceAuthGeneration) {
         workspaceSync?.publish({ type: 'mailbox-refresh' });
         await refreshWorkspace(false);
+        const retained = deepLinkedMessage;
+        if (retained?.id === message.id && retained.id === selectedMessageId) await refreshDeepLinkedMessage(retained);
         return;
       }
       notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');

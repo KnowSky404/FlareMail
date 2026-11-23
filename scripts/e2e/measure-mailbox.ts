@@ -25,7 +25,8 @@ type ActionMeasurement = {
   probeMs: number;
 };
 type RequestMeasurement = { operation: string; method: string; status?: number; ttfb?: number; duration?: number; bytes?: number; timing?: string };
-const panel = '.mail-list-panel';
+const panel = '.mail-workspace:not(.list-layout.detail-open) .mail-list-panel';
+const reader = '.mail-workspace.detail-open .mail-detail-panel';
 const skeleton = { selector: '[aria-label="正在加载邮件"]' };
 const managementSkeleton = { selector: '[data-management-loading]' };
 const row = (text: string) => ({ selector: panel + ' [role="listitem"], ' + panel + ' li', text });
@@ -186,11 +187,11 @@ async function measure(profile: typeof profiles[number]) {
   actions.push(await act(page, 'next-page', page.getByRole('button', { name: '下一页', exact: true }), row('E2E Bulk 45'), [skeleton]));
   actions.push(await act(page, 'previous-page', page.getByRole('button', { name: '上一页', exact: true }), row('E2E Inbox Welcome'), [skeleton]));
   actions.push(await act(page, 'read-first', message(page, 'E2E Inbox Welcome'),
-    { selector: '[aria-label="邮件正文详情"]', text: 'This message is seeded' }, [{ selector: '[aria-label="邮件详情"]' }]));
+    { selector: reader + ' [aria-label="邮件正文详情"]', text: 'This message is seeded' }, [{ selector: reader + ' [aria-label="邮件详情"]' }]));
   const back = page.getByRole('button', { name: '返回邮件列表' });
   actions.push(await act(page, 'back-to-list', back, row('E2E Inbox Welcome'), []));
   actions.push(await act(page, 'read-cached', message(page, 'E2E Inbox Welcome'),
-    { selector: '[aria-label="邮件正文详情"]', text: 'This message is seeded' }, [{ selector: '[aria-label="邮件详情"]' }]));
+    { selector: reader + ' [aria-label="邮件正文详情"]', text: 'This message is seeded' }, [{ selector: reader + ' [aria-label="邮件详情"]' }]));
   await back.click();
   actions.push(await act(page, 'archive-first', folders(page, '归档'), { selector: panel + ' h2, ' + panel + ' h3', text: '为空' }, [skeleton, listHeading('归档')]));
   actions.push(await act(page, 'starred-first', folders(page, '星标邮件'), { selector: panel + ' h2, ' + panel + ' h3', text: '为空' }, [skeleton, listHeading('星标邮件')]));
@@ -210,7 +211,7 @@ async function measure(profile: typeof profiles[number]) {
     ], { keyboard: true }));
   await folders(page, '收件箱').click();
   const search = page.locator('#mail-search-desktop');
-  actions.push(await act(page, 'search', search, { selector: '.mail-list-panel span', text: '1 个结果' }, [skeleton], { input: 'subject:"E2E Inbox Welcome"' }));
+  actions.push(await act(page, 'search', search, { selector: panel + ' span', text: '1 个结果' }, [skeleton], { input: 'subject:"E2E Inbox Welcome"' }));
   actions.push(await act(page, 'settings-first', folders(page, '设置'), { selector: '.settings-main [role="tabpanel"]' }, [managementSkeleton]));
   actions.push(await act(page, 'domains-first', folders(page, '域名'), { selector: 'table', text: 'flaremail.test' }, [managementSkeleton, listHeading('域名')]));
   actions.push(await act(page, 'addresses-first', folders(page, '邮箱地址'), { selector: 'table', text: 'e2e-admin@flaremail.test' }, [listHeading('邮箱地址')]));

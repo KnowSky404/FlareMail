@@ -576,34 +576,43 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
   }
 });
 
-test('refreshes a recovered Inbox when a pending archive completes', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop row actions.');
-  await login(page);
-  const target = row(page, 'E2E Bulk 12');
-  const archive = await holdArchiveRequest(page);
-  const recover = page.getByRole('button', { name: '检查登录状态' });
-  try {
-    const requested = page.waitForRequest(archiveMutationPath);
-    await target.hover();
-    await target.getByRole('button', { name: '归档', exact: true }).press('Enter');
-    await requested;
+for (const from of ['Inbox', 'deep link']) {
+  test(`refreshes a recovered ${from} when a pending archive completes`, async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop row and reader actions.');
+    await login(page);
+    const deepLink = from === 'deep link';
+    const id = deepLink ? 'e2e-bulk-44' : 'e2e-bulk-12';
+    const subject = deepLink ? 'E2E Bulk 44' : 'E2E Bulk 12';
+    const target = deepLink ? page.getByRole('region', { name: '邮件详情' }) : row(page, subject);
+    if (deepLink) await page.goto('/?folder=inbox&message=' + id);
+    const archive = await holdArchiveRequest(page);
+    const recover = page.getByRole('button', { name: '检查登录状态' });
+    const archiveAction = target.getByRole('button', { name: '归档', exact: true });
+    try {
+      const requested = page.waitForRequest(archiveMutationPath);
+      if (!deepLink) await target.hover();
+      await archiveAction.press('Enter');
+      await requested;
 
-    await page.evaluate(() => window.dispatchEvent(new CustomEvent('flaremail:auth-expired', { detail: { source: 'other-tab' } })));
-    await expect(recover).toBeVisible();
-    const recovered = page.waitForResponse((response) => mailboxResponse(response, 'all'));
-    await recover.click();
-    await (await recovered).finished();
-    await expect(recover).toBeHidden();
-    await expect(target).toBeVisible();
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('flaremail:auth-expired', { detail: { source: 'other-tab' } })));
+      await expect(recover).toBeVisible();
+      const recovered = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+      await recover.click();
+      await (await recovered).finished();
+      await expect(recover).toBeHidden();
+      await expect(target).toBeVisible();
+      if (deepLink) await expect(archiveAction).toBeVisible();
 
-    archive.release();
-    await expect(target).toHaveCount(0);
-    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
-  } finally {
-    await archive.finish();
-    await restoreArchivedFixture(page, 'e2e-bulk-12');
-  }
-});
+      archive.release();
+      if (deepLink) await expect(target.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
+      else await expect(target).toHaveCount(0);
+      await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
+    } finally {
+      await archive.finish();
+      await restoreArchivedFixture(page, id);
+    }
+  });
+}
 
 for (const { openFrom, target, updated } of [
   { openFrom: 'deep link', target: '44', updated: '08' },
