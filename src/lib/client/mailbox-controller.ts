@@ -399,6 +399,7 @@ type MailboxControllerCallbacks = {
 export class MailboxController {
   private readonly cache = new Map<string, CursorPager<MailboxPage>>();
   private current: CursorPager<MailboxPage> | null = null;
+  private interruptedPreservedPage: CursorPager<MailboxPage> | null = null;
 
   constructor(private readonly fetchPage: MailboxPageFetcher, private readonly callbacks: MailboxControllerCallbacks,
     private readonly now: () => number = Date.now) {}
@@ -421,11 +422,17 @@ export class MailboxController {
   invalidate() { for (const pager of this.cache.values()) pager.invalidate(); }
   patchFlags(id: string, patch: FlagDelta) {
     const interrupted = this.current?.isPending ?? false;
+    if (this.current?.isPreservingPage) this.interruptedPreservedPage = this.current;
     for (const pager of this.cache.values()) pager.patch((page) => ({ ...patchPageFlags(page, id, patch), metrics: undefined }));
     return interrupted;
   }
-  reset() { for (const pager of this.cache.values()) pager.reset(); this.cache.clear(); this.current = null; }
-  cancel() { this.current?.cancel(); }
+  takeInterruptedPagePreservation() {
+    const preservePage = this.interruptedPreservedPage !== null && this.current === this.interruptedPreservedPage;
+    this.interruptedPreservedPage = null;
+    return preservePage;
+  }
+  reset() { for (const pager of this.cache.values()) pager.reset(); this.cache.clear(); this.current = null; this.interruptedPreservedPage = null; }
+  cancel() { this.current?.cancel(); this.interruptedPreservedPage = null; }
 
   private activate(params: URLSearchParams) {
     const pager = this.pager(params);
