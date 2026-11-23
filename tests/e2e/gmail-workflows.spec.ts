@@ -588,22 +588,26 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
 for (const { from, settledStatus } of [
   { from: 'Inbox', settledStatus: 200 },
   { from: 'deep link', settledStatus: 200 },
-  { from: 'deep link', settledStatus: 404 }
+  { from: 'deep link', settledStatus: 404 },
+  { from: 'bulk toolbar', settledStatus: 200 },
+  { from: 'bulk toolbar', settledStatus: 404 }
 ]) {
   test(`refreshes a recovered ${from} when a pending archive returns ${settledStatus}`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop row and reader actions.');
     await login(page);
     const deepLink = from === 'deep link';
+    const bulk = from === 'bulk toolbar';
     const id = deepLink ? 'e2e-bulk-44' : 'e2e-bulk-12';
     const subject = deepLink ? 'E2E Bulk 44' : 'E2E Bulk 12';
     const target = deepLink ? page.getByRole('region', { name: '邮件详情' }) : row(page, subject);
     if (deepLink) await page.goto('/?folder=inbox&message=' + id);
+    if (bulk) await target.getByRole('checkbox').check();
     const archive = await holdArchiveRequest(page);
     const recover = page.getByRole('button', { name: '检查登录状态' });
-    const archiveAction = target.getByRole('button', { name: '归档', exact: true });
+    const archiveAction = (bulk ? page.getByLabel('批量邮件操作') : target).getByRole('button', { name: '归档', exact: true });
     try {
       const requested = page.waitForRequest(archiveMutationPath);
-      if (!deepLink) await target.hover();
+      if (!deepLink && !bulk) await target.hover();
       await archiveAction.press('Enter');
       await requested;
 
@@ -632,6 +636,7 @@ for (const { from, settledStatus } of [
       if (deepLink) await expect(target.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
       else await expect(target).toHaveCount(0);
       await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
+      await expect(page.getByText(/所选邮件不存在或不属于声明的邮件范围|批量更新邮件失败/u)).toHaveCount(0);
     } finally {
       await archive.finish();
       await restoreArchivedFixture(page, id);
@@ -792,6 +797,9 @@ test('keeps a split reader on the original message when its archive conflicts', 
   await login(page);
   const [first, next] = await readMessages(page);
   const nextFlags = `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`;
+  const readerMetadata = '**/api/workspace/messages/' + encodeURIComponent(first.id);
+  let releaseMetadata = () => {};
+  const holdMetadata = new Promise<void>((resolve) => { releaseMetadata = resolve; });
   try {
     await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
     await page.goto('/?folder=inbox');
@@ -811,14 +819,25 @@ test('keeps a split reader on the original message when its archive conflicts', 
       }
     });
     expect(movedElsewhere.ok()).toBe(true);
+    await page.route(readerMetadata, async (route) => {
+      await holdMetadata;
+      await route.continue().catch(() => {});
+    });
+    const metadataStarted = page.waitForRequest(readerMetadata);
     const conflict = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
-    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    const archive = detail.getByRole('button', { name: '归档', exact: true });
+    await archive.click();
     await conflict;
+    await metadataStarted;
     await expect(row(page, first.subject)).toHaveCount(0);
     await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+    await expect(archive).toBeEnabled();
+    releaseMetadata();
     await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
     expect((await readMessages(page)).find((message) => message.id === next.id)?.read).toBe(false);
   } finally {
+    releaseMetadata();
+    await page.unroute(readerMetadata);
     await restoreArchivedFixture(page, first.id);
     await mutateLocal(page, nextFlags, 'PATCH', { read: next.read });
     await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(first.id)}/flags`, 'PATCH', { read: first.read });
