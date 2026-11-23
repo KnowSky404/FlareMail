@@ -455,7 +455,8 @@ export class MailboxController {
       },
       onLoading: this.callbacks.onLoading,
       onError: this.callbacks.onError,
-      onRefreshing: this.callbacks.onRefreshing
+      onRefreshing: this.callbacks.onRefreshing,
+      isEmpty: (page) => page.messages.length === 0
     }, this.now);
     this.cache.set(key, pager);
     while (this.cache.size > 16) { const oldest = this.cache.keys().next().value!; this.cache.get(oldest)?.cancel(); this.cache.delete(oldest); }

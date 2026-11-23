@@ -278,10 +278,14 @@ describe('mailbox controller', () => {
     const shown: Array<{ page: MailboxPage; pageNumber?: number }> = [];
     const cursors: Array<string | null> = [];
     let total = 41;
+    let moveLastMatchOnNextPage = false;
     const controller = new MailboxController(async (params) => {
       const cursor = params.get('cursor');
       cursors.push(cursor);
-      if (cursor) return { page: { ...makePage('inbox', []), query: 'invoice' } };
+      if (cursor) {
+        if (moveLastMatchOnNextPage) total = 40;
+        return { page: { ...makePage('inbox', total > 40 ? [message('last', 'inbox', '2026-08-14T02:00:00.000Z')] : []), query: 'invoice' } };
+      }
       return { page: { ...first, searchTotal: total, metrics: { ...metrics, inboxCount: total }, nextCursor: total <= 40 ? null : total === 41 ? 'old' : 'new', hasMore: total > 40 } };
     }, {
       onPage: (page, _append, pageNumber) => shown.push({ page, pageNumber }),
@@ -298,10 +302,10 @@ describe('mailbox controller', () => {
     expect(shown.map(({ pageNumber }) => pageNumber)).toEqual([2, 2]);
     expect(shown.at(-1)?.page).toMatchObject({ searchTotal: 42, metrics: { inboxCount: 42 } });
 
-    total = 40;
+    moveLastMatchOnNextPage = true;
     expect(await preservePage()).toBe(true);
-    expect(shown.at(-1)).toMatchObject({ pageNumber: 1, page: { searchTotal: 40 } });
-    expect(cursors).toEqual(['old', null, 'new', null]);
+    expect(shown.at(-1)).toMatchObject({ pageNumber: 1, page: { searchTotal: 40, hasMore: false, nextCursor: null } });
+    expect(cursors).toEqual(['old', null, 'new', null, 'new', null]);
   });
 
   test('reports refresh and append loading separately and clears a cancelled append', async () => {

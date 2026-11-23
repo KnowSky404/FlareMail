@@ -20,6 +20,7 @@ export class CursorPager<T extends CursorPage> {
       onLoading: (loading: boolean, paging: boolean) => void;
       onError: (message: string) => void;
       onRefreshing?: (refreshing: boolean) => void;
+      isEmpty?: (page: T) => boolean;
     },
     private readonly now: () => number = Date.now
   ) {}
@@ -54,6 +55,13 @@ export class CursorPager<T extends CursorPage> {
         for (let pageNumber = resetChain ? 1 : index; pageNumber <= index; pageNumber += 1) {
           const page = await this.fetcher(startCursor, request.signal);
           if (!request.isCurrent()) return false;
+          if (resetChain && pageNumber > 1 && this.callbacks.isEmpty?.(page)) {
+            // The last match moved after we read page one. Recheck its count and boundary.
+            const firstPage = await this.fetcher(null, request.signal);
+            if (!request.isCurrent()) return false;
+            fetched[0] = { index: 1, cursor: null, page: firstPage };
+            break;
+          }
           fetched.push({ index: pageNumber, cursor: startCursor, page });
           if (!page.hasMore || !page.nextCursor) break;
           startCursor = page.nextCursor;
