@@ -1597,6 +1597,12 @@
     finally { categoryPending = false; }
   }
 
+  async function refreshArchiveScope(id: string) {
+    await refreshWorkspace(false);
+    const retained = deepLinkedMessage;
+    if (retained?.id === id && retained.id === selectedMessageId) await refreshDeepLinkedMessage(retained);
+  }
+
   async function handleRowArchive(message: MailMessage) {
     if (pending || message.folder !== 'inbox') return;
     const authGeneration = workspaceAuthGeneration;
@@ -1613,9 +1619,7 @@
       });
       if (authGeneration !== workspaceAuthGeneration) {
         workspaceSync?.publish({ type: 'mailbox-refresh' });
-        await refreshWorkspace(false);
-        const retained = deepLinkedMessage;
-        if (retained?.id === message.id && retained.id === selectedMessageId) await refreshDeepLinkedMessage(retained);
+        await refreshArchiveScope(message.id);
         return;
       }
       notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
@@ -1630,7 +1634,7 @@
     } catch (error) {
       if (authGeneration === workspaceAuthGeneration) {
         notifyError(error, t('notify.bulkFailed'));
-        if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshWorkspace(false);
+        if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope(message.id);
       }
     } finally {
       pending = false;
