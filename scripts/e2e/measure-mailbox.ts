@@ -35,6 +35,7 @@ type RequestMeasurement = {
   duration?: number;
   bytes?: number;
   timing?: string;
+  failure?: string;
   unfinished?: true;
 };
 const panel = '.mail-workspace:not(.list-layout.detail-open) .mail-list-panel';
@@ -63,34 +64,61 @@ function requestOperation(request: Request) {
 }
 
 function recordRequests(page: Page) {
-  const requests: { basic: RequestMeasurement; result: Promise<RequestMeasurement> }[] = [];
+  const requests = new Map<Request, {
+    basic: RequestMeasurement;
+    result: Promise<RequestMeasurement>;
+    resolve: (measurement: RequestMeasurement) => void;
+    finished: boolean;
+  }>();
   const track = (request: Request) => {
     const operation = requestOperation(request);
     if (!operation) return;
     const basic = { operation, method: request.method() };
-    const result = (async () => {
+    let resolve!: (measurement: RequestMeasurement) => void;
+    const result = new Promise<RequestMeasurement>((done) => { resolve = done; });
+    requests.set(request, { basic, result, resolve, finished: false });
+  };
+  const finish = async (request: Request) => {
+    const item = requests.get(request);
+    if (!item) return;
+    item.finished = true;
+    try {
       const response = await request.response();
-      if (!response) return basic;
-      await response.finished();
+      if (!response) {
+        item.resolve(item.basic);
+        return;
+      }
       const timing = request.timing();
-      return {
-        ...basic, status: response.status(), ttfb: timing.responseStart,
+      item.resolve({
+        ...item.basic, status: response.status(), ttfb: timing.responseStart,
         duration: timing.responseEnd, bytes: (await request.sizes()).responseBodySize,
         timing: response.headers()['server-timing']
-      };
-    })().catch(() => basic);
-    requests.push({ basic, result });
+      });
+    } catch {
+      item.resolve(item.basic);
+    }
+  };
+  const fail = (request: Request) => {
+    const item = requests.get(request);
+    if (!item) return;
+    item.finished = true;
+    item.resolve({ ...item.basic, failure: request.failure()?.errorText ?? 'Request failed.' });
   };
   page.on('request', track);
+  page.on('requestfinished', finish);
+  page.on('requestfailed', fail);
   return async () => {
     page.off('request', track);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 2_000); });
     try {
-      return await Promise.all(requests.map(async ({ basic, result }): Promise<RequestMeasurement> =>
-        await Promise.race([result, deadline]) ?? { ...basic, unfinished: true }
-      ));
+      return await Promise.all([...requests.values()].map(async (item): Promise<RequestMeasurement> => {
+        const measurement = await Promise.race([item.result, deadline]);
+        return measurement ?? (item.finished ? item.basic : { ...item.basic, unfinished: true });
+      }));
     } finally {
+      page.off('requestfinished', finish);
+      page.off('requestfailed', fail);
       clearTimeout(timer);
     }
   };
