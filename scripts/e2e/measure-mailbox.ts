@@ -235,6 +235,8 @@ async function measure(profile: typeof profiles[number]) {
       { selector: panel + ' [role="listitem"] button[aria-label="移回收件箱"]:disabled' }
     ], { keyboard: true }));
   await folders(page, '收件箱').click();
+  await expect(inboxRow).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: '正在更新邮件…' })).toHaveCount(0);
   const search = page.locator('#mail-search-desktop');
   actions.push(await act(page, 'search', search, { selector: panel + ' span', text: '1 个结果' }, [skeleton], { input: 'subject:"E2E Inbox Welcome"' }));
   actions.push(await act(page, 'settings-first', folders(page, '设置'), { selector: '.settings-main [role="tabpanel"]' }, [managementSkeleton]));
