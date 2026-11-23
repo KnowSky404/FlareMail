@@ -45,23 +45,19 @@ export function getWorkspaceSessionCookieName(secure: boolean) {
   return secure ? secureWorkspaceSessionCookie : workspaceSessionCookie;
 }
 
+/** Called after the request hook has checked the schema for this environment. */
 export async function getWorkspaceSession(
-  env: CloudflareEnv | undefined,
+  env: CloudflareEnv,
   token?: string | null,
-  authContext: SessionAuthContext = { authMethod: 'local' }
+  authContext: SessionAuthContext = { authMethod: 'local' },
+  expectedOwnerId?: string
 ) {
-  if (!token || !env?.DB) return null;
+  if (!token) return null;
   try {
-    if (!(await hasWorkspaceCoreTables(env))) throw new WorkspaceAuthUnavailableError();
-    const tokenHash = await hashSessionToken(token);
-    const [ownerId, session] = await Promise.all([
-      findWorkspaceOwnerId(env.DB),
-      loadD1WorkspaceContextByTokenHash(env, tokenHash, authContext)
-    ]);
-    if (!ownerId) return null;
-    if (session?.userId !== ownerId) return null;
-    if (session) await touchSession(env!.DB, session.id).run();
-    return session;
+    const active = await loadD1WorkspaceContextByTokenHash(env, await hashSessionToken(token), authContext);
+    if (!active || (expectedOwnerId !== undefined && active.session.userId !== expectedOwnerId)) return null;
+    if (active.needsTouch) await touchSession(env.DB, active.session.id).run();
+    return active.session;
   } catch (error) {
     console.error(JSON.stringify({ level: 'error', event: 'auth_session_store_unavailable', errorName: error instanceof Error ? error.name : 'UnknownError' }));
     throw new WorkspaceAuthUnavailableError();

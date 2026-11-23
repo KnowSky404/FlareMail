@@ -94,10 +94,8 @@ test('shows icon guidance on pointer and keyboard focus', async ({ page, console
   const clearBounds = await clear.boundingBox();
   expect(clearBounds!.x).toBeGreaterThan(searchBounds!.x + searchBounds!.width / 2);
   expect(clearBounds!.x + clearBounds!.width).toBeLessThanOrEqual(searchBounds!.x + searchBounds!.width);
-  const cleared = page.waitForResponse((response) => response.url().includes('/api/workspace/mailbox?')
-    && !new URL(response.url()).searchParams.has('q'));
   await clear.click();
-  await cleared;
+  await expect(page).not.toHaveURL(/[?&]q=/u);
   await expect(search).toHaveValue('');
   await expect(search).toBeFocused();
   await expect(page.locator('.mail-list-panel [aria-busy="true"]')).toHaveCount(0);
@@ -125,10 +123,8 @@ test('keeps the mobile search clear icon inside its field', async ({ page, conso
   const clearBounds = await clear.boundingBox();
   expect(clearBounds!.x).toBeGreaterThan(searchBounds!.x + searchBounds!.width / 2);
   expect(clearBounds!.x + clearBounds!.width).toBeLessThanOrEqual(searchBounds!.x + searchBounds!.width);
-  const cleared = page.waitForResponse((response) => response.url().includes('/api/workspace/mailbox?')
-    && !new URL(response.url()).searchParams.has('q'));
   await clear.click();
-  await cleared;
+  await expect(page).not.toHaveURL(/[?&]q=/u);
   await expect(search).toHaveValue('');
   await expect(search).toBeFocused();
   await expect(page.locator('.mail-list-panel [aria-busy="true"]')).toHaveCount(0);
@@ -204,11 +200,14 @@ test('paginates mail without appending, preserves a failed page and restores the
   await login(page);
   const scrollRegion = page.locator('.fm-list-scroll');
   const rows = scrollRegion.getByRole('listitem');
+  const rowNames = () => rows.getByRole('checkbox').evaluateAll((controls) =>
+    controls.map((control) => control.getAttribute('aria-label'))
+  );
   const next = scrollRegion.getByRole('button', { name: '下一页', exact: true });
   const previous = scrollRegion.getByRole('button', { name: '上一页', exact: true });
   await expect(previous).toBeDisabled();
-  const initialCount = await rows.count();
-  const initialText = await rows.first().textContent();
+  const initialRows = await rowNames();
+  const initialCount = initialRows.length;
   await next.scrollIntoViewIfNeeded();
   const initialScroll = await scrollRegion.evaluate((element) => element.scrollTop);
   await page.route('**/api/workspace/mailbox?**', async (route) => {
@@ -218,7 +217,7 @@ test('paginates mail without appending, preserves a failed page and restores the
   await next.click();
   await expect(scrollRegion.getByRole('alert')).toBeVisible();
   await expect(rows).toHaveCount(initialCount);
-  await expect(rows.first()).toHaveText(initialText!);
+  await expect.poll(rowNames).toEqual(initialRows);
   await expect(previous).toBeDisabled();
   await page.unroute('**/api/workspace/mailbox?**');
   await rows.first().getByRole('checkbox').check();
@@ -232,13 +231,13 @@ test('paginates mail without appending, preserves a failed page and restores the
   await expect(scrollRegion.getByRole('checkbox', { checked: true })).toHaveCount(0);
   await expect(scope).toHaveCount(0);
   expect(await rows.count()).toBeLessThan(initialCount);
-  expect(await rows.first().textContent()).not.toBe(initialText);
+  expect(await rowNames()).not.toEqual(initialRows);
   await rows.first().getByRole('checkbox').check();
   await expect(scope).toHaveValue('selected');
   await rows.first().getByRole('checkbox').uncheck();
   await previous.click();
   await expect(rows).toHaveCount(initialCount);
-  await expect(rows.first()).toHaveText(initialText!);
+  await expect.poll(rowNames).toEqual(initialRows);
   await expect.poll(() => scrollRegion.evaluate((element) => element.scrollTop)).toBeGreaterThanOrEqual(initialScroll - 2);
   await page.screenshot({ path: join(tmpdir(), `flaremail-pagination-${testInfo.project.name}.png`), fullPage: false });
   await assertNoHorizontalOverflow(page);
@@ -1569,7 +1568,8 @@ test('reads three email views with explicit unsafe HTML and a private display re
   await expect(unsafeFrame.locator('img[src^="http://insecure.example/"]')).toHaveCount(0);
   await page.screenshot({ path: join(tmpdir(), `flaremail-unsafe-html-${testInfo.project.name}.png`), fullPage: false });
 
-  await detail.getByRole('button', { name: '安全 HTML', exact: true }).click();
+  await detail.getByRole('button', { name: '显示选项', exact: true }).click();
+  await detail.getByRole('menuitem', { name: '阻止远程图片', exact: true }).click();
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent('download');

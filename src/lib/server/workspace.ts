@@ -29,7 +29,6 @@ export {
   clearSessionCookieOptions,
   destroyWorkspaceSession,
   getWorkspaceSessionCookieName,
-  getWorkspaceSession,
   isSecureSessionRequest,
   legacyWorkspaceSessionCookie,
   sessionCookieOptions,

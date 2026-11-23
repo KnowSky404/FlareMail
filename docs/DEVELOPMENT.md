@@ -368,6 +368,10 @@ for unread received mail. See the [spec](./specs/mailbox-navigation-and-read-sta
 for concurrency, cache invalidation and acceptance cases. Production latency,
 real mail and remote schema readiness require separate authorized verification.
 
+For repeatable Chromium timing and D1 query plans across mailbox sizes, use the
+[mailbox performance harness and evidence](./verification/mailbox-performance.md).
+The D1 harness replaces the synthetic mailbox in a dedicated E2E Worker.
+
 ## Verify message reading modes
 
 Use isolated local HTML/CID fixtures to exercise Plain text, Safe HTML and Unsafe

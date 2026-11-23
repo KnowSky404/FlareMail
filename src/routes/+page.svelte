@@ -49,6 +49,7 @@
     MailboxController,
     createEmptyWorkspaceViewState,
     mergeMailboxPage,
+    patchMailboxArchive,
     patchMailboxFlags,
     mergeMessageDelta,
     moveSelection,
@@ -185,6 +186,7 @@
 
   let authenticated = $state(false);
   let authExpired = $state(false);
+  let workspaceAuthGeneration = 0;
   let authRecoveryPending = $state(false);
   let authRecoveryError = $state('');
   let authRecoverySaveRequired = $state(false);
@@ -407,6 +409,7 @@
   function enterAuthExpired(source: AuthExpirySource) {
     if (authExpired) return;
     authExpired = true;
+    workspaceAuthGeneration += 1;
     if (labelEditorMode && labelActionPending) labelEditorInterrupted = true;
     authRecoveryError = '';
     const composeInput = composeLiveInput ? withCurrentComposePersistence(composeLiveInput) : null;
@@ -1111,6 +1114,7 @@
   }
 
   function resetWorkspace() {
+    workspaceAuthGeneration += 1;
     window.dispatchEvent(new Event(WORKSPACE_SESSION_ENDED_EVENT));
     syncMessageRequest.cancel();
     draftOpenRequest.cancel();
@@ -1596,6 +1600,8 @@
 
   async function handleRowArchive(message: MailMessage) {
     if (pending || message.folder !== 'inbox') return;
+    const authGeneration = workspaceAuthGeneration;
+    const metricsAtStart = metrics;
     pending = true;
     try {
       let section = activeSection;
@@ -1607,16 +1613,43 @@
         threadScope: 'selected', ...(section === 'inbox' ? { category } : {}),
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
+      if (authGeneration !== workspaceAuthGeneration) return;
       if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
         clearRetainedMessage(message.id);
         await closeMobileDetail();
       } else {
         updateRetainedArchive(result.summaries);
       }
-      await refreshWorkspace(false);
+      if (authGeneration !== workspaceAuthGeneration) return;
+      const change = result.summaries.find(({ id }) => id === message.id);
+      if (change) {
+        const patched = patchMailboxArchive({ mailbox, mailboxPages, metrics }, change);
+        mailboxController.patchArchive(change);
+        mailbox = patched.mailbox;
+        mailboxPages = patched.mailboxPages;
+        if (activeSection === (change.archivedAt ? 'inbox' : 'archive')) {
+          selectedMessageIds = selectedMessageIds.filter((id) => id !== change.id);
+          if (!selectedMessageIds.length) bulkThreadScope = 'selected';
+        }
+      }
+      const metricsCurrent = !flagController.busy && metrics === metricsAtStart;
+      if (activeSection === 'profile' || activeSection === 'trash') {
+        metricsCache.clear();
+        metricsRequest.cancel();
+        if (!flagController.busy && (!metricsCurrent || !sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter))) {
+          void refreshMetrics();
+        }
+      } else {
+        void refreshWorkspace(false);
+      }
+      if (metricsCurrent) {
+        acceptMetrics(result.metrics, result.metricsScope.identityFilter);
+      }
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
-    } catch (error) { notifyError(error, t('notify.bulkFailed')); }
+    } catch (error) {
+      if (authGeneration === workspaceAuthGeneration) notifyError(error, t('notify.bulkFailed'));
+    }
     finally { pending = false; }
   }
 

@@ -302,9 +302,9 @@ export async function loadD1WorkspaceContextByTokenHash(
   env: CloudflareEnv,
   tokenHash: string,
   authContext: SessionAuthContext = { authMethod: 'local' }
-): Promise<WorkspaceContext | null> {
+) {
   const sessionRow = await findSessionJoinByTokenHash(env.DB, tokenHash, undefined, authContext);
-  return sessionRow ? mapSessionRow(sessionRow) : null;
+  return sessionRow ? { session: mapSessionRow(sessionRow), needsTouch: Boolean(sessionRow.needs_touch) } : null;
 }
 
 export async function loadD1Session(env: CloudflareEnv, sessionId: string, _capabilities?: unknown): Promise<WorkspaceSession | null> {

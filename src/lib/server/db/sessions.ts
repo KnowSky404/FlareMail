@@ -11,6 +11,8 @@ export interface SessionAuthContext {
   principalId?: string | null;
 }
 
+const sessionTouchCutoff = (timestamp: string) => new Date(Date.parse(timestamp) - 5 * 60 * 1000).toISOString();
+
 export async function findSessionJoin(db: D1Database, sessionId: string) {
   return db.prepare(`
     SELECT s.id AS session_id, s.created_at, s.updated_at, s.auth_method, s.principal_id,
@@ -29,13 +31,15 @@ export async function findSessionJoinByTokenHash(
 ) {
   return db.prepare(`
     SELECT s.id AS session_id, s.created_at, s.updated_at, s.auth_method, s.principal_id,
+      (s.last_seen_at IS NULL OR s.last_seen_at <= ?) AS needs_touch,
       u.id, u.login_email, u.name, u.role, u.email, u.company, u.location, u.timezone,
       u.forwarding_enabled, u.signature, u.incoming_sequence
     FROM workspace_sessions AS s JOIN workspace_users AS u ON u.id = s.user_id
+    JOIN workspace_owner AS owner ON owner.singleton = 1 AND owner.user_id = u.id
     WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?
       AND s.auth_method = ? AND s.principal_id IS ?
-  `).bind(tokenHash, timestamp, authContext.authMethod, authContext.principalId ?? null)
-    .first<WorkspaceSessionJoinRow>();
+  `).bind(sessionTouchCutoff(timestamp), tokenHash, timestamp, authContext.authMethod, authContext.principalId ?? null)
+    .first<WorkspaceSessionJoinRow & { needs_touch: number }>();
 }
 
 export async function findActiveSessionCapability(
@@ -68,8 +72,10 @@ export async function createSession(
 }
 
 export function touchSession(db: D1Database, sessionId: string, timestamp = new Date().toISOString()) {
-  const cutoff = new Date(Date.parse(timestamp) - 5 * 60 * 1000).toISOString();
-  return db.prepare(`UPDATE workspace_sessions SET updated_at = ?, last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR last_seen_at <= ?)`).bind(timestamp, timestamp, sessionId, cutoff);
+  return db.prepare(`
+    UPDATE workspace_sessions SET updated_at = ?, last_seen_at = ?
+    WHERE id = ? AND revoked_at IS NULL AND expires_at > ? AND (last_seen_at IS NULL OR last_seen_at <= ?)
+  `).bind(timestamp, timestamp, sessionId, timestamp, sessionTouchCutoff(timestamp));
 }
 
 export async function deleteSession(db: D1Database, sessionId: string) {
