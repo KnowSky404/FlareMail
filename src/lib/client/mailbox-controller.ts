@@ -442,11 +442,16 @@ export class MailboxController {
       if (cursor) query.set('cursor', cursor);
       return (await this.fetchPage(query, signal)).page;
     }, {
-      onResult: (page, number) => {
+      onResult: (page, number, rebuiltFirstPage) => {
         first = number === 1 ? page : pager.firstPage ?? first;
-        const result = number > 1 && first?.searchTotal !== undefined
-          ? { ...page, searchTotal: first.searchTotal, searchHitFields: first.searchHitFields } : page;
-        this.callbacks.onPage(result, false, number);
+        if (number > 1) {
+          page = {
+            ...page,
+            ...(first?.searchTotal !== undefined ? { searchTotal: first.searchTotal, searchHitFields: first.searchHitFields } : {}),
+            ...(rebuiltFirstPage?.metrics ? { metrics: rebuiltFirstPage.metrics } : {})
+          };
+        }
+        this.callbacks.onPage(page, false, number);
       },
       onLoading: this.callbacks.onLoading,
       onError: this.callbacks.onError,

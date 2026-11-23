@@ -16,7 +16,7 @@ export class CursorPager<T extends CursorPage> {
   constructor(
     private readonly fetcher: (cursor: string | null, signal: AbortSignal) => Promise<T>,
     private readonly callbacks: {
-      onResult: (page: T, pageNumber: number) => void;
+      onResult: (page: T, pageNumber: number, rebuiltFirstPage?: T) => void;
       onLoading: (loading: boolean, paging: boolean) => void;
       onError: (message: string) => void;
       onRefreshing?: (refreshing: boolean) => void;
@@ -69,7 +69,7 @@ export class CursorPager<T extends CursorPage> {
           this.remember(entry.index, entry.page);
         }
         const last = fetched[fetched.length - 1]!;
-        this.publish(last.page, last.index);
+        this.publish(last.page, last.index, resetChain ? fetched[0]?.page : undefined);
         return true;
       } catch (error) {
         if (request.isCurrent()) this.callbacks.onError(error instanceof Error ? error.message : 'Unable to load page.');
@@ -95,7 +95,10 @@ export class CursorPager<T extends CursorPage> {
     return this.load(this.index + 1);
   }
   previous() { return this.pending || this.index <= 1 ? Promise.resolve(false) : this.load(this.index - 1); }
-  refresh(preservePage = false) { return this.load(preservePage ? this.index : 1, true, true); }
+  refresh(preservePage = false) {
+    // Rebuild at most one successor before showing fresh results.
+    return this.load(preservePage && this.index === 2 ? 2 : 1, true, true);
+  }
 
   invalidate() {
     this.cancel();
@@ -117,7 +120,11 @@ export class CursorPager<T extends CursorPage> {
   private remember(index: number, value: T) {
     this.pages.delete(index);
     this.pages.set(index, { value, updatedAt: this.now() });
-    while (this.pages.size > 16) this.pages.delete([...this.pages.keys()].find((pageNumber) => pageNumber !== 1)!);
+    while (this.pages.size > 16) this.pages.delete(this.pages.keys().next().value!);
   }
-  private publish(value: T, index: number) { this.active = value; this.index = index; this.callbacks.onResult(value, index); }
+  private publish(value: T, index: number, rebuiltFirstPage?: T) {
+    this.active = value;
+    this.index = index;
+    this.callbacks.onResult(value, index, rebuiltFirstPage);
+  }
 }

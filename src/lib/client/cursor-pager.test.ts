@@ -53,6 +53,21 @@ describe('cursor pagination', () => {
     await pager.load(); await pager.next(); refreshed = true; await pager.refresh(); await pager.next();
     expect(seen).toEqual([null, 'next', null, 'new-next']);
   });
+  test('returns to a fresh first page instead of replaying deep cursors', async () => {
+    const seen: Array<string | null> = [];
+    const pager = new CursorPager(async (cursor) => {
+      seen.push(cursor);
+      if (cursor === 'next') return { ...first, nextCursor: 'third' };
+      return cursor ? last : first;
+    }, callbacks([]));
+    await pager.load();
+    await pager.next();
+    await pager.next();
+    expect(pager.pageNumber).toBe(3);
+    expect(await pager.refresh(true)).toBe(true);
+    expect(pager.pageNumber).toBe(1);
+    expect(seen).toEqual([null, 'next', 'third', null]);
+  });
   test('accepts a cached previous page even if its stale revalidation fails', async () => {
     let now = 0;
     let failing = false;

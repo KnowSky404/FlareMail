@@ -282,25 +282,26 @@ describe('mailbox controller', () => {
       const cursor = params.get('cursor');
       cursors.push(cursor);
       if (cursor) return { page: { ...makePage('inbox', []), query: 'invoice' } };
-      return { page: { ...first, searchTotal: total, nextCursor: total <= 40 ? null : total === 41 ? 'old' : 'new', hasMore: total > 40 } };
+      return { page: { ...first, searchTotal: total, metrics: { ...metrics, inboxCount: total }, nextCursor: total <= 40 ? null : total === 41 ? 'old' : 'new', hasMore: total > 40 } };
     }, {
       onPage: (page, _append, pageNumber) => shown.push({ page, pageNumber }),
       onLoading: () => undefined,
       onError: () => undefined
     });
 
-    expect(await controller.refresh('inbox', 'invoice', 'all')).toBe(true);
+    controller.seed(first);
     expect(await controller.loadMore('inbox', 'invoice', 'all', first)).toBe(true);
+    expect(shown.at(-1)?.page.searchTotal).toBe(41);
     total = 42;
     const preservePage = () => controller.refresh('inbox', 'invoice', 'all', null, null, 'all', true);
     expect(await preservePage()).toBe(true);
-    expect(shown.map(({ pageNumber }) => pageNumber)).toEqual([1, 2, 2]);
-    expect(shown.at(-1)?.page.searchTotal).toBe(42);
+    expect(shown.map(({ pageNumber }) => pageNumber)).toEqual([2, 2]);
+    expect(shown.at(-1)?.page).toMatchObject({ searchTotal: 42, metrics: { inboxCount: 42 } });
 
     total = 40;
     expect(await preservePage()).toBe(true);
     expect(shown.at(-1)).toMatchObject({ pageNumber: 1, page: { searchTotal: 40 } });
-    expect(cursors).toEqual([null, 'old', null, 'new', null]);
+    expect(cursors).toEqual(['old', null, 'new', null]);
   });
 
   test('reports refresh and append loading separately and clears a cancelled append', async () => {
