@@ -1509,14 +1509,15 @@
     query: string,
     filter: MailFilter,
     delayMs = 250,
-    identityFilter: MailboxIdentityFilter | null = mailIdentityFilter
+    identityFilter: MailboxIdentityFilter | null = mailIdentityFilter,
+    preservePage = false
   ) {
     clearMailboxRefreshTimer();
     if (!authenticated || authExpired || folder === 'profile' || folder === 'trash') return;
     mailboxRefreshTimer = setTimeout(() => {
       mailboxRefreshTimer = undefined;
       if (authenticated && !authExpired && activeSection === folder) {
-        void mailboxController.refresh(folder, query, filter, identityFilter, folder === 'label' ? activeLabelId : null, folder === 'inbox' ? inboxCategory : 'all');
+        void mailboxController.refresh(folder, query, filter, identityFilter, folder === 'label' ? activeLabelId : null, folder === 'inbox' ? inboxCategory : 'all', preservePage);
       }
     }, delayMs);
   }
@@ -2525,7 +2526,8 @@
         void refreshMetrics(mailIdentityFilter);
         const refreshPage = flagsInterruptedPageRequest || searchQuery.trim() || mailFilter !== 'all' || activeSection === 'starred';
         flagsInterruptedPageRequest = false;
-        if (refreshPage) scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0);
+        const preservePage = mailboxController.takeInterruptedPagePreservation();
+        if (refreshPage) scheduleMailboxRefresh(activeSection, searchQuery, mailFilter, 0, mailIdentityFilter, preservePage);
       }
     }
   });

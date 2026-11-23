@@ -11,7 +11,7 @@ export class CursorPager<T extends CursorPage> {
   private index = 1;
   private pending = false;
   private loadingPaging = false;
-  private flight: { index: number; promise: Promise<boolean> } | null = null;
+  private flight: { index: number; preservingPage: boolean; promise: Promise<boolean> } | null = null;
 
   constructor(
     private readonly fetcher: (cursor: string | null, signal: AbortSignal) => Promise<T>,
@@ -28,6 +28,7 @@ export class CursorPager<T extends CursorPage> {
   get firstPage() { return this.pages.get(1)?.value ?? null; }
   get pageNumber() { return this.index; }
   get isPending() { return this.pending; }
+  get isPreservingPage() { return this.flight?.preservingPage === true; }
 
   seed(page: T) { this.reset(); this.remember(1, page); this.active = page; this.index = 1; }
 
@@ -93,7 +94,7 @@ export class CursorPager<T extends CursorPage> {
         }
       }
     })();
-    this.flight = { index, promise };
+    this.flight = { index, preservingPage: resetChain && index > 1, promise };
     return promise;
   }
 

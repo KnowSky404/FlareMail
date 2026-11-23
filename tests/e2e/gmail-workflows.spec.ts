@@ -639,12 +639,13 @@ for (const { from, settledStatus } of [
   });
 }
 
-for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
+for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bulk toolbar on page two during a flag response']) {
   test(`refreshes the ${from} when an archive conflicts with another device`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop', 'This scenario covers desktop archive controls.');
     await login(page);
     const reader = from === 'deep link';
-    const secondPage = from === 'bulk toolbar on page two';
+    const secondPage = from.startsWith('bulk toolbar on page two');
+    const settleReadDuringRecovery = from.endsWith('during a flag response');
     const id = reader || secondPage ? 'e2e-bulk-44' : 'e2e-bulk-14';
     const target = row(page, secondPage ? 'E2E Bulk 44' : 'E2E Bulk 14');
     const validSelection = row(page, 'E2E Bulk 45').getByRole('checkbox');
@@ -665,6 +666,10 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
     const badge = page.locator('#fm-main-sidebar').getByRole('button', { name: /^收件箱(?:\s|$)/u }).locator('.count');
     let finishRead = () => {};
     const holdRead = new Promise<void>((resolve) => { finishRead = resolve; });
+    let finishCursor = () => {};
+    let signalCursor = () => {};
+    const holdCursor = new Promise<void>((resolve) => { finishCursor = resolve; });
+    const cursorStarted = new Promise<void>((resolve) => { signalCursor = resolve; });
     let optimisticUnread = '';
     const watchRecovery = (request: { url(): string }) => {
       const { pathname } = new URL(request.url());
@@ -676,7 +681,8 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
       if (secondPage) {
         await page.route('**' + readPath, async (route) => {
           await holdRead;
-          await route.abort().catch(() => {});
+          if (settleReadDuringRecovery) await route.continue().catch(() => {});
+          else await route.abort().catch(() => {});
         });
         optimisticUnread = String(Number(await badge.textContent()) - 1);
         const readStarted = page.waitForRequest((request) => new URL(request.url()).pathname === readPath);
@@ -685,6 +691,17 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
         await selectedRow.getByRole('button', { name: '标为已读', exact: true }).click();
         await readStarted;
         await expect(badge).toHaveText(optimisticUnread);
+      }
+      if (settleReadDuringRecovery) {
+        let held = false;
+        await page.route('**/api/workspace/mailbox?**', async (route) => {
+          if (!held && new URL(route.request().url()).searchParams.has('cursor')) {
+            held = true;
+            signalCursor();
+            await holdCursor;
+          }
+          await route.continue().catch(() => {});
+        });
       }
       const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
         headers: { origin: new URL(page.url()).origin },
@@ -699,6 +716,12 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
       if (secondPage) page.on('request', watchRecovery);
       await archive.press('Enter');
       await conflict;
+      if (settleReadDuringRecovery) {
+        await cursorStarted;
+        const readFinished = page.waitForResponse((response) => new URL(response.url()).pathname === readPath && response.ok());
+        finishRead();
+        await readFinished;
+      }
       if (reader) await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
       else {
         await expect(target).toHaveCount(0);
@@ -708,7 +731,7 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
           await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeEnabled();
           await expect(archive).toBeEnabled();
           await expect(badge).toHaveText(optimisticUnread);
-          expect(recoveryRequests).toEqual(['/api/workspace/mailbox', '/api/workspace/mailbox']);
+          expect(recoveryRequests).toEqual(Array(settleReadDuringRecovery ? 4 : 2).fill('/api/workspace/mailbox'));
         } else {
           await expect(toolbar).not.toContainText('已选 1 封');
         }
@@ -717,8 +740,10 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
     } finally {
       page.off('request', watchRecovery);
       finishRead();
-      if (secondPage) await page.unroute('**' + readPath);
+      finishCursor();
+      if (secondPage) await page.unrouteAll({ behavior: 'wait' });
       await restoreArchivedFixture(page, id);
+      if (settleReadDuringRecovery) await mutateLocal(page, readPath, 'PATCH', { read: false });
     }
   });
 }
