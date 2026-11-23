@@ -762,6 +762,44 @@ for (const { openFrom, target, updated } of [
   });
 }
 
+test('keeps a split reader on the original message when its archive conflicts', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
+  await login(page);
+  const [first, next] = await readMessages(page);
+  const nextFlags = `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`;
+  try {
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    await page.goto('/?folder=inbox');
+    const detail = page.getByRole('region', { name: '邮件详情' });
+    await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+    await mutateLocal(page, nextFlags, 'PATCH', { read: false });
+    await page.getByRole('button', { name: '刷新邮件列表', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: '邮件列表已刷新。' })).toBeVisible();
+    await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+    expect((await readMessages(page)).find((message) => message.id === next.id)?.read).toBe(false);
+
+    const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+      headers: { origin: new URL(page.url()).origin },
+      data: {
+        action: 'archive', ids: [first.id], threadKeys: [],
+        scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+      }
+    });
+    expect(movedElsewhere.ok()).toBe(true);
+    const conflict = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
+    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    await conflict;
+    await expect(row(page, first.subject)).toHaveCount(0);
+    await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+    await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
+    expect((await readMessages(page)).find((message) => message.id === next.id)?.read).toBe(false);
+  } finally {
+    await restoreArchivedFixture(page, first.id);
+    await mutateLocal(page, nextFlags, 'PATCH', { read: next.read });
+    await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(first.id)}/flags`, 'PATCH', { read: first.read });
+  }
+});
+
 test('keeps a split reader from auto-reading a cached replacement outside the refreshed Inbox', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);
