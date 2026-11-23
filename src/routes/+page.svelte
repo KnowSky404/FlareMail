@@ -201,8 +201,9 @@
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let mailboxPageNumber = $state(1);
   let trashPageNumber = $state(1);
-  let turningPage = false;
-  let suppressDefaultSelection = $state(false);
+  let turningPageScope: string | null = null;
+  let suppressedSelectionScope = $state<string | null>(null);
+  const suppressDefaultSelection = $derived(suppressedSelectionScope !== null);
   let trashItems = $state<TrashItem[]>([]);
   let trashHasMore = $state(false);
   let trashLoading = $state(false);
@@ -258,6 +259,9 @@
   let categoryPending = $state(false);
   const inboxCategories = mailInboxCategories;
   let mailIdentityFilter = $state<MailboxIdentityFilter | null>(null);
+  const mailboxViewScope = $derived(JSON.stringify([activeSection, inboxCategory, searchQuery.trim(),
+    mailFilter, identityKey(mailIdentityFilter), activeLabelId]));
+  const isTurningCurrentPage = () => turningPageScope === mailboxViewScope;
   let mailIdentityOptions = $state<WorkspaceSnapshot['mailIdentityOptions']>({ domains: [], addresses: [] });
   let mobileDetailOpen = $state(false);
   let listReturnFocus: HTMLElement | null = null;
@@ -370,7 +374,7 @@
   const draftOpenRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
     onResult: (result, pageNumber) => {
-      if (turningPage) suppressDefaultSelection = true;
+      reconcileSplitSelectionScope();
       trashPageNumber = pageNumber;
       trashItems = result.items;
       trashHasMore = result.hasMore;
@@ -378,7 +382,7 @@
       trashError = '';
       acceptMetrics(result.metrics, null);
       if (activeSection === 'trash' && (!selectedMessageId || !result.items.some((item) => item.id === selectedMessageId))) {
-        selectedMessageId = turningPage ? null : result.items[0]?.id ?? null;
+        selectedMessageId = isTurningCurrentPage() ? null : result.items[0]?.id ?? null;
       }
     },
     onLoading: (loading) => (trashLoading = loading),
@@ -1114,6 +1118,7 @@
 
   function resetWorkspace() {
     workspaceAuthGeneration += 1;
+    suppressedSelectionScope = null;
     window.dispatchEvent(new Event(WORKSPACE_SESSION_ENDED_EVENT));
     syncMessageRequest.cancel();
     draftOpenRequest.cancel();
@@ -1264,7 +1269,7 @@
       return;
     }
     clearMailboxRefreshTimer();
-    suppressDefaultSelection = false;
+    suppressedSelectionScope = null;
     selectedMessageIds = [];
     bulkThreadScope = 'selected';
     activeSection = section;
@@ -1604,7 +1609,7 @@
       (page.category ?? 'all') === (activeSection === 'inbox' ? inboxCategory : 'all') &&
       (page.labelId ?? null) === (activeSection === 'label' ? activeLabelId : null) &&
       sameIdentityScope(page.identityFilter, mailIdentityFilter);
-    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible && !turningPage && currentScope
+    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible && !isTurningCurrentPage() && currentScope
       ? selectedMessage : null;
     if (openMessage?.folder === 'inbox') {
       selectedMessageId = openMessage.id;
@@ -1860,7 +1865,7 @@
     const previousInbox = mailboxPages?.inbox;
     const sameInboxScope = previousInbox && previousInbox.query === page.query && previousInbox.filter === page.filter &&
       (previousInbox.category ?? 'all') === (page.category ?? 'all') && sameIdentityScope(previousInbox.identityFilter, page.identityFilter);
-    const keepReader = messageReaderVisible && (readerOpen || (!turningPage && sameInboxScope));
+    const keepReader = messageReaderVisible && (readerOpen || (!isTurningCurrentPage() && sameInboxScope));
     const openMessage = keepReader && !pending && activeSection === 'inbox' && page.folder === 'inbox' ? selectedMessage : null;
     page = { ...page, messages: page.messages.map((message) => flagController.overlay(message)), ...(flagController.busy ? { metrics: undefined } : {}) };
     const merged = mergeMailboxPage({ mailbox, mailboxPages, metrics }, page, append);
@@ -1889,7 +1894,7 @@
       (!selectedMessageId || !currentMessages.some((message) => message.id === selectedMessageId)) &&
       !(selectedMessageId && deepLinkedMessage?.id === selectedMessageId && (readerOpen || mobileDetailOpen || readingLayout === 'split'))
     ) {
-      if (!turningPage && readingLayout === 'split' && (!suppressDefaultSelection || selectedMessageId)) selectedMessageId = currentMessages[0]?.id ?? null;
+      if (!isTurningCurrentPage() && readingLayout === 'split' && (!suppressDefaultSelection || selectedMessageId)) selectedMessageId = currentMessages[0]?.id ?? null;
       else if (selectedMessageId && !urlMessageId) selectedMessageId = null;
     }
   }
@@ -1986,8 +1991,17 @@
     }
   }
 
+  function reconcileSplitSelectionScope() {
+    if (isTurningCurrentPage()) suppressedSelectionScope = mailboxViewScope;
+    else if (suppressedSelectionScope !== mailboxViewScope) suppressedSelectionScope = null;
+  }
+
   const mailboxController = new MailboxController(fetchMailboxPage, {
-    onPage: (page, append, pageNumber) => { if (turningPage) suppressDefaultSelection = true; mailboxPageNumber = pageNumber ?? 1; applyMailboxPage(page, append); },
+    onPage: (page, append, pageNumber) => {
+      reconcileSplitSelectionScope();
+      mailboxPageNumber = pageNumber ?? 1;
+      applyMailboxPage(page, append);
+    },
     onLoading: (loading, append) => {
       if (loading && !append) mailboxError = '';
       mailboxLoading = loading && !append;
@@ -2009,10 +2023,11 @@
   }
 
   async function turnListPage(load: () => Promise<boolean>) {
-    if (turningPage || !authenticated || authExpired || pending) return;
-    turningPage = true;
+    if (turningPageScope !== null || !authenticated || authExpired || pending) return;
+    const scope = mailboxViewScope;
+    turningPageScope = scope;
     try {
-      if (await load()) {
+      if (await load() && mailboxViewScope === scope) {
         selectedMessageIds = [];
         bulkThreadScope = 'selected';
         selectedMessageId = null;
@@ -2020,7 +2035,7 @@
         mobileDetailOpen = false;
         updateWorkspaceUrl({ messageId: null }, true);
       }
-    } finally { turningPage = false; }
+    } finally { turningPageScope = null; }
   }
 
   function openCompose(mode: ComposeMode = 'new', initialInput: ComposeInput | null = null) {
@@ -3507,7 +3522,7 @@
                     selectedMessageId={readingLayout === 'list' && !mobileDetailOpen ? null : selectedMessageId}
                     query={searchQuery}
                     filter={mailFilter}
-                    viewKey={[activeSection, inboxCategory, searchQuery.trim(), mailFilter, identityKey(mailIdentityFilter), activeLabelId ?? '', activeSection === 'trash' ? trashPageNumber : mailboxPageNumber].join('|')}
+                    viewKey={`${mailboxViewScope}:${activeSection === 'trash' ? trashPageNumber : mailboxPageNumber}`}
                     refreshing={mailboxRefreshing}
                     loading={activeSection === 'trash' ? trashLoading && !trashLoaded : mailboxLoading}
                     loadingMore={activeSection === 'trash' ? trashLoading : mailboxLoadingMore}
