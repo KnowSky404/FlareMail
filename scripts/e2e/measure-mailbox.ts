@@ -1,7 +1,9 @@
 import { chromium, type Locator, type Page, type Request } from '@playwright/test';
 import { E2E_PASSWORD, E2E_USERNAME, expect, login } from '../../tests/e2e/fixtures';
 
-const origin = new URL(process.env.FLAREMAIL_PERF_ORIGIN ?? 'http://127.0.0.1:4188');
+const perfOrigin = process.env.FLAREMAIL_PERF_ORIGIN;
+if (!perfOrigin) throw new Error('Set FLAREMAIL_PERF_ORIGIN to the isolated local E2E Worker.');
+const origin = new URL(perfOrigin);
 if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.port) {
   throw new Error('The mailbox benchmark requires an isolated local E2E Worker.');
 }

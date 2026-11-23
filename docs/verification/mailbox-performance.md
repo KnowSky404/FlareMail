@@ -9,21 +9,21 @@
 ```bash
 task_tmp=$(mktemp -d)
 export TMPDIR="$task_tmp" TMP="$task_tmp" TEMP="$task_tmp"
-export FLAREMAIL_PERF_ORIGIN=http://127.0.0.1:4188
 bun scripts/e2e/start-local.ts --port 4188
 ```
 
-在另一终端执行以下命令。第二条会替换该实例的合成邮箱数据，所以在浏览器测量之后运行。复测时重新启动隔离实例恢复默认 fixture。文件应保存到任务证据目录。
+在另一终端指定刚启动的 Worker 端口，再分别运行两个测量脚本。D1 脚本会替换该实例的合成邮箱数据，所以在浏览器测量之后运行。复测时重新启动隔离实例恢复默认 fixture。文件应保存到任务证据目录。
 
 ```bash
-FLAREMAIL_PERF_SAMPLES=12 bun scripts/e2e/measure-mailbox.ts > browser.json
-FLAREMAIL_PERF_REPLACE_E2E_MAIL=yes FLAREMAIL_PERF_SAMPLES=10 \
+perf_origin=http://127.0.0.1:4188
+FLAREMAIL_PERF_ORIGIN="$perf_origin" FLAREMAIL_PERF_SAMPLES=12 bun scripts/e2e/measure-mailbox.ts > browser.json
+FLAREMAIL_PERF_ORIGIN="$perf_origin" FLAREMAIL_PERF_REPLACE_E2E_MAIL=yes FLAREMAIL_PERF_SAMPLES=10 \
   bun scripts/e2e/measure-mailbox-d1.ts > d1.json
 ```
 
 - 浏览器每个网络条件 12 次。1280 × 900，浏览器上下文和 HTTP 缓存每次重建，登录后测量首次工作台文档、首次打开各视图和会话内缓存命中。慢网用 Chromium CDP 注入 150 ms 延迟、下行 1.6 Mbps、上行 0.75 Mbps。服务器使用同一台本地机器的 Worker 与 D1/R2 模拟器。
 - 浏览器记录点击或输入事件至首个可见反馈、目标内容或成功通知的时间，分别记录 HTTP 请求、TTFB、完成耗时、响应传输量及可用的 `Server-Timing`。记录 Chromium 的任务、脚本、样式和布局时长、Long Tasks、DOM 节点数及首个内容绘制。以浏览器帧内的 DOM 可见性作为交互反馈的近似。
-- D1 矩阵包含 0、100、1,000、10,000 封邮件，混合入站来源、工作区收发、三个地址及两个域名，并含归档、删除、未读、星标与标签。查询覆盖各文件夹、身份、分类、FTS、游标、详情和标记操作。每项分开记录第一次读取与 10 次重复样本，在本地 Local Explorer 关联请求和 D1 语句。生成实际 SQL 的 `EXPLAIN QUERY PLAN`，以占位参数查看计划形态。
+- D1 矩阵包含 0、100、1,000、10,000 封邮件，混合入站来源、工作区收发、三个地址及两个域名，并含归档、删除、未读、星标与标签。查询覆盖各文件夹、身份、分类、FTS、游标、详情和标记操作。D1 矩阵里的草稿箱为空，含草稿的加载由 Chromium 的首次草稿箱流程覆盖。每项分开记录第一次读取与 10 次重复样本，在本地 Local Explorer 关联请求和 D1 语句。生成实际 SQL 的 `EXPLAIN QUERY PLAN`，以占位参数查看计划形态。
 - 所有统计来自本地 fixture。小样本 p95 按 nearest rank 计算，接近单次最大值，用于排查尾部波动。浏览器冷上下文测量包含 SSR 与资源传输，Worker 已被健康检查和登录请求唤起。D1 日期和耗时量化粒度以本地运行时为准。
 
 ## 发现与选择
@@ -51,7 +51,7 @@ FLAREMAIL_PERF_REPLACE_E2E_MAIL=yes FLAREMAIL_PERF_SAMPLES=10 \
 | Inbox 首屏 | 63 / 69 → 66 / 89 | 5 → 2 | 22,045 → 22,042 |
 | Inbox 第二页 | 49 / 62 → 47 / 50 | 5 → 2 | 2,345 → 2,342 |
 | Sent | 60 / 69 → 62 / 68 | 5 → 2 | 21,976 → 21,973 |
-| Drafts | 52 / 56 → 51 / 53 | 5 → 2 | 19,756 → 19,753 |
+| Drafts（空） | 52 / 56 → 51 / 53 | 5 → 2 | 19,756 → 19,753 |
 | Archive | 63 / 70 → 63 / 73 | 5 → 2 | 22,663 → 22,660 |
 | Starred | 78 / 86 → 87 / 99 | 5 → 2 | 33,236 → 33,233 |
 | Label | 97 / 111 → 98 / 103 | 5 → 2 | 61,467 → 61,464 |
@@ -121,7 +121,7 @@ FLAREMAIL_PERF_REPLACE_E2E_MAIL=yes FLAREMAIL_PERF_SAMPLES=10 \
 ## 本地回归
 
 - `bun run test` 通过 1,003 项，`bun run check` 无错误或警告，`bun run build` 与 `bun run deploy:dry-run` 通过。全量单测用系统临时目录运行，因为既有 fixture 测试会断言该默认路径。
-- 使用 Playwright 跑定向场景，去重后 Chromium 桌面 27 项、390 px 手机 10 项、320 px 窄屏 3 项、Firefox 桌面 5 项、Linux WebKit 桌面 6 项通过。窄屏的两个通用 axe 场景由桌面和 390 px 项覆盖。WebKit 桌面启用 reduced motion。
-- 验证分页失败重试、延迟响应丢弃、浏览器历史、邮箱身份和跨文件夹计数、归档写入确认与后台回读、跨标签页的迟到归档响应、系统时区切换、标签批量操作、草稿续写和会话恢复、回复身份、demo 出站以及安全 HTML、CID 和撤销远程图片权限。桌面与手机分别通过亮色与暗色主题的 axe 检查。当前本地范围未发现 P0 级回归。
+- 使用 Playwright 跑定向场景，去重后 Chromium 桌面 28 项、390 px 手机 10 项、320 px 窄屏 3 项、Firefox 桌面 5 项、Linux WebKit 桌面 6 项通过。窄屏的两个通用 axe 场景由桌面和 390 px 项覆盖。WebKit 桌面启用 reduced motion。
+- 验证分页失败重试、延迟响应丢弃、浏览器历史、邮箱身份和跨文件夹计数、归档写入确认与后台回读、跨标签页的迟到归档响应、从设置返回时的归档缓存失效、系统时区切换、标签批量操作、草稿续写和会话恢复、回复身份、demo 出站以及安全 HTML、CID 和撤销远程图片权限。桌面与手机分别通过亮色与暗色主题的 axe 检查。当前本地范围未发现 P0 级回归。
 - 初跑发现现有浏览器测试有三类旧断言。清除搜索应按 URL 与焦点验证，回到第一页应按有序邮件身份核对，撤销远程图片权限应使用显示选项菜单。按实际交互修正后各自补测。测试日志保留初跑和复跑记录。
 - 浏览器与 SQL 数字仅代表本地 Worker、模拟 D1/R2、合成邮件和 demo provider。真实生产 API p95、投递、实体 Safari 和人工屏幕阅读器仍需对应环境的独立证据。

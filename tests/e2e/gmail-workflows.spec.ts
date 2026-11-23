@@ -6,6 +6,7 @@ import {
   expect,
   login,
   openFolder,
+  selectSettings,
   test
 } from './fixtures';
 
@@ -502,6 +503,56 @@ test('keeps an Inbox row when another tab has already reversed a delayed archive
     await page.unrouteAll({ behavior: 'wait' });
     const archived = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
     const payload = await archived.json() as { data: { page: { messages: Message[] } } };
+    if (payload.data.page.messages.some((message) => message.id === id)) {
+      await mutateLocal(page, '/api/workspace/mailbox/mutate', 'POST', {
+        action: 'unarchive', ids: [id], threadKeys: [],
+        scope: { section: 'archive', identityFilter: null, threadScope: 'selected' }
+      });
+    }
+  }
+});
+
+test('revalidates Inbox after an archive finishes in Settings following a cross-tab refresh', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop row actions.');
+  await login(page);
+  const id = 'e2e-bulk-04';
+  const target = row(page, 'E2E Bulk 04');
+  const mutationPath = '**/api/workspace/mailbox/mutate';
+  let releaseArchive = () => {};
+  const gate = new Promise<void>((resolve) => { releaseArchive = resolve; });
+  await page.route(mutationPath, async (route) => {
+    await gate;
+    await route.continue();
+  });
+
+  try {
+    const requested = page.waitForRequest((request) => request.url().endsWith('/api/workspace/mailbox/mutate'));
+    await target.hover();
+    await target.getByRole('button', { name: '归档', exact: true }).press('Enter');
+    await requested;
+
+    const refreshed = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mailbox-refresh' });
+      channel.close();
+    });
+    await (await refreshed).finished();
+    await expect(target).toBeVisible();
+    await selectSettings(page);
+    await expect(page.locator('.settings-main [role="tabpanel"]')).toBeVisible();
+
+    releaseArchive();
+    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+    const revalidated = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await openFolder(page, '收件箱');
+    await (await revalidated).finished();
+    await expect(target).toHaveCount(0);
+  } finally {
+    releaseArchive();
+    await page.unroute(mutationPath);
+    const response = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
+    const payload = await response.json() as { data: { page: { messages: Message[] } } };
     if (payload.data.page.messages.some((message) => message.id === id)) {
       await mutateLocal(page, '/api/workspace/mailbox/mutate', 'POST', {
         action: 'unarchive', ids: [id], threadKeys: [],
