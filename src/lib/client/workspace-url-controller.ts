@@ -32,7 +32,7 @@ export type WorkspaceUrlUpdates = {
   quarantineDirection?: 'next' | 'previous';
 };
 
-export const WORKSPACE_SEARCH_MAX_LENGTH = 200;
+const WORKSPACE_SEARCH_MAX_LENGTH = 200;
 
 export function limitWorkspaceSearchQuery(query: string) {
   return query.trimStart().slice(0, WORKSPACE_SEARCH_MAX_LENGTH).replace(/[\uD800-\uDBFF]$/u, '');

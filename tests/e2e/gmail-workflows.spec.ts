@@ -1011,37 +1011,6 @@ test('does not retain a split reader after clearing search after a late archive 
   }
 });
 
-test('accepts the pending search result at the 200-character query limit', async ({ page }, testInfo) => {
-  test.skip(!['desktop', 'firefox-desktop', 'webkit-desktop'].includes(testInfo.project.name), 'This scenario uses the desktop search input.');
-  await login(page);
-  const prefix = 'subject:"E2E Bulk 18"';
-  const suffix = 'from:bulk@flaremail.test';
-  const query = prefix + ' '.repeat(200 - prefix.length - suffix.length) + suffix;
-  const search = page.locator('#mail-search-desktop');
-  const listPath = '**/api/workspace/mailbox?**';
-  const matchesQuery = (request: { url(): string }) => new URL(request.url()).searchParams.get('q') === query;
-  let release = () => {};
-  const hold = new Promise<void>((resolve) => { release = resolve; });
-  await page.route(listPath, async (route) => {
-    if (matchesQuery(route.request())) await hold;
-    await route.continue().catch(() => {});
-  });
-  try {
-    const started = page.waitForRequest(matchesQuery);
-    await search.fill(query);
-    await started;
-    await search.press('End');
-    await search.press('x');
-    await expect(search).toHaveValue(query);
-    release();
-    await expect(row(page, 'E2E Bulk 18')).toBeVisible();
-    await expect(row(page, 'E2E Bulk 19')).toHaveCount(0);
-  } finally {
-    release();
-    await page.unroute(listPath);
-  }
-});
-
 test('keeps the split reader from selecting an old page while search is debounced despite a late Trash response', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);

@@ -3,7 +3,7 @@
   import { Search, X } from '@lucide/svelte';
   import { IconButton } from '$lib/components/ui';
   import { useLocale } from '$lib/i18n/runtime.svelte';
-  import { WORKSPACE_SEARCH_MAX_LENGTH } from '$lib/client/workspace-url-controller';
+  import { limitWorkspaceSearchQuery } from '$lib/client/workspace-url-controller';
 
   let {
     query = '',
@@ -28,6 +28,21 @@
     return () => window.removeEventListener('flaremail:focus-search', focusSearch);
   });
 
+  function changeSearch(input: HTMLInputElement) {
+    const raw = input.value;
+    const normalized = limitWorkspaceSearchQuery(raw);
+    if (normalized !== raw) {
+      const start = input.selectionStart;
+      const end = input.selectionEnd;
+      const leadingWhitespace = raw.length - raw.trimStart().length;
+      input.value = normalized;
+      if (start !== null && end !== null) {
+        input.setSelectionRange(Math.max(0, start - leadingWhitespace), Math.max(0, end - leadingWhitespace));
+      }
+    }
+    onQueryChange?.(normalized);
+  }
+
   function clearSearch() {
     if (!disabled) searchInput?.focus({ preventScroll: true });
     onQueryChange?.('');
@@ -43,7 +58,6 @@
     type="text"
     role="searchbox"
     inputmode="search"
-    maxlength={WORKSPACE_SEARCH_MAX_LENGTH}
     value={query}
     placeholder={placeholder ?? t('mail.searchPlaceholder')}
     {disabled}
@@ -52,7 +66,8 @@
     class="fm-field h-9 min-h-11 w-full pl-9 pr-10 text-sm min-[901px]:min-h-0"
     aria-label={t('mail.search')}
     aria-describedby={`${id}-hint`}
-    oninput={(event) => onQueryChange?.(event.currentTarget.value)}
+    oninput={(event) => { if (!(event instanceof InputEvent && event.isComposing)) changeSearch(event.currentTarget); }}
+    oncompositionend={(event) => changeSearch(event.currentTarget)}
   />
   {#if query}
     <IconButton
