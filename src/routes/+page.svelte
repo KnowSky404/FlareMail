@@ -1599,7 +1599,13 @@
   }
 
   async function refreshArchiveScope() {
-    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible ? selectedMessage : null;
+    const page = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
+    const currentScope = page && page.folder === activeSection && page.query === searchQuery.trim() && page.filter === mailFilter &&
+      (page.category ?? 'all') === (activeSection === 'inbox' ? inboxCategory : 'all') &&
+      (page.labelId ?? null) === (activeSection === 'label' ? activeLabelId : null) &&
+      sameIdentityScope(page.identityFilter, mailIdentityFilter);
+    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible && !turningPage && currentScope
+      ? selectedMessage : null;
     if (openMessage?.folder === 'inbox') {
       selectedMessageId = openMessage.id;
       deepLinkedMessage = openMessage;
