@@ -27,7 +27,16 @@ type ActionMeasurement = {
   probeMs: number;
 };
 type ActionResult = ActionMeasurement | { error: string };
-type RequestMeasurement = { operation: string; method: string; status?: number; ttfb?: number; duration?: number; bytes?: number; timing?: string };
+type RequestMeasurement = {
+  operation: string;
+  method: string;
+  status?: number;
+  ttfb?: number;
+  duration?: number;
+  bytes?: number;
+  timing?: string;
+  unfinished?: true;
+};
 const panel = '.mail-workspace:not(.list-layout.detail-open) .mail-list-panel';
 const reader = '.mail-workspace.detail-open .mail-detail-panel';
 const skeleton = { selector: '[aria-label="正在加载邮件"]' };
@@ -52,13 +61,13 @@ function requestOperation(request: Request) {
 }
 
 function recordRequests(page: Page) {
-  const requests = new Map<Request, Promise<RequestMeasurement>>();
+  const requests: { basic: RequestMeasurement; result: Promise<RequestMeasurement> }[] = [];
   const track = (request: Request) => {
     const operation = requestOperation(request);
     if (!operation) return;
-    requests.set(request, (async () => {
+    const basic = { operation, method: request.method() };
+    const result = (async () => {
       const response = await request.response();
-      const basic = { operation, method: request.method() };
       if (!response) return basic;
       await response.finished();
       const timing = request.timing();
@@ -67,12 +76,21 @@ function recordRequests(page: Page) {
         duration: timing.responseEnd, bytes: (await request.sizes()).responseBodySize,
         timing: response.headers()['server-timing']
       };
-    })().catch(() => ({ operation, method: request.method() })));
+    })().catch(() => basic);
+    requests.push({ basic, result });
   };
   page.on('request', track);
   return async () => {
     page.off('request', track);
-    return Promise.all(requests.values());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 2_000); });
+    try {
+      return await Promise.all(requests.map(async ({ basic, result }): Promise<RequestMeasurement> =>
+        await Promise.race([result, deadline]) ?? { ...basic, unfinished: true }
+      ));
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 
