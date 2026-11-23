@@ -49,16 +49,27 @@ export class CursorPager<T extends CursorPage> {
     this.callbacks.onRefreshing?.(Boolean(this.active) && !paging);
     const promise = (async () => {
       try {
-        const page = await this.fetcher(cursor, request.signal);
-        if (!request.isCurrent()) return false;
-        if (resetChain) { this.pages.clear(); this.cursors.clear(); this.cursors.set(1, null); }
-        // A changed boundary invalidates every subsequent page.
-        if (this.pages.get(index)?.value.nextCursor !== page.nextCursor) {
-          for (const key of this.pages.keys()) if (key > index) this.pages.delete(key);
-          for (const key of this.cursors.keys()) if (key > index) this.cursors.delete(key);
+        const fetched: { index: number; cursor: string | null; page: T }[] = [];
+        let startCursor = resetChain ? null : cursor;
+        for (let pageNumber = resetChain ? 1 : index; pageNumber <= index; pageNumber += 1) {
+          const page = await this.fetcher(startCursor, request.signal);
+          if (!request.isCurrent()) return false;
+          fetched.push({ index: pageNumber, cursor: startCursor, page });
+          if (!page.hasMore || !page.nextCursor) break;
+          startCursor = page.nextCursor;
         }
-        this.remember(index, page);
-        this.publish(page, index);
+        if (resetChain) { this.pages.clear(); this.cursors.clear(); this.cursors.set(1, null); }
+        for (const entry of fetched) {
+          // A changed boundary invalidates every subsequent page.
+          if (this.pages.get(entry.index)?.value.nextCursor !== entry.page.nextCursor) {
+            for (const key of this.pages.keys()) if (key > entry.index) this.pages.delete(key);
+            for (const key of this.cursors.keys()) if (key > entry.index) this.cursors.delete(key);
+          }
+          this.cursors.set(entry.index, entry.cursor);
+          this.remember(entry.index, entry.page);
+        }
+        const last = fetched[fetched.length - 1]!;
+        this.publish(last.page, last.index);
         return true;
       } catch (error) {
         if (request.isCurrent()) this.callbacks.onError(error instanceof Error ? error.message : 'Unable to load page.');
@@ -84,7 +95,7 @@ export class CursorPager<T extends CursorPage> {
     return this.load(this.index + 1);
   }
   previous() { return this.pending || this.index <= 1 ? Promise.resolve(false) : this.load(this.index - 1); }
-  refresh() { return this.load(1, true, true); }
+  refresh(preservePage = false) { return this.load(preservePage ? this.index : 1, true, true); }
 
   invalidate() {
     this.cancel();
@@ -106,7 +117,7 @@ export class CursorPager<T extends CursorPage> {
   private remember(index: number, value: T) {
     this.pages.delete(index);
     this.pages.set(index, { value, updatedAt: this.now() });
-    while (this.pages.size > 16) this.pages.delete(this.pages.keys().next().value!);
+    while (this.pages.size > 16) this.pages.delete([...this.pages.keys()].find((pageNumber) => pageNumber !== 1)!);
   }
   private publish(value: T, index: number) { this.active = value; this.index = index; this.callbacks.onResult(value, index); }
 }

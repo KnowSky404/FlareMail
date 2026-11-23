@@ -1617,8 +1617,9 @@
         threadScope: 'selected', ...(section === 'inbox' ? { category } : {}),
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
-      if (authGeneration !== workspaceAuthGeneration) {
-        workspaceSync?.publish({ type: 'mailbox-refresh' });
+      const currentSession = authGeneration === workspaceAuthGeneration;
+      workspaceSync?.publish(currentSession ? { type: 'mailbox-refresh', id: message.id } : { type: 'mailbox-refresh' });
+      if (!currentSession) {
         await refreshArchiveScope();
         return;
       }
@@ -1630,7 +1631,6 @@
         updateRetainedArchive(result.summaries);
       }
       await refreshWorkspace(false);
-      workspaceSync?.publish({ type: 'mailbox-refresh', ...(authGeneration === workspaceAuthGeneration ? { id: message.id } : {}) });
     } catch (error) {
       if (authGeneration === workspaceAuthGeneration) notifyError(error, t('notify.bulkFailed'));
       if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope();

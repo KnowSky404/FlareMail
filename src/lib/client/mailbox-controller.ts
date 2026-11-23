@@ -410,7 +410,7 @@ export class MailboxController {
   }
   refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all', preservePage = false) {
     const pager = this.activate(this.params(folder, query, filter, identityFilter, labelId, category));
-    return preservePage && pager.pageNumber > 1 ? pager.load(pager.pageNumber, true) : pager.refresh();
+    return pager.refresh(preservePage);
   }
   loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return Promise.resolve(false);
@@ -440,11 +440,14 @@ export class MailboxController {
     const pager: CursorPager<MailboxPage> = new CursorPager<MailboxPage>(async (cursor, signal) => {
       const query = new URLSearchParams(params);
       if (cursor) query.set('cursor', cursor);
-      const initial = pager.firstPage ?? first;
-      const { page } = await this.fetchPage(query, signal);
-      return { ...page, ...(cursor && initial?.searchTotal !== undefined ? { searchTotal: initial.searchTotal, searchHitFields: initial.searchHitFields } : {}) };
+      return (await this.fetchPage(query, signal)).page;
     }, {
-      onResult: (page, number) => { if (number === 1) first = page; this.callbacks.onPage(page, false, number); },
+      onResult: (page, number) => {
+        first = number === 1 ? page : pager.firstPage ?? first;
+        const result = number > 1 && first?.searchTotal !== undefined
+          ? { ...page, searchTotal: first.searchTotal, searchHitFields: first.searchHitFields } : page;
+        this.callbacks.onPage(result, false, number);
+      },
       onLoading: this.callbacks.onLoading,
       onError: this.callbacks.onError,
       onRefreshing: this.callbacks.onRefreshing
