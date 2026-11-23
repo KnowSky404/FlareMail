@@ -1,7 +1,7 @@
 import { readCloudflareTarget, localStateArgs, executeD1 } from '../cloudflare-target';
 import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createLocalCloudflareEnvironment } from '../cloudflare-environment';
 import { performanceMarkerTable, readPerformanceRunId } from './performance-worker';
 
@@ -14,11 +14,13 @@ const argument = (name: string, fallback: string) => {
 
 const port = argument('--port', '4173');
 const performanceRunId = readPerformanceRunId();
-const persistenceRoot = resolve(join(tmpdir(), 'flaremail-e2e'));
-const defaultPersistence = performanceRunId
-  ? join(persistenceRoot, 'performance-' + performanceRunId)
-  : process.env.FLAREMAIL_E2E_STATE_DIR ?? join(persistenceRoot, 'state');
-const persistTo = resolve(argument('--persist-to', defaultPersistence));
+const persistenceRoot = resolve(tmpdir(), performanceRunId ? 'flaremail-performance' : 'flaremail-e2e');
+if (performanceRunId && process.argv.includes('--persist-to')) {
+  throw new Error('Omit --persist-to for benchmark runs. The run ID selects an isolated state directory.');
+}
+const persistTo = performanceRunId
+  ? join(persistenceRoot, performanceRunId)
+  : resolve(argument('--persist-to', process.env.FLAREMAIL_E2E_STATE_DIR ?? join(persistenceRoot, 'state')));
 const relativePersistencePath = relative(persistenceRoot, persistTo);
 if (
   !relativePersistencePath ||
@@ -94,7 +96,7 @@ const draftSeed = draftSubjects.map((subject, index) => `INSERT OR IGNORE INTO w
 );`).join('\n');
 
 if (performanceRunId) {
-  await mkdir(dirname(persistTo), { recursive: true });
+  await mkdir(persistenceRoot, { recursive: true });
   await mkdir(persistTo);
 } else {
   await rm(persistTo, { recursive: true, force: true });

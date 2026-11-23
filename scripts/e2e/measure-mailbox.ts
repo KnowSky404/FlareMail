@@ -168,6 +168,7 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
 }
 
 async function measure(profile: typeof profiles[number]) {
+  await requirePerformanceWorker(origin);
   const context = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1280, height: 900 }, baseURL: origin.origin });
   await context.addInitScript(() => {
     new PerformanceObserver((entries) => {
