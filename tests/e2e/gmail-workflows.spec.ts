@@ -644,13 +644,14 @@ for (const { from, settledStatus } of [
   });
 }
 
-for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bulk toolbar on page two during a flag response']) {
+for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bulk toolbar on page two during a flag response', 'bulk toolbar on page two in split view']) {
   test(`refreshes the ${from} when an archive conflicts with another device`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop', 'This scenario covers desktop archive controls.');
     await login(page);
     const reader = from === 'deep link';
     const secondPage = from.startsWith('bulk toolbar on page two');
     const settleReadDuringRecovery = from.endsWith('during a flag response');
+    const emptySplitReader = from.endsWith('in split view');
     const id = reader || secondPage ? 'e2e-bulk-44' : 'e2e-bulk-14';
     const target = row(page, secondPage ? 'E2E Bulk 44' : 'E2E Bulk 14');
     const validSelection = row(page, 'E2E Bulk 45').getByRole('checkbox');
@@ -658,6 +659,10 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bu
     const toolbar = page.getByLabel('批量邮件操作');
     if (reader) await page.goto('/?folder=inbox&message=' + id);
     else {
+      if (emptySplitReader) {
+        await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+        await expect(page.getByRole('button', { name: '关闭分栏预览', exact: true })).toBeVisible();
+      }
       if (secondPage) {
         await page.getByRole('button', { name: '下一页', exact: true }).click();
         await validSelection.check();
@@ -667,6 +672,7 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bu
     const archive = (reader ? detail : toolbar).getByRole('button', { name: '归档', exact: true });
     await expect(archive).toBeVisible();
     const recoveryRequests: string[] = [];
+    const flagWrites: string[] = [];
     const readPath = '/api/workspace/messages/e2e-bulk-45/flags';
     const badge = page.locator('#fm-main-sidebar').getByRole('button', { name: /^收件箱(?:\s|$)/u }).locator('.count');
     let finishRead = () => {};
@@ -676,14 +682,19 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bu
     const holdCursor = new Promise<void>((resolve) => { finishCursor = resolve; });
     const cursorStarted = new Promise<void>((resolve) => { signalCursor = resolve; });
     let optimisticUnread = '';
-    const watchRecovery = (request: { url(): string }) => {
+    const watchRecovery = (request: { url(): string; method(): string }) => {
       const { pathname } = new URL(request.url());
+      if (request.method() === 'PATCH' && pathname.endsWith('/flags')) flagWrites.push(pathname);
       if (pathname === '/api/workspace/mailbox' || pathname === '/api/workspace/mailbox/metrics') {
         recoveryRequests.push(pathname);
       }
     };
     try {
-      if (secondPage) {
+      if (emptySplitReader) {
+        await expect(detail.getByText('选择一封邮件开始阅读', { exact: true })).toBeVisible();
+        expect((await readMessages(page)).find(({ id }) => id === 'e2e-bulk-45')?.read).toBe(false);
+      }
+      if (secondPage && !emptySplitReader) {
         await page.route('**' + readPath, async (route) => {
           await holdRead;
           if (settleReadDuringRecovery) await route.continue().catch(() => {});
@@ -735,7 +746,11 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bu
           await expect(toolbar).toContainText('已选 1 封');
           await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeEnabled();
           await expect(archive).toBeEnabled();
-          await expect(badge).toHaveText(optimisticUnread);
+          if (emptySplitReader) {
+            await expect(detail.getByText('选择一封邮件开始阅读', { exact: true })).toBeVisible();
+            expect((await readMessages(page)).find(({ id }) => id === 'e2e-bulk-45')?.read).toBe(false);
+            expect(flagWrites).toEqual([]);
+          } else await expect(badge).toHaveText(optimisticUnread);
           expect(recoveryRequests).toEqual(Array(settleReadDuringRecovery ? 4 : 2).fill('/api/workspace/mailbox'));
         } else {
           await expect(toolbar).not.toContainText('已选 1 封');
