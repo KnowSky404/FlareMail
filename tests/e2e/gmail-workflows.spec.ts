@@ -811,6 +811,62 @@ for (const { openFrom, target, updated } of [
   });
 }
 
+test('keeps a mobile reader open and manually unread on an archive conflict', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'This scenario covers the phone reader.');
+  await login(page);
+  const message = (await readMessages(page)).find(({ id }) => id === 'e2e-bulk-16')!;
+  const rowLocator = row(page, message.subject);
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  const flagsPath = '/api/workspace/messages/' + encodeURIComponent(message.id) + '/flags';
+  const metadata = '**/api/workspace/messages/' + encodeURIComponent(message.id);
+  let releaseMetadata = () => {};
+  const holdMetadata = new Promise<void>((resolve) => { releaseMetadata = resolve; });
+  await rowLocator.getByRole('button', { name: new RegExp(message.subject, 'u') }).first().click();
+  await expect(detail.getByRole('heading', { name: message.subject, exact: true })).toBeVisible();
+  try {
+    const unread = page.waitForResponse((response) => new URL(response.url()).pathname === flagsPath && response.ok());
+    await detail.getByRole('button', { name: '标为未读', exact: true }).click();
+    await unread;
+    const currentPage = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mailbox-refresh' });
+      channel.close();
+    });
+    await (await currentPage).finished();
+    await expect(detail.getByRole('button', { name: '标为已读', exact: true })).toBeVisible();
+
+    const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+      headers: { origin: new URL(page.url()).origin },
+      data: {
+        action: 'archive', ids: [message.id], threadKeys: [],
+        scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+      }
+    });
+    expect(movedElsewhere.ok()).toBe(true);
+    await page.route(metadata, async (route) => {
+      await holdMetadata;
+      await route.continue().catch(() => {});
+    });
+    const metadataStarted = page.waitForRequest(metadata);
+    const conflict = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
+    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    await conflict;
+    await metadataStarted;
+    await expect(detail.getByRole('heading', { name: message.subject, exact: true })).toBeVisible();
+    releaseMetadata();
+    await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
+    const archived = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
+    const payload = await archived.json() as { data: { page: { messages: Message[] } } };
+    expect(payload.data.page.messages.find(({ id }) => id === message.id)?.read).toBe(false);
+  } finally {
+    releaseMetadata();
+    await page.unroute(metadata);
+    await restoreArchivedFixture(page, message.id);
+    await mutateLocal(page, flagsPath, 'PATCH', { read: message.read });
+  }
+});
+
 test('keeps a split reader on the original message when its archive conflicts', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);
@@ -917,6 +973,37 @@ test('does not retain a split reader after clearing search after a late archive 
     await restoreArchivedFixture(page, original.id);
     await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(original.id)}/flags`, 'PATCH', { read: original.read });
     await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`, 'PATCH', { read: next.read });
+  }
+});
+
+test('accepts the pending search result at the 200-character query limit', async ({ page }, testInfo) => {
+  test.skip(!['desktop', 'firefox-desktop', 'webkit-desktop'].includes(testInfo.project.name), 'This scenario uses the desktop search input.');
+  await login(page);
+  const prefix = 'subject:"E2E Bulk 18"';
+  const suffix = 'from:bulk@flaremail.test';
+  const query = prefix + ' '.repeat(200 - prefix.length - suffix.length) + suffix;
+  const search = page.locator('#mail-search-desktop');
+  const listPath = '**/api/workspace/mailbox?**';
+  const matchesQuery = (request: { url(): string }) => new URL(request.url()).searchParams.get('q') === query;
+  let release = () => {};
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(listPath, async (route) => {
+    if (matchesQuery(route.request())) await hold;
+    await route.continue().catch(() => {});
+  });
+  try {
+    const started = page.waitForRequest(matchesQuery);
+    await search.fill(query);
+    await started;
+    await search.press('End');
+    await search.press('x');
+    await expect(search).toHaveValue(query);
+    release();
+    await expect(row(page, 'E2E Bulk 18')).toBeVisible();
+    await expect(row(page, 'E2E Bulk 19')).toHaveCount(0);
+  } finally {
+    release();
+    await page.unroute(listPath);
   }
 });
 
