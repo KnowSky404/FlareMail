@@ -98,7 +98,7 @@
   import { isEditableShortcutTarget, WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
   import { TrashController } from '$lib/client/trash-controller';
-  import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl, type WorkspaceUrlState } from '$lib/client/workspace-url-controller';
+  import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl, WORKSPACE_SEARCH_MAX_LENGTH, type WorkspaceUrlState } from '$lib/client/workspace-url-controller';
   import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
   import { createWorkspaceSync, WORKSPACE_SESSION_ENDED_EVENT, type WorkspaceSyncController } from '$lib/client/workspace-sync';
   import { LOCALE_CHANGE_EVENT } from '$lib/client/locale-preferences';
@@ -259,9 +259,6 @@
   let categoryPending = $state(false);
   const inboxCategories = mailInboxCategories;
   let mailIdentityFilter = $state<MailboxIdentityFilter | null>(null);
-  const mailboxViewScope = $derived(JSON.stringify([activeSection, inboxCategory, searchQuery.trim(),
-    mailFilter, identityKey(mailIdentityFilter), activeLabelId]));
-  const isTurningCurrentPage = () => turningPageScope === mailboxViewScope;
   let mailIdentityOptions = $state<WorkspaceSnapshot['mailIdentityOptions']>({ domains: [], addresses: [] });
   let mobileDetailOpen = $state(false);
   let listReturnFocus: HTMLElement | null = null;
@@ -538,6 +535,9 @@
   const urlIdentityFilter = $derived(urlState.identityFilter);
   const urlMessageId = $derived(urlState.messageId);
   const urlLabelId = $derived(urlState.labelId);
+  const mailboxViewScope = $derived(JSON.stringify([activeSection, inboxCategory, urlQuery.trim(),
+    mailFilter, identityKey(mailIdentityFilter), activeLabelId]));
+  const isTurningCurrentPage = () => turningPageScope === mailboxViewScope;
 
   $effect(() => {
     activeSection = urlSection;
@@ -1530,12 +1530,14 @@
   }
 
   function handleSearchQueryChange(query: string) {
-    searchQuery = query;
+    const boundedQuery = query.trimStart().slice(0, WORKSPACE_SEARCH_MAX_LENGTH);
+    if (boundedQuery === searchQuery) return;
+    searchQuery = boundedQuery;
     selectedMessageId = null;
     selectedMessageIds = [];
     bulkThreadScope = 'selected';
     mobileDetailOpen = false;
-    updateWorkspaceUrl({ query, messageId: null }, true);
+    updateWorkspaceUrl({ query: boundedQuery, messageId: null }, true);
   }
 
   function handleCategoryChange(category: InboxCategoryFilter) {
@@ -1607,7 +1609,7 @@
 
   function matchesActiveMailboxScope(page: MailboxPage | undefined) {
     const section = activeSection === 'profile' ? 'inbox' : activeSection;
-    return page && page.folder === section && page.query === searchQuery.trim() && page.filter === mailFilter &&
+    return page && page.folder === section && page.query === urlQuery.trim() && page.filter === mailFilter &&
       (page.category ?? 'all') === (activeSection === 'inbox' ? inboxCategory : 'all') &&
       (page.labelId ?? null) === (activeSection === 'label' ? activeLabelId : null) &&
       sameIdentityScope(page.identityFilter, mailIdentityFilter);
@@ -1615,7 +1617,7 @@
 
   async function refreshArchiveScope() {
     const page = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
-    const openMessage = authenticated && !authExpired && readingLayout === 'split' && messageReaderVisible &&
+    const openMessage = authenticated && !authExpired && messageReaderVisible &&
       !isTurningCurrentPage() && matchesActiveMailboxScope(page) ? selectedMessage : null;
     if (openMessage?.folder === 'inbox') {
       selectedMessageId = openMessage.id;

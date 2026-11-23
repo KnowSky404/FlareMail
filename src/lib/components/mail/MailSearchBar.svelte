@@ -3,6 +3,7 @@
   import { Search, X } from '@lucide/svelte';
   import { IconButton } from '$lib/components/ui';
   import { useLocale } from '$lib/i18n/runtime.svelte';
+  import { WORKSPACE_SEARCH_MAX_LENGTH } from '$lib/client/workspace-url-controller';
 
   let {
     query = '',
@@ -42,6 +43,7 @@
     type="text"
     role="searchbox"
     inputmode="search"
+    maxlength={WORKSPACE_SEARCH_MAX_LENGTH}
     value={query}
     placeholder={placeholder ?? t('mail.searchPlaceholder')}
     {disabled}
