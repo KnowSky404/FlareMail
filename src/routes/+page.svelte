@@ -1646,7 +1646,7 @@
       const currentSession = authGeneration === workspaceAuthGeneration;
       workspaceSync?.publish(currentSession ? { type: 'mailbox-refresh', id: message.id } : { type: 'mailbox-refresh' });
       if (!currentSession) {
-        await refreshArchiveScope();
+        void refreshArchiveScope();
         return;
       }
       notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
@@ -1659,7 +1659,7 @@
       await refreshWorkspace(false);
     } catch (error) {
       if (authGeneration === workspaceAuthGeneration) notifyError(error, t('notify.bulkFailed'));
-      if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope();
+      if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') void refreshArchiveScope();
     } finally {
       pending = false;
     }
@@ -1957,7 +1957,7 @@
       const result = await mutateMailbox(action, validSelectedIds, threadKeys, scope);
       if (archiveAction && authGeneration !== workspaceAuthGeneration) {
         workspaceSync?.publish({ type: 'mailbox-refresh' });
-        await refreshArchiveScope();
+        void refreshArchiveScope();
         return;
       }
       const metricsScope = result.result.metricsScope.identityFilter;
@@ -1994,7 +1994,7 @@
       );
     } catch (error) {
       if (!archiveAction || authGeneration === workspaceAuthGeneration) notifyError(error, t('notify.bulkFailed'));
-      if (archiveAction && error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshArchiveScope();
+      if (archiveAction && error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') void refreshArchiveScope();
     } finally {
       pending = false;
     }

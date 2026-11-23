@@ -908,6 +908,9 @@ test('keeps a split reader on the original message when its archive conflicts', 
   const [first, next] = await readMessages(page);
   const nextFlags = `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`;
   const readerMetadata = '**/api/workspace/messages/' + encodeURIComponent(first.id);
+  const mailboxList = '**/api/workspace/mailbox?**';
+  let releaseList = () => {};
+  const holdList = new Promise<void>((resolve) => { releaseList = resolve; });
   let releaseMetadata = () => {};
   const holdMetadata = new Promise<void>((resolve) => { releaseMetadata = resolve; });
   try {
@@ -929,15 +932,25 @@ test('keeps a split reader on the original message when its archive conflicts', 
       }
     });
     expect(movedElsewhere.ok()).toBe(true);
+    await page.route(mailboxList, async (route) => {
+      await holdList;
+      await route.continue().catch(() => {});
+    });
     await page.route(readerMetadata, async (route) => {
       await holdMetadata;
       await route.continue().catch(() => {});
     });
     const metadataStarted = page.waitForRequest(readerMetadata);
+    const listStarted = page.waitForRequest(mailboxList);
     const conflict = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
     const archive = detail.getByRole('button', { name: '归档', exact: true });
     await archive.click();
     await conflict;
+    await listStarted;
+    await expect(page.getByRole('status').filter({ hasText: '正在更新邮件…' })).toBeVisible();
+    await expect(page.locator('#mail-search-desktop')).toBeEnabled();
+    await expect(archive).toBeEnabled();
+    releaseList();
     await metadataStarted;
     await expect(row(page, first.subject)).toHaveCount(0);
     await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
@@ -946,7 +959,9 @@ test('keeps a split reader on the original message when its archive conflicts', 
     await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
     expect((await readMessages(page)).find((message) => message.id === next.id)?.read).toBe(false);
   } finally {
+    releaseList();
     releaseMetadata();
+    await page.unroute(mailboxList);
     await page.unroute(readerMetadata);
     await restoreArchivedFixture(page, first.id);
     await mutateLocal(page, nextFlags, 'PATCH', { read: next.read });
