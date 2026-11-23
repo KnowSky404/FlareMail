@@ -241,7 +241,10 @@ export async function mutateWorkspaceMailbox(
 
   const timestamp = new Date().toISOString();
   const statements = buildMailboxMutationStatements(env.DB, workspace.userId, messageIds, input.action, timestamp, writeScope);
-  await env.DB.batch(statements);
+  const [firstWrite] = await env.DB.batch(statements);
+  if (messageIds.length === 1 && (input.action === 'archive' || input.action === 'unarchive') && !firstWrite?.meta.changes) {
+    throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
+  }
   const summaries: MailboxMessageSummary[] = rows.map((row) => ({
     id: row.id,
     folder: row.folder,

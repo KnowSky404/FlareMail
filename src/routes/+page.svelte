@@ -313,7 +313,7 @@
   let mailboxLoadingMore = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaceSync: WorkspaceSyncController | null = null;
-  let mailboxSyncRevision = 0;
+  let pendingRowArchive: { id: string; mailboxChanged: boolean; messageChanged: boolean } | null = null;
   let authSessionSync: ReturnType<typeof createAuthSessionChannel> | null = null;
   let authRecoveryPromise: Promise<boolean> | null = null;
   let composeSavePromise: Promise<void> | null = null;
@@ -1602,7 +1602,8 @@
   async function handleRowArchive(message: MailMessage) {
     if (pending || message.folder !== 'inbox') return;
     const authGeneration = workspaceAuthGeneration;
-    const syncRevision = mailboxSyncRevision;
+    const operation = { id: message.id, mailboxChanged: false, messageChanged: false };
+    pendingRowArchive = operation;
     const metricsAtStart = metrics;
     pending = true;
     try {
@@ -1616,16 +1617,18 @@
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
       if (authGeneration !== workspaceAuthGeneration) return;
-      if (syncRevision === mailboxSyncRevision) {
+      if (!operation.messageChanged) {
         if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
           clearRetainedMessage(message.id);
           await closeMobileDetail();
         } else {
           updateRetainedArchive(result.summaries);
         }
+      } else if (deepLinkedMessage?.id === message.id && selectedMessageId === message.id) {
+        void refreshDeepLinkedMessage(deepLinkedMessage);
       }
       if (authGeneration !== workspaceAuthGeneration) return;
-      const responseCurrent = syncRevision === mailboxSyncRevision;
+      const responseCurrent = !operation.mailboxChanged;
       const change = responseCurrent ? result.summaries.find(({ id }) => id === message.id) : undefined;
       if (change) {
         const patched = patchMailboxArchive({ mailbox, mailboxPages, metrics }, change);
@@ -1655,9 +1658,14 @@
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
       notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
     } catch (error) {
-      if (authGeneration === workspaceAuthGeneration) notifyError(error, t('notify.bulkFailed'));
+      if (authGeneration === workspaceAuthGeneration) {
+        if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') void refreshWorkspace(false);
+        notifyError(error, t('notify.bulkFailed'));
+      }
+    } finally {
+      pendingRowArchive = null;
+      pending = false;
     }
-    finally { pending = false; }
   }
 
   function handleFilterChange(filter: MailFilter) {
@@ -1843,7 +1851,10 @@
 
     if (!authenticated || authExpired) return;
 
-    mailboxSyncRevision += 1;
+    if (pendingRowArchive) {
+      pendingRowArchive.mailboxChanged = true;
+      if (!event.id || event.id === pendingRowArchive.id) pendingRowArchive.messageChanged = true;
+    }
     mailboxController.invalidate();
     metricsCache.clear();
     if (event.id) invalidateMessageCaches(event.id);
