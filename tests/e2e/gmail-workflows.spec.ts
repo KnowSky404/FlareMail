@@ -459,6 +459,76 @@ test('keeps row read, star, archive, trash and undo actions in the list and pres
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps an Inbox row when another tab has already reversed a delayed archive', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'This scenario uses the desktop row actions.');
+  await login(page);
+  const id = 'e2e-bulk-03';
+  const target = row(page, 'E2E Bulk 03');
+  let letArchiveRespond = () => {};
+  const responseGate = new Promise<void>((resolve) => { letArchiveRespond = resolve; });
+  let markArchiveSaved = () => {};
+  const archiveSaved = new Promise<void>((resolve) => { markArchiveSaved = resolve; });
+  await page.route('**/api/workspace/mailbox/mutate', async (route) => {
+    const response = await route.fetch();
+    if (route.request().postDataJSON().action === 'archive') {
+      markArchiveSaved();
+      await responseGate;
+    }
+    await route.fulfill({ response });
+  });
+
+  try {
+    await target.hover();
+    await target.getByRole('button', { name: '归档', exact: true }).press('Enter');
+    await archiveSaved;
+    await mutateLocal(page, '/api/workspace/mailbox/mutate', 'POST', {
+      action: 'unarchive', ids: [id], threadKeys: [],
+      scope: { section: 'archive', identityFilter: null, threadScope: 'selected' }
+    });
+    const synced = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await page.evaluate((id) => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mailbox-refresh', id });
+      channel.close();
+    }, id);
+    await (await synced).finished();
+
+    await page.route('**/api/workspace/mailbox?**', (route) => route.abort());
+    letArchiveRespond();
+    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+    await expect(target).toBeVisible();
+  } finally {
+    letArchiveRespond();
+    await page.unrouteAll({ behavior: 'wait' });
+    const archived = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
+    const payload = await archived.json() as { data: { page: { messages: Message[] } } };
+    if (payload.data.page.messages.some((message) => message.id === id)) {
+      await mutateLocal(page, '/api/workspace/mailbox/mutate', 'POST', {
+        action: 'unarchive', ids: [id], threadKeys: [],
+        scope: { section: 'archive', identityFilter: null, threadScope: 'selected' }
+      });
+    }
+  }
+});
+
+test('formats returning list rows in the current system time zone', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Changing the browser time zone requires Chromium CDP.');
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTimezoneOverride', { timezoneId: 'UTC' });
+  await login(page);
+  const date = row(page, 'E2E Inbox Welcome').locator('time');
+  const previousDate = await date.textContent();
+  await cdp.send('Emulation.setTimezoneOverride', { timezoneId: 'Pacific/Honolulu' });
+  await openFolder(page, '已发送');
+  await openFolder(page, '收件箱');
+  const currentDate = await date.evaluate((element) =>
+    new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' })
+      .format(new Date(element.getAttribute('datetime')!))
+  );
+  expect(currentDate).not.toBe(previousDate);
+  await expect(date).toHaveText(currentDate);
+});
+
 test('ignores a slower category response after newer category navigation', async ({ page, consoleErrors }) => {
   await login(page);
   await setCategory(page, ['e2e-bulk-01'], 'promotions');

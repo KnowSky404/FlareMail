@@ -2,6 +2,7 @@ import {
   buildMailThreads,
   cloneMailbox,
   cloneProfile,
+  parseMailSearchQuery,
   type MailboxSection,
   type InboxCategoryFilter,
   type MailboxIdentityFilter,
@@ -473,7 +474,9 @@ type ArchiveChange = Pick<MailboxMessageSummary, 'id' | 'archivedAt'>;
 
 function patchPageArchive(page: MailboxPage, change: ArchiveChange): MailboxPage {
   if (!page.messages.some((message) => message.id === change.id)) return page;
-  const leavesPage = page.folder === (change.archivedAt ? 'inbox' : 'archive');
+  const archivedOnly = Boolean(page.query && parseMailSearchQuery(page.query).filters.is.includes('archived'));
+  const leavesPage = archivedOnly || page.folder === 'archive' ? !change.archivedAt
+    : page.folder === 'inbox' && Boolean(change.archivedAt);
   return {
     ...page,
     messages: leavesPage

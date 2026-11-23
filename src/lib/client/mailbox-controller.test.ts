@@ -70,6 +70,21 @@ describe('mailbox controller', () => {
     expect(patched.metrics).toBe(metrics);
   });
 
+  test('removes a restored row from archived-only Inbox, Starred and label results', () => {
+    const item = { ...message('target', 'inbox', '2026-08-14T02:00:00.000Z'), archivedAt: '2026-08-15T00:00:00.000Z' };
+    const makeArchivedSearch = (folder: MailboxPage['folder']) => ({
+      ...makePage(folder, [item]), query: 'subject:target is:archived', searchTotal: 1
+    });
+    const current = { mailbox: { ...cloneMailbox(), inbox: [item] }, metrics, mailboxPages: {
+      inbox: makeArchivedSearch('inbox'), starred: makeArchivedSearch('starred'), label: makeArchivedSearch('label')
+    } };
+    const patched = patchMailboxArchive(current, { id: item.id, archivedAt: null });
+
+    for (const folder of ['inbox', 'starred', 'label'] as const) {
+      expect(patched.mailboxPages?.[folder]).toMatchObject({ messages: [], searchTotal: 0 });
+    }
+  });
+
   test('hydrates the partial active-folder snapshot without inventing inactive pages', () => {
     const page = makePage('inbox', [message('inbox', 'inbox', '2026-08-14T02:00:00.000Z')]);
     const hydrated = mailboxSnapshotFromWorkspace({
