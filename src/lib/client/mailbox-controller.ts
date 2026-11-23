@@ -408,8 +408,9 @@ export class MailboxController {
   navigate(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
     return this.activate(this.params(folder, query, filter, identityFilter, labelId, category)).load();
   }
-  refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
-    return this.activate(this.params(folder, query, filter, identityFilter, labelId, category)).refresh();
+  refresh(folder: MailboxSection, query: string, filter: MailFilter, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all', preservePage = false) {
+    const pager = this.activate(this.params(folder, query, filter, identityFilter, labelId, category));
+    return preservePage && pager.pageNumber > 1 ? pager.load(pager.pageNumber, true) : pager.refresh();
   }
   loadMore(folder: MailboxSection, query: string, filter: MailFilter, currentPage: MailboxPage | undefined, identityFilter: MailboxIdentityFilter | null = null, labelId: string | null = null, category: InboxCategoryFilter = 'all') {
     if (!currentPage?.nextCursor || !currentPage.hasMore) return Promise.resolve(false);

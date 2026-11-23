@@ -630,17 +630,25 @@ for (const { from, settledStatus } of [
   });
 }
 
-for (const from of ['deep link', 'bulk toolbar']) {
+for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
   test(`refreshes the ${from} when an archive conflicts with another device`, async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== 'desktop', 'This scenario covers desktop archive controls.');
     await login(page);
     const reader = from === 'deep link';
-    const id = reader ? 'e2e-bulk-44' : 'e2e-bulk-14';
-    const target = row(page, 'E2E Bulk 14');
+    const secondPage = from === 'bulk toolbar on page two';
+    const id = reader || secondPage ? 'e2e-bulk-44' : 'e2e-bulk-14';
+    const target = row(page, secondPage ? 'E2E Bulk 44' : 'E2E Bulk 14');
+    const validSelection = row(page, 'E2E Bulk 45').getByRole('checkbox');
     const detail = page.getByRole('region', { name: '邮件详情' });
     const toolbar = page.getByLabel('批量邮件操作');
     if (reader) await page.goto('/?folder=inbox&message=' + id);
-    else await target.getByRole('checkbox').check();
+    else {
+      if (secondPage) {
+        await page.getByRole('button', { name: '下一页', exact: true }).click();
+        await validSelection.check();
+      }
+      await target.getByRole('checkbox').check();
+    }
     const archive = (reader ? detail : toolbar).getByRole('button', { name: '归档', exact: true });
     await expect(archive).toBeVisible();
     try {
@@ -659,7 +667,13 @@ for (const from of ['deep link', 'bulk toolbar']) {
       if (reader) await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
       else {
         await expect(target).toHaveCount(0);
-        await expect(toolbar).not.toContainText('已选 1 封');
+        if (secondPage) {
+          await expect(validSelection).toBeChecked();
+          await expect(toolbar).toContainText('已选 1 封');
+          await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeEnabled();
+        } else {
+          await expect(toolbar).not.toContainText('已选 1 封');
+        }
       }
       await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
     } finally {
