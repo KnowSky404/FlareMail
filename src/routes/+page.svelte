@@ -1619,7 +1619,7 @@
     const page = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
     const openMessage = authenticated && !authExpired && messageReaderVisible &&
       !isTurningCurrentPage() && matchesActiveMailboxScope(page) ? selectedMessage : null;
-    if (openMessage?.folder === 'inbox') {
+    if (openMessage && openMessage.folder !== 'drafts') {
       selectedMessageId = openMessage.id;
       deepLinkedMessage = openMessage;
     }
