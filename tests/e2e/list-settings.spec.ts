@@ -3,6 +3,38 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test, expect, login, openFolder, selectSettings, assertNoConsoleErrors, assertNoHorizontalOverflow, E2E_USERNAME, E2E_PASSWORD } from './fixtures';
 
+test('accepts the pending search result at the 200-character query limit', async ({ page }, testInfo) => {
+  test.skip(!['desktop', 'firefox-desktop', 'webkit-desktop'].includes(testInfo.project.name), 'This scenario uses the desktop search input.');
+  await login(page);
+  const prefix = 'from:bulk@flaremail.test';
+  const suffix = 'subject:"E2E Bulk 18"';
+  const query = prefix + ' '.repeat(200 - prefix.length - suffix.length) + suffix;
+  const search = page.locator('#mail-search-desktop');
+  const listPath = '**/api/workspace/mailbox?**';
+  const matchesQuery = (request: { url(): string }) => new URL(request.url()).searchParams.get('q') === query;
+  let release = () => {};
+  const hold = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(listPath, async (route) => {
+    if (matchesQuery(route.request())) await hold;
+    await route.continue().catch(() => {});
+  });
+  try {
+    const started = page.waitForRequest(matchesQuery);
+    await search.fill(' '+query);
+    await started;
+    await search.press('End');
+    await search.press('x');
+    await expect(search).toHaveValue(query);
+    release();
+    const rows = page.locator('.fm-list-scroll').getByRole('listitem');
+    await expect(rows.filter({ hasText: 'E2E Bulk 18' })).toBeVisible();
+    await expect(rows.filter({ hasText: 'E2E Bulk 19' })).toHaveCount(0);
+  } finally {
+    release();
+    await page.unroute(listPath);
+  }
+});
+
 test('trash replaces record pages, retains a failed page, and returns to the first page', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const { data: { page: mailbox } } = await (await page.request.get('/api/workspace/mailbox?folder=inbox&limit=1')).json();
