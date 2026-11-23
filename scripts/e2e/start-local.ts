@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { createLocalCloudflareEnvironment } from '../cloudflare-environment';
+import { performanceMarkerTable, readPerformanceRunId } from './performance-worker';
 
 const root = resolve(import.meta.dir, '../..');
 const localTarget = readCloudflareTarget('cloudflare.local.json');
@@ -12,6 +13,7 @@ const argument = (name: string, fallback: string) => {
 };
 
 const port = argument('--port', '4173');
+const performanceRunId = readPerformanceRunId();
 const persistenceRoot = resolve(join(tmpdir(), 'flaremail-e2e'));
 const persistTo = resolve(argument(
   '--persist-to',
@@ -208,6 +210,8 @@ INSERT OR IGNORE INTO workspace_outbound_receipts (
   'email.sent', ${sql(timestamp)}, ${sql(timestamp)}, ${sql(timestamp)}
 );
 ${draftSeed}
+${performanceRunId ? `CREATE TABLE ${performanceMarkerTable} (id TEXT NOT NULL PRIMARY KEY);
+INSERT INTO ${performanceMarkerTable} (id) VALUES (${sql(performanceRunId)});` : ''}
 `;
 
 await executeD1({ config: 'cloudflare.local.json', persistTo }, seed);

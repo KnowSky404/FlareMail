@@ -1,6 +1,7 @@
 import { request } from '@playwright/test';
 import target from '../../cloudflare.local.json';
 import { E2E_PASSWORD, E2E_USERNAME } from '../../tests/e2e/fixtures';
+import { requirePerformanceWorker } from './performance-worker';
 
 const perfOrigin = process.env.FLAREMAIL_PERF_ORIGIN;
 if (!perfOrigin) throw new Error('Set FLAREMAIL_PERF_ORIGIN to the isolated local E2E Worker.');
@@ -42,6 +43,7 @@ async function d1(query: RawQuery | { batch: RawQuery[] }) {
 }
 
 async function seed(size: number) {
+  await requirePerformanceWorker(origin);
   const ownership = await d1({ sql: 'SELECT user_id FROM workspace_owner WHERE singleton = 1' });
   if (ownership[0].results.rows[0]?.[0] !== owner) throw new Error('Synthetic E2E Owner is missing.');
   await d1({ batch: [
@@ -160,6 +162,7 @@ async function explain(statements: string[]) {
 }
 
 try {
+  await requirePerformanceWorker(origin);
   const login = await client.post('/api/workspace/session', {
     data: { username: E2E_USERNAME, password: E2E_PASSWORD },
     headers: { origin: origin.origin }
