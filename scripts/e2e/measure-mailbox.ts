@@ -17,7 +17,7 @@ const profiles = [
   { name: 'local', rtt: 0, download: -1, upload: -1 },
   { name: 'slow', rtt: 150, download: 1_600_000 / 8, upload: 750_000 / 8 }
 ];
-type Target = { selector: string; text?: string };
+type Target = { selector: string; text?: string; viewport?: string };
 type ActionMeasurement = {
   feedback: number;
   ready: number;
@@ -40,7 +40,9 @@ type RequestMeasurement = {
 const panel = '.mail-workspace:not(.list-layout.detail-open) .mail-list-panel';
 const reader = '.mail-workspace.detail-open .mail-detail-panel';
 const skeleton = { selector: '[aria-label="正在加载邮件"]' };
-const paging = { selector: panel + ' nav.pagination[aria-busy="true"]' };
+const paging = { selector: panel + ' nav.pagination[aria-busy="true"]', viewport: '.fm-list-scroll' };
+const firstPageIndicator = { selector: panel + ' nav.pagination[aria-busy="false"] [role="status"]',
+  text: '第 1 页', viewport: '.fm-list-scroll' };
 const managementSkeleton = { selector: '[data-management-loading]' };
 const row = (text: string) => ({ selector: panel + ' [role="listitem"], ' + panel + ' li', text });
 const listHeading = (text: string) => ({ selector: '.fm-workspace-main h1, .fm-workspace-main h2', text });
@@ -101,10 +103,16 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
   await cdp.send('Performance.enable');
   await control.evaluate((element, { ready, feedback, eventType }) => {
     const state = window as unknown as { measuredAction: Promise<ActionResult> };
-    const visible = (target: { selector: string; text?: string }) =>
-      [...document.querySelectorAll<HTMLElement>(target.selector)].some((node) =>
-        !node.closest('[hidden], [aria-hidden="true"]') && (!target.text || node.textContent?.includes(target.text))
-      );
+    const visible = (target: Target) =>
+      [...document.querySelectorAll<HTMLElement>(target.selector)].some((node) => {
+        if (node.closest('[hidden], [aria-hidden="true"]') || (target.text && !node.textContent?.includes(target.text))) return false;
+        if (!target.viewport) return true;
+        const viewport = node.closest(target.viewport)?.getBoundingClientRect();
+        const rect = node.getBoundingClientRect();
+        return Boolean(viewport && rect.width > 0 && rect.height > 0 &&
+          rect.top >= Math.max(0, viewport.top) && rect.bottom <= Math.min(window.innerHeight, viewport.bottom) &&
+          rect.left >= Math.max(0, viewport.left) && rect.right <= Math.min(window.innerWidth, viewport.right));
+      });
     state.measuredAction = new Promise((resolve) => {
       const action = new AbortController();
       let observer: MutationObserver | undefined;
@@ -127,6 +135,7 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
           if (firstFeedback === undefined && (isReady || feedback.some(visible))) firstFeedback = elapsed;
           probeMs += performance.now() - now;
           if (isReady) {
+            action.abort();
             observer?.disconnect();
             pendingFrame = requestAnimationFrame(() => {
               window.clearTimeout(timeout);
@@ -143,6 +152,9 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
         const scheduleSample = () => {
           if (!pendingFrame) pendingFrame = requestAnimationFrame(sample);
         };
+        if (ready.viewport || feedback.some((target) => target.viewport)) {
+          document.addEventListener('scroll', scheduleSample, { capture: true, signal: action.signal });
+        }
         observer = new MutationObserver(scheduleSample);
         observer.observe(document.documentElement, { childList: true, attributes: true, characterData: true, subtree: true });
         scheduleSample();
@@ -211,7 +223,7 @@ async function measure(profile: typeof profiles[number]) {
   actions.push(await act(page, 'drafts-first', folders(page, '草稿箱'), row('E2E Existing Concurrent'), [skeleton, listHeading('草稿箱')]));
   actions.push(await act(page, 'inbox-cached', folders(page, '收件箱'), row('E2E Inbox Welcome'), [skeleton, listHeading('收件箱')]));
   actions.push(await act(page, 'next-page', page.getByRole('button', { name: '下一页', exact: true }), row('E2E Bulk 45'), [paging]));
-  actions.push(await act(page, 'previous-page', page.getByRole('button', { name: '上一页', exact: true }), row('E2E Inbox Welcome'), [paging]));
+  actions.push(await act(page, 'previous-page', page.getByRole('button', { name: '上一页', exact: true }), firstPageIndicator, [paging]));
   actions.push(await act(page, 'read-first', message(page, 'E2E Inbox Welcome'),
     { selector: reader + ' [aria-label="邮件正文详情"]', text: 'This message is seeded' }, [{ selector: reader + '[aria-label="邮件详情"]' }]));
   const back = page.getByRole('button', { name: '返回邮件列表' });
