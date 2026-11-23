@@ -4,18 +4,20 @@
 
 ## 复现
 
-使用 Bun 1.4.4、cf 1.0.0-rc.1、Ubuntu 24.04 arm64 和 Chromium 156。按 [开发指南](../DEVELOPMENT.md#diagnose-mailbox-navigation) 安装锁定依赖与 Playwright 浏览器。将两个测量脚本复制到基线 worktree 的相同相对路径，在两个源码版本上分别使用独立的本地临时目录和端口。启动前确认使用已签入的本地绑定及 demo provider。
+使用 Bun 1.4.4、cf 1.0.0-rc.1、Ubuntu 24.04 arm64 和 Chromium 156。按 [开发指南](../DEVELOPMENT.md#diagnose-mailbox-navigation) 安装锁定依赖与 Playwright 浏览器。将两个测量脚本、`performance-worker.ts` 和 `start-local.ts` 复制到基线 worktree 的相同相对路径，在两个源码版本上分别使用独立的本地临时目录和端口。启动前确认使用已签入的本地绑定及 demo provider。
 
 ```bash
 task_tmp=$(mktemp -d)
 export TMPDIR="$task_tmp" TMP="$task_tmp" TEMP="$task_tmp"
-bun scripts/e2e/start-local.ts --port 4188
+bun -e 'console.log(crypto.randomUUID())' > "$task_tmp/benchmark-id"
+FLAREMAIL_PERF_RUN_ID="$(cat "$task_tmp/benchmark-id")" bun scripts/e2e/start-local.ts --port 4188
 ```
 
-在另一终端指定刚启动的 Worker 端口，再分别运行两个测量脚本。D1 脚本会替换该实例的合成邮箱数据，所以在浏览器测量之后运行。复测时重新启动隔离实例恢复默认 fixture。文件应保存到任务证据目录。
+在另一终端把 `task_tmp` 设为启动 Worker 时使用的目录，读取该次运行的标记，再指定刚启动的端口并执行两个测量脚本。两个脚本在登录前核对目标 D1 的专用运行标记。D1 脚本还会在每轮清理前复核标记，因此需在浏览器测量之后运行。复测时重新启动隔离实例恢复默认 fixture。文件应保存到任务证据目录。
 
 ```bash
 perf_origin=http://127.0.0.1:4188
+export FLAREMAIL_PERF_RUN_ID="$(cat "$task_tmp/benchmark-id")"
 FLAREMAIL_PERF_ORIGIN="$perf_origin" FLAREMAIL_PERF_SAMPLES=12 bun scripts/e2e/measure-mailbox.ts > browser.json
 FLAREMAIL_PERF_ORIGIN="$perf_origin" FLAREMAIL_PERF_REPLACE_E2E_MAIL=yes FLAREMAIL_PERF_SAMPLES=10 \
   bun scripts/e2e/measure-mailbox-d1.ts > d1.json

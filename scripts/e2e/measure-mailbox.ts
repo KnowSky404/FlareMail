@@ -1,5 +1,6 @@
 import { chromium, type Locator, type Page, type Request } from '@playwright/test';
 import { E2E_PASSWORD, E2E_USERNAME, expect, login } from '../../tests/e2e/fixtures';
+import { requirePerformanceWorker } from './performance-worker';
 
 const perfOrigin = process.env.FLAREMAIL_PERF_ORIGIN;
 if (!perfOrigin) throw new Error('Set FLAREMAIL_PERF_ORIGIN to the isolated local E2E Worker.');
@@ -10,6 +11,7 @@ if (origin.protocol !== 'http:' || origin.hostname !== '127.0.0.1' || !origin.po
 const iterations = Number(process.env.FLAREMAIL_PERF_SAMPLES ?? 12);
 if (!Number.isSafeInteger(iterations) || iterations < 1) throw new Error('Invalid sample count.');
 
+await requirePerformanceWorker(origin);
 const browser = await chromium.launch();
 const profiles = [
   { name: 'local', rtt: 0, download: -1, upload: -1 },
