@@ -15,9 +15,10 @@ const argument = (name: string, fallback: string) => {
 const port = argument('--port', '4173');
 const performanceRunId = readPerformanceRunId();
 const persistenceRoot = resolve(join(tmpdir(), 'flaremail-e2e'));
+const defaultPersistence = join(persistenceRoot, performanceRunId ? 'performance-' + performanceRunId : 'state');
 const persistTo = resolve(argument(
   '--persist-to',
-  process.env.FLAREMAIL_E2E_STATE_DIR ?? join(persistenceRoot, 'state')
+  process.env.FLAREMAIL_E2E_STATE_DIR ?? defaultPersistence
 ));
 const relativePersistencePath = relative(persistenceRoot, persistTo);
 if (
