@@ -2,11 +2,9 @@ import {
   buildMailThreads,
   cloneMailbox,
   cloneProfile,
-  parseMailSearchQuery,
   type MailboxSection,
   type InboxCategoryFilter,
   type MailboxIdentityFilter,
-  type MailboxMessageSummary,
   type MailboxMetricsScope,
   type MailMessage,
   type MailboxPage,
@@ -425,11 +423,6 @@ export class MailboxController {
     for (const pager of this.cache.values()) pager.patch((page) => ({ ...patchPageFlags(page, id, patch), metrics: undefined }));
     return interrupted;
   }
-  patchArchive(change: ArchiveChange) {
-    for (const pager of this.cache.values()) {
-      pager.patch((page) => ({ ...patchPageArchive(page, change), metrics: undefined }));
-    }
-  }
   reset() { for (const pager of this.cache.values()) pager.reset(); this.cache.clear(); this.current = null; }
   cancel() { this.current?.cancel(); }
 
@@ -468,37 +461,6 @@ export class MailboxController {
     if (labelId) params.set('label', labelId);
     return params;
   }
-}
-
-type ArchiveChange = Pick<MailboxMessageSummary, 'id' | 'archivedAt'>;
-
-function patchPageArchive(page: MailboxPage, change: ArchiveChange): MailboxPage {
-  if (!page.messages.some((message) => message.id === change.id)) return page;
-  const archivedOnly = Boolean(page.query && parseMailSearchQuery(page.query).filters.is.includes('archived'));
-  const leavesPage = archivedOnly || page.folder === 'archive' ? !change.archivedAt
-    : page.folder === 'inbox' && Boolean(change.archivedAt);
-  return {
-    ...page,
-    messages: leavesPage
-      ? page.messages.filter((message) => message.id !== change.id)
-      : page.messages.map((message) => message.id === change.id ? { ...message, archivedAt: change.archivedAt } : message),
-    ...(leavesPage && page.searchTotal !== undefined ? { searchTotal: Math.max(0, page.searchTotal - 1) } : {})
-  };
-}
-
-/** Update known rows after a confirmed move. Only the server can refill and repaginate a view. */
-export function patchMailboxArchive(snapshot: MailboxSnapshot, change: ArchiveChange): MailboxSnapshot {
-  const pages = snapshot.mailboxPages ? Object.fromEntries(Object.entries(snapshot.mailboxPages).map(([key, page]) =>
-    [key, page ? patchPageArchive(page, change) : page]
-  )) as MailboxSnapshot['mailboxPages'] : null;
-  return {
-    ...snapshot,
-    mailboxPages: pages,
-    mailbox: {
-      ...snapshot.mailbox,
-      inbox: pages?.inbox?.messages ?? snapshot.mailbox.inbox.filter((message) => !change.archivedAt || message.id !== change.id)
-    }
-  };
 }
 
 function patchPageFlags(page: MailboxPage, id: string, patch: FlagDelta): MailboxPage {

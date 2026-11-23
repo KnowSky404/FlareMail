@@ -49,7 +49,6 @@
     MailboxController,
     createEmptyWorkspaceViewState,
     mergeMailboxPage,
-    patchMailboxArchive,
     patchMailboxFlags,
     mergeMessageDelta,
     moveSelection,
@@ -313,7 +312,6 @@
   let mailboxLoadingMore = $state(false);
   let mailboxRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaceSync: WorkspaceSyncController | null = null;
-  let pendingRowArchive: { id: string; mailboxChanged: boolean; messageChanged: boolean } | null = null;
   let authSessionSync: ReturnType<typeof createAuthSessionChannel> | null = null;
   let authRecoveryPromise: Promise<boolean> | null = null;
   let composeSavePromise: Promise<void> | null = null;
@@ -1599,24 +1597,9 @@
     finally { categoryPending = false; }
   }
 
-  function isImplicitSplitSelection(id: string) {
-    return selectedMessageId === id && readingLayout === 'split' && !readerOpen && !mobileDetailOpen && urlMessageId !== id;
-  }
-
-  function reconcileArchivedSplitSelection(id: string) {
-    if (!isImplicitSplitSelection(id) || activeSection === 'profile' || activeSection === 'trash') return;
-    const page = mailboxPages?.[activeSection];
-    if (!page || page.messages.some((message) => message.id === id)) return;
-    clearRetainedMessage(id);
-    selectedMessageId = page.messages[0]?.id ?? null;
-  }
-
   async function handleRowArchive(message: MailMessage) {
     if (pending || message.folder !== 'inbox') return;
     const authGeneration = workspaceAuthGeneration;
-    const operation = { id: message.id, mailboxChanged: false, messageChanged: false };
-    pendingRowArchive = operation;
-    const metricsAtStart = metrics;
     pending = true;
     try {
       let section = activeSection;
@@ -1629,68 +1612,21 @@
         ...(section === 'label' && activeLabelId ? { labelId: activeLabelId } : {})
       });
       if (authGeneration !== workspaceAuthGeneration) return;
-      const closeArchivedReader = async () => {
-        if (authGeneration !== workspaceAuthGeneration || selectedMessageId !== message.id ||
-          (readingLayout !== 'list' && (activeSection !== 'archive' || !message.archivedAt))) return false;
+      notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
+      if (selectedMessageId === message.id && (readingLayout === 'list' || (activeSection === 'archive' && message.archivedAt))) {
         clearRetainedMessage(message.id);
         await closeMobileDetail();
-        return true;
-      };
-      if (!operation.messageChanged) {
-        if (!await closeArchivedReader()) updateRetainedArchive(result.summaries);
-      } else if (selectedMessageId === message.id) {
-        if (deepLinkedMessage?.id !== message.id) {
-          const current = selectedMessage;
-          deepLinkedMessage = current?.id === message.id ? current : message;
-        }
-        void refreshDeepLinkedMessage(deepLinkedMessage)?.then((refreshed) => {
-          if (refreshed && Boolean(refreshed.archivedAt) !== Boolean(message.archivedAt)) return closeArchivedReader();
-        });
-      }
-      if (authGeneration !== workspaceAuthGeneration) return;
-      const responseCurrent = !operation.mailboxChanged;
-      const change = operation.messageChanged ? undefined : result.summaries.find(({ id }) => id === message.id);
-      if (change) {
-        const patched = patchMailboxArchive({ mailbox, mailboxPages, metrics }, change);
-        const activePage = activeSection === 'profile' || activeSection === 'trash' ? undefined : patched.mailboxPages?.[activeSection];
-        if (activePage && !activePage.messages.some(({ id }) => id === change.id)) {
-          selectedMessageIds = selectedMessageIds.filter((id) => id !== change.id);
-          if (!selectedMessageIds.length) bulkThreadScope = 'selected';
-          const current = selectedMessage;
-          // A cached replacement may have left the folder and must not be auto-read before the refill.
-          if (isImplicitSplitSelection(change.id) && current?.id === change.id) {
-            deepLinkedMessage = { ...current, archivedAt: change.archivedAt };
-          }
-        }
-        mailboxController.patchArchive(change);
-        mailbox = patched.mailbox;
-        mailboxPages = patched.mailboxPages;
-      }
-      const metricsCurrent = responseCurrent && !flagController.busy && metrics === metricsAtStart;
-      if (activeSection === 'profile' || activeSection === 'trash') {
-        if (!change) mailboxController.invalidate();
-        metricsCache.clear();
-        metricsRequest.cancel();
-        if (!flagController.busy && (!metricsCurrent || !sameIdentityScope(result.metricsScope.identityFilter, mailIdentityFilter))) {
-          void refreshMetrics();
-        }
       } else {
-        void refreshWorkspace(false, () => {
-          if (authGeneration === workspaceAuthGeneration) reconcileArchivedSplitSelection(message.id);
-        });
+        updateRetainedArchive(result.summaries);
       }
-      if (metricsCurrent) {
-        acceptMetrics(result.metrics, result.metricsScope.identityFilter);
-      }
-      workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
-      notify(message.archivedAt ? t('notify.bulkUnarchived') : t('notify.bulkArchived'), 'success');
+      await refreshWorkspace(false);
+      if (authGeneration === workspaceAuthGeneration) workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
     } catch (error) {
       if (authGeneration === workspaceAuthGeneration) {
-        if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') void refreshWorkspace(false);
         notifyError(error, t('notify.bulkFailed'));
+        if (error instanceof ClientApiError && error.code === 'MAILBOX_MESSAGE_NOT_FOUND') await refreshWorkspace(false);
       }
     } finally {
-      pendingRowArchive = null;
       pending = false;
     }
   }
@@ -1725,7 +1661,7 @@
     updateWorkspaceUrl({ query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null }, true);
   }
 
-  async function refreshWorkspace(announce = true, onRefreshed?: () => void) {
+  async function refreshWorkspace(announce = true) {
     mailboxController.invalidate();
     metricsCache.clear();
     metricsRequest.cancel();
@@ -1750,8 +1686,6 @@
     );
     if (refreshed) {
       runtimeOperationError = false;
-      if (activeSection === 'inbox' && deepLinkedMessage?.archivedAt) reconcileArchivedSplitSelection(deepLinkedMessage.id);
-      onRefreshed?.();
       if (announce) {
         const current = selectedMessage;
         if (current && current.id === retainedId) await refreshDeepLinkedMessage(current);
@@ -1842,7 +1776,6 @@
         starred: (latestRevision?.starred ?? 0) === flagRevision.starred ? refreshed.starred : deepLinkedMessage.starred
       };
       if (deepLinkedRefreshError === current.id) deepLinkedRefreshError = null;
-      return deepLinkedMessage;
     }).catch((error) => {
       if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
       const stillSelected = activeSection === section && selectedMessageId === current.id;
@@ -1881,10 +1814,6 @@
 
     if (!authenticated || authExpired) return;
 
-    if (pendingRowArchive) {
-      pendingRowArchive.mailboxChanged = true;
-      if (!event.id || event.id === pendingRowArchive.id) pendingRowArchive.messageChanged = true;
-    }
     mailboxController.invalidate();
     metricsCache.clear();
     if (event.id) invalidateMessageCaches(event.id);

@@ -426,11 +426,12 @@ test('keeps row read, star, archive, trash and undo actions in the list and pres
       await target.getByRole('button', { name: '归档', exact: true }).press('Enter');
       await expect.poll(() => refreshHeld).toBe(true);
       await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
-      await expect(target).toHaveCount(0);
+      await expect(target).toBeVisible();
     } finally {
       releaseRefresh();
       await page.unroute(mailboxUrl);
     }
+    await expect(target).toHaveCount(0);
     await expect(page).not.toHaveURL(/message=/u);
     await openFolder(page, '归档');
     await expect(target).toBeVisible();
@@ -555,9 +556,7 @@ test('revalidates Inbox after an archive finishes in Settings following a cross-
 
     releaseArchive();
     await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
-    const revalidated = page.waitForResponse((response) => mailboxResponse(response, 'all'));
     await openFolder(page, '收件箱');
-    await (await revalidated).finished();
     await expect(target).toHaveCount(0);
   } finally {
     releaseArchive();
@@ -612,91 +611,58 @@ for (const { openFrom, target, updated } of [
   });
 }
 
-for (const sync of ['none', 'other message', 'selected message']) {
-  test(`keeps a valid split-pane selection after archive with sync from ${sync}`, async ({ page }, testInfo) => {
-    test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
-    await login(page);
-    const [first, next] = await readMessages(page);
-    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
-    await page.goto('/?folder=inbox');
-    await expect(page).not.toHaveURL(/message=/u);
-    const detail = page.getByRole('region', { name: '邮件详情' });
+test('keeps a split reader from auto-reading a cached replacement outside the refreshed Inbox', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
+  await login(page);
+  const [first, next] = await readMessages(page);
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  await page.goto('/?folder=inbox');
+  const detail = page.getByRole('region', { name: '邮件详情' });
+  await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+
+  const mailboxUrl = '**/api/workspace/mailbox?**';
+  const nextFlags = `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`;
+  let releaseRefresh = () => {};
+  const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+  try {
+    await mutateLocal(page, nextFlags, 'PATCH', { read: false });
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
-    const mailboxUrl = '**/api/workspace/mailbox?**';
-    const mutationPath = '**/api/workspace/mailbox/mutate';
-    let releaseArchive = () => {};
-    let releaseRefresh = () => {};
-    const mutationGate = new Promise<void>((resolve) => { releaseArchive = resolve; });
-    const refreshGate = new Promise<void>((resolve) => { releaseRefresh = resolve; });
-    await page.route(mutationPath, async (route) => {
-      await mutationGate;
+    await expect(row(page, next.subject).locator('button[aria-label="标为已读"]')).toHaveCount(1);
+    const removedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
+      headers: { origin: new URL(page.url()).origin },
+      data: {
+        action: 'archive', ids: [next.id], threadKeys: [],
+        scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
+      }
+    });
+    expect(removedElsewhere.ok()).toBe(true);
+    expect(await removedElsewhere.json()).toMatchObject({ data: { result: { summaries: [{ id: next.id, read: false }] } } });
+
+    await page.route(mailboxUrl, async (route) => {
+      await refreshGate;
       await route.continue();
     });
-
-    try {
-      if (sync === 'none') {
-        await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`, 'PATCH', { read: false });
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
-        await expect(row(page, next.subject).locator('button[aria-label="标为已读"]')).toHaveCount(1);
-        const removedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
-          headers: { origin: new URL(page.url()).origin },
-          data: {
-            action: 'archive', ids: [next.id], threadKeys: [],
-            scope: { section: 'inbox', identityFilter: null, threadScope: 'selected' }
-          }
-        });
-        expect(removedElsewhere.ok()).toBe(true);
-        expect(await removedElsewhere.json()).toMatchObject({ data: { result: { summaries: [{ id: next.id, read: false }] } } });
-      }
-      const requested = page.waitForRequest(mutationPath);
-      await detail.getByRole('button', { name: '归档', exact: true }).click();
-      await requested;
-      if (sync !== 'none') {
-        const synced = page.waitForResponse((response) => mailboxResponse(response, 'all'));
-        await page.evaluate((id) => {
-          const channel = new BroadcastChannel('flaremail-workspace-v1');
-          channel.postMessage({ type: 'message-updated', id });
-          channel.close();
-        }, sync === 'selected message' ? first.id : 'e2e-bulk-08');
-        await (await synced).finished();
-      }
-
-      await page.route(mailboxUrl, async (route) => {
-        await refreshGate;
-        await route.continue();
-      });
-      const refill = page.waitForRequest(mailboxUrl);
-      releaseArchive();
-      await refill;
-      await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
-      if (sync !== 'selected message') {
-        await expect(row(page, first.subject)).toHaveCount(0);
-        await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
-        await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
-      }
-      releaseRefresh();
-      await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeHidden();
-      await expect(detail.getByRole('heading').first()).toBeVisible();
-      if (sync === 'none') {
-        await expect(detail.getByRole('heading', { name: next.subject, exact: true })).toHaveCount(0);
-        const archive = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
-        const payload = await archive.json() as { data: { page: { messages: Message[] } } };
-        expect(payload.data.page.messages.find((message) => message.id === next.id)?.read).toBe(false);
-      }
-    } finally {
-      releaseArchive();
-      releaseRefresh();
-      await page.unroute(mutationPath);
-      await page.unroute(mailboxUrl);
-      await restoreArchivedFixture(page, first.id);
-      if (sync === 'none') {
-        await restoreArchivedFixture(page, next.id);
-        await mutateLocal(page, `/api/workspace/messages/${encodeURIComponent(next.id)}/flags`, 'PATCH', { read: next.read });
-      }
-    }
-  });
-}
+    const refill = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await detail.getByRole('button', { name: '归档', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toBeVisible();
+    await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+    releaseRefresh();
+    await (await refill).finished();
+    await expect(row(page, first.subject)).toHaveCount(0);
+    await expect(row(page, next.subject)).toHaveCount(0);
+    await expect(detail.getByRole('heading', { name: next.subject, exact: true })).toHaveCount(0);
+    const archive = await page.request.get('/api/workspace/mailbox?folder=archive&limit=100');
+    const payload = await archive.json() as { data: { page: { messages: Message[] } } };
+    expect(payload.data.page.messages.find((message) => message.id === next.id)?.read).toBe(false);
+  } finally {
+    releaseRefresh();
+    await page.unroute(mailboxUrl);
+    await restoreArchivedFixture(page, first.id);
+    await restoreArchivedFixture(page, next.id);
+    await mutateLocal(page, nextFlags, 'PATCH', { read: next.read });
+  }
+});
 
 test('formats returning list rows in the current system time zone', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Changing the browser time zone requires Chromium CDP.');
