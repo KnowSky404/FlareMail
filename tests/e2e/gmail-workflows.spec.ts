@@ -660,6 +660,13 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
     }
     const archive = (reader ? detail : toolbar).getByRole('button', { name: '归档', exact: true });
     await expect(archive).toBeVisible();
+    const recoveryRequests: string[] = [];
+    const watchRecovery = (request: { url(): string }) => {
+      const { pathname } = new URL(request.url());
+      if (pathname === '/api/workspace/mailbox' || pathname === '/api/workspace/mailbox/metrics') {
+        recoveryRequests.push(pathname);
+      }
+    };
     try {
       const movedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
         headers: { origin: new URL(page.url()).origin },
@@ -671,6 +678,7 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
       expect(movedElsewhere.ok()).toBe(true);
       const conflict = page.waitForResponse((response) =>
         response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
+      if (secondPage) page.on('request', watchRecovery);
       await archive.press('Enter');
       await conflict;
       if (reader) await expect(detail.getByRole('button', { name: '移回收件箱', exact: true })).toBeVisible();
@@ -680,12 +688,14 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two']) {
           await expect(validSelection).toBeChecked();
           await expect(toolbar).toContainText('已选 1 封');
           await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeEnabled();
+          expect(recoveryRequests).toEqual(['/api/workspace/mailbox', '/api/workspace/mailbox']);
         } else {
           await expect(toolbar).not.toContainText('已选 1 封');
         }
       }
       await expect(page.getByRole('status').filter({ hasText: '已归档所选邮件' })).toHaveCount(0);
     } finally {
+      page.off('request', watchRecovery);
       await restoreArchivedFixture(page, id);
     }
   });
