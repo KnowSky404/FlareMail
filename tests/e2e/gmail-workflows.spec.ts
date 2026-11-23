@@ -752,6 +752,10 @@ for (const from of ['deep link', 'bulk toolbar', 'bulk toolbar on page two', 'bu
             expect(flagWrites).toEqual([]);
           } else await expect(badge).toHaveText(optimisticUnread);
           expect(recoveryRequests).toEqual(Array(settleReadDuringRecovery ? 4 : 2).fill('/api/workspace/mailbox'));
+          if (emptySplitReader) {
+            await page.locator('#mail-search-desktop').fill('subject:"E2E Bulk 18"');
+            await expect(detail.getByRole('heading', { name: 'E2E Bulk 18', exact: true })).toBeVisible();
+          }
         } else {
           await expect(toolbar).not.toContainText('已选 1 封');
         }
