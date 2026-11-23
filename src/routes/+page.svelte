@@ -1599,9 +1599,12 @@
     finally { categoryPending = false; }
   }
 
+  function isImplicitSplitSelection(id: string) {
+    return selectedMessageId === id && readingLayout === 'split' && !readerOpen && !mobileDetailOpen && urlMessageId !== id;
+  }
+
   function reconcileArchivedSplitSelection(id: string) {
-    if (selectedMessageId !== id || readingLayout !== 'split' || readerOpen || mobileDetailOpen ||
-      urlMessageId === id || activeSection === 'profile' || activeSection === 'trash') return;
+    if (!isImplicitSplitSelection(id) || activeSection === 'profile' || activeSection === 'trash') return;
     const page = mailboxPages?.[activeSection];
     if (!page || page.messages.some((message) => message.id === id)) return;
     clearRetainedMessage(id);
@@ -1649,15 +1652,19 @@
       const change = operation.messageChanged ? undefined : result.summaries.find(({ id }) => id === message.id);
       if (change) {
         const patched = patchMailboxArchive({ mailbox, mailboxPages, metrics }, change);
-        mailboxController.patchArchive(change);
-        mailbox = patched.mailbox;
-        mailboxPages = patched.mailboxPages;
-        const activePage = activeSection === 'profile' || activeSection === 'trash' ? undefined : mailboxPages?.[activeSection];
+        const activePage = activeSection === 'profile' || activeSection === 'trash' ? undefined : patched.mailboxPages?.[activeSection];
         if (activePage && !activePage.messages.some(({ id }) => id === change.id)) {
           selectedMessageIds = selectedMessageIds.filter((id) => id !== change.id);
           if (!selectedMessageIds.length) bulkThreadScope = 'selected';
+          const current = selectedMessage;
+          // A cached replacement may have left the folder and must not be auto-read before the refill.
+          if (isImplicitSplitSelection(change.id) && current?.id === change.id) {
+            deepLinkedMessage = { ...current, archivedAt: change.archivedAt };
+          }
         }
-        reconcileArchivedSplitSelection(change.id);
+        mailboxController.patchArchive(change);
+        mailbox = patched.mailbox;
+        mailboxPages = patched.mailboxPages;
       }
       const metricsCurrent = responseCurrent && !flagController.busy && metrics === metricsAtStart;
       if (activeSection === 'profile' || activeSection === 'trash') {
@@ -1668,7 +1675,7 @@
           void refreshMetrics();
         }
       } else {
-        void refreshWorkspace(false).then(() => {
+        void refreshWorkspace(false, () => {
           if (authGeneration === workspaceAuthGeneration) reconcileArchivedSplitSelection(message.id);
         });
       }
@@ -1718,7 +1725,7 @@
     updateWorkspaceUrl({ query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null }, true);
   }
 
-  async function refreshWorkspace(announce = true) {
+  async function refreshWorkspace(announce = true, onRefreshed?: () => void) {
     mailboxController.invalidate();
     metricsCache.clear();
     metricsRequest.cancel();
@@ -1743,6 +1750,8 @@
     );
     if (refreshed) {
       runtimeOperationError = false;
+      if (activeSection === 'inbox' && deepLinkedMessage?.archivedAt) reconcileArchivedSplitSelection(deepLinkedMessage.id);
+      onRefreshed?.();
       if (announce) {
         const current = selectedMessage;
         if (current && current.id === retainedId) await refreshDeepLinkedMessage(current);
