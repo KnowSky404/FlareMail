@@ -867,6 +867,41 @@ test('keeps a mobile reader open and manually unread on an archive conflict', as
   }
 });
 
+test('keeps a split reader on a sent message when Starred changes during archive', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
+  await login(page);
+  const sentResponse = await page.request.get('/api/workspace/mailbox?folder=sent&limit=40');
+  const sent = (await sentResponse.json() as { data: { page: { messages: Message[] } } }).data.page.messages[0];
+  const inbox = await readMessages(page);
+  const target = inbox.find(({ id }) => id === 'e2e-bulk-44')!;
+  const replacement = inbox.find(({ id }) => id === 'e2e-bulk-14')!;
+  const flagsPath = (message: Message) => '/api/workspace/messages/' + encodeURIComponent(message.id) + '/flags';
+  try {
+    await mutateLocal(page, flagsPath(sent), 'PATCH', { starred: true });
+    await mutateLocal(page, flagsPath(target), 'PATCH', { starred: true });
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    await openFolder(page, '星标邮件');
+    const detail = page.getByRole('region', { name: '邮件详情' });
+    await row(page, sent.subject).getByRole('button', { name: new RegExp(sent.subject, 'u') }).first().click();
+    await expect(detail.getByRole('heading', { name: sent.subject, exact: true })).toBeVisible();
+    await row(page, target.subject).getByRole('checkbox').check();
+
+    await mutateLocal(page, flagsPath(sent), 'PATCH', { starred: false });
+    await mutateLocal(page, flagsPath(target), 'PATCH', { starred: false });
+    await mutateLocal(page, flagsPath(replacement), 'PATCH', { starred: true, read: false });
+    const conflict = page.waitForResponse((response) => response.url().endsWith('/api/workspace/mailbox/mutate') && response.status() === 404);
+    await page.getByLabel('批量邮件操作').getByRole('button', { name: '归档', exact: true }).press('Enter');
+    await conflict;
+    await expect(row(page, replacement.subject)).toBeVisible();
+    await expect(detail.getByRole('heading', { name: sent.subject, exact: true })).toBeVisible();
+    expect((await readMessages(page)).find(({ id }) => id === replacement.id)?.read).toBe(false);
+  } finally {
+    for (const item of [sent, target, replacement]) {
+      await mutateLocal(page, flagsPath(item), 'PATCH', { starred: item.starred, read: item.read });
+    }
+  }
+});
+
 test('keeps a split reader on the original message when its archive conflicts', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);
