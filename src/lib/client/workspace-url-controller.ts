@@ -34,6 +34,10 @@ export type WorkspaceUrlUpdates = {
 
 export const WORKSPACE_SEARCH_MAX_LENGTH = 200;
 
+export function limitWorkspaceSearchQuery(query: string) {
+  return query.trimStart().slice(0, WORKSPACE_SEARCH_MAX_LENGTH).replace(/[\uD800-\uDBFF]$/u, '');
+}
+
 const MANAGEMENT_RESOURCE_ID_PATTERN = /^[A-Za-z0-9:._-]{1,128}$/u;
 
 function validManagementResourceId(value: string | null): value is string {
@@ -55,7 +59,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
     managementView: section === 'profile' && (view === 'domains' || view === 'addresses') ? view : 'settings',
     managementDomainId: section === 'profile' && view === 'addresses' && validManagementResourceId(managementDomainId)
       ? managementDomainId : null,
-    query: section === 'trash' || section === 'profile' ? '' : url.searchParams.get('q')?.slice(0, WORKSPACE_SEARCH_MAX_LENGTH) ?? '',
+    query: section === 'trash' || section === 'profile' ? '' : limitWorkspaceSearchQuery(url.searchParams.get('q') ?? '').trimEnd(),
     filter: section !== 'trash' && section !== 'profile' && (filter === 'unread' || filter === 'starred') ? filter : 'all',
     category: section === 'inbox' && isInboxCategoryFilter(category) ? category : 'all',
     identityFilter: section !== 'trash' && section !== 'profile' && identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
@@ -124,7 +128,7 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
     else next.searchParams.delete('category');
   }
   if (updates.query !== undefined) {
-    const query = updates.query.trim().slice(0, WORKSPACE_SEARCH_MAX_LENGTH);
+    const query = limitWorkspaceSearchQuery(updates.query).trimEnd();
     if (query) next.searchParams.set('q', query);
     else next.searchParams.delete('q');
   }

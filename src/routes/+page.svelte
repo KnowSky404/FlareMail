@@ -98,7 +98,7 @@
   import { isEditableShortcutTarget, WorkspaceShortcutController, type WorkspaceShortcutAction } from '$lib/client/workspace-shortcuts';
   import { ToastController, type ToastMessage, type ToastTone } from '$lib/client/toast-controller';
   import { TrashController } from '$lib/client/trash-controller';
-  import { readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl, WORKSPACE_SEARCH_MAX_LENGTH, type WorkspaceUrlState } from '$lib/client/workspace-url-controller';
+  import { limitWorkspaceSearchQuery, readWorkspaceUrl, updateWorkspaceUrl as buildWorkspaceUrl, type WorkspaceUrlState } from '$lib/client/workspace-url-controller';
   import { WorkspaceSnapshotController } from '$lib/client/workspace-snapshot-controller';
   import { createWorkspaceSync, WORKSPACE_SESSION_ENDED_EVENT, type WorkspaceSyncController } from '$lib/client/workspace-sync';
   import { LOCALE_CHANGE_EVENT } from '$lib/client/locale-preferences';
@@ -1530,7 +1530,7 @@
   }
 
   function handleSearchQueryChange(query: string) {
-    const boundedQuery = query.trimStart().slice(0, WORKSPACE_SEARCH_MAX_LENGTH);
+    const boundedQuery = limitWorkspaceSearchQuery(query);
     if (boundedQuery === searchQuery) return;
     searchQuery = boundedQuery;
     selectedMessageId = null;

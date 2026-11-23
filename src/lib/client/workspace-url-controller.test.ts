@@ -24,6 +24,19 @@ describe('workspace URL controller', () => {
       .toEqual({ section: 'trash', managementView: 'settings', managementDomainId: null, settingsTab: 'profile', query: '', filter: 'all', category: 'all', identityFilter: null, messageId: null, labelId: null });
   });
 
+  test('trims search links before the limit and never splits an emoji', () => {
+    const url = new URL('https://flaremail.example/?folder=inbox');
+    const query = 'a'.repeat(198) + '📬';
+    url.searchParams.set('q', ' ' + query + ' ');
+    expect(readWorkspaceUrl(url).query).toBe(query);
+    expect(updateWorkspaceUrl(url, { query: ' ' + query }).searchParams.get('q')).toBe(query);
+
+    const cutBeforeEmoji = 'a'.repeat(199);
+    url.searchParams.set('q', cutBeforeEmoji + '📬');
+    expect(readWorkspaceUrl(url).query).toBe(cutBeforeEmoji);
+    expect(updateWorkspaceUrl(url, { query: cutBeforeEmoji + '📬' }).searchParams.get('q')).toBe(cutBeforeEmoji);
+  });
+
   test('preserves a global Starred deep link and its address scope', () => {
     const url = updateWorkspaceUrl(new URL('https://flaremail.example/?folder=inbox'), {
       section: 'starred', query: 'subject:notice', identityFilter: { kind: 'domain', id: 'domain-1' }
