@@ -1580,6 +1580,8 @@ test('reads three email views with explicit unsafe HTML and a private display re
 
   await detail.getByRole('button', { name: '显示选项', exact: true }).click();
   await detail.getByRole('menuitem', { name: '阻止远程图片', exact: true }).click();
+  await expect(frame.getByText('Safe HTML fixture')).toBeVisible();
+  await expect(detail.getByTitle('不安全 HTML 邮件正文')).toHaveCount(0);
   await expect(frame.locator('img[src^="https://tracker.example/"]')).toHaveCount(0);
 
   const downloadPromise = page.waitForEvent('download');
