@@ -920,7 +920,7 @@ test('does not retain a split reader after clearing search after a late archive 
   }
 });
 
-test('keeps the split reader from selecting an old page while search is debounced', async ({ page }, testInfo) => {
+test('keeps the split reader from selecting an old page while search is debounced despite a late Trash response', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The simultaneous preview is desktop-only.');
   await login(page);
   await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
@@ -928,19 +928,11 @@ test('keeps the split reader from selecting an old page while search is debounce
   const previousPage = page.getByRole('button', { name: '上一页', exact: true });
   const detail = page.getByRole('region', { name: '邮件详情' });
   const emptyReader = detail.getByText('选择一封邮件开始阅读', { exact: true });
-  await nextPage.click();
-  await previousPage.click();
-  await expect(emptyReader).toBeVisible();
-  const firstPageRefreshed = page.waitForResponse((response) => mailboxResponse(response, 'all'));
-  await page.evaluate(() => {
-    const channel = new BroadcastChannel('flaremail-workspace-v1');
-    channel.postMessage({ type: 'mailbox-refresh' });
-    channel.close();
-  });
-  await (await firstPageRefreshed).finished();
-  await expect(page.getByRole('status').filter({ hasText: '正在更新邮件…' })).toHaveCount(0);
-  await expect(emptyReader).toBeVisible();
-
+  let signalTrash = () => {};
+  let releaseTrash = () => {};
+  const trashReady = new Promise<void>((resolve) => { signalTrash = resolve; });
+  const holdTrash = new Promise<void>((resolve) => { releaseTrash = resolve; });
+  const trashPattern = '**/api/workspace/trash?**';
   let signalCursor = () => {};
   let releaseCursor = () => {};
   let releaseSearch = () => {};
@@ -954,26 +946,52 @@ test('keeps the split reader from selecting an old page while search is debounce
     const pathname = new URL(request.url()).pathname;
     if (request.method() === 'PATCH' && pathname.endsWith('/flags')) readWrites.push(pathname);
   };
-  await page.route(mailboxPattern, async (route) => {
-    const { searchParams } = new URL(route.request().url());
-    if (searchParams.has('cursor')) {
-      const response = await route.fetch();
-      signalCursor();
-      await holdCursor;
-      await route.fulfill({ response }).catch(() => {});
-    } else {
-      if (searchParams.get('q') === query) await holdSearch;
-      await route.continue().catch(() => {});
-    }
+  await page.route(trashPattern, async (route) => {
+    const response = await route.fetch();
+    signalTrash();
+    await holdTrash;
+    await route.fulfill({ response }).catch(() => {});
   });
 
   try {
+    await openFolder(page, '垃圾箱');
+    await trashReady;
+    await openFolder(page, '收件箱');
+    await nextPage.click();
+    await previousPage.click();
+    await expect(emptyReader).toBeVisible();
+    const firstPageRefreshed = page.waitForResponse((response) => mailboxResponse(response, 'all'));
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mailbox-refresh' });
+      channel.close();
+    });
+    await (await firstPageRefreshed).finished();
+    await expect(page.getByRole('status').filter({ hasText: '正在更新邮件…' })).toHaveCount(0);
+    await expect(emptyReader).toBeVisible();
+
+    await page.route(mailboxPattern, async (route) => {
+      const { searchParams } = new URL(route.request().url());
+      if (searchParams.has('cursor')) {
+        const response = await route.fetch();
+        signalCursor();
+        await holdCursor;
+        await route.fulfill({ response }).catch(() => {});
+      } else {
+        if (searchParams.get('q') === query) await holdSearch;
+        await route.continue().catch(() => {});
+      }
+    });
+
     await nextPage.click();
     await cursorReady;
     page.on('request', watchFlags);
     const searchStarted = page.waitForRequest((request) => new URL(request.url()).searchParams.get('q') === query);
     await page.locator('#mail-search-desktop').fill(query);
+    const trashReturned = page.waitForResponse(trashPattern);
     releaseCursor();
+    releaseTrash();
+    await (await trashReturned).finished();
     await searchStarted;
     await expect(emptyReader).toBeVisible();
     releaseSearch();
@@ -981,6 +999,7 @@ test('keeps the split reader from selecting an old page while search is debounce
     expect(readWrites).toEqual([]);
   } finally {
     page.off('request', watchFlags);
+    releaseTrash();
     releaseCursor();
     releaseSearch();
     await page.unrouteAll({ behavior: 'wait' });

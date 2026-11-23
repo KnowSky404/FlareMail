@@ -374,7 +374,7 @@
   const draftOpenRequest = new LatestRequest();
   const trashController = new TrashController(fetchTrash, {
     onResult: (result, pageNumber) => {
-      reconcileSplitSelectionScope();
+      if (activeSection === 'trash') reconcileSplitSelectionScope();
       trashPageNumber = pageNumber;
       trashItems = result.items;
       trashHasMore = result.hasMore;
