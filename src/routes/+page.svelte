@@ -1599,6 +1599,15 @@
     finally { categoryPending = false; }
   }
 
+  function reconcileArchivedSplitSelection(id: string) {
+    if (selectedMessageId !== id || readingLayout !== 'split' || readerOpen || mobileDetailOpen ||
+      urlMessageId === id || activeSection === 'profile' || activeSection === 'trash') return;
+    const page = mailboxPages?.[activeSection];
+    if (!page || page.messages.some((message) => message.id === id)) return;
+    clearRetainedMessage(id);
+    selectedMessageId = page.messages[0]?.id ?? null;
+  }
+
   async function handleRowArchive(message: MailMessage) {
     if (pending || message.folder !== 'inbox') return;
     const authGeneration = workspaceAuthGeneration;
@@ -1637,7 +1646,7 @@
       }
       if (authGeneration !== workspaceAuthGeneration) return;
       const responseCurrent = !operation.mailboxChanged;
-      const change = responseCurrent ? result.summaries.find(({ id }) => id === message.id) : undefined;
+      const change = operation.messageChanged ? undefined : result.summaries.find(({ id }) => id === message.id);
       if (change) {
         const patched = patchMailboxArchive({ mailbox, mailboxPages, metrics }, change);
         mailboxController.patchArchive(change);
@@ -1647,12 +1656,8 @@
         if (activePage && !activePage.messages.some(({ id }) => id === change.id)) {
           selectedMessageIds = selectedMessageIds.filter((id) => id !== change.id);
           if (!selectedMessageIds.length) bulkThreadScope = 'selected';
-          if (selectedMessageId === change.id && readingLayout === 'split' &&
-            !readerOpen && !mobileDetailOpen && urlMessageId !== change.id) {
-            clearRetainedMessage(change.id);
-            selectedMessageId = activePage.messages[0]?.id ?? null;
-          }
         }
+        reconcileArchivedSplitSelection(change.id);
       }
       const metricsCurrent = responseCurrent && !flagController.busy && metrics === metricsAtStart;
       if (activeSection === 'profile' || activeSection === 'trash') {
@@ -1663,7 +1668,9 @@
           void refreshMetrics();
         }
       } else {
-        void refreshWorkspace(false);
+        void refreshWorkspace(false).then(() => {
+          if (authGeneration === workspaceAuthGeneration) reconcileArchivedSplitSelection(message.id);
+        });
       }
       if (metricsCurrent) {
         acceptMetrics(result.metrics, result.metricsScope.identityFilter);
