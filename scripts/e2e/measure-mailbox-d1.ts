@@ -111,7 +111,7 @@ async function trace(path: string, method: string, after: number): Promise<Trace
 
 function sqlPhase(sql: string | null) {
   if (!sql) return 'unavailable';
-  if (sql.includes('workspace_schema_metadata')) return 'auth.schema';
+  if (sql.includes('workspace_schema_metadata')) return 'schema';
   if (sql.includes('UPDATE workspace_sessions')) return 'auth.touch';
   if (sql.includes('workspace_sessions AS s')) return 'auth.session';
   if (sql.includes('FROM workspace_owner')) return 'auth.owner';
@@ -128,12 +128,17 @@ async function sampleEndpoint(path: string, method = 'GET', data?: object) {
   const body = await response.body();
   const wallMs = Date.now() - start;
   const rows = await trace(path, method, start - 2);
+  const statements = rows.filter(([name]) => name.startsWith('d1_'));
+  const sessionIndex = statements.findIndex(([, , , , , , sql]) => sqlPhase(sql) === 'auth.session');
   return {
     result: JSON.parse(body.toString()),
     measurement: {
       wallMs, bytes: body.byteLength, timing: response.headers()['server-timing'],
-      queries: rows.filter(([name]) => name.startsWith('d1_')).map(([name, , wallMs, rowsRead, rowsWritten, sqlMs, sql]) =>
-        ({ name, phase: sqlPhase(sql), wallMs, rowsRead, rowsWritten, sqlMs }))
+      queries: statements.map(([name, , wallMs, rowsRead, rowsWritten, sqlMs, sql], index) => {
+        const group = sqlPhase(sql);
+        const phase = group === 'schema' ? (index < sessionIndex ? 'auth.schema' : 'workspace.schema') : group;
+        return { name, phase, wallMs, rowsRead, rowsWritten, sqlMs };
+      })
     },
     sql: rows.flatMap(([, , , , , , sql]) => sql ? [sql] : [])
   };

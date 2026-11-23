@@ -16,6 +16,14 @@ const profiles = [
   { name: 'slow', rtt: 150, download: 1_600_000 / 8, upload: 750_000 / 8 }
 ];
 type Target = { selector: string; text?: string };
+type ActionMeasurement = {
+  feedback: number;
+  ready: number;
+  longTasks: number;
+  longTaskMs: number;
+  domNodes: number;
+  probeMs: number;
+};
 type RequestMeasurement = { operation: string; method: string; status?: number; ttfb?: number; duration?: number; bytes?: number; timing?: string };
 const panel = '.mail-list-panel';
 const skeleton = { selector: '[aria-label="正在加载邮件"]' };
@@ -68,50 +76,68 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
   const stopRecording = recordRequests(page);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Performance.enable');
-  const before = await cdp.send('Performance.getMetrics');
   await control.evaluate((element, { ready, feedback, eventType }) => {
-    const state = window as unknown as { measuredAction: Promise<{ feedback: number; ready: number; longTasks: number; longTaskMs: number; domNodes: number }> };
+    const state = window as unknown as { measuredAction: Promise<ActionMeasurement> };
     const visible = (target: { selector: string; text?: string }) =>
       [...document.querySelectorAll<HTMLElement>(target.selector)].some((node) =>
-        node.getClientRects().length > 0 && (!target.text || node.textContent?.includes(target.text))
+        !node.closest('[hidden], [aria-hidden="true"]') && (!target.text || node.textContent?.includes(target.text))
       );
     state.measuredAction = new Promise((resolve, reject) => {
       element.addEventListener(eventType, () => {
         const start = performance.now();
         let firstFeedback: number | undefined;
+        let probeMs = 0;
+        let pendingFrame = 0;
         const sample = () => {
+          pendingFrame = 0;
           const now = performance.now();
           const elapsed = now - start;
           const isReady = visible(ready);
           if (firstFeedback === undefined && (isReady || feedback.some(visible))) firstFeedback = elapsed;
+          probeMs += performance.now() - now;
           if (isReady) {
-            // Let the browser present the DOM update before reporting the milestone.
+            observer.disconnect();
+            window.clearTimeout(timeout);
             requestAnimationFrame(() => {
               const end = performance.now();
               const tasks = (performance.getEntriesByName('mailbox-long-task')).filter(({ startTime, duration }) =>
                 startTime + duration > start && startTime < end);
+              const domNodes = document.getElementsByTagName('*').length;
+              probeMs += performance.now() - end;
               resolve({ feedback: firstFeedback!, ready: elapsed, longTasks: tasks.length,
-                longTaskMs: tasks.reduce((sum, task) => sum + task.duration, 0),
-                domNodes: document.getElementsByTagName('*').length });
+                longTaskMs: tasks.reduce((sum, task) => sum + task.duration, 0), domNodes, probeMs });
             });
-          } else if (elapsed < 8_000) requestAnimationFrame(sample);
-          else reject(new Error('The expected mailbox content did not render.'));
+          }
         };
-        requestAnimationFrame(sample);
+        const scheduleSample = () => {
+          if (!pendingFrame) pendingFrame = requestAnimationFrame(sample);
+        };
+        const observer = new MutationObserver(scheduleSample);
+        const timeout = window.setTimeout(() => {
+          observer.disconnect();
+          cancelAnimationFrame(pendingFrame);
+          reject(new Error('The expected mailbox content did not render.'));
+        }, 8_000);
+        observer.observe(document.documentElement, { childList: true, attributes: true, characterData: true, subtree: true });
+        scheduleSample();
       }, { capture: true, once: true });
     });
   }, { ready, feedback, eventType: input === undefined ? 'click' : 'input' });
+  const before = await cdp.send('Performance.getMetrics');
   if (input !== undefined) await control.fill(input);
   else if (keyboard) await control.press('Enter');
   else await control.click({ timeout: 5_000 });
-  const elapsed = await page.evaluate(() => (window as unknown as { measuredAction: Promise<unknown> }).measuredAction)
+  const elapsed = await page.evaluate(() => (window as unknown as { measuredAction: Promise<ActionMeasurement> }).measuredAction)
     .catch((error) => { throw new Error(`Mailbox action ${name} failed: ${error.message}`); });
   const after = await cdp.send('Performance.getMetrics');
   await cdp.detach();
   const previous = new Map(before.metrics.map(({ name, value }) => [name, value]));
   const mainThreadMs = Object.fromEntries(after.metrics
     .filter(({ name }) => ['TaskDuration', 'ScriptDuration', 'LayoutDuration', 'RecalcStyleDuration'].includes(name))
-    .map(({ name, value }) => [name, Math.max(0, value - (previous.get(name) ?? 0)) * 1000]));
+    .map(({ name, value }) => {
+      const probeMs = name === 'ScriptDuration' || name === 'TaskDuration' ? elapsed.probeMs : 0;
+      return [name, Math.max(0, (value - (previous.get(name) ?? 0)) * 1000 - probeMs)];
+    }));
   return { name, elapsed, mainThreadMs, requests: await stopRecording() };
 }
 
