@@ -91,13 +91,13 @@ async function seed(size: number) {
 }
 
 type TraceRow = [string, number, number, number | null, number | null, number | null, string | null];
-async function trace(path: string, method: string, after: number): Promise<TraceRow[]> {
+async function trace(url: URL, method: string): Promise<TraceRow[]> {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const result = await localApi('/local/observability/query', { sql: `
       WITH invocation AS (
-        SELECT trace_id FROM spans WHERE parent_id IS NULL AND name = ${sqlLiteral(method)} AND start_ms >= ${after}
-          AND ${spanAttribute('url.full')} = ${sqlLiteral(new URL(path, origin).href)}
-        ORDER BY start_ms DESC LIMIT 1
+        SELECT MIN(trace_id) AS trace_id FROM spans WHERE parent_id IS NULL AND name = ${sqlLiteral(method)}
+          AND ${spanAttribute('url.full')} = ${sqlLiteral(url.href)}
+        HAVING COUNT(DISTINCT trace_id) = 1
       )
       SELECT name, start_ms, duration_ms, ${spanAttribute('cloudflare.d1.response.rows_read')},
         ${spanAttribute('cloudflare.d1.response.rows_written')}, ${spanAttribute('cloudflare.d1.response.sql_duration_ms')},
@@ -108,7 +108,7 @@ async function trace(path: string, method: string, after: number): Promise<Trace
     if (result.rows.some(([name]) => name.startsWith('d1_'))) return result.rows;
     await Bun.sleep(30);
   }
-  throw new Error('No traced D1 operations for the local benchmark request.');
+  throw new Error('Expected one matching invocation with D1 operations for the local benchmark sample.');
 }
 
 function sqlPhase(sql: string | null) {
@@ -124,18 +124,21 @@ function sqlPhase(sql: string | null) {
 }
 
 async function sampleEndpoint(path: string, method = 'GET', data?: object) {
+  const url = new URL(path, origin);
+  const sampleId = crypto.randomUUID();
+  url.searchParams.set('perf_sample', sampleId);
   const start = Date.now();
-  const response = await client.fetch(path, { method, data, headers: { origin: origin.origin } });
+  const response = await client.fetch(url.href, { method, data, headers: { origin: origin.origin } });
   if (!response.ok()) throw new Error(`Local benchmark returned ${response.status()}`);
   const body = await response.body();
   const wallMs = Date.now() - start;
-  const rows = await trace(path, method, start - 2);
+  const rows = await trace(url, method);
   const statements = rows.filter(([name]) => name.startsWith('d1_'));
   const sessionIndex = statements.findIndex(([, , , , , , sql]) => sqlPhase(sql) === 'auth.session');
   return {
     result: JSON.parse(body.toString()),
     measurement: {
-      wallMs, bytes: body.byteLength, timing: response.headers()['server-timing'],
+      sampleId, wallMs, bytes: body.byteLength, timing: response.headers()['server-timing'],
       queries: statements.map(([name, , wallMs, rowsRead, rowsWritten, sqlMs, sql], index) => {
         const group = sqlPhase(sql);
         const phase = group === 'schema' ? (index < sessionIndex ? 'auth.schema' : 'workspace.schema') : group;
