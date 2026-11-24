@@ -300,6 +300,10 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
   await expect(panel(page).getByRole('button', { name: '待处理 (1)', exact: true })).toBeVisible();
   expect((await events(request, recovery, 'email.delivered', 'attention-recovery-2', 5)).ok()).toBe(true);
+  await panel(page).getByRole('button', { name: '确认异常', exact: true }).press('Enter');
+  await expect(panel(page).getByRole('alert')).toContainText('异常已发生变化');
+  await expect(panel(page).getByRole('button', { name: /^待处理/u })).toBeFocused();
+  await expect(panel(page).getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
   const recovered = (await getNotices(request, 'history')).notices.find((item) => item.messageId === recovery)!;
   expect(recovered.state).toBe('resolved');
   expect((await post({ action: 'reopen', incident: { id: recovered.id, version: recovered.version } })).status()).toBe(409);
