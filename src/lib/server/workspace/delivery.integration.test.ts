@@ -327,7 +327,7 @@ describe('Owner delivery attention', () => {
     await env.DB.batch([
       upsertOutboundStatus(env.DB, { ...base, status: 'submitted', attempts: 2, idempotencyKey: 'flaremail:send:user-1:compose-1',
         lastError: '', submittedAt: completedAt, sentAt: null, deliveredAt: null }),
-      upsertOutboundReceipt(env.DB, { ...base, resultKind: 'accepted', remoteStatus: 200, responsePreview: '' })
+      upsertOutboundReceipt(env.DB, { ...base, attemptNumber: 2, resultKind: 'accepted', remoteStatus: 200, responsePreview: '' })
     ]);
     expect(database.query("SELECT status, last_event FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
       .toEqual({ status: 'delivered', last_event: 'email.delivered' });
@@ -561,14 +561,16 @@ describe('Owner delivery attention', () => {
 
   test('scheduled reconciliation recovers a deferred event after a transient write failure', async () => {
     const { database, env } = setup();
+    const now = Date.now();
+    const at = (second: number) => new Date(now + second * 1_000).toISOString();
     database.exec(`
       INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
-      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '2026-01-01T00:01:00.000Z');
-      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission'
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '${at(-60)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission', last_event_at = '${at(-60)}'
         WHERE message_id = 'message-1';
     `);
-    for (let minute = 2; minute <= 6; minute++) {
-      await applyResendDeliveryWebhook(env, `cron-sent-${minute}`, payload('email.sent', `2026-01-01T00:0${minute}:00Z`));
+    for (let second = 2; second <= 6; second++) {
+      await applyResendDeliveryWebhook(env, `cron-sent-${second}`, payload('email.sent', at(second)));
     }
     await reconcileDeferredResendEvents(env);
     expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('submitting');
@@ -586,6 +588,24 @@ describe('Owner delivery attention', () => {
       WHERE json_extract(payload_json, '$._flaremailDeferred') = 1`).all()).toEqual([{ svix_id: 'cron-sent-6' }]);
     await reconcileDeferredResendEvents(env);
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
+  });
+
+  test('scheduled reconciliation recovers the current provider event after a retry is abandoned', async () => {
+    const { database, env } = setup();
+    const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    await applyResendDeliveryWebhook(env, 'delay-before-retry', payload('email.delivery_delayed', at(20)));
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('interrupted', 'message-1', 'user-1', 2, 'resend', 'submitting', '${at(18)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission', last_event_at = '${at(18)}'
+        WHERE message_id = 'message-1';
+    `);
+    await applyResendDeliveryWebhook(env, 'deferred-sent', payload('email.sent', at(17)));
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('submitting');
+    await reconcileDeferredResendEvents(env);
+    expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: 'sent', receipt: { last_event: 'email.sent' }, attention: { kind: 'delayed' }
+    });
   });
 
   test('a stale replay cannot change the status after another replay consumed the same event', async () => {

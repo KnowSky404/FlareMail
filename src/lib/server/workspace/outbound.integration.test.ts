@@ -117,6 +117,38 @@ describe('outbound workspace persistence', () => {
     database.close();
   });
 
+  test('an older completion records its attempt without overwriting the newer outcome', async () => {
+    const { env, database, session } = setup();
+    const address = { toEmail: 'alice@example.net', subject: 'Overlapping retries', body: 'Body' };
+    const initial = new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'unknown outcome') });
+    const sent = await sendWorkspaceMessage(env, session, address, { requestId: 'overlapping-retry', gateway: initial });
+    const original = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const older = retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway: {
+      async send() {
+        original.resolve();
+        await resume.promise;
+        throw new OutboundGatewayError('network_unknown', 'older timeout');
+      }
+    } });
+    await original.promise;
+    try {
+      await retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway:
+        new FakeOutboundGateway({ error: new OutboundGatewayError('rate_limited', 'newer throttle') })
+      });
+    } finally {
+      resume.resolve();
+      await older;
+    }
+    expect(database.query('SELECT status, attempts FROM workspace_delivery_statuses WHERE message_id = ?').get(sent.message.id))
+      .toEqual({ status: 'delayed', attempts: 3 });
+    expect(database.query('SELECT result_kind FROM workspace_outbound_receipts WHERE message_id = ?').get(sent.message.id))
+      .toEqual({ result_kind: 'rate_limited' });
+    expect(database.query('SELECT error FROM workspace_delivery_attempts WHERE message_id = ? AND attempt_number = 2').get(sent.message.id))
+      .toEqual({ error: 'older timeout' });
+    database.close();
+  });
+
   test('transfers persisted labels when a draft is sent', async () => {
     const { env, database, session } = setup();
     const draft = await saveWorkspaceDraft(env, session, { toEmail: 'alice@example.net', subject: 'Labeled', body: 'Body' });

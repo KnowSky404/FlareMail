@@ -154,13 +154,14 @@ function reconciliationStatements(
   outboundRow: NonNullable<Awaited<ReturnType<typeof findOutboundByProviderMessageId>>>,
   event: NormalizedResendWebhookEvent,
   fromDeferred = false,
-  claim?: DeferredEventClaim
+  claim?: DeferredEventClaim,
+  allowExpiredAttempt = false
 ) {
   if (!event.statusUpdate || !event.resultKind) return [];
   const providerFailure = event.eventType === 'email.failed';
   return [
     ...(providerFailure ? [supersedeLocalSubmissionFailure(db, outboundRow.message_id, event.providerMessageId, claim)] : []),
-    ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim) : []),
+    ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim, allowExpiredAttempt) : []),
     reconcileDeliveryStatus(db, {
       messageId: outboundRow.message_id,
       targetStatus: event.statusUpdate,
@@ -171,6 +172,7 @@ function reconciliationStatements(
       eventType: event.eventType,
       eventCreatedAt: event.createdAt,
       fromDeferred,
+      allowExpiredAttempt,
       claim
     }),
     ...(providerFailure ? [ensureProviderFailureAttention(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
@@ -210,13 +212,13 @@ export async function reconcileDeferredResendEvents(env: CloudflareEnv) {
   if (!capabilities.outboundStatuses || !capabilities.outboundReceipts || !capabilities.outboundEvents) return;
   // One discovery read and at most four providers with two reads and four replay batches each.
   const { results } = await listReadyDeferredProviderIds(env.DB, 4);
-  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, 4)));
+  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, 4, true)));
   if (replays.some(({ status }) => status === 'rejected')) {
     throw new DeliveryPersistenceError('A deferred delivery event could not be replayed.');
   }
 }
 
-export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string, limit = 100) {
+export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string, limit = 100, allowExpiredAttempt = false) {
   const outboundRow = await findOutboundByProviderMessageId(env.DB, providerMessageId);
   if (!outboundRow) return 0;
   const pending = await listPendingOutboundEvents(env.DB, providerMessageId, limit);
@@ -230,8 +232,8 @@ export async function reconcilePendingResendEvents(env: CloudflareEnv, providerM
     }
     const claim = { svixId: row.svix_id, token: crypto.randomUUID() };
     const [assigned] = await env.DB.batch([
-      assignOutboundEvent(env.DB, claim, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate)),
-      ...reconciliationStatements(env.DB, outboundRow, event, Boolean(row.was_deferred), claim),
+      assignOutboundEvent(env.DB, claim, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate), allowExpiredAttempt),
+      ...reconciliationStatements(env.DB, outboundRow, event, Boolean(row.was_deferred), claim, allowExpiredAttempt),
       finishOutboundEventReplay(env.DB, claim)
     ]);
     reconciled += assigned.meta.changes;
