@@ -75,6 +75,21 @@ export function insertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
     .bind(p.messageId, p.userId, p.status, p.attempts, p.idempotencyKey, p.provider, p.providerMessageId,
       p.lastError, p.submittedAt, p.sentAt, p.deliveredAt, p.lastEvent, p.lastEventAt, p.createdAt, p.updatedAt);
 }
+export function claimOutboundRetry(db: D1Database, p: DeliveryStatusPayload) {
+  return db.prepare(`
+    UPDATE workspace_delivery_statuses AS delivery
+    SET status = 'submitting', attempts = ?, provider = ?, last_error = '',
+      last_event = 'submission', last_event_at = ?, updated_at = ?
+    WHERE message_id = ? AND user_id = ? AND attempts = ? AND idempotency_key = ?
+      AND status IN ('submitting', 'delayed', 'failed') AND last_event IS NOT 'email.failed'
+      AND NOT EXISTS (
+        SELECT 1 FROM workspace_outbound_receipts receipt
+        WHERE receipt.message_id = delivery.message_id AND receipt.user_id = delivery.user_id
+          AND receipt.result_kind NOT IN ('temporary_failure', 'permanent_failure', 'rate_limited')
+      )
+  `).bind(p.attempts, p.provider, p.lastEventAt, p.updatedAt, p.messageId, p.userId, p.attempts - 1, p.idempotencyKey);
+}
+
 export function upsertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
   return db.prepare(`
     INSERT INTO workspace_delivery_statuses
@@ -93,7 +108,6 @@ export function upsertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
       last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
     WHERE workspace_delivery_statuses.status NOT IN (${terminalStatuses})
       OR COALESCE(workspace_delivery_statuses.last_event, '') NOT GLOB 'email.*'
-      OR excluded.attempts > workspace_delivery_statuses.attempts
       OR (excluded.provider_message_id IS NOT NULL AND excluded.provider_message_id IS NOT workspace_delivery_statuses.provider_message_id)
   `).bind(p.messageId, p.userId, p.status, p.attempts, p.idempotencyKey, p.provider, p.providerMessageId,
     p.lastError, p.submittedAt, p.sentAt, p.deliveredAt, p.lastEvent, p.lastEventAt, p.createdAt, p.updatedAt);
@@ -105,11 +119,12 @@ export interface DeliveryAttemptPayload {
   startedAt: string; completedAt: string | null; createdAt: string;
 }
 
+// The delivery-status claim immediately precedes this insert in the same D1 batch.
 export function insertDeliveryAttempt(db: D1Database, p: DeliveryAttemptPayload) {
   return db.prepare(`INSERT INTO workspace_delivery_attempts
     (id, message_id, user_id, attempt_number, idempotency_key, provider, provider_message_id, status,
       error, started_at, completed_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE changes() = 1`)
     .bind(p.id, p.messageId, p.userId, p.attemptNumber, p.idempotencyKey, p.provider,
       p.providerMessageId, p.status, p.error, p.startedAt, p.completedAt, p.createdAt);
 }

@@ -4,10 +4,12 @@ import { deleteDraft, findOwnedDraft } from '$lib/server/db/drafts';
 import { assertDraftAttachmentSet, listAttachmentsForEntity, transferDraftAttachmentsToMessage, type StoredAttachmentRow } from '$lib/server/db/attachments';
 import { deleteBodyObjectRow, insertBodyObject, markBodyObjectDeletePending, findBodyObject } from '$lib/server/db/body';
 import {
+  claimOutboundRetry,
   findDeliveryStatus,
   finishDeliveryAttempt,
   insertDeliveryAttempt,
   insertOutboundEvent,
+  insertOutboundStatus,
   upsertOutboundReceipt,
   upsertOutboundStatus,
   type DeliveryStatusPayload
@@ -236,13 +238,17 @@ async function submitPersistedMessage(
   const startedAt = nowIso();
   const attemptNumber = attempts + 1;
   const d1StartedAt = Date.now();
-  await env.DB.batch([
-    upsertOutboundStatus(env.DB, statusPayload({ session, messageId: message.id, idempotencyKey, provider,
-      status: 'submitting', attempts: attemptNumber, remoteTimestamp: startedAt })),
+  const starting = statusPayload({ session, messageId: message.id, idempotencyKey, provider,
+    status: 'submitting', attempts: attemptNumber, remoteTimestamp: startedAt });
+  const [claimed] = await env.DB.batch([
+    attempts === 0 ? insertOutboundStatus(env.DB, starting) : claimOutboundRetry(env.DB, starting),
     insertDeliveryAttempt(env.DB, { id: crypto.randomUUID(), messageId: message.id, userId: session.userId,
       attemptNumber, idempotencyKey, provider, providerMessageId: null, status: 'submitting', error: null,
       startedAt, completedAt: null, createdAt: startedAt })
   ]);
+  if (attempts > 0 && !claimed?.meta?.changes) {
+    throw new DeliveryNotRetryableError('status_not_retryable', 'The pending delivery changed before the retry could start.');
+  }
   console.log(JSON.stringify({ event: 'outbound_phase', phase: 'd1_attempt_persist', durationMs: Date.now() - d1StartedAt }));
 
   try {
