@@ -159,6 +159,7 @@ function reconciliationStatements(
       messageId: outboundRow.message_id,
       userId: outboundRow.user_id,
       provider: event.provider,
+      providerMessageId: event.providerMessageId,
       resultKind: event.resultKind,
       remoteStatus: outboundRow.remote_status,
       responsePreview: event.responsePreview,

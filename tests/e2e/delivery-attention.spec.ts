@@ -160,8 +160,9 @@ test('finds an Owner-wide bounce from another identity and acknowledges it witho
     await standalone.close();
 
     await notice(page).click();
-    await panel(page).getByRole('button', { name: '诊断', exact: true }).click();
+    await panel(page).getByRole('button', { name: '诊断', exact: true }).press('Enter');
     await expect(page).toHaveURL(/tab=diagnostics/u);
+    await expect(page.getByRole('tab', { name: '诊断', exact: true })).toBeFocused();
     await expect(page).not.toHaveURL(/filter=attention/u);
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: '诊断', exact: true })).toBeVisible();

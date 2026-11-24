@@ -278,6 +278,27 @@ describe('Owner delivery attention', () => {
     database.close();
   });
 
+  test('keeps a previous provider event in history without advancing an unaccepted retry', async () => {
+    const { database, env } = setup();
+    await applyResendDeliveryWebhook(env, 'delayed-before-retry', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, idempotency_key,
+        provider, provider_message_id, status, started_at)
+      VALUES ('new-attempt', 'message-1', 'user-1', 2, 'flaremail:send:user-1:compose-1', 'resend', NULL,
+        'submitting', '2027-01-15T08:03:00.000Z');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = '2027-01-15T08:03:00.000Z' WHERE message_id = 'message-1';
+    `);
+    const late = await applyResendDeliveryWebhook(env, 'late-before-retry', payload('email.sent', '2027-01-15T08:04:00.000Z'));
+    expect(late).toMatchObject({ matched: true, ignored: true });
+    expect(database.query("SELECT status FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
+      .toEqual({ status: 'submitting' });
+    expect(database.query("SELECT state, closed_at FROM workspace_delivery_attention WHERE kind = 'delayed'").get())
+      .toEqual({ state: 'open', closed_at: null });
+    expect(database.query("SELECT message_id FROM workspace_outbound_events WHERE svix_id = 'late-before-retry'").get())
+      .toEqual({ message_id: 'message-1' });
+  });
+
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {
     const { database, env } = setup();
     const db = env.DB;
