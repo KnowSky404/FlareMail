@@ -6,7 +6,7 @@ import { findDeliveryDetailRows, upsertOutboundReceipt, upsertOutboundStatus } f
 import { changeDeliveryAttention, findCurrentDeliveryAttention, getDeliveryAttentionSummary, listDeliveryAttention } from '$lib/server/db/delivery-attention';
 import { loadMailboxPage } from './mailbox';
 import { parseMailboxQuery } from './mailbox-query';
-import { applyResendDeliveryWebhook, reconcilePendingResendEvents } from './delivery';
+import { applyResendDeliveryWebhook, reconcileDeferredResendEvents, reconcilePendingResendEvents } from './delivery';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -23,9 +23,11 @@ class TestStatement {
 }
 
 class TestD1 {
+  beforeBatch?: () => void;
   constructor(readonly database: Database) {}
   prepare(sql: string) { return new TestStatement(this.database, sql) as unknown as D1PreparedStatement; }
   async batch(statements: D1PreparedStatement[]) {
+    this.beforeBatch?.();
     return this.database.transaction(() =>
       statements.map((statement) => (statement as unknown as TestStatement).execute()))();
   }
@@ -518,6 +520,30 @@ describe('Owner delivery attention', () => {
     expect(database.query("SELECT status, sent_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
       .toEqual({ status: 'sent', sent_at: at(2) });
     expect((await page(env.DB)).notices.map(({ id }) => id)).toEqual([original.id]);
+  });
+
+  test('scheduled reconciliation recovers a deferred event after a transient write failure', async () => {
+    const { database, env } = setup();
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '2026-01-01T00:01:00.000Z');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission'
+        WHERE message_id = 'message-1';
+    `);
+    await applyResendDeliveryWebhook(env, 'cron-sent', payload('email.sent', '2026-01-01T00:02:00Z'));
+    await reconcileDeferredResendEvents(env);
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('submitting');
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+    const d1 = env.DB as unknown as TestD1;
+    d1.beforeBatch = () => { throw new Error('transient write failure'); };
+    await expect(reconcileDeferredResendEvents(env)).rejects.toMatchObject({ code: 'DELIVERY_PERSISTENCE_UNAVAILABLE' });
+    d1.beforeBatch = undefined;
+    await reconcileDeferredResendEvents(env);
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('sent');
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
   });
 
   test('applies newer deferred provider state without reopening an acknowledged delay', async () => {

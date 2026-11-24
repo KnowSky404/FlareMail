@@ -11,6 +11,7 @@ import {
   hasOutboundEvent,
   insertOutboundEvent,
   listPendingOutboundEvents,
+  listReadyDeferredProviderIds,
   markDeferredOutboundEvent,
   reconcileDeliveryStatus,
   resolveLocalDelayOnSent,
@@ -192,6 +193,17 @@ function deliveryPriority(status: string) {
   if (['complained', 'suppressed'].includes(status)) return 6;
   if (status === 'delivered') return 7;
   return -1;
+}
+
+export async function reconcileDeferredResendEvents(env: CloudflareEnv) {
+  if (!env.DB) return;
+  const capabilities = await getWorkspaceCapabilities(env);
+  if (!capabilities.outboundStatuses || !capabilities.outboundReceipts || !capabilities.outboundEvents) return;
+  const { results } = await listReadyDeferredProviderIds(env.DB);
+  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id)));
+  if (replays.some(({ status }) => status === 'rejected')) {
+    throw new DeliveryPersistenceError('A deferred delivery event could not be replayed.');
+  }
 }
 
 export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string) {
