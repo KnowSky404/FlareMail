@@ -386,10 +386,21 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await row.click();
   const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
   await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+  const standalone = await page.context().newPage();
+  await standalone.goto('/messages/' + pendingId + '?folder=sent', { waitUntil: 'domcontentloaded' });
+  const standaloneReceipt = standalone.locator('section[aria-labelledby="delivery-title"]');
+  await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toBeVisible();
+
   expect((await events(page.request, pendingId, 'email.delivered', 'attention-refresh-delivered')).ok()).toBe(true);
   await page.getByRole('button', { name: '刷新投递回执', exact: true }).click();
   await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(row).toHaveCount(0);
   await expect(page.getByRole('heading', { name: pendingSubject, exact: true })).toBeVisible();
   await expect(receipt.getByRole('button', { name: '重试投递' })).toHaveCount(0);
+
+  await page.locator('.fm-detail-shell').getByRole('button', { name: '加星', exact: true }).click();
+  await expect(standalone.getByRole('button', { name: '取消星标', exact: true })).toBeVisible();
+  await expect(standaloneReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
+  await standalone.close();
 });
