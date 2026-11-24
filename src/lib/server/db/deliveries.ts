@@ -279,6 +279,34 @@ export function retainProviderDelayAfterRetry(db: D1Database, messageId: string,
   ];
 }
 
+export function supersedeLocalSubmissionFailure(db: D1Database, messageId: string, providerMessageId: string) {
+  return db.prepare(`
+    UPDATE workspace_delivery_attention AS attention
+    SET state = 'superseded', closed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE message_id = ? AND closed_at IS NULL AND EXISTS (
+      SELECT 1 FROM workspace_delivery_statuses delivery
+      WHERE delivery.message_id = attention.message_id AND delivery.user_id = attention.user_id
+        AND delivery.provider_message_id = ? AND delivery.status = 'failed' AND delivery.last_event = 'submission'
+    )
+  `).bind(messageId, providerMessageId);
+}
+
+export function ensureProviderFailureAttention(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string) {
+  return db.prepare(`
+    INSERT INTO workspace_delivery_attention (user_id, message_id, attempt_number, kind, eligible_at)
+    SELECT source.user_id, source.message_id, source.attempt_number, source.kind, source.eligible_at
+    FROM workspace_delivery_attention_source source
+    JOIN workspace_delivery_statuses delivery ON delivery.message_id = source.message_id AND delivery.user_id = source.user_id
+    WHERE source.message_id = ? AND source.kind = 'failed' AND source.eligible_at IS NOT NULL
+      AND delivery.provider_message_id = ? AND delivery.last_event = 'email.failed' AND delivery.last_event_at = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM workspace_delivery_attention current
+        WHERE current.message_id = source.message_id AND current.user_id = source.user_id
+          AND current.kind = 'failed' AND current.attempt_number = source.attempt_number AND current.closed_at IS NULL
+      )
+  `).bind(messageId, providerMessageId, eventCreatedAt);
+}
+
 export function resolveLocalDelayOnSent(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string) {
   return db.prepare(`
     UPDATE workspace_delivery_attention AS attention
