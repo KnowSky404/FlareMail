@@ -246,7 +246,10 @@ export async function mutateWorkspaceMailbox(
   if (messageIds.length === 1 && (input.action === 'archive' || input.action === 'unarchive') && !firstWrite?.meta.changes) {
     throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
   }
-  const summaries: MailboxMessageSummary[] = rows.map((row) => ({
+  const writtenIds = writeScope?.filter === 'attention'
+    ? new Set((firstWrite?.results as { id: string }[] | undefined)?.map(({ id }) => id)) : null;
+  const writtenRows = writtenIds ? rows.filter(({ id }) => writtenIds.has(id)) : rows;
+  const summaries: MailboxMessageSummary[] = writtenRows.map((row) => ({
     id: row.id,
     folder: row.folder,
     source: row.source,
@@ -256,7 +259,7 @@ export async function mutateWorkspaceMailbox(
     archivedAt: input.action === 'archive' ? row.archived_at ?? timestamp : input.action === 'unarchive' ? null : row.archived_at
   }));
   const movement: MailboxMovement[] = [];
-  for (const row of rows) {
+  for (const row of writtenRows) {
     if (input.action === 'archive' && !row.archived_at) movement.push({ id: row.id, from: 'inbox', to: 'archive' });
     if (input.action === 'unarchive' && row.archived_at) movement.push({ id: row.id, from: 'archive', to: 'inbox' });
   }

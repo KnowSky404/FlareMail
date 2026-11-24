@@ -35,13 +35,20 @@ class TestStatement {
   }
 
   run() {
-    const result = this.database.query(this.sql).run(...this.bindings as SQLQueryBindings[]);
+    const query = this.database.query(this.sql);
+    const params = this.bindings as SQLQueryBindings[];
+    if (/\bRETURNING id\b/iu.test(this.sql)) {
+      const results = query.all(...params);
+      return { results, meta: { changes: results.length } };
+    }
+    const result = query.run(...params);
     return { meta: { changes: Number(result.changes) } };
   }
 }
 
 class TestD1 {
   queries: string[] = [];
+  beforeBatch?: () => void;
   constructor(private readonly database: Database) {}
   prepare(sql: string) {
     this.queries.push(sql);
@@ -49,6 +56,7 @@ class TestD1 {
   }
 
   async batch(statements: D1PreparedStatement[]) {
+    this.beforeBatch?.();
     this.database.exec('BEGIN');
     try {
       const results = statements.map((statement) => (statement as unknown as TestStatement).run());
@@ -168,7 +176,7 @@ const mutationScope = (
   identityFilter: { kind: 'domain' | 'address'; id: string } | null = null,
   threadScope: 'selected' | 'filtered' | 'owner' = 'selected',
   queryText = '',
-  filter: 'all' | 'unread' | 'starred' = 'all'
+  filter: 'all' | 'unread' | 'starred' | 'attention' = 'all'
 ) => ({
   section,
   identityFilter,
@@ -1174,6 +1182,26 @@ describe('D1 mailbox pages', () => {
     expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-1'`).get()).toEqual({ is_starred: 1 });
     expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-a-read'`).get()).toEqual({ is_starred: 0 });
     expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'incoming-b'`).get()).toEqual({ count: 0 });
+  });
+
+  test('rechecks pending attention on the write and reports only changed Sent messages', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      UPDATE workspace_messages SET thread_key = 'legacy:sent-thread' WHERE id = 'sent-1';
+      UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'sent-1';
+    `);
+    const db = env.DB as unknown as TestD1;
+    db.beforeBatch = () => {
+      database.exec("UPDATE workspace_delivery_attention SET state = 'acknowledged' WHERE message_id = 'sent-1'");
+      db.beforeBatch = undefined;
+    };
+    const input = { action: 'trash' as const, messageIds: ['sent-1'], threadKeys: ['legacy:sent-thread'],
+      scope: mutationScope('sent', null, 'filtered', '', 'attention') };
+    expect((await mutateWorkspaceMailbox(env, workspace, input)).summaries).toEqual([]);
+    expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
+
+    database.exec("UPDATE workspace_delivery_attention SET state = 'open' WHERE message_id = 'sent-1'");
+    expect((await mutateWorkspaceMailbox(env, workspace, input)).summaries.map(({ id }) => id)).toEqual(['sent-1']);
   });
 
   test('filtered thread actions apply the current server-side search query', async () => {

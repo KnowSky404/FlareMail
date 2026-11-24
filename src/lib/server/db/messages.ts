@@ -1,7 +1,8 @@
 import { inboxCategorySql } from './inbox-categories';
-import type { InboxCategoryFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
+import type { InboxCategoryFilter, MailboxFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
 import { fromInboundMessageId, getMailThreadGroups, isInboundMessageId, parseAddressJson, parseAddressList } from '$lib/domain/mail';
 import { hasReliableThreadContext, mappedThreadKey, parseAddress, type WorkspaceCapabilities, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
+import { pendingDeliveryAttentionPredicate } from './delivery-attention';
 
 export interface OwnedMailboxMutationRow {
   id: string;
@@ -22,6 +23,7 @@ export interface MailboxMutationSqlScope {
   section: MailboxMutationSection;
   identityFilter: MailboxIdentityFilter | null;
   labelId?: string;
+  filter?: MailboxFilter;
 }
 
 export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
@@ -39,6 +41,9 @@ export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope 
                 AND mutation_label.message_id = ${alias}.id AND mutation_label.label_id = ?)`
           : `${alias}.folder = 'inbox' AND ${alias}.archived_at IS NULL`;
   const bindings: unknown[] = scope.section === 'label' ? [scope.labelId ?? ''] : [];
+  if (scope.section === 'sent' && scope.filter === 'attention') {
+    sectionSql += ` AND ${pendingDeliveryAttentionPredicate(alias)}`;
+  }
   if (scope.category && scope.category !== 'all') {
     sectionSql += ` AND ${inboxCategorySql(`${alias}.from_email`, `${alias}.subject`, `${alias}.inbox_category_v2`, `${alias}.ai_inbox_category`)} = ?`;
     bindings.push(scope.category);
@@ -251,6 +256,7 @@ export function buildMailboxMutationStatements(
       SET ${setParts.join(', ')}
       WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL
         AND m.id IN (${placeholders(workspaceIds)})${scopeClause.sql}
+      ${scope?.filter === 'attention' ? 'RETURNING id' : ''}
     `).bind(...bindings));
   }
   statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp, scope)));

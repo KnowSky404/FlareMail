@@ -10,7 +10,15 @@ class Statement {
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this as unknown as D1PreparedStatement; }
   async first<T>() { return (this.db.query(this.sql).get(...this.values) as T | null) ?? null; }
   async all<T>() { return { results: this.db.query(this.sql).all(...this.values) as T[] }; }
-  run() { const result = this.db.query(this.sql).run(...this.values); return { meta: { changes: Number(result.changes) } }; }
+  run() {
+    const query = this.db.query(this.sql);
+    if (/\bRETURNING id\b/iu.test(this.sql)) {
+      const results = query.all(...this.values);
+      return { results, meta: { changes: results.length } };
+    }
+    const result = query.run(...this.values);
+    return { meta: { changes: Number(result.changes) } };
+  }
 }
 
 class D1 {
