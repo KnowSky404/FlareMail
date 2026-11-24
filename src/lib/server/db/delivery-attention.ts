@@ -42,10 +42,14 @@ export async function getDeliveryAttentionSummary(db: D1Database, userId: string
   return summary((await summaryStatement(db, userId).first<SummaryRow>())!);
 }
 
-export async function findCurrentDeliveryAttention(db: D1Database, userId: string, messageId: string) {
+export function currentDeliveryAttentionStatement(db: D1Database, userId: string, messageId: string) {
   return db.prepare(`SELECT ${itemColumns} FROM workspace_delivery_attention a INDEXED BY workspace_delivery_attention_message ${messageJoin}
     WHERE a.message_id = ? AND a.user_id = ? AND ${active('a')} LIMIT 1`)
-    .bind(messageId, userId).first<DeliveryAttentionItem>();
+    .bind(messageId, userId);
+}
+
+export async function findCurrentDeliveryAttention(db: D1Database, userId: string, messageId: string) {
+  return currentDeliveryAttentionStatement(db, userId, messageId).first<DeliveryAttentionItem>();
 }
 
 export async function listDeliveryAttention(db: D1Database, userId: string, query: {

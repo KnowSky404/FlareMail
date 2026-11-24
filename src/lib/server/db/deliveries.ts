@@ -1,4 +1,8 @@
 import type { DeliveryEventType, DeliveryResultKind, DeliveryStatus, WorkspaceCapabilities, WorkspaceOutboundEventRow, WorkspaceOutboundReceiptRow, WorkspaceOutboundStatusRow } from '$lib/server/workspace/shared';
+import { isDeliveryTerminal, type DeliveryAttentionItem } from '$lib/domain/mail';
+import { currentDeliveryAttentionStatement } from './delivery-attention';
+
+const terminalStatuses = "'delivered', 'bounced', 'failed', 'complained', 'suppressed'";
 
 export async function listOutboundStatuses(db: D1Database, userId: string, capabilities: WorkspaceCapabilities) {
   if (!capabilities.outboundStatuses) return { results: [] as WorkspaceOutboundStatusRow[] };
@@ -16,21 +20,27 @@ export async function listOutboundStatuses(db: D1Database, userId: string, capab
   `).bind(userId).all<WorkspaceOutboundStatusRow>();
 }
 
-export async function findDeliveryDetailRows(db: D1Database, userId: string, messageId: string, capabilities: WorkspaceCapabilities) {
-  const row = capabilities.outboundReceipts ? await db.prepare(`
+export async function findDeliveryDetailRows(db: D1Database, userId: string, messageId: string) {
+  const status = db.prepare(`
     WITH target(user_id, message_id) AS (VALUES (?, ?))
     SELECT s.status, r.message_id AS receipt_id, r.provider, r.result_kind, r.remote_status,
       r.response_preview, r.last_event, r.last_event_at
     FROM target
     LEFT JOIN workspace_delivery_statuses s ON s.user_id = target.user_id AND s.message_id = target.message_id
     LEFT JOIN workspace_outbound_receipts r ON r.user_id = target.user_id AND r.message_id = target.message_id
-  `).bind(userId, messageId).first<WorkspaceOutboundReceiptRow & { status: DeliveryStatus | null; receipt_id: string | null }>() : null;
-  const receipt = row?.receipt_id ? row : null;
-  const events = capabilities.outboundEvents ? await db.prepare(`
+  `).bind(userId, messageId);
+  const events = db.prepare(`
     SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json
     FROM workspace_outbound_events WHERE user_id = ? AND message_id = ? ORDER BY event_created_at DESC, created_at DESC
-  `).bind(userId, messageId).all<WorkspaceOutboundEventRow>() : { results: [] as WorkspaceOutboundEventRow[] };
-  return { receipt, status: row?.status ?? null, events: events.results ?? [] };
+  `).bind(userId, messageId);
+  const [record, history, incident] = await db.batch([status, events, currentDeliveryAttentionStatement(db, userId, messageId)]);
+  const row = record.results[0] as (WorkspaceOutboundReceiptRow & { status: DeliveryStatus | null; receipt_id: string | null }) | undefined;
+  return {
+    receipt: row?.receipt_id ? row : null,
+    status: row?.status ?? null,
+    events: history.results as WorkspaceOutboundEventRow[],
+    attention: (incident.results[0] as DeliveryAttentionItem | undefined) ?? null
+  };
 }
 
 export interface DeliveryStatusPayload {
@@ -72,7 +82,8 @@ export function upsertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
         WHEN excluded.provider_message_id IS NOT NULL AND excluded.provider_message_id IS NOT workspace_delivery_statuses.provider_message_id
         THEN excluded.delivered_at ELSE COALESCE(excluded.delivered_at, workspace_delivery_statuses.delivered_at) END,
       last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
-    WHERE workspace_delivery_statuses.status <> 'delivered'
+    WHERE workspace_delivery_statuses.status NOT IN (${terminalStatuses})
+      OR COALESCE(workspace_delivery_statuses.last_event, '') NOT GLOB 'email.*'
       OR excluded.attempts > workspace_delivery_statuses.attempts
       OR (excluded.provider_message_id IS NOT NULL AND excluded.provider_message_id IS NOT workspace_delivery_statuses.provider_message_id)
   `).bind(p.messageId, p.userId, p.status, p.attempts, p.idempotencyKey, p.provider, p.providerMessageId,
@@ -122,7 +133,8 @@ export function upsertOutboundReceipt(db: D1Database, p: DeliveryReceiptPayload)
       response_preview = excluded.response_preview, last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
     WHERE NOT EXISTS (
       SELECT 1 FROM workspace_delivery_statuses s
-      WHERE s.message_id = excluded.message_id AND s.user_id = excluded.user_id AND s.status = 'delivered'
+      WHERE s.message_id = excluded.message_id AND s.user_id = excluded.user_id
+        AND s.status IN (${terminalStatuses}) AND s.last_event GLOB 'email.*'
     )
   `).bind(p.messageId, p.userId, p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt, p.createdAt, p.updatedAt);
 }
@@ -163,18 +175,18 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       delivered_at = CASE WHEN ? = 'delivered' THEN COALESCE(delivered_at, ?) ELSE delivered_at END,
       last_event = ?, last_event_at = ?, updated_at = ?
     WHERE message_id = ? AND provider_message_id = ?
-      AND (? = 'delivered' OR NOT EXISTS (
+      AND (? OR NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attempts AS attempt
         WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
           AND attempt.provider_message_id IS NOT current.provider_message_id
       ))
-      AND (status NOT IN ('delivered', 'bounced', 'failed', 'complained', 'suppressed') OR status = ?)
+      AND (status NOT IN (${terminalStatuses}) OR status = ?)
       AND (? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
   `).bind(
     input.targetStatus, input.provider, input.providerMessageId, input.lastError,
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
-    input.targetStatus, input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
+    Number(isDeliveryTerminal(input.targetStatus)), input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
 export function insertOutboundEvent(db: D1Database, p: DeliveryEventPayload) {

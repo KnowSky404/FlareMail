@@ -14,7 +14,6 @@ import {
   updateOutboundReceiptForCurrentEvent
 } from '$lib/server/db/deliveries';
 import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
-import { findCurrentDeliveryAttention } from '$lib/server/db/delivery-attention';
 import { findOwnedWorkspaceMessage } from '$lib/server/db/messages';
 
 export class DeliveryPersistenceError extends Error {
@@ -89,10 +88,7 @@ export async function getWorkspaceMessageDeliveryDetail(env: CloudflareEnv | und
   const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
   const message = row ? mapWorkspaceMessageRow(row) : null;
   if (!message || message.folder !== 'sent' || message.source !== 'workspace') return null;
-  const [{ receipt, status, events: eventRows }, attention] = await Promise.all([
-    findDeliveryDetailRows(env.DB, session.userId, messageId, capabilities),
-    findCurrentDeliveryAttention(env.DB, session.userId, messageId)
-  ]);
+  const { receipt, status, events: eventRows, attention } = await findDeliveryDetailRows(env.DB, session.userId, messageId);
   const events = eventRows.map(mapEventRowToDeliveryEvent);
   if (!receipt && !events.length && !attention && !status) return null;
   if (!events.length && receipt) events.push({ id: `local:${messageId}:${receipt.last_event ?? 'submission'}`, type: receipt.last_event ?? 'submission', createdAt: receipt.last_event_at ?? nowIso(), summary: receipt.response_preview || '这封邮件已经写入当前工作台的出站投递记录。', payloadPreview: JSON.stringify({ provider: receipt.provider, resultKind: receipt.result_kind, remoteStatus: receipt.remote_status }) });

@@ -2506,12 +2506,7 @@
     try {
       const result = await retryDelivery(message.id);
 
-      deliveryDetails = Object.fromEntries(
-        Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
-      );
-      deliveryDetailErrors = Object.fromEntries(
-        Object.entries(deliveryDetailErrors).filter(([id]) => id !== result.message.id)
-      );
+      deliveryDetailCache.invalidate(result.message.id);
 
       applyMessageDelta(result, {
         section: 'sent',
