@@ -1081,6 +1081,32 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     AND kind = 'stale_submitting' AND (new.status <> 'submitting' OR attempt_number <> new.attempts)
     AND eligible_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
 
+  -- A stalled retry temporarily shadows a delay for the still-current provider ID.
+  UPDATE workspace_delivery_attention_clock SET version = version + 1
+  WHERE singleton = 1 AND new.status IN ('submitted', 'sent')
+    AND old.provider_message_id IS NOT NULL AND new.provider_message_id IS old.provider_message_id
+    AND EXISTS (
+      SELECT 1 FROM workspace_delivery_attention delay JOIN workspace_delivery_attention stale
+        ON stale.message_id = delay.message_id AND stale.user_id = delay.user_id AND stale.id > delay.id
+      WHERE delay.message_id = new.message_id AND delay.user_id = new.user_id
+        AND delay.kind = 'delayed' AND delay.closed_at IS NULL
+        AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
+        AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    );
+
+  UPDATE workspace_delivery_attention
+  SET version = (SELECT version FROM workspace_delivery_attention_clock WHERE singleton = 1)
+  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND kind = 'delayed'
+    AND new.status IN ('submitted', 'sent')
+    AND old.provider_message_id IS NOT NULL AND new.provider_message_id IS old.provider_message_id
+    AND EXISTS (
+      SELECT 1 FROM workspace_delivery_attention stale
+      WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
+        AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
+        AND stale.id > workspace_delivery_attention.id
+        AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    );
+
   -- Keep the previous issue actionable until its retry stalls or actually progresses.
   UPDATE workspace_delivery_attention
   SET state = 'superseded', closed_at = (
@@ -1091,7 +1117,7 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
       AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     ORDER BY stale.id LIMIT 1
   )
-  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL
+  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND kind <> 'delayed'
     AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id

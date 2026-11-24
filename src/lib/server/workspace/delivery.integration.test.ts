@@ -346,6 +346,30 @@ describe('Owner delivery attention', () => {
     expect((await page(db, 'history')).notices.find(({ id }) => id === original.id)?.state).toBe('resolved');
   });
 
+  test.each(['open', 'acknowledged'])('restores a %s delay after a stalled same-ID retry', async (state) => {
+    const { database, env } = setup();
+    const db = env.DB;
+    await applyResendDeliveryWebhook(env, 'delay-preceding-timeout', payload('email.delivery_delayed', '2026-01-01T00:01:00.000Z'));
+    const original = (await page(db)).notices[0]!;
+    if (state === 'acknowledged') await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(original) });
+    database.exec(`
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event_at = '2026-01-01T00:02:00.000Z'
+        WHERE message_id = 'message-1';
+    `);
+    expect((await page(db)).notices.map(({ kind }) => kind)).toEqual(['stale_submitting']);
+    const beforeReplay = (await page(db)).summary.snapshot;
+    database.exec(`
+      UPDATE workspace_delivery_statuses SET attempts = 3, last_event_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        WHERE message_id = 'message-1';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+    const restored = await findCurrentDeliveryAttention(db, 'user-1', 'message-1');
+    expect(restored).toMatchObject({ id: original.id, state, occurredAt: original.occurredAt });
+    expect(restored?.version).toBeGreaterThan(beforeReplay.version);
+    expect((await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge_all', snapshot: beforeReplay })).changed).toBe(0);
+    expect((await page(db)).notices.map(({ id }) => id)).toEqual(state === 'open' ? [original.id] : []);
+  });
+
   test('accepts a definitive bounce for the last known provider ID after a retry times out', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'initial-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
