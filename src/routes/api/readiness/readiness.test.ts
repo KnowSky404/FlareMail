@@ -80,6 +80,20 @@ describe('/api/readiness', () => {
     database.close();
   });
 
+  test('reports a missing production webhook secret through authenticated system readiness', async () => {
+    using database = new Database(':memory:');
+    applyMigrations(database);
+    const env = {
+      APP_ENV: 'production', OUTBOUND_PROVIDER: 'resend', RESEND_API_KEY: 'synthetic-key',
+      DB: new D1(database), BUCKET: { async head() { return null; } }
+    };
+    const missing = await GET(event(env, 'system-production', true, '?scope=system'));
+    expect(missing.status).toBe(503);
+    expect(await missing.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
+    const secret = `whsec_${btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))}`;
+    expect((await GET(event({ ...env, RESEND_WEBHOOK_SECRET: secret }, 'system-production', true, '?scope=system'))).status).toBe(200);
+  });
+
   test('rejects an empty or partially migrated database', async () => {
     const empty = new Database(':memory:');
     expect((await GET(event({ APP_ENV: 'test', DB: new D1(empty) }))).status).toBe(503);

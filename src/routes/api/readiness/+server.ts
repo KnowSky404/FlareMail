@@ -65,14 +65,19 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   const validation = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
   const resendKeyMissing = systemOnly && validation.config.outboundProvider?.toLowerCase() === 'resend' &&
     !validation.config.hasResendApiKey;
-  const configurationReady = validation.ok && !resendKeyMissing;
+  const resendWebhookMissing = systemOnly && validation.config.appEnv === 'production' && !env?.RESEND_WEBHOOK_SECRET?.trim();
+  const configurationReady = validation.ok && !resendKeyMissing && !resendWebhookMissing;
   if (!configurationReady) {
     console.error(JSON.stringify({
       level: 'error',
       event: 'readiness_check_failed',
       requestId,
       code: 'CONFIG_INVALID',
-      diagnostics: [...validation.errors.map(({ code }) => code), ...(resendKeyMissing ? ['missing_resend_api_key'] : [])]
+      diagnostics: [
+        ...validation.errors.map(({ code }) => code),
+        ...(resendKeyMissing ? ['missing_resend_api_key'] : []),
+        ...(resendWebhookMissing ? ['missing_resend_webhook_secret'] : [])
+      ]
     }));
   }
   let r2Ready = !systemOnly;
