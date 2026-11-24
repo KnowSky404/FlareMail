@@ -250,6 +250,33 @@ test('refreshes an open issue in another tab, handles failure, and keeps health 
   expect((await post({ action: 'reopen', incident: { id: previous.id, version: previous.version } })).ok()).toBe(true);
   await page.goto('/?folder=sent&message=' + id, { waitUntil: 'domcontentloaded' });
   await expect(notice(page)).toHaveAccessibleName(/1 pending delivery issue/u);
+  const listStarted = Promise.withResolvers<void>();
+  const releaseList = Promise.withResolvers<void>();
+  const pendingList = '**/api/workspace/attention?view=pending';
+  await page.route(pendingList, async (route) => {
+    listStarted.resolve();
+    await releaseList.promise;
+    await route.abort().catch(() => undefined);
+  }, { times: 1 });
+  await notice(page).click();
+  await listStarted.promise;
+  await page.keyboard.press('Escape');
+  const receiptAction = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true })
+    .getByRole('button', { name: 'Acknowledge', exact: true });
+  await page.route(endpoint, (route) => route.fulfill({ status: 503, json: { ok: false, error: { code: 'D1_UNAVAILABLE', message: 'synthetic unavailable' } } }),
+    { times: 1 });
+  const failedWrite = page.waitForResponse((response) => new URL(response.url()).pathname === endpoint && response.status() === 503);
+  try {
+    await receiptAction.click();
+    await failedWrite;
+    await expect(receiptAction).toBeEnabled();
+    await notice(page).click();
+    await expect(panel(page).getByText(subject)).toBeVisible();
+    await page.keyboard.press('Escape');
+  } finally {
+    releaseList.resolve();
+  }
+
   const concurrentId = 'e2e-attention-concurrent';
   await page.evaluate(() => {
     const listener = new BroadcastChannel('flaremail-workspace-v1');

@@ -146,6 +146,7 @@ export class DeliveryNotifications {
     if (!this.enabled || this.mutation) return false;
     const request = this.write.begin();
     this.read.cancel();
+    this.readAt = this.pageAt = 0;
     this.loading = false;
     this.mutation = action;
     this.actionError = null;
