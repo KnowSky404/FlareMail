@@ -2,6 +2,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
+import { upsertOutboundReceipt, upsertOutboundStatus } from '$lib/server/db/deliveries';
 import { changeDeliveryAttention, findCurrentDeliveryAttention, getDeliveryAttentionSummary, listDeliveryAttention } from '$lib/server/db/delivery-attention';
 import { loadMailboxPage } from './mailbox';
 import { parseMailboxQuery } from './mailbox-query';
@@ -278,7 +279,7 @@ describe('Owner delivery attention', () => {
     database.close();
   });
 
-  test('keeps a previous provider event in history without advancing an unaccepted retry', async () => {
+  test('preserves an unresolved delay until an unaccepted same-key retry has definitive delivery proof', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'delayed-before-retry', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
     database.exec(`
@@ -297,6 +298,23 @@ describe('Owner delivery attention', () => {
       .toEqual({ state: 'open', closed_at: null });
     expect(database.query("SELECT message_id FROM workspace_outbound_events WHERE svix_id = 'late-before-retry'").get())
       .toEqual({ message_id: 'message-1' });
+
+    const delivered = await applyResendDeliveryWebhook(env, 'delivered-during-retry', payload('email.delivered', '2027-01-15T08:05:00.000Z'));
+    expect(delivered).toMatchObject({ matched: true, ignored: false });
+    const completedAt = '2027-01-15T08:06:00.000Z';
+    const base = { messageId: 'message-1', userId: 'user-1', provider: 'resend', providerMessageId: 're_1',
+      lastEvent: 'submission' as const, lastEventAt: completedAt, createdAt: completedAt, updatedAt: completedAt };
+    await env.DB.batch([
+      upsertOutboundStatus(env.DB, { ...base, status: 'submitted', attempts: 2, idempotencyKey: 'flaremail:send:user-1:compose-1',
+        lastError: '', submittedAt: completedAt, sentAt: null, deliveredAt: null }),
+      upsertOutboundReceipt(env.DB, { ...base, resultKind: 'accepted', remoteStatus: 200, responsePreview: '' })
+    ]);
+    expect(database.query("SELECT status, last_event FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
+      .toEqual({ status: 'delivered', last_event: 'email.delivered' });
+    expect(database.query("SELECT last_event FROM workspace_outbound_receipts WHERE message_id = 'message-1'").get())
+      .toEqual({ last_event: 'email.delivered' });
+    expect(database.query("SELECT state FROM workspace_delivery_attention WHERE kind = 'delayed'").get())
+      .toEqual({ state: 'resolved' });
   });
 
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {

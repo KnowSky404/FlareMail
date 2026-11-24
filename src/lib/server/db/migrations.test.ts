@@ -135,6 +135,40 @@ describe('versioned D1 migrations', () => {
     latest.close();
   });
 
+  test('upgrades legacy sent mail with a same-attempt delay and preserves existing acknowledgements', () => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0032_ai_automatic_classification.sql');
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
+      SELECT value, 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'
+      FROM json_each('["legacy", "earlier-attempt", "existing", "delivered"]');
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id,
+        submitted_at, last_event, last_event_at)
+      SELECT id, user_id, CASE WHEN id = 'delivered' THEN 'delivered' ELSE 'sent' END,
+        CASE WHEN id = 'earlier-attempt' THEN 2 ELSE 1 END, 'provider-' || id,
+        '2026-01-01T00:00:00.000Z', CASE WHEN id = 'delivered' THEN 'email.delivered' ELSE 'email.sent' END,
+        '2026-01-01T00:05:00.000Z' FROM workspace_messages;
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      SELECT id, id, user_id, 'resend', 'provider-' || id, 'email.delivery_delayed', '2026-01-01T00:01:00.000Z'
+      FROM workspace_messages;
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider_message_id, status, started_at, completed_at)
+      VALUES ('attempt-2', 'earlier-attempt', 'owner', 2, 'provider-earlier-attempt', 'submitted',
+        '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z');
+    `);
+    db.exec(readFileSync(join(migrationsDirectory, '0033_delivery_attention.sql'), 'utf8'));
+    db.query('INSERT INTO _test_migrations (name) VALUES (?)').run('0033_delivery_attention.sql');
+    db.exec(`
+      INSERT INTO workspace_delivery_attention (user_id, message_id, attempt_number, kind, eligible_at, state)
+      VALUES ('owner', 'existing', 1, 'delayed', '2026-01-01T00:01:00.000Z', 'acknowledged');
+    `);
+    applyMigrations(db);
+    expect(db.query('SELECT message_id, kind, eligible_at, state FROM workspace_delivery_attention ORDER BY message_id').all()).toEqual([
+      { message_id: 'existing', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'acknowledged' },
+      { message_id: 'legacy', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' }
+    ]);
+    db.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);
@@ -172,7 +206,8 @@ describe('versioned D1 migrations', () => {
       '0030_mail_ai_analyses.sql',
       '0031_telegram_ai_summary.sql',
       '0032_ai_automatic_classification.sql',
-      '0033_delivery_attention.sql'
+      '0033_delivery_attention.sql',
+      '0034_delivery_attention_backfill.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -307,7 +342,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 33 }
+      { schema_name: 'flaremail', schema_version: 34 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
