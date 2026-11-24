@@ -293,13 +293,13 @@ describe('Owner delivery attention', () => {
         last_event_at = '${at(3)}' WHERE message_id = 'message-1';
     `);
     const late = await applyResendDeliveryWebhook(env, 'late-before-retry', payload('email.sent', at(4)));
-    expect(late).toMatchObject({ matched: false, ignored: true });
+    expect(late).toMatchObject({ matched: true, ignored: true });
     expect(database.query("SELECT status FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
       .toEqual({ status: 'submitting' });
     expect(database.query("SELECT state, closed_at FROM workspace_delivery_attention WHERE kind = 'delayed'").get())
       .toEqual({ state: 'open', closed_at: null });
     expect(database.query("SELECT user_id FROM workspace_outbound_events WHERE svix_id = 'late-before-retry'").get())
-      .toEqual({ user_id: 'unmatched' });
+      .toEqual({ user_id: 'user-1' });
 
     const delivered = await applyResendDeliveryWebhook(env, 'delivered-during-retry', payload('email.delivered', at(5)));
     expect(delivered).toMatchObject({ matched: true, ignored: false });
@@ -348,9 +348,10 @@ describe('Owner delivery attention', () => {
     });
   });
 
-  test('replays a deferred provider delay once a same-key retry confirms its ID', async () => {
+  test.each([-60, 30])('attributes a deferred delay %i seconds from the start of a confirmed retry', async (offset) => {
     const { database, env } = setup();
-    const now = new Date().toISOString();
+    const startedAt = Date.now();
+    const now = new Date(startedAt).toISOString();
     await applyResendDeliveryWebhook(env, 'previous-delay', payload('email.delivery_delayed', now));
     database.exec(`
       INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
@@ -358,8 +359,13 @@ describe('Owner delivery attention', () => {
       UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
         last_event_at = '${now}' WHERE message_id = 'message-1';
     `);
-    const newDelay = await applyResendDeliveryWebhook(env, 'retry-delay', payload('email.delivery_delayed', now));
-    expect(newDelay).toMatchObject({ matched: false, ignored: true });
+    const eventAt = new Date(startedAt + offset * 1000).toISOString();
+    const newDelay = await applyResendDeliveryWebhook(env, 'retry-delay', payload('email.delivery_delayed', eventAt));
+    expect(newDelay).toMatchObject({ matched: true, ignored: true });
+    const pending = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
+    const deferred = pending.events.find(({ svix_id }) => svix_id === 'retry-delay');
+    expect(deferred?.event_type).toBe('email.delivery_delayed');
+    expect(deferred?.payload_json).not.toContain('_flaremailDeferred');
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
     database.exec(`
       UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
@@ -367,9 +373,9 @@ describe('Owner delivery attention', () => {
     `);
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(1);
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
-    expect((await page(env.DB, 'pending')).notices.map(({ kind }) => kind)).toEqual(['delayed']);
+    expect((await page(env.DB, 'pending')).notices.map(({ kind }) => kind)).toEqual(offset > 0 ? ['delayed'] : []);
     expect(database.query("SELECT attempt_number FROM workspace_delivery_attention WHERE state = 'open'").get())
-      .toEqual({ attempt_number: 2 });
+      .toEqual(offset > 0 ? { attempt_number: 2 } : null);
   });
 
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {

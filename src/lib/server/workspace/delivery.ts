@@ -9,7 +9,8 @@ import {
   findOutboundByProviderMessageId,
   hasOutboundEvent,
   insertOutboundEvent,
-  listUnmatchedOutboundEvents,
+  listPendingOutboundEvents,
+  markDeferredOutboundEvent,
   reconcileDeliveryStatus,
   updateOutboundReceiptForCurrentEvent
 } from '$lib/server/db/deliveries';
@@ -104,7 +105,7 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
   const event = normalizeResendWebhookEvent(payload as Parameters<typeof normalizeResendWebhookEvent>[0]);
   if (await hasOutboundEvent(env.DB, svixId)) return { duplicate: true, ignored: false, matched: true, messageId: null as string | null };
   const outboundRow = await findOutboundByProviderMessageId(env.DB, event.providerMessageId);
-  const eventRecord = serializeOutboundEventInsert({ svixId, messageId: event.providerMessageId, userId: 'unmatched', provider: event.provider, providerMessageId: event.providerMessageId, eventType: event.eventType, eventCreatedAt: event.createdAt, summary: event.summary, payloadJson: event.payloadJson });
+  const eventRecord = serializeOutboundEventInsert({ svixId, messageId: outboundRow?.message_id ?? event.providerMessageId, userId: outboundRow?.user_id ?? 'unmatched', provider: event.provider, providerMessageId: event.providerMessageId, eventType: event.eventType, eventCreatedAt: event.createdAt, summary: event.summary, payloadJson: event.payloadJson });
   if (!outboundRow) {
     try {
       await env.DB.batch([insertOutboundEvent(env.DB, eventRecord)]);
@@ -119,12 +120,11 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
 
   const statements: D1PreparedStatement[] = [
     insertOutboundEvent(env.DB, eventRecord),
-    assignOutboundEvent(env.DB, svixId, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate)),
+    ...(event.statusUpdate && !isDeliveryTerminal(event.statusUpdate) ? [markDeferredOutboundEvent(env.DB, svixId)] : []),
     ...reconciliationStatements(env.DB, outboundRow, event)
   ];
   try {
-    const [, assigned] = await env.DB.batch(statements);
-    if (!assigned.meta.changes) return { duplicate: false, ignored: true, matched: false, messageId: null };
+    await env.DB.batch(statements);
   } catch (error) {
     if (error instanceof Error && /unique constraint|constraint failed/iu.test(error.message)) {
       return { duplicate: true, ignored: true, matched: true, messageId: outboundRow.message_id };
@@ -139,7 +139,8 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
 function reconciliationStatements(
   db: D1Database,
   outboundRow: NonNullable<Awaited<ReturnType<typeof findOutboundByProviderMessageId>>>,
-  event: NormalizedResendWebhookEvent
+  event: NormalizedResendWebhookEvent,
+  fromDeferred = false
 ) {
   if (!event.statusUpdate || !event.resultKind) return [];
   return [
@@ -151,7 +152,8 @@ function reconciliationStatements(
       providerMessageId: event.providerMessageId,
       lastError: event.lastError,
       eventType: event.eventType,
-      eventCreatedAt: event.createdAt
+      eventCreatedAt: event.createdAt,
+      fromDeferred
     }),
     updateOutboundReceiptForCurrentEvent(db, {
       messageId: outboundRow.message_id,
@@ -184,7 +186,7 @@ function deliveryPriority(status: string) {
 export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string) {
   const outboundRow = await findOutboundByProviderMessageId(env.DB, providerMessageId);
   if (!outboundRow) return 0;
-  const pending = await listUnmatchedOutboundEvents(env.DB, providerMessageId);
+  const pending = await listPendingOutboundEvents(env.DB, providerMessageId);
   let reconciled = 0;
   for (const row of pending.results ?? []) {
     let event: NormalizedResendWebhookEvent;
@@ -195,7 +197,7 @@ export async function reconcilePendingResendEvents(env: CloudflareEnv, providerM
     }
     const [assigned] = await env.DB.batch([
       assignOutboundEvent(env.DB, row.svix_id, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate)),
-      ...reconciliationStatements(env.DB, outboundRow, event)
+      ...reconciliationStatements(env.DB, outboundRow, event, Boolean(row.was_deferred))
     ]);
     reconciled += assigned.meta.changes;
   }
