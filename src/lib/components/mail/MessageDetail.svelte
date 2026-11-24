@@ -158,6 +158,7 @@
     {pending}
     {inboundDetailPending}
     {deliveryDetailPending}
+    receiptStatus={deliveryDetail?.status}
     {showBack}
     {sectionTitle}
     {onBack}

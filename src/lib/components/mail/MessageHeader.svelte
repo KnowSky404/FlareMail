@@ -20,6 +20,7 @@
   } from '@lucide/svelte';
   import {
     parseAddressList,
+    type DeliveryStatus,
     type InboundMessageDetail,
     type MailMessage
   } from '$lib/domain/mail';
@@ -35,6 +36,7 @@
     pending = false,
     inboundDetailPending = false,
     deliveryDetailPending = false,
+    receiptStatus = null,
     showBack = false,
     onBack,
     onEditDraft,
@@ -64,6 +66,7 @@
     pending?: boolean;
     inboundDetailPending?: boolean;
     deliveryDetailPending?: boolean;
+    receiptStatus?: DeliveryStatus | null;
     showBack?: boolean;
     onBack?: () => void;
     onEditDraft?: (message: MailMessage) => void | Promise<void>;
@@ -126,7 +129,7 @@
     return Math.max(0, to + cc + bcc - 1);
   });
   const downloadHref = $derived(safeHref(rawDownloadHref));
-  const deliveryStatus = $derived(message?.folder === 'sent' ? (message.deliveryStatus ?? 'submitted') : null);
+  const deliveryStatus = $derived(message?.folder === 'sent' ? (receiptStatus ?? message.deliveryStatus ?? 'submitted') : null);
 
   const deliveryLabel = (status: string | null) => {
     const labels: Record<string, string> = {

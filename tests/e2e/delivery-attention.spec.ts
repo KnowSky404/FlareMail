@@ -469,6 +469,8 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
     });
     await expect(focusRow).toHaveCount(filter === 'attention' ? 0 : 1);
     await expect(focusReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+    const header = page.locator('.fm-detail-shell').getByRole('heading', { name: focusSubject, exact: true });
+    await expect(header.locator('..').getByText('已送达', { exact: true })).toBeVisible();
     await expect(focusReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
   }
 });
