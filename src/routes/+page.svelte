@@ -255,6 +255,7 @@
   let selectedMessageId = $state<string | null>(null);
   let deepLinkedMessage = $state<MailMessage | null>(null);
   let focusDiagnostics = $state(false);
+  let notificationMessageToFocus = $state<string | null>(null);
   let deepLinkedRefreshError = $state<string | null>(null);
   const deepLinkedFlagRevisions = new Map<string, { read: number; starred: number }>();
   let selectedMessageIds = $state<string[]>([]);
@@ -3088,11 +3089,25 @@
     );
   }
 
+  $effect(() => {
+    const target = notificationMessageToFocus;
+    if (!target) return;
+    if (urlMessageId !== target) {
+      notificationMessageToFocus = null;
+    } else if (selectedMessage?.id === target && mobileDetailOpen) {
+      notificationMessageToFocus = null;
+      void tick().then(() => {
+        if (selectedMessage?.id === target) workspaceElement?.querySelector<HTMLElement>('.fm-detail-shell h1')?.focus({ preventScroll: true });
+      });
+    }
+  });
+
   function goFromNotifications(updates: Parameters<typeof updateWorkspaceUrl>[0]) {
     const navigate = () => {
       if (updates.messageId) deliveryDetailCache.invalidate(updates.messageId);
       focusDiagnostics = updates.settingsTab === 'diagnostics';
       void updateWorkspaceUrl(updates);
+      notificationMessageToFocus = updates.messageId ?? null;
     };
     if (managementNavigationGuard && activeSection === 'profile' && managementView !== 'settings') {
       if (managementNavigationGuard(navigate) !== false) navigate();
@@ -3106,10 +3121,17 @@
     if (id) deliveryDetailCache.invalidate(id);
     else deliveryDetailCache.reset();
     if (current?.folder === 'sent' && (!id || id === current.id)) void loadDeliveryDetail(current, true);
+    refreshAttentionMailbox();
+  }
+
+  function refreshAttentionMailbox() {
     mailboxController.invalidateAttention();
     if (activeSection === 'sent' && mailFilter === 'attention') {
-      // A notification mutation can remove the current row from this server-backed filter.
-      if (current && urlMessageId === current.id) deepLinkedMessage = current;
+      const current = selectedMessage;
+      if (current && messageReaderVisible) {
+        selectedMessageId = current.id;
+        deepLinkedMessage = current;
+      }
       void mailboxController.refresh('sent', searchQuery, mailFilter, mailIdentityFilter);
     }
   }
@@ -3129,6 +3151,7 @@
   async function handleReloadDeliveryDetail(message: MailMessage) {
     notifications.invalidate();
     const ok = await loadDeliveryDetail(message, true);
+    if (ok) refreshAttentionMailbox();
     notify(
       ok ? t('notify.deliveryReloaded', { subject: message.subject }) : t('notify.deliveryReloadFailed'),
       ok ? 'success' : 'error'
