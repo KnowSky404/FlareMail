@@ -5,6 +5,7 @@ import { getWorkspaceCapabilities } from '$lib/server/db/capabilities';
 import {
   assignOutboundEvent,
   ensureProviderFailureAttention,
+  finishOutboundEventReplay,
   findDeliveryDetailRows,
   findDeliveryStatus,
   findOutboundByProviderMessageId,
@@ -17,7 +18,8 @@ import {
   resolveLocalDelayOnSent,
   retainProviderDelayAfterRetry,
   supersedeLocalSubmissionFailure,
-  updateOutboundReceiptForCurrentEvent
+  updateOutboundReceiptForCurrentEvent,
+  type DeferredEventClaim
 } from '$lib/server/db/deliveries';
 import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
 import { findOwnedWorkspaceMessage } from '$lib/server/db/messages';
@@ -147,13 +149,14 @@ function reconciliationStatements(
   db: D1Database,
   outboundRow: NonNullable<Awaited<ReturnType<typeof findOutboundByProviderMessageId>>>,
   event: NormalizedResendWebhookEvent,
-  fromDeferred = false
+  fromDeferred = false,
+  claim?: DeferredEventClaim
 ) {
   if (!event.statusUpdate || !event.resultKind) return [];
   const providerFailure = event.eventType === 'email.failed';
   return [
-    ...(providerFailure ? [supersedeLocalSubmissionFailure(db, outboundRow.message_id, event.providerMessageId)] : []),
-    ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt) : []),
+    ...(providerFailure ? [supersedeLocalSubmissionFailure(db, outboundRow.message_id, event.providerMessageId, claim)] : []),
+    ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim) : []),
     reconcileDeliveryStatus(db, {
       messageId: outboundRow.message_id,
       targetStatus: event.statusUpdate,
@@ -163,10 +166,11 @@ function reconciliationStatements(
       lastError: event.lastError,
       eventType: event.eventType,
       eventCreatedAt: event.createdAt,
-      fromDeferred
+      fromDeferred,
+      claim
     }),
-    ...(providerFailure ? [ensureProviderFailureAttention(db, outboundRow.message_id, event.providerMessageId, event.createdAt)] : []),
-    ...(event.statusUpdate === 'sent' ? [resolveLocalDelayOnSent(db, outboundRow.message_id, event.providerMessageId, event.createdAt)] : []),
+    ...(providerFailure ? [ensureProviderFailureAttention(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
+    ...(event.statusUpdate === 'sent' ? [resolveLocalDelayOnSent(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
     updateOutboundReceiptForCurrentEvent(db, {
       messageId: outboundRow.message_id,
       userId: outboundRow.user_id,
@@ -178,7 +182,8 @@ function reconciliationStatements(
       lastEvent: event.eventType,
       lastEventAt: event.createdAt,
       createdAt: event.createdAt,
-      updatedAt: event.createdAt
+      updatedAt: event.createdAt,
+      claim
     })
   ];
 }
@@ -200,16 +205,16 @@ export async function reconcileDeferredResendEvents(env: CloudflareEnv) {
   const capabilities = await getWorkspaceCapabilities(env);
   if (!capabilities.outboundStatuses || !capabilities.outboundReceipts || !capabilities.outboundEvents) return;
   const { results } = await listReadyDeferredProviderIds(env.DB);
-  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id)));
+  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, 10)));
   if (replays.some(({ status }) => status === 'rejected')) {
     throw new DeliveryPersistenceError('A deferred delivery event could not be replayed.');
   }
 }
 
-export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string) {
+export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string, limit = 100) {
   const outboundRow = await findOutboundByProviderMessageId(env.DB, providerMessageId);
   if (!outboundRow) return 0;
-  const pending = await listPendingOutboundEvents(env.DB, providerMessageId);
+  const pending = await listPendingOutboundEvents(env.DB, providerMessageId, limit);
   let reconciled = 0;
   for (const row of pending.results ?? []) {
     let event: NormalizedResendWebhookEvent;
@@ -218,9 +223,11 @@ export async function reconcilePendingResendEvents(env: CloudflareEnv, providerM
     } catch {
       continue;
     }
+    const claim = { svixId: row.svix_id, token: crypto.randomUUID() };
     const [assigned] = await env.DB.batch([
-      assignOutboundEvent(env.DB, row.svix_id, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate)),
-      ...reconciliationStatements(env.DB, outboundRow, event, Boolean(row.was_deferred))
+      assignOutboundEvent(env.DB, claim, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate)),
+      ...reconciliationStatements(env.DB, outboundRow, event, Boolean(row.was_deferred), claim),
+      finishOutboundEventReplay(env.DB, claim)
     ]);
     reconciled += assigned.meta.changes;
   }
