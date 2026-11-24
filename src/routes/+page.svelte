@@ -1,4 +1,7 @@
 <script lang="ts">
+  import DeliveryNotificationsMenu from '$lib/components/shell/DeliveryNotificationsMenu.svelte';
+  import { DeliveryNotifications } from '$lib/client/delivery-notifications.svelte';
+  import type { DeliveryAttentionAction } from '$lib/domain/mail';
   import { formatApiError, LocalizedError } from '$lib/client/api-error';
   import { navigationCounts } from '$lib/client/navigation-counts';
   import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
@@ -197,6 +200,9 @@
   let mailboxRefreshing = $state(false);
   const metricsCache = new Map<string, { value: WorkspaceMetrics; updatedAt: number }>();
   const metricsRequest = new LatestRequest();
+  const ownerMetricsRequest = new LatestRequest();
+  let ownerMetrics = $state<WorkspaceMetrics | null>(null);
+  const notifications = new DeliveryNotifications();
   const readActivation = new ReadActivationController();
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let mailboxPageNumber = $state(1);
@@ -268,6 +274,7 @@
   let workspaceElement = $state<HTMLElement>();
   let workspaceWidth = $state(Number.POSITIVE_INFINITY);
   let viewportWidth = $state(0);
+  const mobileTopbar = $derived(viewportWidth > 0 && viewportWidth <= 900);
   let density = $state<DisplayDensity>('comfortable');
   let readingLayout = $state<ReadingLayout>('list');
   const messageReaderVisible = $derived(readerOpen || mobileDetailOpen || (readingLayout === 'split' && viewportWidth >= 901));
@@ -303,7 +310,6 @@
   let workspaceBodyPendingId = $state<string | null>(null);
   let toastMessages = $state<ToastMessage[]>([]);
   let sendAnnouncement = $state('');
-  let runtimeOperationError = $state(false);
   let loginError = $state('');
   let profileStatus = $state('');
   let profileStatusError = $state(false);
@@ -398,7 +404,6 @@
 
   const notifyError = (error: unknown, fallback: string) => {
     if (authExpired || isClientAuthExpired()) return;
-    if (!(error instanceof ClientApiError) || error.status >= 500) runtimeOperationError = true;
     notify(
       displayError(error, fallback),
       'error',
@@ -409,6 +414,8 @@
   function enterAuthExpired(source: AuthExpirySource) {
     if (authExpired) return;
     authExpired = true;
+    notifications.reset();
+    ownerMetricsRequest.cancel();
     workspaceAuthGeneration += 1;
     if (labelEditorMode && labelActionPending) labelEditorInterrupted = true;
     authRecoveryError = '';
@@ -579,6 +586,17 @@
   });
 
   $effect(() => {
+    if (authenticated && !authExpired) untrack(() => notifications.start());
+  });
+
+  $effect(() => {
+    if (authenticated && !authExpired && activeSection === 'profile' &&
+      managementView === 'settings' && urlState.settingsTab === 'diagnostics') {
+      untrack(() => void refreshOwnerMetrics());
+    }
+  });
+
+  $effect(() => {
     if (!authenticated || activeSection !== 'profile') return;
     if (managementView === 'settings') void loadProfilePane();
     else void loadMailIdentityManager();
@@ -677,9 +695,6 @@
     [...mailbox.inbox, ...mailbox.sent],
     mailIdentityOptions.addresses.map((address) => address.email)
   ));
-  const serviceDegraded = $derived(
-    runtimeOperationError || metrics.delayedCount + metrics.failedCount + metrics.bouncedCount + metrics.complainedCount + metrics.staleDeliveryCount > 0
-  );
   const activeMessages = $derived(
     activeSection === 'trash'
       ? trashItems.map((item) => item.message)
@@ -696,10 +711,12 @@
         ? buildMailThreads({ ...mailbox, inbox: activeMessages, sent: [] }, 'inbox')
         : []
   );
+  const activeAttentionPage = $derived(activeSection === 'sent' && mailFilter === 'attention' &&
+    matchesActiveMailboxScope(mailboxPages?.sent));
   const visibleMessages = $derived.by(() =>
     activeMessages.filter((message) => {
       const matchesFilter =
-        mailFilter === 'all' ||
+        mailFilter === 'all' || activeAttentionPage ||
         (mailFilter === 'unread' && !message.read) ||
         (mailFilter === 'starred' && message.starred);
       return matchesFilter;
@@ -708,7 +725,7 @@
   const visibleThreads = $derived.by(() =>
     (activeSection === 'inbox' && (mailboxPages?.inbox?.category ?? 'all') !== inboxCategory ? [] : activeThreads).filter((thread) => {
       const matchesFilter =
-        mailFilter === 'all' ||
+        mailFilter === 'all' || activeAttentionPage ||
         (mailFilter === 'unread' && thread.unreadCount > 0) ||
         (mailFilter === 'starred' && thread.messages.some((message) => message.starred));
       return matchesFilter;
@@ -949,7 +966,6 @@
     mailboxPages = merged.snapshot.mailboxPages;
     metrics = merged.snapshot.metrics;
     if (merged.metricsApplied) metricsIdentity = mailIdentityFilter;
-    runtimeOperationError = false;
     authenticated = true;
     if (options?.section) activeSection = options.section;
     if (options?.clearMailView) {
@@ -1067,6 +1083,10 @@
     metricsRequest.cancel();
     metricsCache.clear();
     if (options?.resetUserScoped) {
+      notifications.reset();
+      if (authenticated && !authExpired) notifications.start();
+      ownerMetricsRequest.cancel();
+      ownerMetrics = null;
       deepLinkedMessage = null;
       deepLinkedRefreshError = null;
       deepLinkedFlagRevisions.clear();
@@ -1105,6 +1125,8 @@
     void reloadMailLabels();
     workspaceSnapshotController.noteUser(workspace.profile.email);
 
+    if (!next.identityFilter) ownerMetrics = next.metrics;
+
     if (options?.syncUrl) {
       updateWorkspaceUrl(
         {
@@ -1121,6 +1143,9 @@
   }
 
   function resetWorkspace() {
+    notifications.reset();
+    ownerMetricsRequest.cancel();
+    ownerMetrics = null;
     workspaceAuthGeneration += 1;
     suppressedSelectionScope = null;
     window.dispatchEvent(new Event(WORKSPACE_SESSION_ENDED_EVENT));
@@ -1185,7 +1210,6 @@
     profileStatus = '';
     profileStatusError = false;
     loginError = '';
-    runtimeOperationError = false;
     sendAnnouncement = '';
     workspaceSnapshotController.reset();
   }
@@ -1701,11 +1725,14 @@
     metricsCache.clear();
     metricsRequest.cancel();
     if (!authenticated || authExpired) return;
+    if (announce) {
+      notifications.invalidate();
+      void notifications.checkHealth(true);
+    }
     if (activeSection === 'trash') {
       if (mailIdentityFilter) await refreshMetrics(mailIdentityFilter, true);
       const refreshed = await trashController.refresh();
       if (refreshed) {
-        runtimeOperationError = false;
         if (announce) notify(t('notify.trashRefreshed'), 'success');
       }
       return;
@@ -1721,7 +1748,6 @@
       preservePage
     );
     if (refreshed) {
-      runtimeOperationError = false;
       if (announce) {
         const current = selectedMessage;
         if (current && current.id === retainedId) await refreshDeepLinkedMessage(current);
@@ -1849,6 +1875,12 @@
     }
 
     if (!authenticated || authExpired) return;
+    if (event.type === 'delivery-attention-changed') {
+      notifications.invalidate();
+      refreshAttentionReader(event.id);
+      return;
+    }
+    if (event.delivery) notifications.invalidate();
 
     mailboxController.invalidate();
     metricsCache.clear();
@@ -1882,7 +1914,6 @@
     mailbox = merged.mailbox;
     mailboxPages = merged.mailboxPages;
     if (page.metrics) acceptMetrics(page.metrics, page.identityFilter ?? null);
-    runtimeOperationError = false;
     mailboxError = '';
     const currentMessages = merged.mailboxPages?.[page.folder]?.messages ?? [];
     if (activeSection === page.folder) {
@@ -1965,6 +1996,8 @@
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
         acceptMetrics(result.result.metrics, metricsScope);
       }
+      const affectsAttention = action === 'trash' && result.result.summaries.some((message) => message.folder === 'sent');
+      if (affectsAttention) notifications.invalidate();
       if (action === 'trash') {
         trashController.invalidate();
         trashLoaded = false;
@@ -1980,7 +2013,7 @@
       selectedMessageIds = [];
       bulkThreadScope = 'selected';
       await refreshWorkspace(false);
-      workspaceSync?.publish({ type: 'mailbox-refresh' });
+      workspaceSync?.publish({ type: 'mailbox-refresh', ...(affectsAttention ? { delivery: true } : {}) });
       if (archiveAction && authGeneration !== workspaceAuthGeneration) return;
       toastController.dismissPassive();
       notify(
@@ -2257,7 +2290,6 @@
 
       profile = result.profile ?? profile;
       if (result.metrics) await acceptMutationMetrics(result.metrics, null);
-      runtimeOperationError = false;
       profileStatus = t('notify.profileSaved');
       notify(t('notify.profileUpdated'), 'success');
       return profile;
@@ -2441,8 +2473,10 @@
       resetComposeState();
       if (deliveryTone === 'success') sendAnnouncement = deliveryMessage;
       else notify(deliveryMessage, deliveryTone, { persistent: true });
-      workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
+      notifications.invalidate();
+      workspaceSync?.publish({ type: 'message-updated', id: result.message.id, delivery: true });
     } catch (error) {
+      notifications.invalidate();
       notifyError(error, t('notify.sendFailed'));
     } finally {
       pending = false;
@@ -2478,8 +2512,10 @@
                 : t('notify.retryFailed', { subject: result.message.subject, error: result.message.deliveryError ?? t('notify.tryLater') });
       const deliveryTone: ToastTone = result.message.deliveryResultKind === 'accepted' ? 'success' : 'warning';
       notify(deliveryMessage, deliveryTone, { persistent: deliveryTone === 'warning' });
-      workspaceSync?.publish({ type: 'message-updated', id: result.message.id });
+      notifications.invalidate();
+      workspaceSync?.publish({ type: 'message-updated', id: result.message.id, delivery: true });
     } catch (error) {
+      notifications.invalidate();
       notifyError(error, t('notify.retryDeliveryFailed'));
     } finally {
       pending = false;
@@ -2492,6 +2528,10 @@
 
   function acceptMetrics(value: WorkspaceMetrics, identity: MailboxIdentityFilter | null) {
     metricsCache.set(identityKey(identity), { value, updatedAt: Date.now() });
+    if (!identity) {
+      ownerMetricsRequest.cancel();
+      ownerMetrics = value;
+    }
     if (sameIdentityScope(identity, mailIdentityFilter)) {
       metrics = value;
       metricsIdentity = identity;
@@ -2515,6 +2555,22 @@
     try {
       const result = await fetchMailboxMetrics(identity, request.signal);
       if (request.isCurrent()) acceptMetrics(result.metrics, result.metricsScope.identityFilter);
+    } catch (error) {
+      if (request.isCurrent()) notifyError(error, t('mail.listError'));
+    }
+  }
+
+  async function refreshOwnerMetrics(force = false) {
+    const cached = metricsCache.get('owner');
+    if (!force && cached && Date.now() - cached.updatedAt < 30_000) {
+      ownerMetrics = cached.value;
+      return;
+    }
+    if (!authenticated || authExpired) return;
+    const request = ownerMetricsRequest.begin();
+    try {
+      const result = await fetchMailboxMetrics(null, request.signal);
+      if (request.isCurrent() && result.metricsScope.identityFilter === null) acceptMetrics(result.metrics, null);
     } catch (error) {
       if (request.isCurrent()) notifyError(error, t('mail.listError'));
     }
@@ -2790,7 +2846,6 @@
       mailbox = removed.snapshot.mailbox;
       mailboxPages = removed.snapshot.mailboxPages;
       metrics = removed.snapshot.metrics;
-      runtimeOperationError = false;
       trashController.invalidate();
       trashLoaded = false;
       if (readingLayout === 'list' && selectedMessageId === message.id) closeMobileDetail();
@@ -2803,7 +2858,8 @@
       if (composeInitialInput?.draftId === message.id) {
         resetComposeState();
       }
-      workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId });
+      if (result.folder === 'sent') notifications.invalidate();
+      workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId, ...(result.folder === 'sent' ? { delivery: true } : {}) });
 
       notify(
         t('notify.movedTrash'),
@@ -2817,7 +2873,9 @@
               await acceptMutationMetrics(restored.metrics, null);
               trashController.invalidate();
               trashLoaded = false;
-              workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId });
+              if (restored.originalFolder === 'sent') notifications.invalidate();
+              workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId,
+                ...(restored.originalFolder === 'sent' ? { delivery: true } : {}) });
               if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace(false);
               notify(t('notify.trashUndone'), 'success');
             }
@@ -2845,10 +2903,11 @@
     try {
       const result = await restoreTrashItem(message.id);
       await acceptMutationMetrics(result.metrics, null);
-      runtimeOperationError = false;
       removeTrashItemFromView(message.id);
       await trashController.refresh();
-      workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id });
+      if (result.originalFolder === 'sent') notifications.invalidate();
+      workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id,
+        ...(result.originalFolder === 'sent' ? { delivery: true } : {}) });
       notify(t('notify.restoredTo', { folder: result.originalFolder === 'archive' ? t('shell.archive') : result.originalFolder === 'sent' ? t('shell.sent') : result.originalFolder === 'drafts' ? t('shell.drafts') : t('shell.inbox') }), 'success');
     } catch (error) {
       notifyError(error, t('notify.restoreFailed'));
@@ -2862,7 +2921,6 @@
     try {
       const result = await permanentlyDeleteTrashItem(message.id);
       await acceptMutationMetrics(result.metrics, null);
-      runtimeOperationError = false;
       removeTrashItemFromView(message.id);
       await trashController.refresh();
       inboundDetailCache.invalidate(message.id);
@@ -2886,7 +2944,6 @@
     try {
       const result = await emptyTrash();
       await acceptMutationMetrics(result.metrics, null);
-      runtimeOperationError = false;
       for (const item of trashItems) {
         inboundDetailCache.invalidate(item.id);
         deliveryDetailCache.invalidate(item.id);
@@ -3008,7 +3065,42 @@
     );
   }
 
+  function goFromNotifications(updates: Parameters<typeof updateWorkspaceUrl>[0]) {
+    const navigate = () => { void updateWorkspaceUrl(updates); };
+    if (managementNavigationGuard && activeSection === 'profile' && managementView !== 'settings') {
+      managementNavigationGuard(navigate);
+      return;
+    }
+    navigate();
+  }
+
+  function refreshAttentionReader(id?: string) {
+    const current = selectedMessage;
+    if (id) deliveryDetailCache.invalidate(id);
+    else deliveryDetailCache.reset();
+    if (current?.folder === 'sent' && (!id || id === current.id)) void loadDeliveryDetail(current, true);
+    if (activeSection === 'sent' && mailFilter === 'attention') {
+      // A notification mutation can remove the current row from this server-backed filter.
+      if (current && urlMessageId === current.id) deepLinkedMessage = current;
+      mailboxController.invalidate();
+      void mailboxController.refresh('sent', searchQuery, mailFilter, mailIdentityFilter);
+    }
+  }
+
+  async function handleAttentionAction(action: DeliveryAttentionAction, id?: string) {
+    const succeeded = await notifications.act(action);
+    if (succeeded) {
+      refreshAttentionReader(id);
+      workspaceSync?.publish({ type: 'delivery-attention-changed', ...(id ? { id } : {}) });
+    } else if (notifications.actionError) {
+      if (notifications.actionError === 'changed') refreshAttentionReader(id);
+      if (!notifications.open) notify(t(notifications.actionError === 'changed' ? 'attention.changed' : 'attention.actionFailed'), 'error');
+    }
+    return succeeded;
+  }
+
   async function handleReloadDeliveryDetail(message: MailMessage) {
+    notifications.invalidate();
     const ok = await loadDeliveryDetail(message, true);
     notify(
       ok ? t('notify.deliveryReloaded', { subject: message.subject }) : t('notify.deliveryReloadFailed'),
@@ -3167,11 +3259,15 @@
       }
     };
 
+    const refreshOnFocus = () => { void notifications.refresh(); void notifications.checkHealth(); };
+    window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('keydown', handleShortcut);
     const handleLocaleChange = () => toastController.reset();
     window.addEventListener(LOCALE_CHANGE_EVENT, handleLocaleChange);
     return () => {
       recordWorkspaceHistory = null;
+      window.removeEventListener('focus', refreshOnFocus);
+      notifications.reset();
       document.removeEventListener('keydown', handleShortcut);
       window.removeEventListener('popstate', syncBrowserWorkspaceUrl);
       window.removeEventListener('popstate', captureShallowPopstate, { capture: true });
@@ -3205,6 +3301,16 @@
   />
 </svelte:head>
 
+{#snippet notificationMenu(onOpenChange: (open: boolean) => void)}
+  <DeliveryNotificationsMenu
+    {notifications}
+    onAct={handleAttentionAction}
+    onViewMessage={(messageId) => goFromNotifications({ section: 'sent', query: '', filter: 'all', identityFilter: null, messageId })}
+    onOpenDiagnostics={() => goFromNotifications({ section: 'profile', managementView: 'settings', settingsTab: 'diagnostics' })}
+    onOpenChange={(open) => { notifications.setOpen(open); onOpenChange(open); }}
+  />
+{/snippet}
+
 <div class="fm-app-shell" data-density={density} style={`--fm-sidebar-width: ${sidebarCollapsed ? '64px' : '232px'}`}>
   {#if data.runtimeState.state === 'unavailable'}
     <RuntimeUnavailableView state={data.runtimeState} />
@@ -3230,18 +3336,10 @@
         />
       {/if}
       <AppTopbar
-        bouncedCount={metrics.bouncedCount}
-        complainedCount={metrics.complainedCount}
-        delayedCount={metrics.delayedCount}
-        draftCount={metrics.draftsCount}
-        failedCount={metrics.failedCount}
-        {pending}
         {profile}
-        queuedCount={metrics.queuedCount}
-        {runtimeLabel}
-        {serviceDegraded}
-        staleDeliveryCount={metrics.staleDeliveryCount}
-        unreadCount={unreadCount}
+        {pending}
+        notificationMenu={mobileTopbar ? undefined : notificationMenu}
+        onCloseNotifications={() => notifications.setOpen(false)}
         searchQuery={searchQuery}
         {density}
         onOpenAbout={openAbout}
@@ -3252,6 +3350,8 @@
 
       <div class:mobile-detail-nav-hidden={mobileDetailOpen}>
         <MobileNavigation
+          notificationMenu={mobileTopbar ? notificationMenu : undefined}
+          onCloseNotifications={() => notifications.setOpen(false)}
           {profile}
           activeSection={activeSection}
           {managementView}
@@ -3298,10 +3398,16 @@
                   <ProfilePane
                     tab={urlState.settingsTab}
                     onTabChange={(settingsTab) => updateWorkspaceUrl({ settingsTab })}
-                    {metrics}
+                    metrics={ownerMetrics}
                     {pending}
                     {profile}
-                    {serviceDegraded}
+                    systemHealth={notifications.health}
+                    pendingAttentionCount={notifications.summary?.pendingCount ?? null}
+                    onRefreshHealth={() => {
+                      notifications.invalidate();
+                      void notifications.checkHealth(true);
+                      void refreshOwnerMetrics(true);
+                    }}
                     {authExpired}
                     diagnostics={data.runtimeDiagnostics ? {
                       ...data.runtimeDiagnostics,
@@ -3409,7 +3515,7 @@
                     title={activeSection === 'label' ? userLabels.find((label) => label.id === activeLabelId)?.name : undefined}
                     {readingLayout}
                     onToggleReadingLayout={toggleReadingLayout}
-                    count={(searchQuery.trim() || (activeSection === 'inbox' && inboxCategory !== 'all')) && activeSection !== 'trash'
+                    count={(searchQuery.trim() || mailFilter === 'attention' || (activeSection === 'inbox' && inboxCategory !== 'all')) && activeSection !== 'trash'
                       ? mailboxPages?.[activeSection]?.searchTotal ?? 0
                       : activeSection === 'inbox' ? metrics.inboxCount
                         : activeSection === 'archive' ? metrics.archiveCount
@@ -3605,6 +3711,8 @@
                     onReportHtmlIssue={handleReportHtmlIssue}
                     onReloadDeliveryDetail={handleReloadDeliveryDetail}
                     onRetryDelivery={retryMessageDelivery}
+                    attentionPending={Boolean(notifications.mutation)}
+                    onAttentionAction={handleAttentionAction}
                     onReloadInboundDetail={handleReloadInboundDetail}
                     onArchive={activeSection !== 'trash' ? handleRowArchive : undefined}
                     onRemove={handleDeleteMessage}
@@ -3659,6 +3767,8 @@
           onReportHtmlIssue={handleReportHtmlIssue}
           onReloadDeliveryDetail={handleReloadDeliveryDetail}
           onRetryDelivery={retryMessageDelivery}
+          attentionPending={Boolean(notifications.mutation)}
+          onAttentionAction={handleAttentionAction}
           onReloadInboundDetail={handleReloadInboundDetail}
           onArchive={activeSection !== 'trash' ? handleRowArchive : undefined}
           onRemove={handleDeleteMessage}

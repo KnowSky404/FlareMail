@@ -10,6 +10,8 @@ import {
 import { isClientAuthExpired, markClientAuthExpired } from './auth-session';
 import type {
   ComposeInput,
+  DeliveryAttentionAction,
+  DeliveryAttentionSummary,
   DeliveryDetail,
   InboundMessageDetail,
   LoginInput,
@@ -205,6 +207,12 @@ export function fetchDeliveryDetail(messageId: string, signal?: AbortSignal) {
     `/api/workspace/messages/${encodeURIComponent(messageId)}/delivery`,
     { signal }
   );
+}
+
+export function mutateDeliveryAttention(action: DeliveryAttentionAction, signal?: AbortSignal) {
+  return requestJson<{ changed: number; summary: DeliveryAttentionSummary }>('/api/workspace/attention', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(action), signal
+  });
 }
 
 export function fetchMessageBody(messageId: string, signal?: AbortSignal) {

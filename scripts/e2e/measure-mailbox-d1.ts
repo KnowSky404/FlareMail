@@ -58,7 +58,7 @@ async function writeFixtures(runId: string, statements: RawQuery[]) {
 async function seed(size: number) {
   const runId = await requirePerformanceWorker(origin);
   await writeFixtures(runId, [
-    ...['workspace_messages', 'workspace_drafts', 'workspace_email_states', 'mail_labels'].map((table) =>
+    ...['workspace_delivery_statuses', 'workspace_messages', 'workspace_drafts', 'workspace_email_states', 'mail_labels'].map((table) =>
       ({ sql: `DELETE FROM ${table} WHERE ${table === 'mail_labels' ? 'owner_user_id' : 'user_id'} = ?`, params: [owner] })),
     { sql: 'DELETE FROM email_messages WHERE owner_user_id = ?', params: [owner] },
     { sql: 'INSERT INTO mail_labels (id, owner_user_id, name, name_key, created_at, updated_at) SELECT ?, ?, ?, ?, ?, ? WHERE 1',
@@ -80,6 +80,13 @@ async function seed(size: number) {
           'perf-w-'||i, i%4=3, i%11=0, CASE WHEN i%10=1 AND i%3<>0 THEN ${sentAt} END,
           CASE WHEN i%19=0 THEN ${sentAt} END, CASE WHEN i%3=0 THEN ${address} END, CASE WHEN i%3<>0 THEN ${address} END
         FROM n WHERE i%2=1` },
+      { sql: `${numbers}
+        INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, last_event_at)
+        SELECT 'perf-w-'||i, '${owner}', CASE ((i-3)/6)%8
+          WHEN 0 THEN 'bounced' WHEN 1 THEN 'failed' WHEN 2 THEN 'delayed' WHEN 3 THEN 'suppressed'
+          WHEN 4 THEN 'complained' WHEN 5 THEN 'submitting' WHEN 6 THEN 'sent' ELSE 'delivered' END,
+          1, ${sentAt}
+        FROM n WHERE i%6=3` },
       { sql: `${numbers}
         INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, snippet, raw_key, "timestamp", mail_address_id, mail_domain_id, recipient_status)
         SELECT 'perf-i-'||i, '${owner}', 'sender@fixture.test', 'recipient@fixture.test',
@@ -129,6 +136,7 @@ function sqlPhase(sql: string | null) {
   if (sql.includes('workspace_sessions AS s')) return 'auth.session';
   if (sql.includes('FROM workspace_owner')) return 'auth.owner';
   if (sql.includes('message_counts AS')) return 'metrics';
+  if (sql.includes('workspace_delivery_attention')) return 'attention';
   if (sql.includes('MATCH')) return 'search';
   if (sql.includes('mail_message_labels')) return 'label';
   return 'other';
@@ -171,7 +179,11 @@ async function sampleEndpoint(path: string, method = 'GET', data?: object) {
 
 async function explain(statements: string[]) {
   const result: { phase: string; plan: unknown }[] = [];
-  for (const sql of new Set(statements)) {
+  // D1 reports the list and its summary as a single newline-separated batch span.
+  const queries = statements.flatMap((sql) => sql.includes('workspace_delivery_attention')
+    ? sql.split(/\n(?=SELECT COUNT\(\*\) AS pendingCount)/u)
+    : [sql]);
+  for (const sql of new Set(queries)) {
     if (!/^\s*(SELECT|WITH)\b/iu.test(sql)) continue;
     try {
       const query = await d1({ sql: 'EXPLAIN QUERY PLAN ' + sql,
@@ -192,6 +204,11 @@ try {
   });
   if (!login.ok()) throw new Error('Synthetic local E2E login failed.');
   const reports = [];
+  const attention = '/api/workspace/attention';
+  const support = await client.get(attention + '/summary');
+  const supportsAttention = support.ok();
+  if (!supportsAttention && support.status() !== 404) throw new Error('Cannot check delivery attention benchmark support.');
+  await support.dispose();
   for (const size of [0, 100, 1_000, 10_000]) {
     await seed(size);
     const mailbox = '/api/workspace/mailbox?limit=40&folder=';
@@ -207,7 +224,12 @@ try {
       identity: mailbox + 'inbox&identity=address:' + addresses[1],
       domain: mailbox + 'inbox&identity=domain:00000000-0000-4000-8000-000000000011',
       search: mailbox + 'inbox&q=subject:Performance',
-      category: mailbox + 'inbox&category=primary'
+      category: mailbox + 'inbox&category=primary',
+      ...(supportsAttention ? {
+        attentionSummary: attention + '/summary',
+        attentionPending: attention + '?limit=20',
+        sentAttention: mailbox + 'sent&filter=attention'
+      } : {})
     };
     const measurements = [];
     for (const [operation, path] of Object.entries(endpoints)) {
@@ -232,6 +254,23 @@ try {
         flags.push((await sampleEndpoint(detail + '/flags', 'PATCH', { starred: index % 2 === 0 })).measurement);
       }
       measurements.push({ operation: 'detail', samples: values }, { operation: 'flags', samples: flags });
+    }
+    if (supportsAttention) {
+      const current = await sampleEndpoint(attention + '/summary');
+      const { pendingCount, snapshot } = current.result.data;
+      if (pendingCount) {
+        const confirmed = await sampleEndpoint(attention, 'POST', { action: 'acknowledge_all', snapshot });
+        if (confirmed.result.data.changed !== pendingCount || confirmed.result.data.summary.pendingCount !== 0) {
+          throw new Error('Bulk acknowledgement did not settle the benchmark snapshot.');
+        }
+        measurements.push({ operation: 'attentionAll', samples: [confirmed.measurement], plans: await explain(confirmed.sql) });
+      }
+      const history = await sampleEndpoint(attention + '?view=history&limit=20');
+      measurements.push({ operation: 'attentionHistory', first: history.measurement, samples: [history.measurement], plans: await explain(history.sql) });
+      if (history.result.data.nextCursor) {
+        const next = await sampleEndpoint(attention + '?view=history&limit=20&cursor=' + history.result.data.nextCursor);
+        measurements.push({ operation: 'attentionHistoryPageTwo', samples: [next.measurement], plans: await explain(next.sql) });
+      }
     }
     reports.push({ size, measurements });
   }

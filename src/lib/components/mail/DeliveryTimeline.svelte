@@ -1,8 +1,9 @@
 <script lang="ts">
   import { Check, CircleAlert, CircleCheck, Clock3, Eye, ExternalLink, MousePointerClick, RefreshCw, Send, TriangleAlert } from '@lucide/svelte';
   import { getDeliveryRetryEligibility } from '$lib/domain/mail';
-  import type { DeliveryDetail, DeliveryEvent, DeliveryEventType, DeliveryStatus, MailMessage } from '$lib/domain/mail';
-  import { StatusBadge } from '$lib/components/ui';
+  import type { DeliveryAttentionAction, DeliveryDetail, DeliveryEvent, DeliveryEventType, DeliveryStatus, MailMessage } from '$lib/domain/mail';
+  import { attentionKindLabel, attentionStateLabel } from '$lib/client/delivery-attention-labels';
+  import { Button, StatusBadge } from '$lib/components/ui';
   import { translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
@@ -12,6 +13,8 @@
     loading = false,
     error = '',
     pending = false,
+    attentionPending = false,
+    onAttentionAction,
     onReload,
     onRetry
   }: {
@@ -20,6 +23,8 @@
     loading?: boolean;
     error?: string;
     pending?: boolean;
+    attentionPending?: boolean;
+    onAttentionAction?: (action: DeliveryAttentionAction, messageId: string) => Promise<boolean>;
     onReload?: (message: MailMessage) => void | Promise<void>;
     onRetry?: (message: MailMessage) => void | Promise<void>;
   } = $props();
@@ -89,16 +94,16 @@
   };
 
   const currentStatus = $derived<DeliveryStatus | null>(
-    message?.folder === 'sent' ? (message.deliveryStatus ?? (deliveryDetail?.resultKind === 'accepted' ? 'submitted' : null)) : null
+    message?.folder === 'sent' ? (deliveryDetail?.status ?? message.deliveryStatus ?? (deliveryDetail?.resultKind === 'accepted' ? 'submitted' : null)) : null
   );
   const sortedEvents = $derived(
     [...(deliveryDetail?.events ?? [])].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   );
   const retryEligibility = $derived(
-    message?.folder === 'sent' && message.deliveryStatus
+    message?.folder === 'sent' && currentStatus
       ? getDeliveryRetryEligibility({
-        status: message.deliveryStatus,
-        resultKind: message.deliveryResultKind,
+        status: currentStatus,
+        resultKind: deliveryDetail?.resultKind ?? message.deliveryResultKind,
         idempotencyKey: message.deliveryIdempotencyKey,
         attemptStartedAt: message.deliveryAttemptStartedAt
       })
@@ -129,6 +134,17 @@
         {#if retryable && onRetry}<button class="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 text-xs font-semibold text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={() => onRetry?.(message)} disabled={pending}>{t('mail.retryDelivery')}</button>{/if}
       </div>
     </div>
+    {#if deliveryDetail?.attention}
+      {@const incident = deliveryDetail.attention}
+      <div class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 py-1">
+        <p class="text-xs text-[var(--fm-text-secondary)]" role="status">{t(attentionKindLabel[incident.kind])} · {t(attentionStateLabel[incident.state])}</p>
+        {#if onAttentionAction && (incident.state === 'open' || incident.state === 'acknowledged')}
+          <Button variant="ghost" size="sm" disabled={pending || attentionPending || loading} onclick={() => onAttentionAction?.({
+            action: incident.state === 'open' ? 'acknowledge' : 'reopen', incident: { id: incident.id, version: incident.version }
+          }, incident.messageId)}>{t(incident.state === 'open' ? 'attention.acknowledge' : 'attention.reopen')}</Button>
+        {/if}
+      </div>
+    {/if}
     {#if error}
       <p class="mt-3 flex items-start gap-2 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert"><TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{error}</p>
     {:else if loading && sortedEvents.length === 0}

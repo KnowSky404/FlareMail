@@ -60,7 +60,7 @@ export function readWorkspaceUrl(url: URL): WorkspaceUrlState {
     managementDomainId: section === 'profile' && view === 'addresses' && validManagementResourceId(managementDomainId)
       ? managementDomainId : null,
     query: section === 'trash' || section === 'profile' ? '' : limitWorkspaceSearchQuery(url.searchParams.get('q') ?? '').trimEnd(),
-    filter: section !== 'trash' && section !== 'profile' && (filter === 'unread' || filter === 'starred') ? filter : 'all',
+    filter: section !== 'trash' && section !== 'profile' && (filter === 'unread' || filter === 'starred' || (section === 'sent' && filter === 'attention')) ? filter : 'all',
     category: section === 'inbox' && isInboxCategoryFilter(category) ? category : 'all',
     identityFilter: section !== 'trash' && section !== 'profile' && identityMatch ? { kind: identityMatch[1] as 'domain' | 'address', id: identityMatch[2] } : null,
     messageId: section === 'profile' ? null : url.searchParams.get('message'),

@@ -24,13 +24,11 @@ export async function verifyNavigationAttention(page: Page, consoleErrors: strin
   await showNavigation();
   const response = await page.request.get('/api/workspace/mailbox/metrics');
   const { data } = await response.json();
-  const expectedSending = data.metrics.queuedCount + data.metrics.delayedCount + data.metrics.failedCount
-    + data.metrics.bouncedCount + data.metrics.complainedCount;
-  for (const [label, count] of [['收件箱', data.metrics.unreadCount], ['草稿箱', data.metrics.draftsCount], ['已发送', expectedSending]] as const) {
+  for (const [label, count] of [['收件箱', data.metrics.unreadCount], ['草稿箱', data.metrics.draftsCount]] as const) {
     if (count) await expect(badge(label)).toHaveText(count > 99 ? '99+' : String(count));
     else await expect(badge(label)).toHaveCount(0);
   }
-  for (const label of ['星标邮件', '归档', '垃圾箱']) await expect(badge(label)).toHaveCount(0);
+  for (const label of ['已发送', '星标邮件', '归档', '垃圾箱']) await expect(badge(label)).toHaveCount(0);
   if (compact) await page.keyboard.press('Escape');
 
   const support = 'address:00000000-0000-4000-8000-000000000022';
@@ -59,9 +57,7 @@ export async function verifyNavigationAttention(page: Page, consoleErrors: strin
     await expect(badge('收件箱')).toHaveText('99+');
     await expect(badge('收件箱')).toHaveAttribute('title', '120 未读');
     await expect(badge('草稿箱')).toHaveText('99+');
-    await expect(badge('已发送')).toHaveText('7');
-    await expect(button('已发送')).toHaveAccessibleDescription('7 封发送中或需处理');
-    for (const label of ['星标邮件', '归档', '垃圾箱']) await expect(badge(label)).toHaveCount(0);
+    for (const label of ['已发送', '星标邮件', '归档', '垃圾箱']) await expect(badge(label)).toHaveCount(0);
     expect((await new AxeBuilder({ page }).include(compact ? '.mobile-nav-list' : '#fm-main-sidebar')
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([]);
     await assertNoHorizontalOverflow(page);

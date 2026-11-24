@@ -311,3 +311,13 @@ one hour of the Resend 24-hour idempotency expiry, and expired attempts that
 require review. A normal retry after expiry returns
 `DELIVERY_REVIEW_REQUIRED`; inspect Resend Dashboard, the inbox, and the
 delivery timeline before choosing any separately authorized resend workflow.
+
+
+## Delivery attention recovery
+
+Migration 0033 is additive, but the old Worker checks schema 32 exactly. A
+previous binary cannot be used as-is on 33. Keep attention history during code
+rollback with a tested compatible build. If a database restore is required,
+review all post-bookmark mail, session and attention writes and follow the
+existing isolated restore procedure before switching production. See the
+[schema 33 cutover checklist](PRODUCTION_CHECKLIST.md#schema-33-delivery-attention-upgrade).

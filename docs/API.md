@@ -91,16 +91,12 @@ scope. Invalid identity syntax returns 400; unknown/foreign identities return
 these metrics. `inboxCount` counts non-deleted, non-archived received messages;
 `unreadCount` counts their unread subset. Inbox navigation badges use the latter.
 
-Navigation badges represent attention rather than folder totals: Inbox uses
-`unreadCount`; Drafts uses `draftsCount`; Sent adds `queuedCount`, `delayedCount`,
-`failedCount`, `bouncedCount`, and `complainedCount`. `queuedCount` includes
-queued/submitting and `failedCount` includes failed/suppressed. The submitting
-subset `staleDeliveryCount` is not added again. Delivery metrics count only
-existing, non-deleted sent messages owned by the current Owner within the chosen
-identity; deleted messages and orphaned delivery rows are excluded. Sent/delivered
-mail does not contribute. Starred, Archive, and Trash have no navigation badges.
-`inboxCount`, `sentCount`, `starredCount`, `archiveCount`, and `trashCount` retain
-their total-count meanings for lists and API consumers.
+Navigation shows only Inbox `unreadCount` and Drafts `draftsCount` in the current
+identity scope. Sent retains its delivery labels and folder total. Raw delivery
+metrics count current delivery facts for existing, non-deleted sent messages in
+the requested scope. `queuedCount` includes queued/submitting and
+`failedCount` includes failed/suppressed. `staleDeliveryCount` is a subset of
+submitting. Settings loads global counts using the Owner scope.
 
 `PATCH /api/workspace/messages/:id/flags` accepts one or both boolean fields
 `read` and `starred`. The optional `identity` query parameter selects response
@@ -721,6 +717,37 @@ Search pages keep the normal opaque timestamp/id cursor. The first page also
 returns `searchTotal` and `searchHitFields`; each result can include a bounded
 `searchSnippet` whose private-use delimiters are rendered as text highlights,
 never as HTML. BCC, raw MIME, attachment bytes and secrets are not searchable.
+
+## Delivery attention
+
+- `GET /api/workspace/attention/summary` returns `{ pendingCount, snapshot: { version, asOf } }`.
+- `GET /api/workspace/attention?view=pending|history&kind=<kind>&limit=20&cursor=<opaque>`
+  returns `{ notices, nextCursor, summary }`. Pending is the default. The page
+  limit is 1–50. The cursor is bound to the Owner, view and type. Each notice has
+  `id`, `version`, `messageId`, `kind`, `state`, `occurredAt`,
+  `acknowledgedAt`, `closedAt`, a bounded `subject` and `sender`.
+- Kinds are `delayed`, `failed`, `bounced`, `complained`, `suppressed` and
+  `stale_submitting`. States are `open`, `acknowledged`, `resolved` and
+  `superseded`. The inbox identity filter does not narrow these endpoints.
+- `POST /api/workspace/attention` accepts
+  `{ action: "acknowledge" | "reopen", incident: { id, version } }` or
+  `{ action: "acknowledge_all", snapshot: { version, asOf } }`. Submit the
+  server-returned snapshot for the pending collection the Owner confirmed.
+  The result is `{ changed, summary }`. Repeating the same valid confirmation
+  changes zero rows. A missing/foreign/trashed issue returns 404. A changed,
+  inactive or already closed incident returns 409 if the action no longer applies.
+- `GET /api/workspace/mailbox?folder=sent&filter=attention` returns messages with a
+  pending issue in the requested identity/search scope. Cursor and filtered total
+  use the same scope. `GET /api/workspace/messages/:id/delivery` includes the
+  current delivery status and its active attention record, when present.
+- `GET /api/readiness?scope=system` is an authenticated readiness summary. It
+  verifies D1 and probes R2 by reading metadata. It omits cleanup and domain
+  reports. It does not call provider APIs.
+
+All attention operations enforce session and Owner scope; writes use the usual
+same-origin CSRF rules. Status changes record attention independently of the
+provider timeline, send retries and workspace flags. See the [lifecycle
+contract](specs/delivery-attention-lifecycle.md).
 
 ## Delivery retry
 

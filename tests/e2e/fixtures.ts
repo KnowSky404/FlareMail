@@ -102,3 +102,10 @@ export async function openFolder(page: Page, folder: '收件箱' | '星标邮件
   await expect(mobileFolder).toBeHidden();
   await expect(page).toHaveURL(new RegExp(`folder=${folderValue}`, 'u'));
 }
+
+export async function signResendWebhook(id: string, timestamp: number, body: string) {
+  const secret = new TextEncoder().encode('FlareMail E2E webhook secret 2026');
+  const key = await crypto.subtle.importKey('raw', secret, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}.${timestamp}.${body}`));
+  return Buffer.from(digest).toString('base64');
+}

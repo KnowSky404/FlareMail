@@ -65,7 +65,7 @@
     { id: 'inbox', label: t('shell.inbox'), count: counts.inbox, icon: Inbox },
     { id: 'starred', label: t('shell.starred'), icon: Star },
     { id: 'drafts', label: t('shell.drafts'), count: counts.drafts, icon: FileText },
-    { id: 'sent', label: t('shell.sent'), count: counts.sent, icon: Send },
+    { id: 'sent', label: t('shell.sent'), icon: Send },
     { id: 'archive', label: t('shell.archive'), icon: Archive },
     { id: 'trash', label: t('shell.trash'), icon: Trash2 },
     { id: 'domains', label: t('shell.domains'), icon: Globe2 },

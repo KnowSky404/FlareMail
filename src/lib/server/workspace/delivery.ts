@@ -1,7 +1,7 @@
 import { getDeliveryRetryEligibility, type DeliveryRetryEligibilityCode } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { normalizeResendWebhookEvent, type NormalizedResendWebhookEvent } from '$lib/server/resend-webhook';
-import { getWorkspaceCapabilities, hasWorkspaceCoreTables } from '$lib/server/db/capabilities';
+import { getWorkspaceCapabilities } from '$lib/server/db/capabilities';
 import {
   assignOutboundEvent,
   findDeliveryDetailRows,
@@ -14,6 +14,7 @@ import {
   updateOutboundReceiptForCurrentEvent
 } from '$lib/server/db/deliveries';
 import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
+import { findCurrentDeliveryAttention } from '$lib/server/db/delivery-attention';
 import { findOwnedWorkspaceMessage } from '$lib/server/db/messages';
 
 export class DeliveryPersistenceError extends Error {
@@ -82,16 +83,20 @@ export function assertPersistedDeliveryRetryable(input: PersistedDeliveryRetryIn
 }
 
 export async function getWorkspaceMessageDeliveryDetail(env: CloudflareEnv | undefined, session: WorkspaceContext, messageId: string) {
-  if (session.storage !== 'd1' || !env?.DB || !(await hasWorkspaceCoreTables(env))) return null;
+  if (session.storage !== 'd1' || !env?.DB) return null;
+  const capabilities = await getWorkspaceCapabilities(env);
+  if (!capabilities.outboundStatuses) return null;
   const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
   const message = row ? mapWorkspaceMessageRow(row) : null;
   if (!message || message.folder !== 'sent' || message.source !== 'workspace') return null;
-  const capabilities = await getWorkspaceCapabilities(env);
-  const { receipt, events: eventRows } = await findDeliveryDetailRows(env!.DB, session.userId, messageId, capabilities);
+  const [{ receipt, status, events: eventRows }, attention] = await Promise.all([
+    findDeliveryDetailRows(env.DB, session.userId, messageId, capabilities),
+    findCurrentDeliveryAttention(env.DB, session.userId, messageId)
+  ]);
   const events = eventRows.map(mapEventRowToDeliveryEvent);
-  if (!receipt && !events.length) return null;
+  if (!receipt && !events.length && !attention && !status) return null;
   if (!events.length && receipt) events.push({ id: `local:${messageId}:${receipt.last_event ?? 'submission'}`, type: receipt.last_event ?? 'submission', createdAt: receipt.last_event_at ?? nowIso(), summary: receipt.response_preview || '这封邮件已经写入当前工作台的出站投递记录。', payloadPreview: JSON.stringify({ provider: receipt.provider, resultKind: receipt.result_kind, remoteStatus: receipt.remote_status }) });
-  return { messageId, provider: receipt?.provider ?? null, resultKind: receipt?.result_kind ?? null, lastEvent: receipt?.last_event ?? events[0]?.type ?? null, lastEventAt: receipt?.last_event_at ?? events[0]?.createdAt ?? null, events } satisfies DeliveryDetail;
+  return { messageId, provider: receipt?.provider ?? null, resultKind: receipt?.result_kind ?? null, lastEvent: receipt?.last_event ?? events[0]?.type ?? null, lastEventAt: receipt?.last_event_at ?? events[0]?.createdAt ?? null, events, status, attention } satisfies DeliveryDetail;
 }
 
 export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined, svixId: string, payload: unknown) {

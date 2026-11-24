@@ -104,6 +104,37 @@ describe('versioned D1 migrations', () => {
     }
   });
 
+  test('backfills current historical issues without changing delivery facts or importing orphan and other-folder states', () => {
+    const db = createDatabase();
+    db.exec('PRAGMA foreign_keys = ON');
+    applyMigrationsThrough(db, '0032_ai_automatic_classification.sql');
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at, deleted_at)
+        VALUES ('old', 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01', NULL),
+          ('trashed', 'owner', 'sent', '', '', '', '', '2026-01-01', '2026-01-02'),
+          ('received', 'owner', 'inbox', '', '', '', '', '2026-01-01', NULL);
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status) VALUES
+        ('old', 'owner', 'bounced'), ('trashed', 'owner', 'failed'),
+        ('received', 'owner', 'complained'), ('orphan', 'owner', 'suppressed');
+    `);
+    applyMigrations(db);
+    expect(db.query('SELECT message_id, kind, state FROM workspace_delivery_attention ORDER BY message_id').all()).toEqual([
+      { message_id: 'old', kind: 'bounced', state: 'open' },
+      { message_id: 'trashed', kind: 'failed', state: 'open' }
+    ]);
+    expect(db.query('SELECT status FROM workspace_delivery_statuses ORDER BY message_id').all()).toEqual([
+      { status: 'bounced' }, { status: 'suppressed' }, { status: 'complained' }, { status: 'failed' }
+    ]);
+    const latest = createDatabase();
+    latest.exec(readFileSync(latestSchema, 'utf8'));
+    const attentionSql = (db: Database) => db.query(`
+      SELECT sql FROM sqlite_master WHERE name LIKE 'workspace_delivery_attention%' ORDER BY name
+    `).all();
+    expect(attentionSql(latest)).toEqual(attentionSql(db));
+    db.close();
+    latest.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);
@@ -140,7 +171,8 @@ describe('versioned D1 migrations', () => {
       '0029_blocked_senders.sql',
       '0030_mail_ai_analyses.sql',
       '0031_telegram_ai_summary.sql',
-      '0032_ai_automatic_classification.sql'
+      '0032_ai_automatic_classification.sql',
+      '0033_delivery_attention.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -275,7 +307,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 32 }
+      { schema_name: 'flaremail', schema_version: 33 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())

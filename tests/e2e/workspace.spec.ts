@@ -1,4 +1,4 @@
-import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, selectSettings, test } from './fixtures';
+import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, selectSettings, test, signResendWebhook } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,7 +22,6 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-const webhookSecretBytes = new TextEncoder().encode('FlareMail E2E webhook secret 2026');
 
 test('shows icon guidance on pointer and keyboard focus', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop toolbar exposes the icon-first refresh control.');
@@ -47,9 +46,9 @@ test('shows icon guidance on pointer and keyboard focus', async ({ page, console
   await page.keyboard.press('Escape');
   await expect(guidance).toBeHidden();
   await expect(refresh).toBeFocused();
-  const serviceStatus = page.locator('summary[aria-label="查看工作区服务状态"]');
+  const serviceStatus = page.getByRole('button', { name: /^通知/u });
   await serviceStatus.hover();
-  const statusGuidance = page.getByRole('tooltip', { name: /全局状态/u });
+  const statusGuidance = page.getByRole('tooltip', { name: /^通知/u });
   await expect(statusGuidance).toBeVisible();
   await expect(serviceStatus).toHaveAttribute('aria-describedby', await statusGuidance.getAttribute('id') ?? '');
   const statusGuidanceBounds = await statusGuidance.boundingBox();
@@ -63,7 +62,7 @@ test('shows icon guidance on pointer and keyboard focus', async ({ page, console
   await page.setViewportSize({ width: 1280, height: 900 });
   await serviceStatus.click();
   await expect(statusGuidance).toBeHidden();
-  await expect(page.locator('#service-status-content')).toBeVisible();
+  await expect(page.locator('#delivery-notifications-content')).toBeVisible();
   await page.keyboard.press('Escape');
   const preferences = page.getByRole('button', { name: '显示偏好' });
   await preferences.focus();
@@ -673,12 +672,6 @@ test('shows a server-paginated global Starred view across inbox and sent', async
   });
   expect(cleanup).toBe(true);
 });
-
-async function signWebhook(id: string, timestamp: number, body: string) {
-  const key = await crypto.subtle.importKey('raw', webhookSecretBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}.${timestamp}.${body}`));
-  return Buffer.from(digest).toString('base64');
-}
 
 type DraftSnapshot = { id: string; subject: string; body: string; sentAt: string };
 
@@ -1697,7 +1690,7 @@ test('uses global service metrics and exposes typed API errors with a request ID
   await login(page);
 
   const serviceStatus = page.locator('details.status-menu');
-  const serviceSummary = page.locator('summary[aria-label="查看工作区服务状态"]');
+  const serviceSummary = page.getByRole('button', { name: /^通知/u });
   await expect(serviceSummary).toBeVisible();
   await serviceSummary.click();
   await expect(serviceStatus).toContainText('指标覆盖整个工作区');
@@ -2413,7 +2406,7 @@ test('sends through the local fake provider and applies a signed delivered webho
       'content-type': 'application/json',
       'svix-id': svixId,
       'svix-timestamp': String(timestamp),
-      'svix-signature': `v1,${await signWebhook(svixId, timestamp, body)}`
+      'svix-signature': `v1,${await signResendWebhook(svixId, timestamp, body)}`
     }
   });
   expect(webhook.ok(), await webhook.text()).toBe(true);
@@ -2651,12 +2644,12 @@ test('keeps topbar icons compact and persists clicked language preferences', asy
   await login(page);
   for (const width of [1280, 1024, 901]) {
     await page.setViewportSize({ width, height: 900 });
-    const status = page.locator('summary[aria-label="查看工作区服务状态"]');
+    const status = page.getByRole('button', { name: /^通知/u });
     const bounds = await status.boundingBox();
     expect(bounds?.width).toBe(40);
     expect(bounds?.height).toBe(40);
     await status.click();
-    await expect(page.locator('#service-status-content')).toBeVisible();
+    await expect(page.locator('#delivery-notifications-content')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(status).toBeFocused();
     await page.getByRole('button', { name: '显示偏好' }).click();

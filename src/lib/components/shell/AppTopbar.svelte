@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import Monitor from '@lucide/svelte/icons/monitor';
   import Moon from '@lucide/svelte/icons/moon';
   import Rows3 from '@lucide/svelte/icons/rows-3';
@@ -11,23 +11,14 @@
   import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
   import BrandMark from './BrandMark.svelte';
   import AccountMenu from './AccountMenu.svelte';
-  import ServiceStatusMenu from './ServiceStatusMenu.svelte';
   import LanguageSwitcher from './LanguageSwitcher.svelte';
   import MailSearchBar from '$lib/components/mail/MailSearchBar.svelte';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
   let {
     profile,
-    runtimeLabel,
-    unreadCount,
-    draftCount,
-    queuedCount,
-    delayedCount,
-    failedCount,
-    bouncedCount,
-    complainedCount,
-    staleDeliveryCount,
-    serviceDegraded,
+    notificationMenu,
+    onCloseNotifications,
     searchQuery = '',
     density = 'comfortable',
     pending = false,
@@ -37,16 +28,8 @@
     onToggleDensity
   }: {
     profile: UserProfile;
-    runtimeLabel: string;
-    unreadCount: number;
-    draftCount: number;
-    queuedCount: number;
-    delayedCount: number;
-    failedCount: number;
-    bouncedCount: number;
-    complainedCount: number;
-    staleDeliveryCount: number;
-    serviceDegraded: boolean;
+    notificationMenu?: Snippet<[onOpenChange: (open: boolean) => void]>;
+    onCloseNotifications: () => void;
     searchQuery?: string;
     density?: 'comfortable' | 'compact';
     pending?: boolean;
@@ -136,18 +119,9 @@
   </div>
 
   <div class="actions" aria-label={t('shell.topbarActions')}>
-    <ServiceStatusMenu
-      {draftCount}
-      {bouncedCount}
-      {complainedCount}
-      {delayedCount}
-      {failedCount}
-      {queuedCount}
-      {runtimeLabel}
-      {serviceDegraded}
-      {staleDeliveryCount}
-      {unreadCount}
-    />
+    {@render notificationMenu?.((open) => {
+      if (open) preferencesOpen = accountOpen = false;
+    })}
 
     <DropdownMenu
       id="display-preferences"
@@ -161,7 +135,10 @@
       initialFocusSelector='[role="radiogroup"] [role="radio"][aria-checked="true"]'
       onOpenChange={(open) => {
         preferencesOpen = open;
-        if (open) accountOpen = false;
+        if (open) {
+          accountOpen = false;
+          onCloseNotifications();
+        }
       }}
     >
       {#snippet trigger()}
@@ -209,7 +186,10 @@
 
     <AccountMenu {profile} {pending} open={accountOpen} {onOpenAbout} {onLogout} onOpenChange={(open) => {
       accountOpen = open;
-      if (open) preferencesOpen = false;
+      if (open) {
+        preferencesOpen = false;
+        onCloseNotifications();
+      }
     }} />
   </div>
 </header>

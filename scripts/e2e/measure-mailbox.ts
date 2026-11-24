@@ -124,8 +124,8 @@ function recordRequests(page: Page) {
   };
 }
 
-async function act(page: Page, name: string, control: Locator, ready: Target, feedback: Target[], options: { input?: string; keyboard?: boolean } = {}) {
-  const { input, keyboard } = options;
+async function act(page: Page, name: string, control: Locator, ready: Target, feedback: Target[], options: { input?: string; option?: string; keyboard?: boolean } = {}) {
+  const { input, option, keyboard } = options;
   const stopRecording = recordRequests(page);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Performance.enable');
@@ -188,9 +188,10 @@ async function act(page: Page, name: string, control: Locator, ready: Target, fe
         scheduleSample();
       }, { capture: true, once: true, signal: action.signal });
     });
-  }, { ready, feedback, eventType: input === undefined ? 'click' : 'input' });
+  }, { ready, feedback, eventType: option !== undefined ? 'change' : input === undefined ? 'click' : 'input' });
   const before = await cdp.send('Performance.getMetrics');
-  if (input !== undefined) await control.fill(input, { timeout: 5_000 });
+  if (option !== undefined) await control.selectOption(option, { timeout: 5_000 });
+  else if (input !== undefined) await control.fill(input, { timeout: 5_000 });
   else if (keyboard) await control.press('Enter', { timeout: 5_000 });
   else await control.click({ timeout: 5_000 });
   const elapsed = await page.evaluate(() => (window as unknown as { measuredAction: Promise<ActionResult> }).measuredAction);
@@ -283,6 +284,22 @@ async function measure(profile: typeof profiles[number]) {
   actions.push(await act(page, 'settings-first', folders(page, '设置'), { selector: '.settings-main [role="tabpanel"]' }, [managementSkeleton]));
   actions.push(await act(page, 'domains-first', folders(page, '域名'), { selector: 'table', text: 'flaremail.test' }, [managementSkeleton, listHeading('域名')]));
   actions.push(await act(page, 'addresses-first', folders(page, '邮箱地址'), { selector: 'table', text: 'e2e-admin@flaremail.test' }, [listHeading('邮箱地址')]));
+  await folders(page, '收件箱').click();
+  const identity = page.getByLabel('按邮件身份筛选');
+  await identity.selectOption('address:00000000-0000-4000-8000-000000000022');
+  await expect(message(page, 'E2E Inbox Welcome')).toHaveCount(0);
+  actions.push(await act(page, 'identity-to-primary', identity, row('E2E Inbox Welcome'), [skeleton],
+    { option: 'address:00000000-0000-4000-8000-000000000021' }));
+
+  const notifications = page.locator('button[aria-controls="delivery-notifications-content"]');
+  const legacy = await notifications.count() === 0;
+  const trigger = legacy ? page.locator('summary[aria-controls="service-status-content"]') : notifications;
+  const popover = legacy ? '#service-status-content' : '#delivery-notifications-content';
+  const content = legacy ? { selector: popover + ' dl' }
+    : { selector: popover + ' p[role="status"]', text: '没有待处理的投递异常。' };
+  actions.push(await act(page, 'notifications-first', trigger, content, [{ selector: popover }]));
+  await page.keyboard.press('Escape');
+  actions.push(await act(page, 'notifications-cached', trigger, content, [{ selector: popover }]));
   expect(errors).toEqual([]);
   await context.close();
   return { initial, actions };
