@@ -10,13 +10,15 @@ const visible = `m.folder = 'sent' AND m.deleted_at IS NULL`;
 const messageJoin = `JOIN workspace_messages m ON m.id = a.message_id AND m.user_id = a.user_id AND ${visible}`;
 
 // During retry the previous incident stays actionable until the new attempt itself stalls.
-const staleReplacement = (alias: string) => `
+const replacingRetry = (alias: string) => `
   SELECT stale.eligible_at FROM workspace_delivery_attention stale INDEXED BY workspace_delivery_attention_message
   WHERE stale.message_id = ${alias}.message_id AND stale.user_id = ${alias}.user_id
-    AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL AND stale.eligible_at <= ${now}
+    AND stale.closed_at IS NULL AND stale.eligible_at <= ${now}
+    AND (stale.kind = 'stale_submitting' OR (${alias}.delayed_provider_message_id IS NOT NULL
+      AND stale.kind IN ('delayed', 'failed') AND stale.delayed_provider_message_id IS NULL))
     AND stale.attempt_number > ${alias}.attempt_number ORDER BY stale.attempt_number LIMIT 1`;
 const active = (alias: string) => `${alias}.closed_at IS NULL AND ${alias}.eligible_at <= ${now}
-  AND NOT EXISTS (${staleReplacement(alias)})`;
+  AND NOT EXISTS (${replacingRetry(alias)})`;
 const itemColumns = `a.id, a.version, a.message_id AS messageId, a.kind, a.state,
   a.eligible_at AS occurredAt, a.acknowledged_at AS acknowledgedAt, a.closed_at AS closedAt`;
 
@@ -65,11 +67,11 @@ export async function listDeliveryAttention(db: D1Database, userId: string, quer
     throw new ApiError(400, 'INVALID_CURSOR', '分页游标无效，请从第一页重新读取。');
   }
   const pending = view === 'pending';
-  const shadowed = `EXISTS (${staleReplacement('a')})`;
+  const shadowed = `EXISTS (${replacingRetry('a')})`;
   const columns = pending ? itemColumns : `a.id, a.version, a.message_id AS messageId, a.kind, a.eligible_at AS occurredAt,
     a.acknowledged_at AS acknowledgedAt,
     CASE WHEN a.closed_at IS NULL AND ${shadowed} THEN 'superseded' ELSE a.state END AS state,
-    COALESCE(a.closed_at, (${staleReplacement('a')})) AS closedAt`;
+    COALESCE(a.closed_at, (${replacingRetry('a')})) AS closedAt`;
   const items = db.prepare(`SELECT ${columns}, substr(m.subject, 1, 240) AS subject, substr(m.from_email, 1, 254) AS sender
     FROM workspace_delivery_attention a ${messageJoin}
     WHERE a.user_id = ?

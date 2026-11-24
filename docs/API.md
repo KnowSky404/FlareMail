@@ -518,7 +518,7 @@ response contract allows it.
 
 On the first accepted logical send, the server persists the chosen address ID,
 From name/email, signature-rendered body, recipient sets, threading data, and
-Message-ID domain. Same-key retries replay that persisted payload and never
+Message-ID domain. Same-key retries replay that persisted payload. A definitive `email.failed` event prevents ordinary retry. Same-key retries never
 switch to a new default or signature. If that original address can no longer
 send, retry stops with an explicit error and leaves its persisted delivery
 state intact. `Reply-To` is omitted unless generated from trusted server state;

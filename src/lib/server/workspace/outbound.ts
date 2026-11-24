@@ -474,6 +474,7 @@ export async function retryWorkspaceMessageDelivery(
     assertPersistedDeliveryRetryable({
       status: delivery.status,
       resultKind: delivery.result_kind,
+      lastEvent: delivery.last_event,
       attempts: delivery.attempts,
       idempotencyKey: delivery.idempotency_key,
       messageIdempotencyKey: row.idempotency_key,

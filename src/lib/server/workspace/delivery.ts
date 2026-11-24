@@ -1,4 +1,4 @@
-import { getDeliveryRetryEligibility, isDeliveryTerminal, type DeliveryRetryEligibilityCode } from '$lib/domain/mail';
+import { getDeliveryRetryEligibility, isDeliveryTerminal, type DeliveryEventType, type DeliveryRetryEligibilityCode } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { normalizeResendWebhookEvent, type NormalizedResendWebhookEvent } from '$lib/server/resend-webhook';
 import { getWorkspaceCapabilities } from '$lib/server/db/capabilities';
@@ -43,6 +43,7 @@ export class DeliveryNotRetryableError extends Error {
 export interface PersistedDeliveryRetryInput {
   status: Parameters<typeof getDeliveryRetryEligibility>[0]['status'];
   resultKind: Parameters<typeof getDeliveryRetryEligibility>[0]['resultKind'];
+  lastEvent?: DeliveryEventType | null;
   attempts: number;
   idempotencyKey: string | null | undefined;
   messageIdempotencyKey: string | null | undefined;
@@ -72,6 +73,7 @@ export function assertPersistedDeliveryRetryable(input: PersistedDeliveryRetryIn
   const eligibility = getDeliveryRetryEligibility({
     status: input.status,
     resultKind: input.resultKind,
+    lastEvent: input.lastEvent,
     idempotencyKey: input.idempotencyKey,
     attemptStartedAt: input.attemptStartedAt,
     now: input.now

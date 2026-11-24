@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import { FakeOutboundGateway, MAX_OUTBOUND_ATTACHMENT_BYTES, OutboundGatewayError } from '$lib/server/outbound/gateway';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound';
-import { getWorkspaceMessageDeliveryDetail } from './delivery';
+import { applyResendDeliveryWebhook, getWorkspaceMessageDeliveryDetail } from './delivery';
 import { saveWorkspaceDraft, DraftBodyReloadRequiredError, DraftConflictError } from './draft';
 import type { WorkspaceSession } from './shared';
 import { createMailLabel, setMailMessageLabel } from '$lib/server/db/labels';
@@ -202,6 +202,23 @@ describe('outbound workspace persistence', () => {
     });
     const otherSession = { ...session, userId: 'user-2' };
     expect(await retryWorkspaceMessageDelivery(env, otherSession, sent.message.id, { gateway: new FakeOutboundGateway() })).toBeNull();
+  });
+
+  test('keeps a definitive provider failure and rejects a same-key acceptance replay', async () => {
+    const { env, session } = setup();
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Provider failure', body: 'Body' }, {
+      requestId: 'provider-failure', gateway: new FakeOutboundGateway({ providerMessageId: 're_failed' })
+    });
+    await applyResendDeliveryWebhook(env, 'svix-failed', {
+      type: 'email.failed', created_at: new Date().toISOString(), data: { email_id: 're_failed' }
+    });
+    const retryGateway = new FakeOutboundGateway({ providerMessageId: 're_failed' });
+    await expect(retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway: retryGateway }))
+      .rejects.toMatchObject({ code: 'DELIVERY_NOT_RETRYABLE', reason: 'result_not_retryable' });
+    expect(retryGateway.sent).toEqual([]);
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id)).toMatchObject({
+      status: 'failed', lastEvent: 'email.failed', attention: { kind: 'failed', state: 'open' }
+    });
   });
 
   test('rejects a message whose persisted message and delivery keys diverge', async () => {

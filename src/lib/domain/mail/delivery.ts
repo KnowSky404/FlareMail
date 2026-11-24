@@ -45,6 +45,7 @@ export type DeliveryRetryEligibilityCode =
 export interface DeliveryRetryEligibilityInput {
   status: DeliveryStatus;
   resultKind?: DeliveryResultKind | null;
+  lastEvent?: DeliveryEventType | null;
   idempotencyKey?: string | null;
   attemptStartedAt?: string | null;
   now?: string | number | Date;
@@ -79,8 +80,8 @@ export function getDeliveryRetryEligibility(input: DeliveryRetryEligibilityInput
   if (!retryableStatuses.has(input.status)) {
     return ineligible('status_not_retryable', `Delivery status '${input.status}' does not allow an ordinary retry.`);
   }
-  if (input.resultKind && retryBlockedResultKinds.has(input.resultKind)) {
-    return ineligible('result_not_retryable', `Delivery result '${input.resultKind}' indicates the provider already accepted or queued the message.`);
+  if (input.lastEvent === 'email.failed' || (input.resultKind && retryBlockedResultKinds.has(input.resultKind))) {
+    return ineligible('result_not_retryable', 'The provider already accepted, queued, or definitively failed the delivery.');
   }
   if (input.resultKind && !['temporary_failure', 'permanent_failure', 'rate_limited'].includes(input.resultKind)) {
     return ineligible('result_not_retryable', `Delivery result '${input.resultKind}' is not retryable.`);

@@ -129,8 +129,10 @@ describe('versioned D1 migrations', () => {
     latest.exec(readFileSync(latestSchema, 'utf8'));
     const attentionSql = (db: Database) => db.query(`
       SELECT sql FROM sqlite_master WHERE name LIKE 'workspace_delivery_attention%' ORDER BY name
-    `).all();
-    expect(attentionSql(latest)).toEqual(attentionSql(db));
+    `).all() as { sql: string | null }[];
+    const normalizedAttentionSql = (database: Database) => attentionSql(database)
+      .map(({ sql }) => sql?.replace(/\s+/gu, ' ').replace(/\s*([(),])\s*/gu, '$1'));
+    expect(normalizedAttentionSql(latest)).toEqual(normalizedAttentionSql(db));
     db.close();
     latest.close();
   });
