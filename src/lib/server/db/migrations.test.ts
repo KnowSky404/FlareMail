@@ -141,11 +141,11 @@ describe('versioned D1 migrations', () => {
     db.exec(`
       INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
       SELECT value, 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'
-      FROM json_each('["legacy", "earlier-attempt", "early-webhook", "ignored-delay", "existing", "delivered"]');
+      FROM json_each('["legacy", "earlier-attempt", "early-webhook", "ignored-delay", "existing", "delivered", "same-id-retry", "new-id-retry"]');
       INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id,
         submitted_at, last_event, last_event_at)
       SELECT id, user_id, CASE WHEN id = 'delivered' THEN 'delivered' ELSE 'sent' END,
-        CASE WHEN id = 'earlier-attempt' THEN 2 ELSE 1 END, 'provider-' || id,
+        CASE WHEN id IN ('earlier-attempt', 'same-id-retry', 'new-id-retry') THEN 2 ELSE 1 END, 'provider-' || id,
         '2026-01-01T00:00:00.000Z', CASE WHEN id = 'delivered' THEN 'email.delivered' ELSE 'email.sent' END,
         '2026-01-01T00:05:00.000Z' FROM workspace_messages;
       INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
@@ -163,8 +163,17 @@ describe('versioned D1 migrations', () => {
         '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
         ('in-flight', 'early-webhook', 'owner', 1, 'provider-early-webhook', 'submitted',
           '2026-01-01T00:00:30.000Z', '2026-01-01T00:03:00.000Z'),
+        ('same-id-first', 'same-id-retry', 'owner', 1, 'provider-same-id-retry', 'submitted',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:30.000Z'),
+        ('same-id-next', 'same-id-retry', 'owner', 2, 'provider-same-id-retry', 'submitted',
+          '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
+        ('new-id-first', 'new-id-retry', 'owner', 1, 'provider-old', 'submitted',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:30.000Z'),
+        ('new-id-next', 'new-id-retry', 'owner', 2, 'provider-new-id-retry', 'submitted',
+          '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
         ('already-accepted', 'ignored-delay', 'owner', 1, 'provider-ignored-delay', 'submitted',
           '2026-01-01T00:00:30.000Z', '2026-01-01T00:00:45.000Z');
+      UPDATE workspace_outbound_events SET provider_message_id = 'provider-old' WHERE svix_id='new-id-retry';
     `);
     db.exec(readFileSync(join(migrationsDirectory, '0033_delivery_attention.sql'), 'utf8'));
     db.query('INSERT INTO _test_migrations (name) VALUES (?)').run('0033_delivery_attention.sql');
@@ -176,7 +185,8 @@ describe('versioned D1 migrations', () => {
     expect(db.query('SELECT message_id, kind, eligible_at, state FROM workspace_delivery_attention ORDER BY message_id').all()).toEqual([
       { message_id: 'early-webhook', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' },
       { message_id: 'existing', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'acknowledged' },
-      { message_id: 'legacy', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' }
+      { message_id: 'legacy', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' },
+      { message_id: 'same-id-retry', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' }
     ]);
     db.close();
   });
