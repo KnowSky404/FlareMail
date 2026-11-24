@@ -49,8 +49,10 @@ class TestStatement {
 class TestD1 {
   queries: string[] = [];
   beforeBatch?: () => void;
+  beforePrepare?: (sql: string) => void;
   constructor(private readonly database: Database) {}
   prepare(sql: string) {
+    this.beforePrepare?.(sql);
     this.queries.push(sql);
     return new TestStatement(this.database, sql) as unknown as D1PreparedStatement;
   }
@@ -1202,6 +1204,24 @@ describe('D1 mailbox pages', () => {
 
     database.exec("UPDATE workspace_delivery_attention SET state = 'open' WHERE message_id = 'sent-1'");
     expect((await mutateWorkspaceMailbox(env, workspace, input)).summaries.map(({ id }) => id)).toEqual(['sent-1']);
+  });
+
+  test('counts a selected message that leaves attention before thread expansion', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      UPDATE workspace_messages SET thread_key = 'legacy:sent-thread' WHERE id = 'sent-1';
+      UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'sent-1';
+    `);
+    const db = env.DB as unknown as TestD1;
+    db.beforePrepare = (sql) => {
+      if (!sql.includes('m.thread_key IN')) return;
+      db.beforePrepare = undefined;
+      database.exec("UPDATE workspace_delivery_attention SET state = 'acknowledged' WHERE message_id = 'sent-1'");
+    };
+    const input = { action: 'trash' as const, messageIds: ['sent-1'], threadKeys: ['legacy:sent-thread'],
+      scope: mutationScope('sent', null, 'filtered', '', 'attention') };
+    expect(await mutateWorkspaceMailbox(env, workspace, input)).toMatchObject({ summaries: [], skippedCount: 1 });
+    expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
   });
 
   test('filtered thread actions apply the current server-side search query', async () => {

@@ -212,12 +212,12 @@ export async function mutateWorkspaceMailbox(
       maxMailboxMutationIds
     )
       : [];
+  const filteredAttention = scope.threadScope === 'filtered' && scope.filter === 'attention';
   const selectedWithoutThread = directRows.filter((row) => !row.thread_key).map((row) => row.id);
-  const messageIds = [...new Set([
-    ...(scope.threadScope === 'filtered' ? selectedWithoutThread : directIds),
-    ...resolvedIds
-  ])];
-  if (messageIds.length === 0) throw new ApiError(400, 'MAILBOX_SELECTION_EMPTY', '请选择至少一封邮件。');
+  const expanded = new Set([...(scope.threadScope === 'filtered' ? selectedWithoutThread : directIds), ...resolvedIds]);
+  const skippedSelected = filteredAttention ? directIds.filter((id) => !expanded.has(id)).length : 0;
+  const messageIds = [...expanded];
+  if (messageIds.length === 0 && !skippedSelected) throw new ApiError(400, 'MAILBOX_SELECTION_EMPTY', '请选择至少一封邮件。');
   if (messageIds.length > maxMailboxMutationIds) {
     throw new ApiError(400, 'MAILBOX_SELECTION_TOO_LARGE', `一次最多操作 ${maxMailboxMutationIds} 封邮件。`);
   }
@@ -225,7 +225,7 @@ export async function mutateWorkspaceMailbox(
   const writeScope = scope.threadScope === 'owner' ? null : scope;
   const rows = await listOwnedMailboxMutationRows(env.DB, workspace.userId, messageIds, writeScope);
   const owned = new Map(rows.map((row) => [row.id, row]));
-  if (rows.length !== messageIds.length || messageIds.some((id) => !owned.has(id))) {
+  if (!filteredAttention && (rows.length !== messageIds.length || messageIds.some((id) => !owned.has(id)))) {
     throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
   }
   if (threadKeys.length) {
@@ -241,8 +241,9 @@ export async function mutateWorkspaceMailbox(
   }
 
   const timestamp = new Date().toISOString();
-  const statements = buildMailboxMutationStatements(env.DB, workspace.userId, messageIds, input.action, timestamp, writeScope);
-  const [firstWrite] = await env.DB.batch(statements);
+  const writeIds = filteredAttention ? rows.map(({ id }) => id) : messageIds;
+  const statements = buildMailboxMutationStatements(env.DB, workspace.userId, writeIds, input.action, timestamp, writeScope);
+  const [firstWrite] = statements.length ? await env.DB.batch(statements) : [];
   if (messageIds.length === 1 && (input.action === 'archive' || input.action === 'unarchive') && !firstWrite?.meta.changes) {
     throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
   }
@@ -265,7 +266,7 @@ export async function mutateWorkspaceMailbox(
   }
   return {
     summaries,
-    ...(writtenIds ? { skippedCount: rows.length - writtenRows.length } : {}),
+    ...(writtenIds ? { skippedCount: skippedSelected + messageIds.length - writtenRows.length } : {}),
     metrics: await getMailboxMetrics(env.DB, workspace.userId, scope.identityFilter),
     metricsScope: { identityFilter: scope.identityFilter },
     scope,
