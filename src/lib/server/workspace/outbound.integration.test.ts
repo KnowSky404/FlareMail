@@ -226,7 +226,7 @@ describe('outbound workspace persistence', () => {
     });
   });
 
-  test('replays a deferred sent event for the prior delivery when the retry is rate limited', async () => {
+  test.each(['rate_limited', 'timeout'] as const)('replays a deferred sent event for the prior delivery after retry %s', async (kind) => {
     const { env, session } = setup();
     const providerId = 're_rate_limit_prior';
     const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Rate limit', body: 'Body' }, {
@@ -241,7 +241,7 @@ describe('outbound workspace persistence', () => {
           type: 'email.sent', created_at: new Date(Date.now() - 1000).toISOString(), data: { email_id: providerId }
         });
         expect(deferred).toMatchObject({ matched: true, ignored: true });
-        throw new OutboundGatewayError('rate_limited', 'retry rate limited');
+        throw new OutboundGatewayError(kind, `retry ${kind}`);
       }
     } });
     expect(result?.message).toMatchObject({ deliveryStatus: 'sent', deliveryLastEvent: 'email.sent' });

@@ -482,6 +482,34 @@ describe('Owner delivery attention', () => {
     expect((await page(env.DB)).notices.map(({ id }) => id)).toEqual([original.id]);
   });
 
+  test('applies newer deferred provider state without reopening an acknowledged delay', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    const at = (minute: number) => `2026-01-01T00:0${minute}:00.000Z`;
+    await applyResendDeliveryWebhook(env, 'prior-delay', payload('email.delivery_delayed', at(1)));
+    const original = (await page(db)).notices[0]!;
+    await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(original) });
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '${at(4)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = '${at(4)}', sent_at = NULL WHERE message_id = 'message-1';
+    `);
+    await applyResendDeliveryWebhook(env, 'newer-delay', payload('email.delivery_delayed', at(3)));
+    await applyResendDeliveryWebhook(env, 'previously-sent', payload('email.sent', at(2)));
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(2);
+    expect(database.query("SELECT status, sent_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
+      .toEqual({ status: 'delayed', sent_at: at(2) });
+    expect((await page(db)).notices).toEqual([]);
+    expect(await findDeliveryDetailRows(db, 'user-1', 'message-1')).toMatchObject({
+      status: 'delayed', receipt: { last_event_at: at(3) }, attention: { id: original.id, state: 'acknowledged' }
+    });
+  });
+
   test.each([-100, 500])('attributes a deferred delay %i milliseconds from the start of a confirmed retry', async (offset) => {
     const { database, env } = setup();
     const startedAt = Math.floor(Date.now() / 1000) * 1000 + 300;

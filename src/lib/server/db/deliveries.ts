@@ -9,8 +9,17 @@ const wasDeferred = `CASE WHEN json_valid(payload_json)
 const unconfirmedAttempt = (alias: string) => `EXISTS (
   SELECT 1 FROM workspace_delivery_attempts AS attempt
   WHERE attempt.message_id = ${alias}.message_id AND attempt.attempt_number = ${alias}.attempts
-    AND attempt.provider_message_id IS NOT ${alias}.provider_message_id AND attempt.completed_at IS NULL
+    AND attempt.provider_message_id IS NOT ${alias}.provider_message_id
+    AND attempt.completed_at IS NULL AND attempt.error IS NULL
 )`;
+
+const newerProviderEvent = (alias: string) => `
+  SELECT 1 FROM workspace_outbound_events newer
+  WHERE newer.message_id = ${alias}.message_id AND newer.user_id = ${alias}.user_id
+    AND newer.provider_message_id = ${alias}.provider_message_id
+    AND newer.event_type IN ('email.sent', 'email.delivery_delayed') AND NOT (${wasDeferred})
+    AND julianday(newer.event_created_at) > julianday(?) AND julianday(newer.event_created_at) <= julianday(attempt.started_at)
+`;
 
 export async function listOutboundStatuses(db: D1Database, userId: string, capabilities: WorkspaceCapabilities) {
   if (!capabilities.outboundStatuses) return { results: [] as WorkspaceOutboundStatusRow[] };
@@ -212,17 +221,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
               AND prior.provider_message_id = current.provider_message_id
           ))
           AND NOT (
-            (? = 'sent' OR (? = 'delayed' AND NOT EXISTS (
-              SELECT 1 FROM workspace_delivery_attention delay
-              WHERE delay.message_id = current.message_id AND delay.user_id = current.user_id
-                AND delay.delayed_provider_message_id = current.provider_message_id AND delay.closed_at IS NULL
-            ))) AND NOT EXISTS (
-              SELECT 1 FROM workspace_outbound_events newer
-              WHERE newer.message_id = current.message_id AND newer.user_id = current.user_id
-                AND newer.provider_message_id = current.provider_message_id
-                AND newer.event_type IN ('email.sent', 'email.delivery_delayed')
-                AND newer.event_created_at > ? AND newer.event_created_at <= attempt.started_at
-            )
+            ? IN ('sent', 'delayed') AND NOT EXISTS (${newerProviderEvent('current')})
           )
       ))
       AND (last_event IS 'submission' OR status NOT IN (${terminalStatuses}) OR status = ?)
@@ -232,7 +231,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
     terminal, terminal, input.eventCreatedAt, Number(input.fromDeferred ?? false),
-    input.targetStatus, input.targetStatus, input.eventCreatedAt,
+    input.targetStatus, input.eventCreatedAt,
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
@@ -246,25 +245,33 @@ export function retainProviderDelayAfterRetry(db: D1Database, messageId: string,
       ON original.message_id = delivery.message_id AND original.user_id = delivery.user_id
       AND original.delayed_provider_message_id = delivery.provider_message_id AND original.closed_at IS NULL
       AND original.attempt_number < delivery.attempts
-    JOIN workspace_delivery_attention retry
+    LEFT JOIN workspace_delivery_attention retry
       ON retry.message_id = delivery.message_id AND retry.user_id = delivery.user_id
       AND retry.attempt_number = delivery.attempts AND retry.delayed_provider_message_id IS NULL
-      AND retry.kind IN ('delayed', 'failed') AND retry.closed_at IS NULL
-    WHERE delivery.message_id = ? AND delivery.provider_message_id = ? AND delivery.last_event = 'submission'
-      AND delivery.status IN ('delayed', 'failed') AND attempt.completed_at IS NOT NULL
-      AND julianday(?) >= julianday(attempt.started_at)
+      AND retry.kind IN ('delayed', 'failed', 'stale_submitting') AND retry.closed_at IS NULL
+      AND retry.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE delivery.message_id = ? AND delivery.provider_message_id = ?
+      AND NOT (${unconfirmedAttempt('delivery')})
+      AND (delivery.last_event IS 'submission'
+        OR (delivery.status IN ('sent', 'delayed') AND julianday(delivery.last_event_at) <= julianday(?)))
+      AND (
+        julianday(?) < julianday(attempt.started_at)
+        OR (delivery.last_event IS 'submission' AND attempt.provider_message_id IS NULL
+          AND (attempt.completed_at IS NOT NULL OR attempt.error IS NOT NULL))
+      )
+      AND (julianday(?) >= julianday(attempt.started_at) OR NOT EXISTS (${newerProviderEvent('delivery')}))
     ORDER BY original.attempt_number DESC LIMIT 1`;
-  const args = [messageId, providerMessageId, eventCreatedAt];
+  const args = [messageId, providerMessageId, eventCreatedAt, eventCreatedAt, eventCreatedAt, eventCreatedAt];
   return [
     db.prepare(`
       UPDATE workspace_delivery_attention_clock SET version = version + 1
-      WHERE singleton = 1 AND EXISTS (${replacement})
+      WHERE singleton = 1 AND EXISTS (SELECT 1 FROM (${replacement}) WHERE retry_id IS NOT NULL)
     `).bind(...args),
     db.prepare(`
       WITH replacement AS MATERIALIZED (${replacement})
       UPDATE workspace_delivery_attention
       SET attempt_number = CASE WHEN id = replacement.original_id THEN replacement.attempts ELSE attempt_number END,
-        version = CASE WHEN id = replacement.original_id THEN (SELECT version FROM workspace_delivery_attention_clock) ELSE version END,
+        version = CASE WHEN id = replacement.original_id AND replacement.retry_id IS NOT NULL THEN (SELECT version FROM workspace_delivery_attention_clock) ELSE version END,
         state = CASE WHEN id = replacement.retry_id THEN 'superseded' ELSE state END,
         closed_at = CASE WHEN id = replacement.retry_id THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE closed_at END
       FROM replacement WHERE id IN (replacement.original_id, replacement.retry_id)
