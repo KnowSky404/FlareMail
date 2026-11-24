@@ -104,8 +104,17 @@
       if (!mounted || authExpired || current !== refreshRevision) return;
       if (flagController.busy) { refreshPending = true; return; }
       if (revision !== flagRevision) { void refreshMessageFromWorkspace(); return; }
-      messageOverride = result.message;
+      const fresh = result.message;
+      const lastEventAt = deliveryDetail?.lastEventAt ?? message.deliveryLastEventAt;
+      const receiptChanged = fresh.folder === 'sent' &&
+        ((deliveryDetail?.status ?? message.deliveryStatus) !== fresh.deliveryStatus ||
+          (fresh.deliveryLastEventAt && (!lastEventAt || fresh.deliveryLastEventAt > lastEventAt)));
+      messageOverride = fresh;
       statusRefreshError = false;
+      if (receiptChanged) {
+        deliveryDetail = null;
+        void reloadDeliveryDetail();
+      }
     } catch (error) {
       if (!mounted || authExpired || current !== refreshRevision) return;
       if (error instanceof ClientApiError && error.code === 'AUTH_SESSION_EXPIRED') return;
