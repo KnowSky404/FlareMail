@@ -4,6 +4,7 @@ import { normalizeResendWebhookEvent, type NormalizedResendWebhookEvent } from '
 import { getWorkspaceCapabilities } from '$lib/server/db/capabilities';
 import {
   assignOutboundEvent,
+  ensureProviderFailureAttention,
   findDeliveryDetailRows,
   findDeliveryStatus,
   findOutboundByProviderMessageId,
@@ -14,6 +15,7 @@ import {
   reconcileDeliveryStatus,
   resolveLocalDelayOnSent,
   retainProviderDelayAfterRetry,
+  supersedeLocalSubmissionFailure,
   updateOutboundReceiptForCurrentEvent
 } from '$lib/server/db/deliveries';
 import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
@@ -147,7 +149,9 @@ function reconciliationStatements(
   fromDeferred = false
 ) {
   if (!event.statusUpdate || !event.resultKind) return [];
+  const providerFailure = event.eventType === 'email.failed';
   return [
+    ...(providerFailure ? [supersedeLocalSubmissionFailure(db, outboundRow.message_id, event.providerMessageId)] : []),
     ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt) : []),
     reconcileDeliveryStatus(db, {
       messageId: outboundRow.message_id,
@@ -160,6 +164,7 @@ function reconciliationStatements(
       eventCreatedAt: event.createdAt,
       fromDeferred
     }),
+    ...(providerFailure ? [ensureProviderFailureAttention(db, outboundRow.message_id, event.providerMessageId, event.createdAt)] : []),
     ...(event.statusUpdate === 'sent' ? [resolveLocalDelayOnSent(db, outboundRow.message_id, event.providerMessageId, event.createdAt)] : []),
     updateOutboundReceiptForCurrentEvent(db, {
       messageId: outboundRow.message_id,

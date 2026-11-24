@@ -420,6 +420,20 @@ describe('Owner delivery attention', () => {
     expect((await page(db, 'history')).notices.find(({ id }) => id === local?.id)?.state).toBe('superseded');
   });
 
+  test('opens a provider failure after acknowledgement of the local submission failure', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    database.query("UPDATE workspace_delivery_statuses SET status = 'failed' WHERE message_id = 'message-1'").run();
+    const local = (await page(db)).notices[0]!;
+    await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(local) });
+    await applyResendDeliveryWebhook(env, 'confirmed-failure', payload('email.failed', '2027-01-15T08:02:00Z'));
+    const current = (await page(db)).notices;
+    expect(current).toHaveLength(1);
+    expect(current[0]).toMatchObject({ kind: 'failed', state: 'open' });
+    expect(current[0]?.id).not.toBe(local.id);
+    expect((await page(db, 'history')).notices.find(({ id }) => id === local.id)?.state).toBe('superseded');
+  });
+
   test('accepts a definitive bounce for the last known provider ID after a retry times out', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'initial-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
