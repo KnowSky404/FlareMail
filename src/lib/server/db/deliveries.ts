@@ -247,7 +247,7 @@ export function retainProviderDelayAfterRetry(db: D1Database, messageId: string,
       AND original.attempt_number < delivery.attempts
     LEFT JOIN workspace_delivery_attention retry
       ON retry.message_id = delivery.message_id AND retry.user_id = delivery.user_id
-      AND retry.attempt_number = delivery.attempts AND retry.delayed_provider_message_id IS NULL
+      AND retry.attempt_number > original.attempt_number AND retry.delayed_provider_message_id IS NULL
       AND retry.kind IN ('delayed', 'failed', 'stale_submitting') AND retry.closed_at IS NULL
       AND retry.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE delivery.message_id = ? AND delivery.provider_message_id = ?
@@ -260,7 +260,7 @@ export function retainProviderDelayAfterRetry(db: D1Database, messageId: string,
           AND (attempt.completed_at IS NOT NULL OR attempt.error IS NOT NULL))
       )
       AND (julianday(?) >= julianday(attempt.started_at) OR NOT EXISTS (${newerProviderEvent('delivery')}))
-    ORDER BY original.attempt_number DESC LIMIT 1`;
+    ORDER BY original.attempt_number DESC, retry.attempt_number DESC LIMIT 1`;
   const args = [messageId, providerMessageId, eventCreatedAt, eventCreatedAt, eventCreatedAt, eventCreatedAt];
   return [
     db.prepare(`
