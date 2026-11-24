@@ -8,7 +8,7 @@ import { mutateWorkspaceMailbox } from '$lib/server/workspace';
 const actions = new Set<MailboxMutationAction>(['archive', 'unarchive', 'read', 'unread', 'star', 'unstar', 'trash']);
 const sections = new Set(['inbox', 'sent', 'archive', 'starred', 'label']);
 const threadScopes = new Set(['selected', 'filtered', 'owner']);
-const filters = new Set<MailboxFilter>(['all', 'unread', 'starred']);
+const filters = new Set<MailboxFilter>(['all', 'unread', 'starred', 'attention']);
 const deliveryStatuses = new Set<DeliveryStatus>([
   'draft', 'queued', 'submitting', 'submitted', 'sent', 'delivered', 'delayed',
   'bounced', 'failed', 'complained', 'suppressed'
@@ -72,6 +72,7 @@ function parseMutationScope(value: unknown, hasThreadKeys: boolean): MailboxMuta
   if (threadScope === 'filtered' && (
     typeof scope.query !== 'string' ||
     !filters.has(scope.filter as MailboxFilter) ||
+    (scope.filter === 'attention' && scope.section !== 'sent') ||
     (scope.deliveryStatus !== undefined && scope.deliveryStatus !== null && !deliveryStatuses.has(scope.deliveryStatus as DeliveryStatus))
   )) {
     throw new ApiError(400, 'INVALID_MAILBOX_FILTER_SCOPE', '当前筛选会话的搜索或筛选范围无效。');

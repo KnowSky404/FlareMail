@@ -29,6 +29,7 @@ export class DeliveryNotifications {
   private readAt = 0;
   private pageAt = 0;
   private checkedAt = 0;
+  private refreshAfterMutation = false;
 
   start() {
     this.enabled = true;
@@ -53,6 +54,7 @@ export class DeliveryNotifications {
     this.actionError = null;
     this.health = 'unknown';
     this.readAt = this.pageAt = this.checkedAt = 0;
+    this.refreshAfterMutation = false;
   }
 
   setOpen(open: boolean) {
@@ -129,7 +131,8 @@ export class DeliveryNotifications {
 
   invalidate() {
     this.pageAt = this.readAt = 0;
-    void this.refresh(true);
+    if (this.mutation) this.refreshAfterMutation = true;
+    else void this.refresh(true);
   }
 
   async act(action: DeliveryAttentionAction) {
@@ -158,9 +161,11 @@ export class DeliveryNotifications {
     } finally {
       if (request.isCurrent()) {
         this.mutation = null;
-        if (reload) {
+        const refreshAfterMutation = this.refreshAfterMutation;
+        this.refreshAfterMutation = false;
+        if (reload || refreshAfterMutation) {
           this.pageAt = 0;
-          if (this.open || this.actionError || this.readAt === 0) void this.refresh(true);
+          if (this.open || this.actionError || refreshAfterMutation) void this.refresh(true);
         }
       }
     }

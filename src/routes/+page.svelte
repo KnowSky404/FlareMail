@@ -3068,7 +3068,7 @@
   function goFromNotifications(updates: Parameters<typeof updateWorkspaceUrl>[0]) {
     const navigate = () => { void updateWorkspaceUrl(updates); };
     if (managementNavigationGuard && activeSection === 'profile' && managementView !== 'settings') {
-      managementNavigationGuard(navigate);
+      if (managementNavigationGuard(navigate) !== false) navigate();
       return;
     }
     navigate();

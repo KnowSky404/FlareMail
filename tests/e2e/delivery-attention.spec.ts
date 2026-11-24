@@ -158,6 +158,19 @@ test('finds an Owner-wide bounce from another identity and acknowledges it witho
     await expect(notice(page)).toHaveAccessibleName('通知');
     await expect(receipt.getByText('已退信', { exact: true })).toBeVisible();
     await standalone.close();
+
+    await notice(page).click();
+    await panel(page).getByRole('button', { name: '诊断', exact: true }).click();
+    await expect(page).toHaveURL(/tab=diagnostics/u);
+    await expect(page).not.toHaveURL(/filter=attention/u);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('heading', { name: '诊断', exact: true })).toBeVisible();
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '域名', exact: true }).click();
+    await expect(page).toHaveURL(/view=domains/u);
+    await page.getByRole('table').first().waitFor();
+    await notice(page).click();
+    await panel(page).getByRole('button', { name: '诊断', exact: true }).click();
+    await expect(page).toHaveURL(/tab=diagnostics/u);
   }
   await assertNoConsoleErrors(consoleErrors);
 });
@@ -211,6 +224,39 @@ test('refreshes an open issue in another tab, handles failure, and keeps health 
   await screenshot(page, info, 'dark-english');
   await panel(page).getByRole('button', { name: 'Acknowledge', exact: true }).click();
   await expect(notice(second)).toHaveAccessibleName('通知');
+
+  const post = (data: object) => page.request.post(endpoint, { data, headers: { origin } });
+  const previous = (await getNotices(page.request, 'history')).notices.find((item) => item.messageId === id)!;
+  expect((await post({ action: 'reopen', incident: { id: previous.id, version: previous.version } })).ok()).toBe(true);
+  await page.goto('/?folder=sent&message=' + id, { waitUntil: 'domcontentloaded' });
+  await expect(notice(page)).toHaveAccessibleName(/1 pending delivery issue/u);
+  const concurrentId = 'e2e-attention-concurrent';
+  await page.evaluate(() => {
+    const listener = new BroadcastChannel('flaremail-workspace-v1');
+    listener.addEventListener('message', (event) => {
+      if (event.data?.id !== 'e2e-attention-concurrent') return;
+      document.documentElement.dataset.attentionInvalidated = 'true';
+      listener.close();
+    });
+  });
+  await page.route(endpoint, async (route) => {
+    const response = await route.fetch();
+    await seed(page.request, origin, concurrentId, 'bounced');
+    await second.evaluate((messageId) => {
+      const sender = new BroadcastChannel('flaremail-workspace-v1');
+      sender.postMessage({ type: 'delivery-attention-changed', id: messageId });
+      sender.close();
+    }, concurrentId);
+    await expect(page.locator('html')).toHaveAttribute('data-attention-invalidated', 'true');
+    await route.fulfill({ response });
+  });
+  const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+  await receipt.getByRole('button', { name: 'Acknowledge', exact: true }).click();
+  await expect(receipt.getByText(/Acknowledged/u)).toBeVisible();
+  await expect(notice(page)).toHaveAccessibleName(/1 pending delivery issue/u);
+  await page.unroute(endpoint);
+  const concurrent = (await getNotices(page.request)).notices.find((item) => item.messageId === concurrentId)!;
+  expect((await post({ action: 'acknowledge', incident: { id: concurrent.id, version: concurrent.version } })).ok()).toBe(true);
   await second.close();
   await assertNoConsoleErrors(consoleErrors.filter((error) => !error.includes('503')));
 });

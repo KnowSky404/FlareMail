@@ -95,3 +95,10 @@ test('retired category deep links normalize to service notifications', () => {
     expect(readWorkspaceUrl(new URL(`https://flaremail.example/?folder=inbox&category=${category}`)).category).toBe('updates');
   }
 });
+
+test('keeps attention in Sent and clears it from a Diagnostics deep link', () => {
+  const url = new URL('https://flaremail.example/?folder=sent&filter=attention');
+  expect(updateWorkspaceUrl(url, { messageId: 'sent-1' }).searchParams.get('filter')).toBe('attention');
+  const diagnostics = updateWorkspaceUrl(url, { section: 'profile', managementView: 'settings', settingsTab: 'diagnostics' });
+  expect(diagnostics.search).toBe('?folder=settings&tab=diagnostics');
+});

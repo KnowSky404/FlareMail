@@ -59,7 +59,7 @@ export function buildWorkspaceBackHref(url: URL, message: MailMessage): string {
   const params = new URLSearchParams({ folder, message: message.id });
   if (query) params.set('q', query);
   if (folder === 'inbox' && category !== 'all' && isInboxCategoryFilter(category)) params.set('category', category);
-  if (filter === 'unread' || filter === 'starred') params.set('filter', filter);
+  if (filter === 'unread' || filter === 'starred' || (folder === 'sent' && filter === 'attention')) params.set('filter', filter);
   const identity = url.searchParams.get('identity');
   if (identity && /^(domain|address):[A-Za-z0-9:._-]{1,128}$/u.test(identity)) params.set('identity', identity);
   if (folder === 'label' && validLabel) params.set('label', label);

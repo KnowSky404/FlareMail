@@ -109,6 +109,23 @@ describe('mailbox mutation API scope', () => {
     expect(db.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'inbound-b'`).get()).toEqual({ count: 0 });
   });
 
+  test('accepts the Sent attention filter for filtered conversations only in Sent', async () => {
+    const { db, env } = fixture();
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email,
+        sent_at, thread_key, message_id) VALUES
+        ('sent-1', 'user-1', 'sent', '', 'owner@example.test', '', 'recipient@example.test',
+          '2026-08-01T00:00:00Z', 'sent-thread', '<sent-1@example.test>');
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status) VALUES ('sent-1', 'user-1', 'bounced');
+    `);
+    const body = { action: 'star', ids: ['sent-1'], threadKeys: ['sent-thread'],
+      scope: { section: 'sent', identityFilter: null, threadScope: 'filtered', query: '', filter: 'attention' } };
+    const valid = await POST(event(env, body));
+    expect(await valid.json()).toMatchObject({ ok: true, data: { result: { summaries: [{ id: 'sent-1', starred: true }] } } });
+    const wrongFolder = await POST(event(env, { ...body, scope: { ...body.scope, section: 'inbox' } }));
+    expect(await wrongFolder.json()).toMatchObject({ error: { code: 'INVALID_MAILBOX_FILTER_SCOPE' } });
+  });
+
   test('reports that a single archive was not applied when its label scope changes before the write', async () => {
     const { db, env } = fixture();
     db.query(`INSERT INTO mail_labels (id, owner_user_id, name, name_key, created_at, updated_at)
