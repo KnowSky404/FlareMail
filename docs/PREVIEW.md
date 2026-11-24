@@ -168,3 +168,8 @@ AI outbox processing. Local synthetic dispatcher tests cover that handler path.
 ### Schema 32 summary/classification acceptance
 
 Follow the [current SPEC](specs/ai-summary-and-automatic-classification.md). Migration 0032 requires explicit target-D1 migration authorization, backup/restore-point review and a compatible application rollout. A schema-version-only bridge is insufficient for category writes; pause those writes during cutover or use a reviewed dual-write bridge. Keep the existing independent PRE D1 and R2 bindings. Validate the exact committed SHA: AI settings default-off/readback, cache-only reader GET, six category filters and retired links, authentication and readiness. Enabling auto-classification, saving settings or generating real summaries needs separate write/external-processing authorization. Local fake-provider tests cover inbound enqueue and scheduled leases; HTTP checks alone do not prove email()/Cron execution. No production deployment is implied.
+
+
+### Schema 33 delivery attention
+
+核对 PRE 与生产的 D1/R2/Owner 绑定。0033 及合成异常写入验收仅用于已授权的独立 PRE。共享 D1 必须等待兼容发布计划，不能先迁移共享数据库再试运行。业务验收检查异身份定位、单条及批量确认、恢复历史、重开和系统健康，参照[异常关注 Spec](specs/delivery-attention-lifecycle.md)。

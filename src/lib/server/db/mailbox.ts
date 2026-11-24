@@ -1,3 +1,4 @@
+import { pendingDeliveryAttentionPredicate } from './delivery-attention';
 import { inboxCategorySql } from './inbox-categories';
 import type { DeliveryStatus, InboxCategoryFilter, MailFolder, MailboxFilter, MailboxIdentityFilter, MailboxSection, MailSearchQuery, WorkspaceMetrics } from '$lib/domain/mail';
 import { buildFtsSearchPlan, buildLabelSearchPredicate } from '$lib/server/search/fts';
@@ -92,6 +93,7 @@ export async function listWorkspaceMessagePage(
     input.starredOnly ? 'm.is_starred = 1' : '1 = 1',
     identityPredicate('m', input.folder === 'sent' ? 'sender_address_id' : 'recipient_address_id')
   ];
+  if (input.filter === 'attention') conditions.push('m.deleted_at IS NULL', pendingDeliveryAttentionPredicate('m'));
   const bindings: unknown[] = [userId, input.folder];
   if (input.category && input.category !== 'all') {
     conditions.push(`${inboxCategorySql('m.from_email', 'm.subject', 'm.inbox_category_v2', 'm.ai_inbox_category')} = ?`);
@@ -198,7 +200,7 @@ export async function listWorkspaceMessagePage(
     LEFT JOIN workspace_outbound_receipts AS r
       ON r.user_id = m.user_id AND r.message_id = m.id` : ''}
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || input.labelId || (input.category && input.category !== 'all'))
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || input.filter === 'attention' || input.labelId || (input.category && input.category !== 'all'))
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.sent_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`);

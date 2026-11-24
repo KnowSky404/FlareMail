@@ -2,6 +2,9 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
+import { changeDeliveryAttention, findCurrentDeliveryAttention, getDeliveryAttentionSummary, listDeliveryAttention } from '$lib/server/db/delivery-attention';
+import { loadMailboxPage } from './mailbox';
+import { parseMailboxQuery } from './mailbox-query';
 import { applyResendDeliveryWebhook, reconcilePendingResendEvents } from './delivery';
 
 class TestStatement {
@@ -10,21 +13,26 @@ class TestStatement {
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this as unknown as D1PreparedStatement; }
   async first<T>() { return (this.database.query(this.sql).get(...this.values) as T | null) ?? null; }
   async all<T>() { return { success: true, results: this.database.query(this.sql).all(...this.values) as T[] }; }
-  async run<T>() { this.database.query(this.sql).run(...this.values); return { success: true, results: [] as T[] }; }
+  execute() {
+    const query = this.database.query(this.sql);
+    if (/^\s*(?:SELECT|WITH)\b/iu.test(this.sql)) return { success: true, results: query.all(...this.values), meta: { changes: 0 } };
+    return { success: true, results: [], meta: { changes: query.run(...this.values).changes } };
+  }
+  async run() { return this.execute(); }
 }
 
 class TestD1 {
   constructor(readonly database: Database) {}
   prepare(sql: string) { return new TestStatement(this.database, sql) as unknown as D1PreparedStatement; }
   async batch(statements: D1PreparedStatement[]) {
-    const results = [];
-    for (const statement of statements) results.push(await statement.run());
-    return results;
+    return this.database.transaction(() =>
+      statements.map((statement) => (statement as unknown as TestStatement).execute()))();
   }
 }
 
 const setup = () => {
   const database = new Database(':memory:');
+  database.exec('PRAGMA foreign_keys = ON');
   database.exec(readFileSync(new URL('../../../../schema.sql', import.meta.url), 'utf8'));
   database.query(`INSERT INTO workspace_schema_metadata (schema_name, schema_version, updated_at)
     VALUES ('flaremail', ?, '2026-08-19T00:00:00.000Z')`).run(FLAREMAIL_SCHEMA_VERSION);
@@ -35,9 +43,26 @@ const setup = () => {
   database.query(`INSERT INTO workspace_outbound_receipts
     (message_id, user_id, provider, result_kind, remote_status, response_preview, last_event, last_event_at)
     VALUES ('message-1', 'user-1', 'resend', 'accepted', 200, 'submitted', 'submission', '2027-01-15T08:00:00.000Z')`).run();
+  addMessage(database, 'message-1');
   const env = { DB: new TestD1(database) as unknown as D1Database, BUCKET: {} as R2Bucket };
   return { database, env };
 };
+
+function addMessage(database: Database, id: string, user = 'user-1', address = 'address-a') {
+  database.query(`INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email,
+    sent_at, subject, body, sender_address_id) VALUES (?, ?, 'sent', '', ?, '', '', '2026-01-01', ?, 'private-body', ?)`)
+    .run(id, user, `${address}@example.test`, id, address);
+}
+
+function addDelivery(database: Database, id: string, status: string, time = '2026-01-01T00:00:00.000Z', user = 'user-1', address?: string) {
+  addMessage(database, id, user, address);
+  database.query(`INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, last_event_at)
+    VALUES (?, ?, ?, 1, ?)`).run(id, user, status, time);
+}
+
+const page = (db: D1Database, view: 'pending' | 'history' = 'pending', { limit = 20, cursor = null as string | null } = {}) =>
+  listDeliveryAttention(db, 'user-1', { view, kind: null, limit, cursor });
+const ref = ({ id, version }: { id: number; version: number }) => ({ id, version });
 
 const payload = (type: string, createdAt: string, emailId = 're_1') => ({
   type,
@@ -114,5 +139,150 @@ describe('Resend delivery reconciliation', () => {
       .toEqual({ status: 'delivered', delivered_at: '2027-01-15T08:05:00.000Z' });
     expect(database.query(`SELECT message_id, user_id FROM workspace_outbound_events WHERE svix_id = 'svix-early'`).get())
       .toEqual({ message_id: 'message-1', user_id: 'user-1' });
+  });
+});
+
+describe('Owner delivery attention', () => {
+  test('counts only actionable sent messages once and paginates safe summaries independently of identity', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    for (const status of ['delayed', 'failed', 'bounced', 'complained', 'suppressed']) {
+      addDelivery(database, status, status, undefined, 'user-1', 'address-b');
+    }
+    addDelivery(database, 'stalled', 'submitting');
+    addDelivery(database, 'fresh', 'submitting', new Date().toISOString());
+    addDelivery(database, 'queued', 'queued');
+    addDelivery(database, 'another-owner', 'bounced', undefined, 'owner-2');
+    let cursor: string | null = null;
+    const found = [];
+    do {
+      const result = await page(db, 'pending', { limit: 2, cursor });
+      expect(result.summary.pendingCount).toBe(6);
+      found.push(...result.notices);
+      cursor = result.nextCursor;
+    } while (cursor);
+    expect(new Set(found.map(({ kind }) => kind))).toEqual(new Set([
+      'delayed', 'failed', 'bounced', 'complained', 'suppressed', 'stale_submitting'
+    ]));
+    expect(found).toHaveLength(6);
+    expect(JSON.stringify(found)).not.toContain('private-body');
+    const issue = found[0]!;
+    await expect(changeDeliveryAttention(db, 'owner-2', { action: 'acknowledge', incident: ref(issue) }))
+      .rejects.toMatchObject({ status: 404 });
+    const first = await page(db, 'pending', { limit: 2 });
+    await expect(page(db, 'history', { cursor: first.nextCursor })).rejects.toMatchObject({ code: 'INVALID_CURSOR' });
+    expect((await listDeliveryAttention(db, 'user-1', { view: 'pending', kind: 'bounced', limit: 1, cursor: null })).notices)
+      .toEqual([expect.objectContaining({ messageId: 'bounced', kind: 'bounced' })]);
+
+    database.exec(`
+      INSERT INTO mail_domains (id, owner_user_id, domain_name, cloudflare_zone_id, worker_name)
+        VALUES ('domain-b', 'user-1', 'example.test', 'zone', 'worker');
+      INSERT INTO mail_addresses (id, owner_user_id, domain_id, email, local_part)
+        VALUES ('address-b', 'user-1', 'domain-b', 'address-b@example.test', 'address-b');
+    `);
+    const session = { userId: 'user-1', storage: 'd1', profile: { email: 'owner@example.test' } } as const;
+    const all = parseMailboxQuery(new URLSearchParams('folder=sent&filter=attention'));
+    const scoped = { ...all, identityFilter: { kind: 'address', id: 'address-b' } as const };
+    const filtered = await loadMailboxPage(env, session as never, scoped);
+    expect(filtered.messages).toHaveLength(5);
+    expect(filtered.searchTotal).toBe(5);
+    expect(filtered.metrics?.bouncedCount).toBe(1);
+    database.close();
+  });
+
+  test('keeps webhook duplicates and old events from reopening, and rejects an old confirmation on escalation', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    const delayed = payload('email.delivery_delayed', '2027-01-15T08:03:00Z');
+    await applyResendDeliveryWebhook(env, 'delayed-1', delayed);
+    const incident = (await page(db)).notices[0]!;
+    expect(incident.kind).toBe('delayed');
+    const oldSnapshot = (await page(db)).summary.snapshot;
+    const ack = { action: 'acknowledge', incident: ref(incident) } as const;
+    const confirmations = await Promise.all([changeDeliveryAttention(db, 'user-1', ack), changeDeliveryAttention(db, 'user-1', ack)]);
+    expect(confirmations.map(({ changed }) => changed)).toEqual([1, 0]);
+    expect(confirmations[0].summary.pendingCount).toBe(0);
+    expect((await page(db, 'history')).notices[0]).toMatchObject({ state: 'acknowledged', closedAt: null });
+    expect((await applyResendDeliveryWebhook(env, 'delayed-1', delayed)).duplicate).toBe(true);
+    await applyResendDeliveryWebhook(env, 'delayed-2', payload('email.delivery_delayed', '2027-01-15T08:04:00Z'));
+    await applyResendDeliveryWebhook(env, 'older-sent', payload('email.sent', '2027-01-15T08:02:00Z'));
+    expect((await page(db)).notices).toEqual([]);
+    const race = await Promise.allSettled([
+      applyResendDeliveryWebhook(env, 'bounced-1', payload('email.bounced', '2027-01-15T08:05:00Z')),
+      changeDeliveryAttention(db, 'user-1', ack)
+    ]);
+    expect(race[0]).toMatchObject({ status: 'fulfilled', value: { ignored: false } });
+    if (race[1].status === 'rejected') expect(race[1].reason).toMatchObject({ status: 409 });
+    else expect(race[1].value.changed).toBe(0);
+    await expect(changeDeliveryAttention(db, 'user-1', ack)).rejects.toMatchObject({ status: 409 });
+    expect((await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge_all', snapshot: oldSnapshot })).changed).toBe(0);
+    const bounced = (await page(db)).notices[0]!;
+    expect(bounced).toMatchObject({ kind: 'bounced', state: 'open' });
+    expect(bounced.id).not.toBe(incident.id);
+    expect((await page(db, 'history')).notices[0]).toMatchObject({ kind: 'delayed', state: 'superseded' });
+    expect(database.query("SELECT status, attempts, idempotency_key FROM workspace_delivery_statuses").get())
+      .toEqual({ status: 'bounced', attempts: 1, idempotency_key: 'flaremail:send:user-1:compose-1' });
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_outbound_events").get()).toEqual({ count: 4 });
+    database.close();
+  });
+
+  test('records actual recovery, keeps prior failure during retry, and assigns a new version after reopen', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    await applyResendDeliveryWebhook(env, 'delayed-1', payload('email.delivery_delayed', '2027-01-15T08:03:00Z'));
+    const first = (await page(db)).notices[0]!;
+    const ack = { action: 'acknowledge', incident: ref(first) } as const;
+    await changeDeliveryAttention(db, 'user-1', ack);
+    await changeDeliveryAttention(db, 'user-1', { action: 'reopen', incident: ref(first) });
+    const reopened = (await findCurrentDeliveryAttention(db, 'user-1', 'message-1'))!;
+    expect(reopened.version).toBeGreaterThan(first.version);
+    await expect(changeDeliveryAttention(db, 'user-1', ack)).rejects.toMatchObject({ code: 'ATTENTION_CHANGED' });
+    await applyResendDeliveryWebhook(env, 'delivered-1', payload('email.delivered', '2027-01-15T08:05:00Z'));
+    expect((await page(db)).notices).toEqual([]);
+    expect((await page(db, 'history')).notices[0]).toMatchObject({ state: 'resolved', closedAt: expect.any(String) });
+    await expect(changeDeliveryAttention(db, 'user-1', { action: 'reopen', incident: ref(reopened) }))
+      .rejects.toMatchObject({ code: 'ATTENTION_CHANGED' });
+
+    addDelivery(database, 'retry', 'failed');
+    database.query("UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event_at = ? WHERE message_id = 'retry'")
+      .run(new Date().toISOString());
+    expect(await findCurrentDeliveryAttention(db, 'user-1', 'retry')).toMatchObject({ kind: 'failed' });
+    database.query("UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'retry'").run();
+    expect((await page(db, 'history')).notices.find(({ messageId }) => messageId === 'retry'))
+      .toMatchObject({ kind: 'failed', state: 'resolved' });
+    addDelivery(database, 'stale-retry', 'submitting');
+    database.query("UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'stale-retry'").run();
+    expect((await page(db, 'history')).notices.find(({ messageId }) => messageId === 'stale-retry'))
+      .toMatchObject({ kind: 'stale_submitting', state: 'resolved' });
+    database.close();
+  });
+
+  test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    addDelivery(database, 'hidden', 'bounced');
+    addDelivery(database, 'reopened', 'bounced');
+    addDelivery(database, 'included', 'failed');
+    addDelivery(database, 'potentially-stale', 'submitting', new Date().toISOString());
+    database.query("UPDATE workspace_messages SET deleted_at = '2026-01-01' WHERE id = 'hidden'").run();
+    const reopened = (await findCurrentDeliveryAttention(db, 'user-1', 'reopened'))!;
+    const snapshot = (await getDeliveryAttentionSummary(db, 'user-1')).snapshot;
+    await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(reopened) });
+    await changeDeliveryAttention(db, 'user-1', { action: 'reopen', incident: ref(reopened) });
+    addDelivery(database, 'arrived-late', 'bounced');
+    database.query("UPDATE workspace_messages SET deleted_at = NULL WHERE id = 'hidden'").run();
+    database.query("UPDATE workspace_delivery_statuses SET last_event_at = '2026-01-01' WHERE message_id = 'potentially-stale'").run();
+    const all = { action: 'acknowledge_all', snapshot } as const;
+    expect((await changeDeliveryAttention(db, 'user-1', all)).changed).toBe(1);
+    expect((await changeDeliveryAttention(db, 'user-1', all)).changed).toBe(0);
+    expect((await page(db)).notices.map(({ messageId }) => messageId).sort())
+      .toEqual(['arrived-late', 'hidden', 'potentially-stale', 'reopened']);
+    database.query("UPDATE workspace_messages SET deleted_at = '2026-01-01' WHERE id = 'included'").run();
+    expect((await page(db, 'history')).notices).toEqual([]);
+    database.query("UPDATE workspace_messages SET deleted_at = NULL WHERE id = 'included'").run();
+    expect(await findCurrentDeliveryAttention(db, 'user-1', 'included')).toMatchObject({ state: 'acknowledged' });
+    database.query("DELETE FROM workspace_messages WHERE id = 'included'").run();
+    expect(database.query("SELECT id FROM workspace_delivery_attention WHERE message_id = 'included'").all()).toEqual([]);
+    database.close();
   });
 });

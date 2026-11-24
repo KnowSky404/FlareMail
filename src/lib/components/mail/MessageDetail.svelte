@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage, MessageBodyView } from '$lib/domain/mail';
+  import type { DeliveryAttentionAction, DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage, MessageBodyView } from '$lib/domain/mail';
   import { Avatar, Button, EmptyState } from '$lib/components/ui';
   import { Forward, Reply, ReplyAll } from '@lucide/svelte';
   import AttachmentList from './AttachmentList.svelte';
@@ -21,6 +21,8 @@
     deliveryDetail = null,
     deliveryDetailError = '',
     deliveryDetailPending = false,
+    attentionPending = false,
+    onAttentionAction,
     workspaceBody = null,
     workspaceAttachments = [],
     workspaceBodyError = '',
@@ -65,6 +67,8 @@
     deliveryDetail?: DeliveryDetail | null;
     deliveryDetailError?: string;
     deliveryDetailPending?: boolean;
+    attentionPending?: boolean;
+    onAttentionAction?: (action: DeliveryAttentionAction, messageId: string) => Promise<boolean>;
     workspaceBody?: string | null;
     workspaceAttachments?: MailAttachmentSummary[];
     workspaceBodyError?: string;
@@ -218,7 +222,7 @@
 
         {#if isSent && !trashMode}
           <div class="mt-6">
-            <DeliveryTimeline message={message} {deliveryDetail} loading={deliveryDetailPending} error={deliveryDetailError} {pending} onReload={onReloadDeliveryDetail} onRetry={onRetryDelivery} />
+            <DeliveryTimeline message={message} {deliveryDetail} loading={deliveryDetailPending} error={deliveryDetailError} {pending} {attentionPending} {onAttentionAction} onReload={onReloadDeliveryDetail} onRetry={onRetryDelivery} />
           </div>
         {/if}
 

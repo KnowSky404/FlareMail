@@ -17,7 +17,7 @@ export const maxMailboxPageSize = 100;
 export const maxD1LikePatternBytes = 50;
 
 const folders = new Set<MailFolder>(['inbox', 'sent', 'drafts']);
-const filters = new Set<MailboxFilter>(['all', 'unread', 'starred']);
+const filters = new Set<MailboxFilter>(['all', 'unread', 'starred', 'attention']);
 const deliveryStatuses = new Set<DeliveryStatus>([
   'draft', 'queued', 'submitting', 'submitted', 'sent', 'delivered', 'delayed',
   'bounced', 'failed', 'complained', 'suppressed'
@@ -188,9 +188,9 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   }
 
   const filterValue = params.get('filter') ?? 'all';
-  if (!filters.has(filterValue as MailboxFilter)) {
+  if (!filters.has(filterValue as MailboxFilter) || (filterValue === 'attention' && section !== 'sent')) {
     throw new ApiError(400, 'INVALID_FILTER', '邮件筛选条件无效。', {
-      filter: ['仅支持 all、unread 或 starred。']
+      filter: ['仅支持 all、unread、starred，或已发送邮件的 attention。']
     });
   }
 

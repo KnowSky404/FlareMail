@@ -18,7 +18,8 @@ class D1 {
   prepare(sql: string) { return new Statement(this.db, sql) as unknown as D1PreparedStatement; }
 }
 
-const event = (env: unknown, requestId = 'readiness-test', authenticated = true) => ({
+const event = (env: unknown, requestId = 'readiness-test', authenticated = true, query = '') => ({
+  url: new URL('https://mail.example.test/api/readiness' + query),
   platform: { env },
   request: new Request('https://mail.example.test/api/readiness', { headers: { 'X-Request-ID': requestId } }),
   locals: authenticated ? {
@@ -50,6 +51,33 @@ describe('/api/readiness', () => {
       requestId: 'readiness-private',
       error: expect.objectContaining({ code: 'AUTHENTICATION_REQUIRED' })
     }));
+  });
+
+  test('system scope checks R2 without fetching domain health and clears degradation after a successful probe', async () => {
+    const database = new Database(':memory:');
+    applyMigrations(database);
+    let calls = 0;
+    const env = { APP_ENV: 'test', DB: new D1(database), BUCKET: {
+      async head() {
+        if (++calls === 1) throw new Error('synthetic bucket unavailable');
+        return null;
+      }
+    } };
+    const probe = () => GET(event(env, 'system-readiness', true, '?scope=system'));
+    const offline = await probe();
+    expect(offline.status).toBe(503);
+    expect(await offline.json()).toMatchObject({ error: { code: 'R2_UNAVAILABLE' } });
+    const recovered = await probe();
+    expect(recovered.status).toBe(200);
+    const body = await recovered.json();
+    expect(body).toMatchObject({ ok: true });
+    expect(body).not.toHaveProperty('mailHealth');
+    expect(body).not.toHaveProperty('cleanupQueue');
+    const missingProviderKey = await GET(event({ ...env, OUTBOUND_PROVIDER: 'resend' }, 'system-configuration', true, '?scope=system'));
+    expect(missingProviderKey.status).toBe(503);
+    expect(await missingProviderKey.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
+    expect(calls).toBe(2);
+    database.close();
   });
 
   test('rejects an empty or partially migrated database', async () => {

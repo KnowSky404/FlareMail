@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import FileText from '@lucide/svelte/icons/file-text';
   import Archive from '@lucide/svelte/icons/archive';
   import Inbox from '@lucide/svelte/icons/inbox';
@@ -29,6 +29,8 @@
     profile,
     activeSection,
     counts,
+    notificationMenu,
+    onCloseNotifications,
     managementView = 'settings',
     pending = false,
     userLabels = [],
@@ -44,6 +46,8 @@
     profile: UserProfile;
     activeSection: AppSection;
     counts: NavigationCounts;
+    notificationMenu?: Snippet<[onOpenChange: (open: boolean) => void]>;
+    onCloseNotifications: () => void;
     managementView?: 'settings' | 'domains' | 'addresses';
     pending?: boolean;
     userLabels?: MailUserLabel[];
@@ -112,7 +116,7 @@
 {/snippet}
 
 <header class="mobile-bar">
-  <button class="icon" type="button" aria-label={t('shell.openNavigation')} aria-expanded={open} onclick={() => { accountOpen = false; open = true; }}>
+  <button class="icon" type="button" aria-label={t('shell.openNavigation')} aria-expanded={open} onclick={() => { accountOpen = false; onCloseNotifications(); open = true; }}>
     <Menu size={21} aria-hidden="true" />
   </button>
   <BrandMark compact />
@@ -120,7 +124,16 @@
   <button class="compose" type="button" aria-label={t('shell.compose')} title={t('shell.compose')} disabled={pending} onclick={onCompose}>
     <PenLine size={18} aria-hidden="true" /><span>{t('shell.compose')}</span>
   </button>
-  <AccountMenu id="mobile-account-menu" {profile} {pending} open={accountOpen} onOpenChange={(next) => { accountOpen = next; if (next) open = false; }} {onOpenAbout} {onLogout} />
+  {@render notificationMenu?.((next) => {
+    if (next) open = accountOpen = false;
+  })}
+  <AccountMenu id="mobile-account-menu" {profile} {pending} open={accountOpen} onOpenChange={(next) => {
+    accountOpen = next;
+    if (next) {
+      open = false;
+      onCloseNotifications();
+    }
+  }} {onOpenAbout} {onLogout} />
 </header>
 
 <Drawer id="mobile-navigation-drawer" {open} title={t('shell.mobileNavigation')} description={t('shell.mobileNavigationDescription')} side="left" width="sm" class="!max-w-80" onClose={() => (open = false)}>
@@ -134,8 +147,8 @@
       <button class:active={activeSection === 'drafts'} type="button" aria-label={counts.drafts ? `${t('shell.drafts')} ${formatNavigationCount(i18n.locale, counts.drafts!)}` : t('shell.drafts')} aria-describedby={countId('drafts')} onclick={() => select('drafts')}>
         <FileText size={19} aria-hidden="true" /><span>{t('shell.drafts')}</span>{@render badge('drafts')}
       </button>
-      <button class:active={activeSection === 'sent'} type="button" aria-label={counts.sent ? `${t('shell.sent')} ${formatNavigationCount(i18n.locale, counts.sent!)}` : t('shell.sent')} aria-describedby={countId('sent')} onclick={() => select('sent')}>
-        <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>{@render badge('sent')}
+      <button class:active={activeSection === 'sent'} type="button" onclick={() => select('sent')}>
+        <Send size={19} aria-hidden="true" /><span>{t('shell.sent')}</span>
       </button>
       <button class:active={activeSection === 'archive'} type="button" onclick={() => select('archive')}>
         <Archive size={19} aria-hidden="true" /><span>{t('shell.archive')}</span>
@@ -189,6 +202,11 @@
     padding: env(safe-area-inset-top) var(--space-2) 0;
     border-bottom: 1px solid var(--fm-border);
     background: var(--fm-surface);
+  }
+
+  .mobile-bar :global(.notification-trigger) {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .mobile-bar strong {
@@ -267,6 +285,8 @@
   }
 
   @media (max-width: 420px) {
+    .mobile-bar { gap: var(--space-1); }
+
     .compose span {
       display: none;
     }

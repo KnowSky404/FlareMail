@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { systemHealthLabel } from '$lib/client/delivery-attention-labels';
+  import type { SystemHealth } from '$lib/domain/runtime-state';
   import { onMount, tick, untrack } from 'svelte';
   import { Activity, Ban, Bell, ChevronRight, Send, Sparkles, UserRound } from '@lucide/svelte';
   import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
@@ -39,7 +41,9 @@
     onTabChange,
     diagnostics = null,
     metrics,
-    serviceDegraded,
+    systemHealth,
+    pendingAttentionCount,
+    onRefreshHealth,
     status = '',
     statusError = false,
     pending = false,
@@ -54,8 +58,10 @@
     tab?: SettingsTab;
     onTabChange?: (tab: SettingsTab) => void;
     diagnostics?: RuntimeDiagnostics | null;
-    metrics: WorkspaceMetrics;
-    serviceDegraded: boolean;
+    metrics: WorkspaceMetrics | null;
+    systemHealth: SystemHealth;
+    pendingAttentionCount: number | null;
+    onRefreshHealth: () => void;
     status?: string;
     statusError?: boolean;
     pending?: boolean;
@@ -257,12 +263,15 @@
     {#if tab === 'diagnostics'}
     <Panel id="settings-diagnostics" class="scroll-mt-[5.25rem]" title={t('settings.diagnostics')} description={t('settings.diagnosticsDescription')}>
       {#if diagnostics}
+        <h3 class="mb-2 text-sm font-medium">{t('settings.globalDelivery')}</h3>
         <dl class="diagnostic-grid">
-          <div><dt>{t('settings.globalDelivery')}</dt><dd><Badge class={serviceDegraded ? 'text-[var(--fm-danger)]' : 'text-[var(--fm-success)]'}>{serviceDegraded ? t('settings.needsAttention') : t('settings.normal')}</Badge></dd></div>
-          <div><dt>{t('settings.queuedDelayed')}</dt><dd>{formatNumber(metrics.queuedCount, i18n.locale)} / {formatNumber(metrics.delayedCount, i18n.locale)}</dd></div>
-          <div><dt>{t('settings.failedBouncedComplained')}</dt><dd>{formatNumber(metrics.failedCount, i18n.locale)} / {formatNumber(metrics.bouncedCount, i18n.locale)} / {formatNumber(metrics.complainedCount, i18n.locale)}</dd></div>
-          <div><dt>{t('settings.staleSubmitting')}</dt><dd>{formatNumber(metrics.staleDeliveryCount, i18n.locale)}</dd></div>
+          <div><dt>{t('settings.runtime')}</dt><dd><Badge>{t(systemHealthLabel[systemHealth])}</Badge></dd></div>
+          <div><dt>{t('attention.filter')}</dt><dd>{pendingAttentionCount === null ? '—' : formatNumber(pendingAttentionCount, i18n.locale)}</dd></div>
+          <div><dt>{t('settings.queuedDelayed')}</dt><dd>{metrics ? `${formatNumber(metrics.queuedCount, i18n.locale)} / ${formatNumber(metrics.delayedCount, i18n.locale)}` : '—'}</dd></div>
+          <div><dt>{t('settings.failedBouncedComplained')}</dt><dd>{metrics ? `${formatNumber(metrics.failedCount, i18n.locale)} / ${formatNumber(metrics.bouncedCount, i18n.locale)} / ${formatNumber(metrics.complainedCount, i18n.locale)}` : '—'}</dd></div>
+          <div><dt>{t('settings.staleSubmitting')}</dt><dd>{metrics ? formatNumber(metrics.staleDeliveryCount, i18n.locale) : '—'}</dd></div>
         </dl>
+        <Button variant="ghost" size="sm" disabled={authExpired} onclick={onRefreshHealth}>{t('attention.refresh')}</Button>
         <details class="settings-disclosure diagnostics-disclosure">
           <summary><ChevronRight size={16} aria-hidden="true" />{t('settings.runtime')}</summary>
           <dl class="diagnostic-grid disclosure-content">

@@ -28,6 +28,8 @@ const REQUIRED_TABLES = [
   'workspace_outbound_statuses',
   'workspace_attachments',
   'workspace_delivery_statuses',
+  'workspace_delivery_attention',
+  'workspace_delivery_attention_clock',
   'workspace_login_rate_limits',
   'workspace_outbound_rate_limits',
   'workspace_outbound_receipts',
@@ -57,17 +59,30 @@ async function hasSupportedWorkspaceSchema(db: D1Database) {
 export const GET: RequestHandler = withApiHandler(async (event) => {
   const session = requireWorkspaceSession(event);
   const requestId = getRequestId(event);
+  const systemOnly = event.url.searchParams.get('scope') === 'system';
   const { platform } = event;
   const env = platform?.env as CloudflareEnv | undefined;
   const validation = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
-  if (!validation.ok) {
+  const resendKeyMissing = systemOnly && validation.config.outboundProvider?.toLowerCase() === 'resend' &&
+    !validation.config.hasResendApiKey;
+  const configurationReady = validation.ok && !resendKeyMissing;
+  if (!configurationReady) {
     console.error(JSON.stringify({
       level: 'error',
       event: 'readiness_check_failed',
       requestId,
       code: 'CONFIG_INVALID',
-      diagnostics: validation.errors.map(({ code }) => code)
+      diagnostics: [...validation.errors.map(({ code }) => code), ...(resendKeyMissing ? ['missing_resend_api_key'] : [])]
     }));
+  }
+  let r2Ready = !systemOnly;
+  if (systemOnly && configurationReady && env?.BUCKET) {
+    try {
+      await env.BUCKET.head('health/readiness-probe');
+      r2Ready = true;
+    } catch {
+      console.error(JSON.stringify({ level: 'error', event: 'readiness_check_failed', requestId, code: 'R2_UNAVAILABLE' }));
+    }
   }
   let schemaReady = false;
   let schemaCode: 'D1_UNAVAILABLE' | 'SCHEMA_NOT_READY' = 'D1_UNAVAILABLE';
@@ -82,7 +97,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
     try {
       schemaReady = await hasSupportedWorkspaceSchema(env.DB);
       schemaCode = 'SCHEMA_NOT_READY';
-      if (schemaReady) {
+      if (schemaReady && !systemOnly) {
         const queue = await env.DB.prepare(`
           SELECT
             SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
@@ -172,8 +187,8 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
       inboundRoutingReady = false;
     }
   }
-  const ok = validation.ok && schemaReady && inboundRoutingReady;
-  const errorCode = !validation.ok ? 'CONFIG_INVALID' : !schemaReady ? schemaCode : 'INBOUND_ROUTING_NOT_READY';
+  const ok = configurationReady && schemaReady && r2Ready && inboundRoutingReady;
+  const errorCode = !configurationReady ? 'CONFIG_INVALID' : !schemaReady ? schemaCode : !r2Ready ? 'R2_UNAVAILABLE' : 'INBOUND_ROUTING_NOT_READY';
   return json({
     ok,
     version: env?.APP_VERSION ?? 'development',
@@ -187,6 +202,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
         code: errorCode,
         message: errorCode === 'CONFIG_INVALID' ? '服务配置尚未完成。'
           : errorCode === 'D1_UNAVAILABLE' ? '工作区数据服务暂时不可用。'
+          : errorCode === 'R2_UNAVAILABLE' ? '文件存储服务暂时不可用。'
           : errorCode === 'INBOUND_ROUTING_NOT_READY' ? '收信归属库尚未就绪。' : '服务数据结构尚未就绪。',
         retryable: errorCode !== 'CONFIG_INVALID'
       }

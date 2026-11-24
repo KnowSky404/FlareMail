@@ -2,15 +2,17 @@
   import { ListFilter } from '@lucide/svelte';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
-  export type MailFilter = 'all' | 'unread' | 'starred';
+  export type MailFilter = import('$lib/domain/mail').MailboxFilter;
 
   let {
     filter = 'all',
     disabled = false,
+    showDeliveryAttention = false,
     onFilterChange
   }: {
     filter?: MailFilter;
     disabled?: boolean;
+    showDeliveryAttention?: boolean;
     onFilterChange?: (filter: MailFilter) => void;
   } = $props();
 
@@ -19,11 +21,12 @@
   const options = $derived<Array<{ value: MailFilter; label: string }>>([
     { value: 'all', label: t('mail.all') },
     { value: 'unread', label: t('mail.unread') },
-    { value: 'starred', label: t('mail.starred') }
+    { value: 'starred', label: t('mail.starred') },
+    ...(showDeliveryAttention ? [{ value: 'attention' as const, label: t('attention.filter') }] : [])
   ]);
 </script>
 
-<div class="flex min-w-0 shrink-0 items-center gap-1" role="group" aria-label={t('mail.filter')}>
+<div class="flex min-w-0 flex-wrap items-center gap-1" role="group" aria-label={t('mail.filter')}>
   <span class="mr-1 hidden text-[var(--fm-text-muted)] sm:inline-flex" aria-hidden="true">
     <ListFilter class="size-4" />
   </span>

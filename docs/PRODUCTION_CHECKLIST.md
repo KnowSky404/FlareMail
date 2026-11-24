@@ -373,3 +373,10 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
 - [ ] Verify six-category manual mappings, retained legacy values, empty background queue, default-off automatic classification and unchanged provider credentials. Prompt version 3 invalidates prior analyses without automatically regenerating historical mail.
 - [ ] Check independently authorized classification and Telegram consent, workspace output language and shared 30 attempts/hour limit. Do not enable new external processing as a side effect of deployment.
 - [ ] Rehearse rollback on the additive schema: original columns remain, but new-category choices are stored separately and older code will not see them. Preserve the upgraded data and deploy a compatible rollback binary rather than dropping columns/jobs or restoring over unreviewed new mail.
+
+
+## Schema 33 delivery attention upgrade
+
+- [ ] Review [migration and lifecycle](specs/delivery-attention-lifecycle.md), exact SHA and D1 size. Schema 32 Workers reject 33. Confirm PRE separation and inventory every live Worker and webhook binding that uses the affected database.
+- [ ] Prepare a verified recovery bookmark or snapshot and a schema-33-compatible code rollback, or schedule an approved controlled cutover. Apply 0033 once per isolated database and verify migration metadata, trigger/index existence, Owner visibility and authenticated system readiness.
+- [ ] Accept the full lifecycle with synthetic data only in isolated PRE. For shared environments use explicitly authorized read-only checks. In production verify Owner counts, existing sent states and history without changing a real message unless authorized.

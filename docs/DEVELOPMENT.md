@@ -406,3 +406,12 @@ See [AI setup and fake-provider testing](AI.md). AI tests do not need provider c
 ## AI summary and classification
 
 The [SPEC](specs/ai-summary-and-automatic-classification.md) defines six purpose categories, cache-first reading, workspace output language and opt-in new-mail classification. Schema 32 is required. Run AI persistence/dispatcher, category API/query and migration tests with fake providers before browser QA. Cron classification is independent of Telegram; keep model calls outside inbound persistence. Do not use real mail as fixtures or raise the shared quota implicitly.
+
+
+## Validate delivery attention locally
+
+Run the isolated Playwright `delivery-attention.spec.ts` project on Chromium
+desktop, mobile and narrow, and Firefox/WebKit desktop. The fixture writes to
+the loopback Local Explorer only after verifying the synthetic workspace Owner.
+Screenshots can be retained by setting `FLAREMAIL_ATTENTION_SCREENSHOTS` to the
+task's artifact directory. See the [lifecycle spec](specs/delivery-attention-lifecycle.md).

@@ -278,7 +278,7 @@ export interface WorkspacePayload {
   metrics: WorkspaceMetrics;
 }
 
-export type MailboxFilter = 'all' | 'unread' | 'starred';
+export type MailboxFilter = 'all' | 'unread' | 'starred' | 'attention';
 
 export interface MailboxPage {
   category?: InboxCategoryFilter;
@@ -374,6 +374,8 @@ export interface DeliveryDetail {
   lastEvent: DeliveryEventType | null;
   lastEventAt: string | null;
   events: DeliveryEvent[];
+  status?: DeliveryStatus | null;
+  attention?: import('./delivery-attention').DeliveryAttentionItem | null;
 }
 
 export interface LoginInput {

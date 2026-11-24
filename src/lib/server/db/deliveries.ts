@@ -17,15 +17,20 @@ export async function listOutboundStatuses(db: D1Database, userId: string, capab
 }
 
 export async function findDeliveryDetailRows(db: D1Database, userId: string, messageId: string, capabilities: WorkspaceCapabilities) {
-  const receipt = capabilities.outboundReceipts ? await db.prepare(`
-    SELECT provider, result_kind, remote_status, response_preview, last_event, last_event_at
-    FROM workspace_outbound_receipts WHERE user_id = ? AND message_id = ?
-  `).bind(userId, messageId).first<WorkspaceOutboundReceiptRow>() : null;
+  const row = capabilities.outboundReceipts ? await db.prepare(`
+    WITH target(user_id, message_id) AS (VALUES (?, ?))
+    SELECT s.status, r.message_id AS receipt_id, r.provider, r.result_kind, r.remote_status,
+      r.response_preview, r.last_event, r.last_event_at
+    FROM target
+    LEFT JOIN workspace_delivery_statuses s ON s.user_id = target.user_id AND s.message_id = target.message_id
+    LEFT JOIN workspace_outbound_receipts r ON r.user_id = target.user_id AND r.message_id = target.message_id
+  `).bind(userId, messageId).first<WorkspaceOutboundReceiptRow & { status: DeliveryStatus | null; receipt_id: string | null }>() : null;
+  const receipt = row?.receipt_id ? row : null;
   const events = capabilities.outboundEvents ? await db.prepare(`
     SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json
     FROM workspace_outbound_events WHERE user_id = ? AND message_id = ? ORDER BY event_created_at DESC, created_at DESC
   `).bind(userId, messageId).all<WorkspaceOutboundEventRow>() : { results: [] as WorkspaceOutboundEventRow[] };
-  return { receipt, events: events.results ?? [] };
+  return { receipt, status: row?.status ?? null, events: events.results ?? [] };
 }
 
 export interface DeliveryStatusPayload {

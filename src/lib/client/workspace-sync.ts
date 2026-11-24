@@ -3,8 +3,9 @@ export const WORKSPACE_SYNC_CHANNEL = 'flaremail-workspace-v1';
 export const WORKSPACE_SYNC_STORAGE_KEY = 'flaremail-workspace-sync-v1';
 
 export type WorkspaceSyncEvent =
-  | { type: 'message-updated'; id: string }
-  | { type: 'mailbox-refresh'; id?: string }
+  | { type: 'message-updated'; id: string; delivery?: true }
+  | { type: 'mailbox-refresh'; id?: string; delivery?: true }
+  | { type: 'delivery-attention-changed'; id?: string }
   | { type: 'blocked-senders-changed' }
   | { type: 'mail-identity-options-changed' }
   | { type: 'session-ended' };
@@ -16,16 +17,16 @@ export type WorkspaceSyncController = {
 
 export function parseWorkspaceSyncEvent(value: unknown): WorkspaceSyncEvent | null {
   if (!value || typeof value !== 'object') return null;
-  const input = value as { type?: unknown; id?: unknown };
+  const input = value as { type?: unknown; id?: unknown; delivery?: unknown };
   if (input.type === 'session-ended') return { type: 'session-ended' };
-  if (input.type === 'message-updated' && typeof input.id === 'string' && input.id.length > 0) {
-    return { type: 'message-updated', id: input.id };
+  const id = typeof input.id === 'string' && input.id.length > 0 ? input.id : undefined;
+  if (input.type === 'message-updated' && id) {
+    return { type: input.type, id, ...(input.delivery === true ? { delivery: true } : {}) };
   }
   if (input.type === 'mailbox-refresh') {
-    return typeof input.id === 'string' && input.id.length > 0
-      ? { type: 'mailbox-refresh', id: input.id }
-      : { type: 'mailbox-refresh' };
+    return { type: input.type, ...(id ? { id } : {}), ...(input.delivery === true ? { delivery: true } : {}) };
   }
+  if (input.type === 'delivery-attention-changed') return { type: input.type, ...(id ? { id } : {}) };
   if (input.type === 'mail-identity-options-changed') return { type: 'mail-identity-options-changed' };
   if (input.type === 'blocked-senders-changed') return { type: 'blocked-senders-changed' };
   return null;

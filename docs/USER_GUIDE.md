@@ -77,6 +77,15 @@ Use the delivery timeline to review submission, delivery, and failure events. Su
 
 Mail folders, categories, search, Starred, and label views show up to 40 mail records per page. Conversation grouping can produce fewer rows or show the same conversation on adjacent pages. Previous page restores a visited page; Next page replaces the current list. Bulk selection and default actions apply to the current page. Explicit filtered-conversation or Owner-conversation expansion remains available; turning a page clears both selection and the expansion choice. Trash also shows 40 records per page. A refresh or change of query restarts server pagination at the first page.
 
+## Delivery issues
+
+Use **Notifications** in the top bar to view delivery issues across all of your
+mail identities. View the affected message and acknowledge the issue when you
+have reviewed it. The message and its delivery status stay in Sent. The
+**History** view includes acknowledged and recovered issues. Use **Reopen
+issue** to bring back an acknowledged issue that still applies. In Sent, choose
+**Pending delivery issues** to narrow the current identity's list.
+
 ## Settings and notifications
 
 Open Settings from the desktop sidebar or mobile navigation. The top-right account menu shows your account information, **About**, and **Sign out**. About opens a centered dialog with the project version, GitHub repository link, and `© KnowSky404` attribution. The version comes from the highest stable release tag reachable from the build commit, with the version in `package.json` as a fallback. Close it with its Close button, Escape, or the backdrop. Focus returns to the account button and unsaved settings remain intact.

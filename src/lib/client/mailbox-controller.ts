@@ -19,7 +19,7 @@ import { CursorPager } from './cursor-pager';
 
 export type WorkspaceSection = MailboxSection | 'trash' | 'profile';
 
-export type MailFilter = 'all' | 'unread' | 'starred';
+export type MailFilter = import('$lib/domain/mail').MailboxFilter;
 
 export type MessageDelta = {
   message: MailMessage;

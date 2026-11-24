@@ -1,9 +1,10 @@
 <script lang="ts">
   import { formatApiError } from '$lib/client/api-error';
+  import { LatestRequest } from '$lib/client/latest-request';
   import { onMount, untrack } from 'svelte';
   import { MessageFlagsController, ReadActivationController } from '$lib/client/message-flags-controller';
   import type { PageData } from './$types';
-  import type { DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
+  import type { DeliveryAttentionAction, DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage } from '$lib/domain/mail';
   import MessageDetail from '$lib/components/mail/MessageDetail.svelte';
   import AuthExpiredNotice from '$lib/components/mail/AuthExpiredNotice.svelte';
   import LanguageSwitcher from '$lib/components/shell/LanguageSwitcher.svelte';
@@ -16,6 +17,7 @@
     fetchMessageBody,
     fetchWorkspaceMessage,
     fetchWorkspaceSession,
+    mutateDeliveryAttention,
     updateMessageFlags
   } from '$lib/client/workspace-api';
   import {
@@ -46,6 +48,8 @@
   let deliveryDetail = $state<DeliveryDetail | null>(null);
   let deliveryDetailError = $state('');
   let deliveryDetailPending = $state(false);
+  let attentionPending = $state(false);
+  const deliveryRequest = new LatestRequest();
   let mutationPending = $state(false);
   let mutationError = $state('');
   let statusRefreshError = $state(false);
@@ -122,6 +126,9 @@
     flagController.reset();
     readActivation.reset();
     mutationPending = false;
+    attentionPending = false;
+    deliveryRequest.cancel();
+    deliveryDetailPending = false;
     authRecoveryError = '';
     activeController?.abort();
     activeController = null;
@@ -160,17 +167,44 @@
       if (!signal.aborted && mounted) workspaceBodyPending = false;
     }
 
-    if (fresh.message.folder === 'sent') {
-      deliveryDetailPending = true;
-      try {
-        const result = await fetchDeliveryDetail(fresh.message.id, signal);
-        if (!signal.aborted && mounted) {
-          deliveryDetail = result.detail;
-          deliveryDetailError = '';
-        }
-      } finally {
-        if (!signal.aborted && mounted) deliveryDetailPending = false;
+    if (fresh.message.folder === 'sent') await reloadDeliveryDetail();
+  }
+
+  async function reloadDeliveryDetail() {
+    if (!mounted || authExpired || message.folder !== 'sent') return;
+    const request = deliveryRequest.begin();
+    deliveryDetailPending = true;
+    deliveryDetailError = '';
+    try {
+      const result = await fetchDeliveryDetail(message.id, request.signal);
+      if (request.isCurrent()) deliveryDetail = result.detail;
+    } catch (error) {
+      if (request.isCurrent()) deliveryDetailError = errorMessage(error, t('mail.deliveryDetailFailed'));
+    } finally {
+      if (request.isCurrent()) deliveryDetailPending = false;
+    }
+  }
+
+  async function changeAttention(action: DeliveryAttentionAction, id: string) {
+    if (authExpired || attentionPending || !activeController) return false;
+    const signal = activeController.signal;
+    attentionPending = true;
+    mutationError = '';
+    try {
+      await mutateDeliveryAttention(action, signal);
+      if (signal.aborted) return false;
+      sync?.publish({ type: 'delivery-attention-changed', id });
+      await reloadDeliveryDetail();
+      return true;
+    } catch (error) {
+      if (!signal.aborted) {
+        const changed = error instanceof ClientApiError && [404, 409].includes(error.status);
+        mutationError = t(changed ? 'attention.changed' : 'attention.actionFailed');
+        if (changed) await reloadDeliveryDetail();
       }
+      return false;
+    } finally {
+      if (!signal.aborted) attentionPending = false;
     }
   }
 
@@ -253,8 +287,15 @@
         window.location.assign(data.backHref);
         return;
       }
+      if (event.type === 'delivery-attention-changed') {
+        if (!event.id || event.id === message.id) void reloadDeliveryDetail();
+        return;
+      }
       if (event.type === 'mail-identity-options-changed' || event.type === 'blocked-senders-changed') return;
-      if (event.id === message.id && !authExpired) void refreshMessageFromWorkspace();
+      if (event.id === message.id && !authExpired) {
+        void refreshMessageFromWorkspace();
+        if (event.delivery) void reloadDeliveryDetail();
+      }
     });
 
     // A release may have happened after server rendering but before the sync listener was attached.
@@ -289,23 +330,12 @@
           if (!controller.signal.aborted) workspaceBodyPending = false;
         });
 
-      if (message.folder === 'sent') {
-        deliveryDetailPending = true;
-        void fetchDeliveryDetail(message.id, controller.signal)
-          .then((result) => {
-            if (!controller.signal.aborted) deliveryDetail = result.detail;
-          })
-          .catch((error) => {
-            if (!controller.signal.aborted) deliveryDetailError = errorMessage(error, t('mail.deliveryDetailFailed'));
-          })
-          .finally(() => {
-            if (!controller.signal.aborted) deliveryDetailPending = false;
-          });
-      }
+      if (message.folder === 'sent') void reloadDeliveryDetail();
     }
 
     return () => {
-      controller.abort();
+      activeController?.abort();
+      deliveryRequest.cancel();
       mounted = false;
       flagController.reset();
       readActivation.reset();
@@ -359,6 +389,9 @@
         {deliveryDetail}
         {deliveryDetailError}
         {deliveryDetailPending}
+        {attentionPending}
+        onAttentionAction={changeAttention}
+        onReloadDeliveryDetail={reloadDeliveryDetail}
         {workspaceBody}
         {workspaceAttachments}
         {workspaceBodyError}

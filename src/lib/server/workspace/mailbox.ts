@@ -70,7 +70,7 @@ export interface WorkspaceSnapshotOptions {
 }
 
 const maxMailboxMutationIds = 100;
-const mailboxMutationFilters = new Set<MailboxFilter>(['all', 'unread', 'starred']);
+const mailboxMutationFilters = new Set<MailboxFilter>(['all', 'unread', 'starred', 'attention']);
 const mailboxMutationDeliveryStatuses = new Set<DeliveryStatus>([
   'draft', 'queued', 'submitting', 'submitted', 'sent', 'delivered', 'delayed',
   'bounced', 'failed', 'complained', 'suppressed'
@@ -164,6 +164,7 @@ export async function mutateWorkspaceMailbox(
   if (suppliedScope.threadScope === 'filtered' && (
     typeof suppliedScope.query !== 'string' || suppliedScope.query.length > 200 ||
     !mailboxMutationFilters.has(suppliedScope.filter as MailboxFilter) ||
+    (suppliedScope.filter === 'attention' && suppliedScope.section !== 'sent') ||
     (suppliedScope.deliveryStatus !== undefined && suppliedScope.deliveryStatus !== null &&
       !mailboxMutationDeliveryStatuses.has(suppliedScope.deliveryStatus))
   )) {
@@ -418,7 +419,7 @@ export async function loadMailboxPage(
     filter: query.filter,
     identityFilter: query.identityFilter,
     deliveryStatus: query.deliveryStatus,
-    ...((query.search || (query.category && query.category !== 'all')) && !query.cursor ? { searchTotal, searchHitFields } : {}),
+    ...((query.search || query.filter === 'attention' || (query.category && query.category !== 'all')) && !query.cursor ? { searchTotal, searchHitFields } : {}),
     ...(metrics ? { metrics } : {})
   };
 }

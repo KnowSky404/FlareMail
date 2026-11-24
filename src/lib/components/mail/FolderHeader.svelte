@@ -59,7 +59,7 @@
   });
 
   const heading = $derived(title || sectionLabels[activeSection]);
-  const countLabel = $derived(query.trim()
+  const countLabel = $derived(query.trim() || filter === 'attention'
     ? translateCount(i18n.locale, 'mail.resultCount', count)
     : translateCount(i18n.locale, 'mail.folderCount', count));
   const identityValue = $derived(identityFilter ? `${identityFilter.kind}:${identityFilter.id}` : '');
@@ -142,7 +142,7 @@
           {/each}
         </select>
       {/if}
-      <MailFilterBar {filter} onFilterChange={onFilterChange} />
+      <MailFilterBar showDeliveryAttention={activeSection === 'sent'} {filter} onFilterChange={onFilterChange} />
     </div>
   {/if}
 </header>

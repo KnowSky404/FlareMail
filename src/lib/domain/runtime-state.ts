@@ -33,3 +33,6 @@ export function unavailableState(
 ): RuntimeUnavailableState {
   return { state: 'unavailable', code, retryable, requestId };
 }
+
+
+export type SystemHealth = 'unknown' | 'checking' | 'ready' | 'degraded';
