@@ -204,6 +204,22 @@ test('refreshes an open issue in another tab, handles failure, and keeps health 
   await expect(panel(page).getByText(subject)).toBeVisible();
   await page.unroute(endpoint);
 
+  const requestStarted = Promise.withResolvers<void>();
+  const releaseFailure = Promise.withResolvers<void>();
+  await page.route(endpoint, async (route) => {
+    requestStarted.resolve();
+    await releaseFailure.promise;
+    await route.fulfill({ status: 503, json: { ok: false, error: { code: 'D1_UNAVAILABLE', message: 'synthetic unavailable' } } });
+  });
+  await panel(page).getByRole('button', { name: '确认异常', exact: true }).press('Enter');
+  await requestStarted.promise;
+  const closeNotifications = panel(page).getByRole('button', { name: '关闭', exact: true });
+  await closeNotifications.focus();
+  releaseFailure.resolve();
+  await expect(panel(page).getByRole('alert')).toBeVisible();
+  await expect(closeNotifications).toBeFocused();
+  await page.unroute(endpoint);
+
   await panel(page).getByRole('button', { name: '全部确认', exact: true }).click();
   await expect(panel(page).getByText(/确认整个工作区当前的 1 条/u)).toBeVisible();
   await panel(page).getByRole('button', { name: '全部确认', exact: true }).click();
