@@ -141,7 +141,7 @@ describe('versioned D1 migrations', () => {
     db.exec(`
       INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
       SELECT value, 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'
-      FROM json_each('["legacy", "earlier-attempt", "existing", "delivered"]');
+      FROM json_each('["legacy", "earlier-attempt", "early-webhook", "existing", "delivered"]');
       INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id,
         submitted_at, last_event, last_event_at)
       SELECT id, user_id, CASE WHEN id = 'delivered' THEN 'delivered' ELSE 'sent' END,
@@ -153,7 +153,9 @@ describe('versioned D1 migrations', () => {
       FROM workspace_messages;
       INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider_message_id, status, started_at, completed_at)
       VALUES ('attempt-2', 'earlier-attempt', 'owner', 2, 'provider-earlier-attempt', 'submitted',
-        '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z');
+        '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
+        ('in-flight', 'early-webhook', 'owner', 1, 'provider-early-webhook', 'submitted',
+          '2026-01-01T00:00:30.000Z', '2026-01-01T00:03:00.000Z');
     `);
     db.exec(readFileSync(join(migrationsDirectory, '0033_delivery_attention.sql'), 'utf8'));
     db.query('INSERT INTO _test_migrations (name) VALUES (?)').run('0033_delivery_attention.sql');
@@ -163,6 +165,7 @@ describe('versioned D1 migrations', () => {
     `);
     applyMigrations(db);
     expect(db.query('SELECT message_id, kind, eligible_at, state FROM workspace_delivery_attention ORDER BY message_id').all()).toEqual([
+      { message_id: 'early-webhook', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' },
       { message_id: 'existing', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'acknowledged' },
       { message_id: 'legacy', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' }
     ]);

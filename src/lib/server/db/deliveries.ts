@@ -68,7 +68,9 @@ export function upsertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
       last_error = excluded.last_error,
       submitted_at = COALESCE(excluded.submitted_at, workspace_delivery_statuses.submitted_at),
       sent_at = COALESCE(excluded.sent_at, workspace_delivery_statuses.sent_at),
-      delivered_at = COALESCE(excluded.delivered_at, workspace_delivery_statuses.delivered_at),
+      delivered_at = CASE
+        WHEN excluded.provider_message_id IS NOT NULL AND excluded.provider_message_id IS NOT workspace_delivery_statuses.provider_message_id
+        THEN excluded.delivered_at ELSE COALESCE(excluded.delivered_at, workspace_delivery_statuses.delivered_at) END,
       last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
     WHERE workspace_delivery_statuses.status <> 'delivered'
       OR excluded.attempts > workspace_delivery_statuses.attempts

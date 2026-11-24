@@ -10,7 +10,14 @@ JOIN workspace_outbound_events e ON e.message_id = s.message_id AND e.user_id = 
   AND e.provider_message_id = s.provider_message_id AND e.event_type = 'email.delivery_delayed'
 WHERE s.status = 'sent' AND s.last_event = 'email.sent'
   AND e.event_created_at <= s.last_event_at
-  AND e.event_created_at >= COALESCE(a.completed_at, a.started_at, s.submitted_at, s.created_at)
+  AND e.event_created_at >= COALESCE(
+    CASE WHEN EXISTS (
+      SELECT 1 FROM workspace_delivery_attempts prior
+      WHERE prior.message_id = a.message_id AND prior.user_id = a.user_id
+        AND prior.attempt_number < a.attempt_number AND prior.provider_message_id = a.provider_message_id
+    ) THEN COALESCE(a.completed_at, a.started_at) ELSE a.started_at END,
+    s.submitted_at, s.created_at
+  )
   AND (a.provider_message_id = s.provider_message_id OR (a.id IS NULL AND s.attempts <= 1))
   AND strftime('%Y-%m-%dT%H:%M:%fZ', e.event_created_at) IS NOT NULL
   AND NOT EXISTS (

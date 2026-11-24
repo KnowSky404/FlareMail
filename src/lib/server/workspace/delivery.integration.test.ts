@@ -315,6 +315,16 @@ describe('Owner delivery attention', () => {
       .toEqual({ last_event: 'email.delivered' });
     expect(database.query("SELECT state FROM workspace_delivery_attention WHERE kind = 'delayed'").get())
       .toEqual({ state: 'resolved' });
+
+    await upsertOutboundStatus(env.DB, { ...base, providerMessageId: 're_2', status: 'submitted', attempts: 2,
+      idempotencyKey: 'flaremail:send:user-1:compose-1', lastError: '', submittedAt: completedAt, sentAt: null, deliveredAt: null }).run();
+    database.query("UPDATE workspace_delivery_attempts SET provider_message_id = 're_2' WHERE id = 'new-attempt'").run();
+    expect(database.query("SELECT delivered_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
+      .toEqual({ delivered_at: null });
+    const newDeliveredAt = '2027-01-15T08:07:00.000Z';
+    await applyResendDeliveryWebhook(env, 'delivered-replacement-id', payload('email.delivered', newDeliveredAt, 're_2'));
+    expect(database.query("SELECT delivered_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
+      .toEqual({ delivered_at: newDeliveredAt });
   });
 
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {
