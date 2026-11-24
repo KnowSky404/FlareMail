@@ -95,6 +95,12 @@ describe('/api/readiness', () => {
     expect(noProvider.status).toBe(503);
     expect(await noProvider.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
     expect((await GET(event({ ...env, RESEND_WEBHOOK_SECRET: secret }, 'system-production', true, '?scope=system'))).status).toBe(200);
+
+    const preview = { ...env, APP_ENV: 'preview' };
+    const previewMissing = await GET(event(preview, 'system-preview', true, '?scope=system'));
+    expect(previewMissing.status).toBe(503);
+    expect(await previewMissing.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
+    expect((await GET(event({ ...preview, RESEND_WEBHOOK_SECRET: secret }, 'system-preview', true, '?scope=system'))).status).toBe(200);
   });
 
   test('rejects an empty or partially migrated database', async () => {

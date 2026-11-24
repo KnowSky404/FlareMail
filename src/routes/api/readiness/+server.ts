@@ -63,11 +63,12 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   const { platform } = event;
   const env = platform?.env as CloudflareEnv | undefined;
   const validation = validateEnvironment((env ?? {}) as unknown as Record<string, unknown>);
-  const resendKeyMissing = systemOnly && validation.config.outboundProvider?.toLowerCase() === 'resend' &&
-    !validation.config.hasResendApiKey;
+  const usesResend = validation.config.outboundProvider?.toLowerCase() === 'resend';
+  const resendKeyMissing = systemOnly && usesResend && !validation.config.hasResendApiKey;
   const productionSystem = systemOnly && validation.config.appEnv === 'production';
   const sendProviderMissing = productionSystem && !validation.config.outboundProvider;
-  const resendWebhookMissing = productionSystem && !env?.RESEND_WEBHOOK_SECRET?.trim();
+  const resendPreview = systemOnly && validation.config.appEnv === 'preview' && usesResend;
+  const resendWebhookMissing = (productionSystem || resendPreview) && !env?.RESEND_WEBHOOK_SECRET?.trim();
   const configurationReady = validation.ok && !resendKeyMissing && !resendWebhookMissing && !sendProviderMissing;
   if (!configurationReady) {
     console.error(JSON.stringify({
