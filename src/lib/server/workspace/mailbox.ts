@@ -188,8 +188,10 @@ export async function mutateWorkspaceMailbox(
   }
   if (scope.section === 'label') await requireMailLabel(env.DB, workspace.userId, scope.labelId!);
 
+  const filteredAttention = scope.threadScope === 'filtered' && scope.filter === 'attention';
+  const anchorScope = filteredAttention ? { ...scope, filter: 'all' as const } : scope;
   const directRows = directIds.length
-    ? await listOwnedMailboxMutationRows(env.DB, workspace.userId, directIds, scope)
+    ? await listOwnedMailboxMutationRows(env.DB, workspace.userId, directIds, anchorScope)
     : [];
   if (directRows.length !== directIds.length || directIds.some((id) => !directRows.some((row) => row.id === id))) {
     throw new ApiError(404, 'MAILBOX_MESSAGE_NOT_FOUND', '所选邮件不存在或不属于声明的邮件范围。');
@@ -212,7 +214,6 @@ export async function mutateWorkspaceMailbox(
       maxMailboxMutationIds
     )
       : [];
-  const filteredAttention = scope.threadScope === 'filtered' && scope.filter === 'attention';
   const selectedWithoutThread = directRows.filter((row) => !row.thread_key).map((row) => row.id);
   const expanded = new Set([...(scope.threadScope === 'filtered' ? selectedWithoutThread : directIds), ...resolvedIds]);
   const skippedSelected = filteredAttention ? directIds.filter((id) => !expanded.has(id)).length : 0;
