@@ -17,7 +17,7 @@ class TestStatement {
   async all<T>() { return { success: true, results: this.database.query(this.sql).all(...this.values) as T[] }; }
   execute() {
     const query = this.database.query(this.sql);
-    if (/^\s*(?:SELECT|WITH)\b/iu.test(this.sql)) return { success: true, results: query.all(...this.values) };
+    if (/^\s*(?:SELECT|WITH)\b|\bRETURNING id\b/iu.test(this.sql)) return { success: true, results: query.all(...this.values) };
     const result = query.run(...this.values);
     return { success: true, results: [], meta: { changes: result.changes } };
   }

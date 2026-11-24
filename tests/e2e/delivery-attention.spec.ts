@@ -191,7 +191,7 @@ test('refreshes an open issue in another tab, handles failure, and keeps health 
   let degraded = true;
   await page.route('**/api/readiness?scope=system', async (route) => {
     if (!degraded) return route.continue();
-    await route.fulfill({ status: 503, json: { ok: false, error: { code: 'R2_UNAVAILABLE', message: 'synthetic dependency fault' } } });
+    await route.fulfill({ status: 503, json: { ok: false, error: { code: 'AUTHENTICATION_UNAVAILABLE', message: 'synthetic session store failure' } } });
   });
   await notice(page).click();
   await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
@@ -259,6 +259,11 @@ test('refreshes an open issue in another tab, handles failure, and keeps health 
   await expect(receipt.getByText(/Acknowledged/u)).toBeVisible();
   await expect(notice(page)).toHaveAccessibleName(/1 pending delivery issue/u);
   await page.unroute(endpoint);
+  const reopenedResponse = await post({ action: 'reopen', incident: { id: previous.id,
+    version: (await getNotices(page.request, 'history')).notices.find((item) => item.id === previous.id)!.version } });
+  expect((await reopenedResponse.json()).data.changed).toBe(1);
+  const reopened = (await getNotices(page.request)).notices.find((item) => item.id === previous.id)!;
+  expect((await post({ action: 'acknowledge', incident: { id: reopened.id, version: reopened.version } })).ok()).toBe(true);
   const concurrent = (await getNotices(page.request)).notices.find((item) => item.messageId === concurrentId)!;
   expect((await post({ action: 'acknowledge', incident: { id: concurrent.id, version: concurrent.version } })).ok()).toBe(true);
   await second.close();

@@ -99,25 +99,25 @@ export async function changeDeliveryAttention(db: D1Database, userId: string, ac
     const update = db.prepare(`UPDATE workspace_delivery_attention ${acknowledge} WHERE id IN (
       SELECT a.id FROM workspace_delivery_attention a ${messageJoin}
       WHERE a.user_id = ? AND a.state = 'open' AND ${active('a')}
-        AND a.version <= ? AND a.eligible_at <= ?)`)
+        AND a.version <= ? AND a.eligible_at <= ?) RETURNING id`)
       .bind(userId, action.snapshot.version, action.snapshot.asOf);
     const [result, count] = await db.batch([update, summaryStatement(db, userId)]);
-    return { changed: result.meta.changes, summary: summary(count.results[0] as SummaryRow) };
+    return { changed: result.results.length, summary: summary(count.results[0] as SummaryRow) };
   }
   const { id, version } = action.incident;
   const reopening = action.action === 'reopen';
   const update = db.prepare(`UPDATE workspace_delivery_attention
     ${reopening ? "SET state = 'open'" : acknowledge} WHERE id IN (
       SELECT a.id FROM workspace_delivery_attention a ${messageJoin}
-      WHERE a.id = ? AND a.user_id = ? AND a.version = ? AND a.state = ? AND ${active('a')})`)
+      WHERE a.id = ? AND a.user_id = ? AND a.version = ? AND a.state = ? AND ${active('a')}) RETURNING id`)
     .bind(id, userId, version, reopening ? 'acknowledged' : 'open');
   const find = db.prepare(`SELECT a.version, a.state, CASE WHEN ${active('a')} THEN 1 ELSE 0 END AS active
     FROM workspace_delivery_attention a ${messageJoin} WHERE a.id = ? AND a.user_id = ?`).bind(id, userId);
   const [result, selected, count] = await db.batch([update, find, summaryStatement(db, userId)]);
   const current = selected.results[0] as { version: number; state: DeliveryAttentionState; active: number } | undefined;
   if (!current) throw new ApiError(404, 'ATTENTION_NOT_FOUND', '没有找到这条投递异常。');
-  if (!result.meta.changes && (reopening || !current.active || current.version !== version || current.state !== 'acknowledged')) {
+  if (!result.results.length && (reopening || !current.active || current.version !== version || current.state !== 'acknowledged')) {
     throw new ApiError(409, 'ATTENTION_CHANGED', '投递异常已发生变化，请刷新后重试。');
   }
-  return { changed: result.meta.changes, summary: summary(count.results[0] as SummaryRow) };
+  return { changed: result.results.length, summary: summary(count.results[0] as SummaryRow) };
 }
