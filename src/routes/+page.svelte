@@ -1904,6 +1904,16 @@
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {
+    const current = selectedMessage;
+    for (const message of page.messages) {
+      if (message.folder !== 'sent') continue;
+      const receipt = deliveryDetails[message.id];
+      if ((receipt && (receipt.status !== message.deliveryStatus ||
+        (message.deliveryLastEventAt && (!receipt.lastEventAt || message.deliveryLastEventAt > receipt.lastEventAt)))) ||
+        (deliveryDetailPendingId === message.id && current?.id === message.id && current.deliveryStatus !== message.deliveryStatus)) {
+        deliveryDetailCache.invalidate(message.id);
+      }
+    }
     const previousInbox = mailboxPages?.inbox;
     const sameInboxScope = previousInbox && previousInbox.query === page.query && previousInbox.filter === page.filter &&
       (previousInbox.category ?? 'all') === (page.category ?? 'all') && sameIdentityScope(previousInbox.identityFilter, page.identityFilter);
@@ -3079,10 +3089,10 @@
     if (id) deliveryDetailCache.invalidate(id);
     else deliveryDetailCache.reset();
     if (current?.folder === 'sent' && (!id || id === current.id)) void loadDeliveryDetail(current, true);
+    mailboxController.invalidateAttention();
     if (activeSection === 'sent' && mailFilter === 'attention') {
       // A notification mutation can remove the current row from this server-backed filter.
       if (current && urlMessageId === current.id) deepLinkedMessage = current;
-      mailboxController.invalidate();
       void mailboxController.refresh('sent', searchQuery, mailFilter, mailIdentityFilter);
     }
   }
