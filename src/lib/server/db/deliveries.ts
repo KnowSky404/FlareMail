@@ -3,6 +3,11 @@ import { isDeliveryTerminal, type DeliveryAttentionItem } from '$lib/domain/mail
 import { currentDeliveryAttentionStatement } from './delivery-attention';
 
 const terminalStatuses = "'delivered', 'bounced', 'failed', 'complained', 'suppressed'";
+const unconfirmedAttempt = (alias: string) => `EXISTS (
+  SELECT 1 FROM workspace_delivery_attempts AS attempt
+  WHERE attempt.message_id = ${alias}.message_id AND attempt.attempt_number = ${alias}.attempts
+    AND attempt.provider_message_id IS NOT ${alias}.provider_message_id
+)`;
 
 export async function listOutboundStatuses(db: D1Database, userId: string, capabilities: WorkspaceCapabilities) {
   if (!capabilities.outboundStatuses) return { results: [] as WorkspaceOutboundStatusRow[] };
@@ -175,11 +180,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       delivered_at = CASE WHEN ? = 'delivered' THEN COALESCE(delivered_at, ?) ELSE delivered_at END,
       last_event = ?, last_event_at = ?, updated_at = ?
     WHERE message_id = ? AND provider_message_id = ?
-      AND (? OR NOT EXISTS (
-        SELECT 1 FROM workspace_delivery_attempts AS attempt
-        WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
-          AND attempt.provider_message_id IS NOT current.provider_message_id
-      ))
+      AND (? OR NOT (${unconfirmedAttempt('current')}))
       AND (status NOT IN (${terminalStatuses}) OR status = ?)
       AND (? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
   `).bind(
@@ -222,7 +223,11 @@ export async function listUnmatchedOutboundEvents(db: D1Database, providerMessag
     .bind(providerMessageId).all<WorkspaceOutboundEventRow>();
 }
 
-export function assignOutboundEvent(db: D1Database, svixId: string, messageId: string, userId: string) {
+export function assignOutboundEvent(db: D1Database, svixId: string, messageId: string, userId: string, allowUnconfirmed: boolean) {
   return db.prepare(`UPDATE workspace_outbound_events SET message_id = ?, user_id = ?
-    WHERE svix_id = ? AND user_id = 'unmatched'`).bind(messageId, userId, svixId);
+    WHERE svix_id = ? AND user_id = 'unmatched' AND EXISTS (
+      SELECT 1 FROM workspace_delivery_statuses d
+      WHERE d.message_id = ? AND d.user_id = ? AND d.provider_message_id = workspace_outbound_events.provider_message_id
+        AND (? OR NOT (${unconfirmedAttempt('d')}))
+    )`).bind(messageId, userId, svixId, messageId, userId, Number(allowUnconfirmed));
 }

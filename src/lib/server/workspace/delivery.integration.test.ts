@@ -281,27 +281,29 @@ describe('Owner delivery attention', () => {
 
   test('preserves an unresolved delay until an unaccepted same-key retry has definitive delivery proof', async () => {
     const { database, env } = setup();
-    await applyResendDeliveryWebhook(env, 'delayed-before-retry', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
+    const now = Date.now();
+    const at = (second: number) => new Date(now + second * 1000).toISOString();
+    await applyResendDeliveryWebhook(env, 'delayed-before-retry', payload('email.delivery_delayed', at(2)));
     database.exec(`
       INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, idempotency_key,
         provider, provider_message_id, status, started_at)
       VALUES ('new-attempt', 'message-1', 'user-1', 2, 'flaremail:send:user-1:compose-1', 'resend', NULL,
-        'submitting', '2027-01-15T08:03:00.000Z');
+        'submitting', '${at(3)}');
       UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
-        last_event_at = '2027-01-15T08:03:00.000Z' WHERE message_id = 'message-1';
+        last_event_at = '${at(3)}' WHERE message_id = 'message-1';
     `);
-    const late = await applyResendDeliveryWebhook(env, 'late-before-retry', payload('email.sent', '2027-01-15T08:04:00.000Z'));
-    expect(late).toMatchObject({ matched: true, ignored: true });
+    const late = await applyResendDeliveryWebhook(env, 'late-before-retry', payload('email.sent', at(4)));
+    expect(late).toMatchObject({ matched: false, ignored: true });
     expect(database.query("SELECT status FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
       .toEqual({ status: 'submitting' });
     expect(database.query("SELECT state, closed_at FROM workspace_delivery_attention WHERE kind = 'delayed'").get())
       .toEqual({ state: 'open', closed_at: null });
-    expect(database.query("SELECT message_id FROM workspace_outbound_events WHERE svix_id = 'late-before-retry'").get())
-      .toEqual({ message_id: 'message-1' });
+    expect(database.query("SELECT user_id FROM workspace_outbound_events WHERE svix_id = 'late-before-retry'").get())
+      .toEqual({ user_id: 'unmatched' });
 
-    const delivered = await applyResendDeliveryWebhook(env, 'delivered-during-retry', payload('email.delivered', '2027-01-15T08:05:00.000Z'));
+    const delivered = await applyResendDeliveryWebhook(env, 'delivered-during-retry', payload('email.delivered', at(5)));
     expect(delivered).toMatchObject({ matched: true, ignored: false });
-    const completedAt = '2027-01-15T08:06:00.000Z';
+    const completedAt = at(6);
     const base = { messageId: 'message-1', userId: 'user-1', provider: 'resend', providerMessageId: 're_1',
       lastEvent: 'submission' as const, lastEventAt: completedAt, createdAt: completedAt, updatedAt: completedAt };
     await env.DB.batch([
@@ -321,7 +323,7 @@ describe('Owner delivery attention', () => {
     database.query("UPDATE workspace_delivery_attempts SET provider_message_id = 're_2' WHERE id = 'new-attempt'").run();
     expect(database.query("SELECT delivered_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
       .toEqual({ delivered_at: null });
-    const newDeliveredAt = '2027-01-15T08:07:00.000Z';
+    const newDeliveredAt = at(7);
     await applyResendDeliveryWebhook(env, 'delivered-replacement-id', payload('email.delivered', newDeliveredAt, 're_2'));
     expect(database.query("SELECT delivered_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
       .toEqual({ delivered_at: newDeliveredAt });
@@ -344,6 +346,30 @@ describe('Owner delivery attention', () => {
     expect(await findDeliveryDetailRows(env.DB, 'other-owner', 'message-1')).toMatchObject({
       status: null, receipt: null, attention: null, events: []
     });
+  });
+
+  test('replays a deferred provider delay once a same-key retry confirms its ID', async () => {
+    const { database, env } = setup();
+    const now = new Date().toISOString();
+    await applyResendDeliveryWebhook(env, 'previous-delay', payload('email.delivery_delayed', now));
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '${now}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = '${now}' WHERE message_id = 'message-1';
+    `);
+    const newDelay = await applyResendDeliveryWebhook(env, 'retry-delay', payload('email.delivery_delayed', now));
+    expect(newDelay).toMatchObject({ matched: false, ignored: true });
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(1);
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
+    expect((await page(env.DB, 'pending')).notices.map(({ kind }) => kind)).toEqual(['delayed']);
+    expect(database.query("SELECT attempt_number FROM workspace_delivery_attention WHERE state = 'open'").get())
+      .toEqual({ attempt_number: 2 });
   });
 
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {

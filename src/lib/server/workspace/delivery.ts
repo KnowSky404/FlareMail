@@ -1,4 +1,4 @@
-import { getDeliveryRetryEligibility, type DeliveryRetryEligibilityCode } from '$lib/domain/mail';
+import { getDeliveryRetryEligibility, isDeliveryTerminal, type DeliveryRetryEligibilityCode } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { normalizeResendWebhookEvent, type NormalizedResendWebhookEvent } from '$lib/server/resend-webhook';
 import { getWorkspaceCapabilities } from '$lib/server/db/capabilities';
@@ -104,7 +104,7 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
   const event = normalizeResendWebhookEvent(payload as Parameters<typeof normalizeResendWebhookEvent>[0]);
   if (await hasOutboundEvent(env.DB, svixId)) return { duplicate: true, ignored: false, matched: true, messageId: null as string | null };
   const outboundRow = await findOutboundByProviderMessageId(env.DB, event.providerMessageId);
-  const eventRecord = serializeOutboundEventInsert({ svixId, messageId: outboundRow?.message_id ?? event.providerMessageId, userId: outboundRow?.user_id ?? 'unmatched', provider: event.provider, providerMessageId: event.providerMessageId, eventType: event.eventType, eventCreatedAt: event.createdAt, summary: event.summary, payloadJson: event.payloadJson });
+  const eventRecord = serializeOutboundEventInsert({ svixId, messageId: event.providerMessageId, userId: 'unmatched', provider: event.provider, providerMessageId: event.providerMessageId, eventType: event.eventType, eventCreatedAt: event.createdAt, summary: event.summary, payloadJson: event.payloadJson });
   if (!outboundRow) {
     try {
       await env.DB.batch([insertOutboundEvent(env.DB, eventRecord)]);
@@ -119,10 +119,12 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
 
   const statements: D1PreparedStatement[] = [
     insertOutboundEvent(env.DB, eventRecord),
+    assignOutboundEvent(env.DB, svixId, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate)),
     ...reconciliationStatements(env.DB, outboundRow, event)
   ];
   try {
-    await env.DB.batch(statements);
+    const [, assigned] = await env.DB.batch(statements);
+    if (!assigned.meta.changes) return { duplicate: false, ignored: true, matched: false, messageId: null };
   } catch (error) {
     if (error instanceof Error && /unique constraint|constraint failed/iu.test(error.message)) {
       return { duplicate: true, ignored: true, matched: true, messageId: outboundRow.message_id };
@@ -191,11 +193,11 @@ export async function reconcilePendingResendEvents(env: CloudflareEnv, providerM
     } catch {
       continue;
     }
-    await env.DB.batch([
-      assignOutboundEvent(env.DB, row.svix_id, outboundRow.message_id, outboundRow.user_id),
+    const [assigned] = await env.DB.batch([
+      assignOutboundEvent(env.DB, row.svix_id, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate)),
       ...reconciliationStatements(env.DB, outboundRow, event)
     ]);
-    reconciled += 1;
+    reconciled += assigned.meta.changes;
   }
   return reconciled;
 }
