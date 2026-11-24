@@ -91,6 +91,9 @@ describe('/api/readiness', () => {
     expect(missing.status).toBe(503);
     expect(await missing.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
     const secret = `whsec_${btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))}`;
+    const noProvider = await GET(event({ ...env, OUTBOUND_PROVIDER: undefined, RESEND_WEBHOOK_SECRET: secret }, 'system-production', true, '?scope=system'));
+    expect(noProvider.status).toBe(503);
+    expect(await noProvider.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
     expect((await GET(event({ ...env, RESEND_WEBHOOK_SECRET: secret }, 'system-production', true, '?scope=system'))).status).toBe(200);
   });
 
