@@ -370,6 +370,30 @@ describe('Owner delivery attention', () => {
     expect((await page(db)).notices.map(({ id }) => id)).toEqual(state === 'open' ? [original.id] : []);
   });
 
+  test('excludes a delay restored after successive retry timeouts from the older bulk snapshot', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    const at = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
+    await applyResendDeliveryWebhook(env, 'known-delay', payload('email.delivery_delayed', at(-3600)));
+    const original = (await page(db)).notices[0]!;
+    const insert = database.query(`INSERT INTO workspace_delivery_attempts
+      (id, message_id, user_id, attempt_number, provider, status, started_at, error)
+      VALUES (?, 'message-1', 'user-1', ?, 'resend', 'submitting', ?, 'timeout')`);
+    const project = database.query(`UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = ?,
+      last_event = 'submission', last_event_at = ? WHERE message_id = 'message-1'`);
+    insert.run('stalled', 2, at(-1200));
+    project.run(2, at(-1185));
+    insert.run('returned', 3, at(-30));
+    project.run(3, at(-15));
+    const before = await page(db);
+    expect(before.notices.map(({ kind }) => kind)).toEqual(['stale_submitting']);
+    await applyResendDeliveryWebhook(env, 'late-provider-delay', payload('email.delivery_delayed', at(-1)));
+    const restored = (await page(db)).notices[0]!;
+    expect(restored.id).toBe(original.id);
+    expect(restored.version).toBeGreaterThan(before.summary.snapshot.version);
+    expect((await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge_all', snapshot: before.summary.snapshot })).changed).toBe(0);
+  });
+
   test('clears a retry rate limit and restores the provider delay after same-ID acceptance', async () => {
     const { database, env } = setup();
     const db = env.DB;
