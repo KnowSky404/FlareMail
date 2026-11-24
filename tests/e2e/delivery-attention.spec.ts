@@ -359,6 +359,15 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   expect((await nativeRetry.json()).data.message).toMatchObject({ deliveryAttempts: 2 });
   const nativeDetail = await request.get('/api/workspace/messages/' + native.id + '/delivery');
   expect((await nativeDetail.json()).data.detail.attention).toMatchObject({ kind: 'delayed', state: 'open' });
+  expect((await events(request, native.deliveryProviderMessageId, 'email.failed', 'attention-native-provider-failure')).ok()).toBe(true);
+  await page.goto('/?folder=sent&message=' + native.id);
+  const failedReceipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+  await expect(failedReceipt.getByText('发送失败', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: '更多邮件操作', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: '重试投递' })).toHaveCount(0);
+  await expect(failedReceipt.getByRole('button', { name: '重试投递' })).toHaveCount(0);
+  const nativeFailure = (await getNotices(request)).notices.find((item) => item.messageId === native.id)!;
+  expect((await post({ action: 'acknowledge', incident: { id: nativeFailure.id, version: nativeFailure.version } })).ok()).toBe(true);
   expect((await request.delete('/api/workspace/session', { headers: { origin } })).ok()).toBe(true);
   expect((await post(ack)).status()).toBe(401);
   await login(page);
@@ -442,4 +451,18 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await expect(standaloneReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
   await standalone.close();
+
+  const focusId = 'e2e-attention-focus';
+  const focusSubject = 'E2E Attention Focus';
+  await seed(page.request, origin, focusId, 'delayed', focusSubject);
+  await page.goto('/?folder=sent&filter=attention');
+  const focusRow = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(focusSubject, 'u') });
+  await expect(focusRow).toBeVisible();
+  expect((await events(page.request, focusId, 'email.delivered', 'attention-focus-delivered')).ok()).toBe(true);
+  await page.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 31_000;
+    try { window.dispatchEvent(new Event('focus')); } finally { Date.now = now; }
+  });
+  await expect(focusRow).toHaveCount(0);
 });

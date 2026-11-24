@@ -3314,7 +3314,12 @@
       }
     };
 
-    const refreshOnFocus = () => { void notifications.refresh(); void notifications.checkHealth(); };
+    const refreshOnFocus = () => {
+      void notifications.refresh().then((refreshed) => {
+        if (refreshed && authenticated && !authExpired) refreshAttentionMailbox();
+      });
+      void notifications.checkHealth();
+    };
     window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('keydown', handleShortcut);
     const handleLocaleChange = () => toastController.reset();

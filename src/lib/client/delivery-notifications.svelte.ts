@@ -127,6 +127,7 @@ export class DeliveryNotifications {
         const result = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { signal: request.signal });
         if (request.isCurrent()) this.summary = result;
       }
+      return request.isCurrent();
     } catch {
       if (!request.isCurrent()) return;
       this.loadError = true;

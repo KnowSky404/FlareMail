@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getDeliveryRetryEligibility } from '$lib/domain/mail';
   import type { DeliveryAttentionAction, DeliveryDetail, InboundMessageDetail, MailAttachmentSummary, MailMessage, MessageBodyView } from '$lib/domain/mail';
   import { Avatar, Button, EmptyState } from '$lib/components/ui';
   import { Forward, Reply, ReplyAll } from '@lucide/svelte';
@@ -129,6 +130,18 @@
   const formattedThreadCount = $derived(formatNumber(threadCount, i18n.locale));
   const isInbound = $derived(message?.source === 'inbound');
   const isSent = $derived(message?.folder === 'sent');
+  const retryDelivery = $derived.by(() => {
+    const status = deliveryDetail?.status ?? message?.deliveryStatus;
+    if (!message || !isSent || !status) return undefined;
+    const eligibility = getDeliveryRetryEligibility({
+      status,
+      lastEvent: deliveryDetail?.lastEvent ?? message.deliveryLastEvent,
+      resultKind: deliveryDetail?.resultKind ?? message.deliveryResultKind,
+      idempotencyKey: message.deliveryIdempotencyKey,
+      attemptStartedAt: message.deliveryAttemptStartedAt
+    });
+    return eligibility.eligible ? onRetryDelivery : undefined;
+  });
 
   const folderLabel = (folder: MailMessage['folder']) => {
     if (folder === 'inbox') return t('shell.inbox');
@@ -140,7 +153,6 @@
 <div class:fm-reader-body={readerMode} class="fm-detail-shell flex h-full min-h-0 min-w-0 flex-col bg-[var(--fm-surface)]">
   <MessageHeader
     {message}
-    {deliveryDetail}
     {inboundDetail}
     {rawDownloadHref}
     {pending}
@@ -163,7 +175,7 @@
     {trashMode}
     {onReloadInboundDetail}
     {onReloadDeliveryDetail}
-    {onRetryDelivery}
+    onRetryDelivery={retryDelivery}
     {onOpenReader}
     {onCloseReader}
     {standaloneHref}
@@ -222,7 +234,7 @@
 
         {#if isSent && !trashMode}
           <div class="mt-6">
-            <DeliveryTimeline message={message} {deliveryDetail} loading={deliveryDetailPending} error={deliveryDetailError} {pending} {attentionPending} {onAttentionAction} onReload={onReloadDeliveryDetail} onRetry={onRetryDelivery} />
+            <DeliveryTimeline message={message} {deliveryDetail} loading={deliveryDetailPending} error={deliveryDetailError} {pending} {attentionPending} {onAttentionAction} onReload={onReloadDeliveryDetail} onRetry={retryDelivery} />
           </div>
         {/if}
 
