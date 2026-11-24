@@ -2,7 +2,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
-import { upsertOutboundReceipt, upsertOutboundStatus } from '$lib/server/db/deliveries';
+import { findDeliveryDetailRows, upsertOutboundReceipt, upsertOutboundStatus } from '$lib/server/db/deliveries';
 import { changeDeliveryAttention, findCurrentDeliveryAttention, getDeliveryAttentionSummary, listDeliveryAttention } from '$lib/server/db/delivery-attention';
 import { loadMailboxPage } from './mailbox';
 import { parseMailboxQuery } from './mailbox-query';
@@ -325,6 +325,25 @@ describe('Owner delivery attention', () => {
     await applyResendDeliveryWebhook(env, 'delivered-replacement-id', payload('email.delivered', newDeliveredAt, 're_2'));
     expect(database.query("SELECT delivered_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
       .toEqual({ delivered_at: newDeliveredAt });
+  });
+
+  test('accepts a definitive bounce for the last known provider ID after a retry times out', async () => {
+    const { database, env } = setup();
+    await applyResendDeliveryWebhook(env, 'initial-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, error, started_at)
+      VALUES ('uncertain', 'message-1', 'user-1', 2, 'resend', 'submitting', 'timeout', '2027-01-15T08:03:00.000Z');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = '2027-01-15T08:03:00.000Z' WHERE message_id = 'message-1';
+    `);
+    const bounce = await applyResendDeliveryWebhook(env, 'definitive-bounce', payload('email.bounced', '2027-01-15T08:04:00.000Z'));
+    expect(bounce).toMatchObject({ matched: true, ignored: false });
+    expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: 'bounced', receipt: { last_event: 'email.bounced' }, attention: { kind: 'bounced', state: 'open' }
+    });
+    expect(await findDeliveryDetailRows(env.DB, 'other-owner', 'message-1')).toMatchObject({
+      status: null, receipt: null, attention: null, events: []
+    });
   });
 
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {

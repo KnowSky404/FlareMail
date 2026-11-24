@@ -15,16 +15,21 @@ class TestStatement {
   bind(...values: unknown[]) { this.values = values as SQLQueryBindings[]; return this as unknown as D1PreparedStatement; }
   async first<T>() { return (this.database.query(this.sql).get(...this.values) as T | null) ?? null; }
   async all<T>() { return { success: true, results: this.database.query(this.sql).all(...this.values) as T[] }; }
-  async run<T>() { this.database.query(this.sql).run(...this.values); return { success: true, results: [] as T[] }; }
+  execute() {
+    const query = this.database.query(this.sql);
+    if (/^\s*(?:SELECT|WITH)\b/iu.test(this.sql)) return { success: true, results: query.all(...this.values) };
+    query.run(...this.values);
+    return { success: true, results: [] };
+  }
+  async run() { return this.execute(); }
 }
 
 class TestD1 {
   constructor(readonly database: Database) {}
   prepare(sql: string) { return new TestStatement(this.database, sql) as unknown as D1PreparedStatement; }
   async batch(statements: D1PreparedStatement[]) {
-    const results = [];
-    for (const statement of statements) results.push(await statement.run());
-    return results;
+    return this.database.transaction(() =>
+      statements.map((statement) => (statement as unknown as TestStatement).execute()))();
   }
 }
 
