@@ -137,3 +137,9 @@ test('reader retains only validated quarantine page context', () => {
   valid.searchParams.set('quarantinePage', '-1');
   expect(buildWorkspaceBackHref(valid, message)).not.toContain('quarantineCursor');
 });
+
+test('returns to the same Sent attention filter from an independent reader', () => {
+  const value = { id: 'sent-1', folder: 'sent' } as Parameters<typeof buildWorkspaceBackHref>[1];
+  expect(buildWorkspaceBackHref(new URL('https://flaremail.test/messages/sent-1?folder=sent&filter=attention'), value))
+    .toBe('/?folder=sent&message=sent-1&filter=attention');
+});

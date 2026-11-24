@@ -257,6 +257,27 @@ describe('Owner delivery attention', () => {
     database.close();
   });
 
+  test('keeps a stalled attempt visible until its retry stalls or succeeds', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    addDelivery(database, 'retried-submission', 'submitting');
+    const old = (await page(db)).notices[0]!;
+    database.query("UPDATE workspace_delivery_statuses SET attempts = 2, last_event_at = ? WHERE message_id = 'retried-submission'")
+      .run(new Date().toISOString());
+    expect((await page(db)).notices.map(({ id }) => id)).toEqual([old.id]);
+
+    database.query("UPDATE workspace_delivery_statuses SET last_event_at = '2026-01-02' WHERE message_id = 'retried-submission'").run();
+    const current = (await page(db)).notices;
+    expect(current).toHaveLength(1);
+    expect(current[0].id).not.toBe(old.id);
+    expect((await page(db, 'history')).notices.find(({ id }) => id === old.id)?.state).toBe('superseded');
+
+    database.query("UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'retried-submission'").run();
+    expect((await page(db)).notices).toEqual([]);
+    expect((await page(db, 'history')).notices.find(({ id }) => id === current[0].id)?.state).toBe('resolved');
+    database.close();
+  });
+
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {
     const { database, env } = setup();
     const db = env.DB;

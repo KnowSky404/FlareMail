@@ -14,7 +14,7 @@ const staleReplacement = (alias: string) => `
   SELECT stale.eligible_at FROM workspace_delivery_attention stale INDEXED BY workspace_delivery_attention_message
   WHERE stale.message_id = ${alias}.message_id AND stale.user_id = ${alias}.user_id
     AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL AND stale.eligible_at <= ${now}
-    AND ${alias}.kind <> 'stale_submitting'`;
+    AND stale.id > ${alias}.id ORDER BY stale.id LIMIT 1`;
 const active = (alias: string) => `${alias}.closed_at IS NULL AND ${alias}.eligible_at <= ${now}
   AND NOT EXISTS (${staleReplacement(alias)})`;
 const itemColumns = `a.id, a.version, a.message_id AS messageId, a.kind, a.state,

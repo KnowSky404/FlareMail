@@ -1081,19 +1081,22 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     AND kind = 'stale_submitting' AND (new.status <> 'submitting' OR attempt_number <> new.attempts)
     AND eligible_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
 
-  -- A retry that has itself stalled replaces the previous actionable failure.
+  -- Keep the previous issue actionable until its retry stalls or actually progresses.
   UPDATE workspace_delivery_attention
   SET state = 'superseded', closed_at = (
     SELECT stale.eligible_at FROM workspace_delivery_attention stale
     WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
       AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
+      AND stale.id > workspace_delivery_attention.id
       AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    ORDER BY stale.id LIMIT 1
   )
   WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL
-    AND kind <> 'stale_submitting' AND EXISTS (
+    AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
         AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
+        AND stale.id > workspace_delivery_attention.id
         AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     );
 
@@ -1104,7 +1107,6 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
   WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND (
     (new.status IN ('delayed', 'failed', 'bounced', 'complained', 'suppressed')
       AND (kind <> new.status OR attempt_number <> new.attempts))
-    OR (new.status = 'submitting' AND kind = 'stale_submitting' AND attempt_number <> new.attempts)
     OR (new.status IN ('submitted', 'sent', 'delivered')
       AND NOT (kind = 'delayed' AND attempt_number = new.attempts AND new.status = 'sent'))
   );

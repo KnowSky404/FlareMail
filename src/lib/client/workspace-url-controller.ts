@@ -132,10 +132,9 @@ export function updateWorkspaceUrl(url: URL, updates: WorkspaceUrlUpdates) {
     if (query) next.searchParams.set('q', query);
     else next.searchParams.delete('q');
   }
-  if (updates.filter !== undefined) {
-    if (updates.filter === 'all') next.searchParams.delete('filter');
-    else next.searchParams.set('filter', updates.filter);
-  }
+  const nextFilter = updates.filter ?? next.searchParams.get('filter');
+  if (nextFilter === 'all' || (nextFilter === 'attention' && targetSection !== 'sent')) next.searchParams.delete('filter');
+  else if (updates.filter) next.searchParams.set('filter', updates.filter);
   if (updates.identityFilter !== undefined) {
     if (updates.identityFilter) next.searchParams.set('identity', `${updates.identityFilter.kind}:${updates.identityFilter.id}`);
     else next.searchParams.delete('identity');
