@@ -97,7 +97,8 @@ test('finds an Owner-wide bounce from another identity and acknowledges it witho
   await expect(notice(page)).toBeFocused();
   await notice(page).press('Enter');
 
-  await panel(page).getByRole('button', { name: '查看邮件' }).click();
+  await panel(page).getByRole('button', { name: '查看邮件' }).press('Enter');
+  await expect(page.getByRole('heading', { name: subject, exact: true })).toBeFocused();
   await expect(page).toHaveURL(new RegExp('message=' + id, 'u'));
   await expect(page).not.toHaveURL(/identity=/u);
   const timeline = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
@@ -375,13 +376,20 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await freshPage;
   await expect(page.getByText(pendingSubject, { exact: true })).toHaveCount(0);
 
-  await page.goto('/?folder=sent');
+  const acknowledged = (await getNotices(page.request, 'history')).notices.find((item) => item.messageId === pendingId)!;
+  expect((await page.request.post(endpoint, {
+    headers: { origin }, data: { action: 'reopen', incident: { id: acknowledged.id, version: acknowledged.version } }
+  })).ok()).toBe(true);
+  await page.goto('/?folder=sent&filter=attention');
   await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
-  await page.getByRole('button', { name: new RegExp(pendingSubject, 'u') }).click();
+  const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(pendingSubject, 'u') });
+  await row.click();
   const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
-  await expect(receipt.getByText(/已确认/u)).toBeVisible();
+  await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
   expect((await events(page.request, pendingId, 'email.delivered', 'attention-refresh-delivered')).ok()).toBe(true);
-  await page.getByRole('button', { name: '刷新邮件列表', exact: true }).click();
+  await page.getByRole('button', { name: '刷新投递回执', exact: true }).click();
   await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(row).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: pendingSubject, exact: true })).toBeVisible();
   await expect(receipt.getByRole('button', { name: '重试投递' })).toHaveCount(0);
 });
