@@ -226,6 +226,30 @@ describe('outbound workspace persistence', () => {
     });
   });
 
+  test('replays a deferred sent event for the prior delivery when the retry is rate limited', async () => {
+    const { env, session } = setup();
+    const providerId = 're_rate_limit_prior';
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Rate limit', body: 'Body' }, {
+      requestId: 'rate-limit-replay', gateway: new FakeOutboundGateway({ providerMessageId: providerId })
+    });
+    await applyResendDeliveryWebhook(env, 'svix-rate-limit-delay', {
+      type: 'email.delivery_delayed', created_at: new Date(Date.now() - 4000).toISOString(), data: { email_id: providerId }
+    });
+    const result = await retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway: {
+      async send() {
+        const deferred = await applyResendDeliveryWebhook(env, 'svix-rate-limit-sent', {
+          type: 'email.sent', created_at: new Date(Date.now() - 1000).toISOString(), data: { email_id: providerId }
+        });
+        expect(deferred).toMatchObject({ matched: true, ignored: true });
+        throw new OutboundGatewayError('rate_limited', 'retry rate limited');
+      }
+    } });
+    expect(result?.message).toMatchObject({ deliveryStatus: 'sent', deliveryLastEvent: 'email.sent' });
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id)).toMatchObject({
+      status: 'sent', lastEvent: 'email.sent', attention: { kind: 'delayed', state: 'open' }
+    });
+  });
+
   test('rejects a retry if a definitive failure commits before the attempt is claimed', async () => {
     const { env, session, database } = setup();
     const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Concurrent failure', body: 'Body' }, {

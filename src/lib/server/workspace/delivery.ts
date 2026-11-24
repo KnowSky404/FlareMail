@@ -12,6 +12,7 @@ import {
   listPendingOutboundEvents,
   markDeferredOutboundEvent,
   reconcileDeliveryStatus,
+  resolveLocalDelayOnSent,
   updateOutboundReceiptForCurrentEvent
 } from '$lib/server/db/deliveries';
 import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
@@ -157,6 +158,7 @@ function reconciliationStatements(
       eventCreatedAt: event.createdAt,
       fromDeferred
     }),
+    ...(event.statusUpdate === 'sent' ? [resolveLocalDelayOnSent(db, outboundRow.message_id, event.providerMessageId, event.createdAt)] : []),
     updateOutboundReceiptForCurrentEvent(db, {
       messageId: outboundRow.message_id,
       userId: outboundRow.user_id,
