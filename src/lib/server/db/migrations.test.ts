@@ -141,7 +141,7 @@ describe('versioned D1 migrations', () => {
     db.exec(`
       INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
       SELECT value, 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'
-      FROM json_each('["legacy", "earlier-attempt", "early-webhook", "existing", "delivered"]');
+      FROM json_each('["legacy", "earlier-attempt", "early-webhook", "ignored-delay", "existing", "delivered"]');
       INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id,
         submitted_at, last_event, last_event_at)
       SELECT id, user_id, CASE WHEN id = 'delivered' THEN 'delivered' ELSE 'sent' END,
@@ -149,13 +149,22 @@ describe('versioned D1 migrations', () => {
         '2026-01-01T00:00:00.000Z', CASE WHEN id = 'delivered' THEN 'email.delivered' ELSE 'email.sent' END,
         '2026-01-01T00:05:00.000Z' FROM workspace_messages;
       INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      VALUES ('local:ignored-delay:submission:1', 'ignored-delay', 'owner', 'resend', 'provider-ignored-delay', 'submission', '2026-01-01T00:00:45.000Z');
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      SELECT 'sent-' || id, id, user_id, 'resend', 'provider-' || id, 'email.sent', '2026-01-01T00:05:00.000Z'
+      FROM workspace_messages WHERE id IN ('early-webhook', 'ignored-delay');
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
       SELECT id, id, user_id, 'resend', 'provider-' || id, 'email.delivery_delayed', '2026-01-01T00:01:00.000Z'
       FROM workspace_messages;
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      VALUES ('local:early-webhook:submission:1', 'early-webhook', 'owner', 'resend', 'provider-early-webhook', 'submission', '2026-01-01T00:03:00.000Z');
       INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider_message_id, status, started_at, completed_at)
       VALUES ('attempt-2', 'earlier-attempt', 'owner', 2, 'provider-earlier-attempt', 'submitted',
         '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
         ('in-flight', 'early-webhook', 'owner', 1, 'provider-early-webhook', 'submitted',
-          '2026-01-01T00:00:30.000Z', '2026-01-01T00:03:00.000Z');
+          '2026-01-01T00:00:30.000Z', '2026-01-01T00:03:00.000Z'),
+        ('already-accepted', 'ignored-delay', 'owner', 1, 'provider-ignored-delay', 'submitted',
+          '2026-01-01T00:00:30.000Z', '2026-01-01T00:00:45.000Z');
     `);
     db.exec(readFileSync(join(migrationsDirectory, '0033_delivery_attention.sql'), 'utf8'));
     db.query('INSERT INTO _test_migrations (name) VALUES (?)').run('0033_delivery_attention.sql');
