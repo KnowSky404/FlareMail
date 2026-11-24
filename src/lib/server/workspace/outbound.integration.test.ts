@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import { FakeOutboundGateway, MAX_OUTBOUND_ATTACHMENT_BYTES, OutboundGatewayError } from '$lib/server/outbound/gateway';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound';
-import { applyResendDeliveryWebhook, getWorkspaceMessageDeliveryDetail } from './delivery';
+import { applyResendDeliveryWebhook, getWorkspaceMessageDeliveryDetail, reconcileDeferredResendEvents } from './delivery';
 import { saveWorkspaceDraft, DraftBodyReloadRequiredError, DraftConflictError } from './draft';
 import type { WorkspaceSession } from './shared';
 import { createMailLabel, setMailMessageLabel } from '$lib/server/db/labels';
@@ -93,6 +93,30 @@ const setup = () => {
 };
 
 describe('outbound workspace persistence', () => {
+  test('queues early events in the acceptance transaction when inline replay fails', async () => {
+    const { env, database, session } = setup();
+    const d1 = env.DB as unknown as TestD1;
+    const gateway = new FakeOutboundGateway({ providerMessageId: 're_early' });
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Early event', body: 'Body' }, {
+      requestId: 'early-event',
+      gateway: {
+        async send(input) {
+          await applyResendDeliveryWebhook(env, 'early-delivered', {
+            type: 'email.delivered', created_at: new Date().toISOString(), data: { email_id: 're_early' }
+          });
+          d1.beforePrepare = (sql) => {
+            if (sql.includes('AS was_deferred') && sql.includes('WHERE provider_message_id = ?')) throw new Error('transient read failure');
+          };
+          return gateway.send(input);
+        }
+      }
+    });
+    d1.beforePrepare = undefined;
+    await reconcileDeferredResendEvents(env);
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id)).toMatchObject({ status: 'delivered' });
+    database.close();
+  });
+
   test('transfers persisted labels when a draft is sent', async () => {
     const { env, database, session } = setup();
     const draft = await saveWorkspaceDraft(env, session, { toEmail: 'alice@example.net', subject: 'Labeled', body: 'Body' });

@@ -5,11 +5,13 @@ import { assertDraftAttachmentSet, listAttachmentsForEntity, transferDraftAttach
 import { deleteBodyObjectRow, insertBodyObject, markBodyObjectDeletePending, findBodyObject } from '$lib/server/db/body';
 import {
   claimOutboundRetry,
+  clearSupersededReplayMarkers,
   findDeliveryStatus,
   finishDeliveryAttempt,
   insertDeliveryAttempt,
   insertOutboundEvent,
   insertOutboundStatus,
+  markMatchedPendingOutboundEvents,
   upsertOutboundReceipt,
   upsertOutboundStatus,
   type DeliveryStatusPayload
@@ -260,6 +262,8 @@ async function submitPersistedMessage(
       upsertOutboundStatus(env.DB, state),
       finishDeliveryAttempt(env.DB, { messageId: message.id, attemptNumber, providerMessageId: result.providerMessageId,
         status: 'submitted', error: null, completedAt }),
+      clearSupersededReplayMarkers(env.DB, message.id),
+      markMatchedPendingOutboundEvents(env.DB, result.providerMessageId),
       upsertOutboundReceipt(env.DB, { messageId: message.id, userId: session.userId, provider,
         resultKind: 'accepted', remoteStatus: result.remoteStatus, responsePreview: 'Provider accepted the message for delivery.',
         lastEvent: 'submission', lastEventAt: completedAt, createdAt: completedAt, updatedAt: completedAt }),

@@ -273,6 +273,7 @@ export function retainProviderDelayAfterRetry(db: D1Database, messageId: string,
         OR (delivery.status IN ('sent', 'delayed') AND julianday(delivery.last_event_at) <= julianday(?)))
       AND (
         julianday(?) < julianday(attempt.started_at)
+        OR attempt.provider_message_id = delivery.provider_message_id
         OR (delivery.last_event IS 'submission' AND attempt.provider_message_id IS NULL
           AND (attempt.completed_at IS NOT NULL OR attempt.error IS NOT NULL))
       )
@@ -376,20 +377,40 @@ export function markDeferredOutboundEvent(db: D1Database, svixId: string) {
     )`).bind(svixId);
 }
 
-export function listReadyDeferredProviderIds(db: D1Database) {
+export function markMatchedPendingOutboundEvents(db: D1Database, providerMessageId: string) {
+  return db.prepare(`
+    UPDATE workspace_outbound_events AS event
+    SET message_id = delivery.message_id, user_id = delivery.user_id,
+      payload_json = json_set(payload_json, '${deferredPath}', 1)
+    FROM workspace_delivery_statuses AS delivery
+    WHERE event.provider = 'resend' AND event.provider_message_id = ? AND event.user_id = 'unmatched'
+      AND delivery.provider_message_id = event.provider_message_id AND json_valid(event.payload_json)
+  `).bind(providerMessageId);
+}
+
+export function clearSupersededReplayMarkers(db: D1Database, messageId: string) {
+  return db.prepare(`
+    UPDATE workspace_outbound_events AS event SET payload_json = json_remove(payload_json, '${deferredPath}')
+    FROM workspace_delivery_statuses AS delivery
+    WHERE event.message_id = ? AND event.message_id = delivery.message_id AND event.user_id = delivery.user_id
+      AND event.provider = 'resend' AND event.provider_message_id <> delivery.provider_message_id AND (${wasDeferred})
+  `).bind(messageId);
+}
+
+export function listReadyDeferredProviderIds(db: D1Database, limit: number) {
   return db.prepare(`
     SELECT delivery.provider_message_id AS id
     FROM workspace_delivery_statuses delivery
     JOIN workspace_outbound_events AS event INDEXED BY idx_workspace_outbound_events_pending_resend
       ON event.provider_message_id = delivery.provider_message_id
     WHERE event.provider = 'resend' AND event.provider_message_id IS NOT NULL
-      AND (event.user_id = 'unmatched' OR ${wasDeferred})
-      AND (event.user_id = 'unmatched' OR (event.user_id = delivery.user_id AND event.message_id = delivery.message_id))
+      AND (${wasDeferred})
+      AND event.user_id = delivery.user_id AND event.message_id = delivery.message_id
       AND NOT (${unconfirmedAttempt('delivery')})
     GROUP BY delivery.provider_message_id
     ORDER BY MIN(event.event_created_at)
-    LIMIT 10
-  `).all<{ id: string }>();
+    LIMIT ?
+  `).bind(limit).all<{ id: string }>();
 }
 
 export async function listPendingOutboundEvents(db: D1Database, providerMessageId: string, limit: number) {
