@@ -138,8 +138,8 @@ export async function listWorkspaceMessagePage(
     bindings.push(input.deliveryStatus);
   }
   if (input.threadKeys?.length) {
-    conditions.push(`m.thread_key IN (${input.threadKeys.map(() => '?').join(', ')})`);
-    bindings.push(...input.threadKeys);
+    conditions.push(`m.thread_key IN (SELECT value FROM json_each(?))`);
+    bindings.push(JSON.stringify(input.threadKeys));
   }
   if (input.labelId) {
     conditions.push(`EXISTS (SELECT 1 FROM mail_message_labels AS labeled

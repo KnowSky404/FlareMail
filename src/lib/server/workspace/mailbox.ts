@@ -588,8 +588,8 @@ async function listInboundMessageSummaryPage(
     bindings.push(input.timestamp, input.timestamp, input.cursorId);
   }
   if (input.threadKeys?.length) {
-    conditions.push(`e.thread_key IN (${input.threadKeys.map(() => '?').join(', ')})`);
-    bindings.push(...input.threadKeys);
+    conditions.push(`e.thread_key IN (SELECT value FROM json_each(?))`);
+    bindings.push(JSON.stringify(input.threadKeys));
   }
   if (input.labelId) {
     conditions.push(`EXISTS (SELECT 1 FROM mail_message_labels AS labeled

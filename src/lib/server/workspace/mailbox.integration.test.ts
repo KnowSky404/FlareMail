@@ -22,6 +22,7 @@ class TestStatement {
   constructor(private readonly database: Database, private readonly sql: string) {}
 
   bind(...bindings: unknown[]) {
+    if (bindings.length > 100) throw new Error('D1 parameters exceed 100');
     this.bindings = bindings;
     return this as unknown as D1PreparedStatement;
   }
@@ -1184,6 +1185,38 @@ describe('D1 mailbox pages', () => {
     expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-1'`).get()).toEqual({ is_starred: 1 });
     expect(database.query(`SELECT is_starred FROM workspace_email_states WHERE email_message_id = 'incoming-a-read'`).get()).toEqual({ is_starred: 0 });
     expect(database.query(`SELECT COUNT(*) AS count FROM workspace_email_states WHERE email_message_id = 'incoming-b'`).get()).toEqual({ count: 0 });
+  });
+
+  test('trashes 100 pending Sent messages without exceeding the D1 parameter limit', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      UPDATE workspace_messages SET thread_key = 'legacy:sent-thread' WHERE id = 'sent-1';
+      UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'sent-1';
+    `);
+    const addMessage = database.query(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, subject, body, thread_key, sent_at)
+      SELECT ?, user_id, folder, from_name, from_email, to_name, to_email, subject, body, thread_key, sent_at
+      FROM workspace_messages WHERE id = 'sent-1'
+    `);
+    const addStatus = database.query(`
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, last_event_at)
+      VALUES (?, ?, 'delayed', 1, '2026-01-01T00:00:00.000Z')
+    `);
+    const messageIds = ['sent-1'];
+    for (let index = 1; index < 100; index++) {
+      const id = `pending-sent-${index}`;
+      addMessage.run(id);
+      addStatus.run(id, workspace.userId);
+      messageIds.push(id);
+    }
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'trash', messageIds, threadKeys: ['legacy:sent-thread'],
+      scope: mutationScope('sent', null, 'filtered', '', 'attention')
+    });
+    expect(result.skippedCount).toBe(0);
+    expect(result.summaries.map(({ id }) => id).sort()).toEqual(messageIds.sort());
+    expect(database.query("SELECT COUNT(*) AS count FROM workspace_messages WHERE deleted_at IS NOT NULL AND thread_key = 'legacy:sent-thread'").get())
+      .toEqual({ count: 100 });
   });
 
   test('rechecks pending attention on the write and reports only changed Sent messages', async () => {
