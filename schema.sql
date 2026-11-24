@@ -1005,7 +1005,8 @@ CREATE TABLE workspace_delivery_attention (
   state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'acknowledged', 'resolved', 'superseded')),
   version INTEGER NOT NULL DEFAULT 0,
   acknowledged_at TEXT,
-  closed_at TEXT
+  closed_at TEXT,
+  delayed_provider_message_id TEXT
 );
 CREATE INDEX workspace_delivery_attention_owner_order
   ON workspace_delivery_attention(user_id, eligible_at DESC, id DESC);
@@ -1067,7 +1068,8 @@ END;
 CREATE TRIGGER workspace_delivery_attention_status_update
 AFTER UPDATE OF status, attempts, last_event_at ON workspace_delivery_statuses
 WHEN new.status <> old.status OR new.attempts <> old.attempts
-  OR (new.status = 'submitting' AND new.last_event_at IS NOT old.last_event_at) BEGIN
+  OR (new.status = 'submitting' AND new.last_event_at IS NOT old.last_event_at)
+  OR (new.status = 'delayed' AND new.last_event = 'email.delivery_delayed' AND new.last_event IS NOT old.last_event) BEGIN
   -- Submission timestamps can move within the same attempt before it becomes stale.
   UPDATE workspace_delivery_attention
   SET eligible_at = COALESCE((SELECT eligible_at FROM workspace_delivery_attention_source WHERE message_id = new.message_id), eligible_at)
@@ -1089,20 +1091,20 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
       SELECT 1 FROM workspace_delivery_attention delay JOIN workspace_delivery_attention stale
         ON stale.message_id = delay.message_id AND stale.user_id = delay.user_id AND stale.attempt_number > delay.attempt_number
       WHERE delay.message_id = new.message_id AND delay.user_id = new.user_id
-        AND delay.kind = 'delayed' AND delay.closed_at IS NULL
-        AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
+        AND delay.delayed_provider_message_id IS new.provider_message_id AND delay.closed_at IS NULL
+        AND stale.kind IN ('stale_submitting', 'delayed', 'failed') AND stale.delayed_provider_message_id IS NULL AND stale.closed_at IS NULL
         AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     );
 
   UPDATE workspace_delivery_attention
   SET version = (SELECT version FROM workspace_delivery_attention_clock WHERE singleton = 1)
-  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND kind = 'delayed'
+  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND delayed_provider_message_id IS new.provider_message_id
     AND new.status IN ('submitted', 'sent')
     AND old.provider_message_id IS NOT NULL AND new.provider_message_id IS old.provider_message_id
     AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
-        AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
+        AND stale.kind IN ('stale_submitting', 'delayed', 'failed') AND stale.delayed_provider_message_id IS NULL AND stale.closed_at IS NULL
         AND stale.attempt_number > workspace_delivery_attention.attempt_number
         AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     );
@@ -1117,7 +1119,7 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
       AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     ORDER BY stale.attempt_number LIMIT 1
   )
-  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND kind <> 'delayed'
+  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND delayed_provider_message_id IS NULL
     AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
@@ -1132,12 +1134,14 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     closed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND (
     (new.status IN ('delayed', 'failed', 'bounced', 'complained', 'suppressed')
-      AND (kind <> new.status OR attempt_number <> new.attempts))
+      AND (kind <> new.status OR attempt_number <> new.attempts)
+      AND NOT (delayed_provider_message_id IS NOT NULL AND delayed_provider_message_id IS new.provider_message_id
+        AND new.status IN ('delayed', 'failed') AND new.last_event IS 'submission'))
     OR (new.status IN ('submitted', 'sent', 'delivered')
       AND NOT (kind = 'delayed' AND (
         (new.status = 'sent' AND attempt_number = new.attempts)
-        OR (new.status IN ('submitted', 'sent') AND old.provider_message_id IS NOT NULL
-          AND new.provider_message_id IS old.provider_message_id)
+        OR (new.status IN ('submitted', 'sent') AND delayed_provider_message_id IS NOT NULL
+          AND delayed_provider_message_id IS new.provider_message_id)
       )))
   );
 
@@ -1150,6 +1154,11 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
       WHERE a.message_id = src.message_id AND a.kind = src.kind
         AND a.attempt_number = src.attempt_number AND a.closed_at IS NULL
     );
+
+  UPDATE workspace_delivery_attention SET delayed_provider_message_id = new.provider_message_id
+  WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL
+    AND kind = 'delayed' AND attempt_number = new.attempts
+    AND new.status = 'delayed' AND new.last_event = 'email.delivery_delayed';
 END;
 
 

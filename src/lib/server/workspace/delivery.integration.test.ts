@@ -370,6 +370,30 @@ describe('Owner delivery attention', () => {
     expect((await page(db)).notices.map(({ id }) => id)).toEqual(state === 'open' ? [original.id] : []);
   });
 
+  test('clears a retry rate limit and restores the provider delay after same-ID acceptance', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    await applyResendDeliveryWebhook(env, 'delay-before-rate-limit', payload('email.delivery_delayed', new Date().toISOString()));
+    const original = (await page(db)).notices[0]!;
+    await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(original) });
+    database.exec(`
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE message_id = 'message-1';
+      UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'message-1';
+    `);
+    const rateLimit = (await page(db)).notices[0]!;
+    expect(rateLimit.id).not.toBe(original.id);
+    database.exec(`
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 3 WHERE message_id = 'message-1';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+    expect((await page(db)).notices).toEqual([]);
+    const current = await findCurrentDeliveryAttention(db, 'user-1', 'message-1');
+    expect(current).toMatchObject({ id: original.id, state: 'acknowledged' });
+    expect(current?.version).toBeGreaterThan(rateLimit.version);
+    expect((await page(db, 'history')).notices.find(({ id }) => id === rateLimit.id)?.state).toBe('resolved');
+  });
+
   test('accepts a definitive bounce for the last known provider ID after a retry times out', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'initial-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));

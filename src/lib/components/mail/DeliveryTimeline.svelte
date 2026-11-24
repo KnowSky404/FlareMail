@@ -104,6 +104,7 @@
     message?.folder === 'sent' && currentStatus
       ? getDeliveryRetryEligibility({
         status: currentStatus,
+        lastEvent: deliveryDetail?.lastEvent ?? message.deliveryLastEvent,
         resultKind: deliveryDetail?.resultKind ?? message.deliveryResultKind,
         idempotencyKey: message.deliveryIdempotencyKey,
         attemptStartedAt: message.deliveryAttemptStartedAt
