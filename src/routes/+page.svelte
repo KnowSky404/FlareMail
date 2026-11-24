@@ -2534,6 +2534,11 @@
       workspaceSync?.publish({ type: 'message-updated', id: result.message.id, delivery: true });
     } catch (error) {
       notifications.invalidate();
+      if (error instanceof ClientApiError && ['IDEMPOTENCY_CONFLICT', 'OUTBOUND_UNAVAILABLE', 'DELIVERY_NOT_RETRYABLE'].includes(error.code ?? '')) {
+        const change = { type: 'message-updated' as const, id: message.id, delivery: true as const };
+        handleWorkspaceSync(change);
+        workspaceSync?.publish(change);
+      }
       notifyError(error, t('notify.retryDeliveryFailed'));
     } finally {
       pending = false;

@@ -198,8 +198,9 @@ test('refreshes an open issue in another tab, handles failure, and keeps health 
   await expect(panel(page).getByText('系统运行异常', { exact: true })).toBeVisible();
 
   await page.route(endpoint, async (route) => route.fulfill({ status: 503, json: { ok: false, error: { code: 'D1_UNAVAILABLE', message: 'synthetic unavailable' } } }));
-  await panel(page).getByRole('button', { name: '确认异常', exact: true }).click();
+  await panel(page).getByRole('button', { name: '确认异常', exact: true }).press('Enter');
   await expect(panel(page).getByRole('alert')).toContainText('未能更新投递异常');
+  await expect(panel(page).getByRole('button', { name: /^待处理/u })).toBeFocused();
   await expect(panel(page).getByText(subject)).toBeVisible();
   await page.unroute(endpoint);
 
@@ -275,6 +276,13 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   await login(page);
   const request = page.request;
   const post = (data: object, csrfOrigin = origin) => request.post(endpoint, { data, headers: { origin: csrfOrigin } });
+  const sent = await request.post('/api/workspace/messages', {
+    headers: { origin, 'Idempotency-Key': 'e2e-native-d1-delivery-claim' },
+    data: { senderAddressId: primary, toEmail: 'demo-recipient@flaremail.test', subject: 'E2E native claim', body: 'Synthetic send' }
+  });
+  expect(sent.ok()).toBe(true);
+  const native = (await sent.json()).data.message;
+  expect(native).toMatchObject({ deliveryStatus: 'submitted', deliveryAttempts: 1 });
 
   expect((await events(request, id, 'email.delivery_delayed', 'attention-delayed')).ok()).toBe(true);
   expect((await events(request, recovery, 'email.delivery_delayed', 'attention-recovery-1')).ok()).toBe(true);
@@ -324,6 +332,12 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   expect((await post({ action: 'acknowledge', incident: { id: bounce.id, version: bounce.version } })).ok()).toBe(true);
   const detail = await request.get('/api/workspace/messages/' + id + '/delivery');
   expect((await detail.json()).data.detail).toMatchObject({ status: 'bounced', attention: { state: 'acknowledged' } });
+  expect((await events(request, native.deliveryProviderMessageId, 'email.delivery_delayed', 'attention-native-claim-delay')).ok()).toBe(true);
+  const nativeRetry = await request.post('/api/workspace/messages/' + native.id + '/retry', { headers: { origin } });
+  expect(nativeRetry.ok()).toBe(true);
+  expect((await nativeRetry.json()).data.message).toMatchObject({ deliveryAttempts: 2 });
+  const nativeDetail = await request.get('/api/workspace/messages/' + native.id + '/delivery');
+  expect((await nativeDetail.json()).data.detail.attention).toMatchObject({ kind: 'delayed', state: 'open' });
   expect((await request.delete('/api/workspace/session', { headers: { origin } })).ok()).toBe(true);
   expect((await post(ack)).status()).toBe(401);
   await login(page);
