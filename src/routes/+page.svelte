@@ -2038,6 +2038,11 @@
       workspaceSync?.publish({ type: 'mailbox-refresh', ...(affectsAttention ? { delivery: true } : {}) });
       if (archiveAction && authGeneration !== workspaceAuthGeneration) return;
       toastController.dismissPassive();
+      const skippedCount = result.result.skippedCount ?? 0;
+      if (skippedCount > 0) {
+        notify(t('notify.bulkAttentionChanged', { count: skippedCount }), 'warning');
+        return;
+      }
       notify(
         action === 'archive'
           ? t('notify.bulkArchived')

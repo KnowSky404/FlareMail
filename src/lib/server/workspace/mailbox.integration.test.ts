@@ -1197,7 +1197,7 @@ describe('D1 mailbox pages', () => {
     };
     const input = { action: 'trash' as const, messageIds: ['sent-1'], threadKeys: ['legacy:sent-thread'],
       scope: mutationScope('sent', null, 'filtered', '', 'attention') };
-    expect((await mutateWorkspaceMailbox(env, workspace, input)).summaries).toEqual([]);
+    expect(await mutateWorkspaceMailbox(env, workspace, input)).toMatchObject({ summaries: [], skippedCount: 1 });
     expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
 
     database.exec("UPDATE workspace_delivery_attention SET state = 'open' WHERE message_id = 'sent-1'");

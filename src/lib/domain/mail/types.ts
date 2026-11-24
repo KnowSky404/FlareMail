@@ -351,6 +351,7 @@ export interface MailboxMovement {
 
 export interface MailboxMutationResult {
   summaries: MailboxMessageSummary[];
+  skippedCount?: number;
   metrics: WorkspaceMetrics;
   metricsScope: MailboxMetricsScope;
   scope: MailboxMutationScope;
