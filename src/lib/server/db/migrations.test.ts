@@ -221,6 +221,47 @@ describe('versioned D1 migrations', () => {
     db.close();
   });
 
+  test('recovers in-flight same-ID delays missing after schema 35 without reopening known outcomes', () => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0032_ai_automatic_classification.sql');
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
+      SELECT value, 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'
+      FROM json_each('["in-flight", "replaced", "terminal", "acknowledged"]');
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id, last_event, last_event_at)
+      SELECT id, user_id, 'submitted', 2, 'current-' || id, 'submission', '2026-01-01T00:03:00.000Z'
+      FROM workspace_messages;
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider_message_id, status, started_at, completed_at)
+      SELECT id || '-first', id, user_id, 1, CASE id WHEN 'replaced' THEN 'different-id' ELSE 'current-' || id END,
+        'submitted', '2026-01-01T00:00:00.000Z', '2026-01-01T00:01:00.000Z' FROM workspace_messages
+      UNION ALL SELECT id || '-retry', id, user_id, 2, 'current-' || id, 'submitted',
+        '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z' FROM workspace_messages;
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      SELECT id || '-delayed', id, user_id, 'resend', 'current-' || id, 'email.delivery_delayed', '2026-01-01T00:02:30.000Z'
+      FROM workspace_messages;
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      VALUES ('terminal-delivered', 'terminal', 'owner', 'resend', 'current-terminal', 'email.delivered', '2026-01-01T00:02:40.000Z');
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      SELECT 'local:' || id || ':submission:2', id, user_id, 'resend', 'current-' || id, 'submission', '2026-01-01T00:03:00.000Z'
+      FROM workspace_messages;
+    `);
+    for (const file of ['0033_delivery_attention.sql', '0034_delivery_attention_backfill.sql', '0035_preserve_replayed_delivery_delay.sql']) {
+      db.exec(readFileSync(join(migrationsDirectory, file), 'utf8'));
+      db.query('INSERT INTO _test_migrations (name) VALUES (?)').run(file);
+    }
+    expect(db.query('SELECT id FROM workspace_delivery_attention').all()).toEqual([]);
+    db.exec(`
+      INSERT INTO workspace_delivery_attention (user_id, message_id, attempt_number, kind, eligible_at, state, delayed_provider_message_id)
+      VALUES ('owner', 'acknowledged', 2, 'delayed', '2026-01-01T00:02:30.000Z', 'acknowledged', 'current-acknowledged');
+    `);
+    applyMigrations(db);
+    expect(db.query('SELECT message_id, state FROM workspace_delivery_attention ORDER BY message_id').all()).toEqual([
+      { message_id: 'acknowledged', state: 'acknowledged' },
+      { message_id: 'in-flight', state: 'open' }
+    ]);
+    db.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);
@@ -261,7 +302,7 @@ describe('versioned D1 migrations', () => {
       '0033_delivery_attention.sql',
       '0034_delivery_attention_backfill.sql',
       '0035_preserve_replayed_delivery_delay.sql',
-      '0036_index_pending_resend_events.sql'
+      '0036_recover_pending_resend_events.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
