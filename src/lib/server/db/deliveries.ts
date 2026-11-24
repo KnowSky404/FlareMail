@@ -138,6 +138,14 @@ export function upsertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
     p.lastError, p.submittedAt, p.sentAt, p.deliveredAt, p.lastEvent, p.lastEventAt, p.createdAt, p.updatedAt);
 }
 
+export function rememberAcceptedProviderId(db: D1Database, p: DeliveryStatusPayload) {
+  return db.prepare(`
+    UPDATE workspace_delivery_statuses SET provider_message_id = ?
+    WHERE message_id = ? AND user_id = ? AND idempotency_key = ? AND provider = ?
+      AND attempts > ? AND provider_message_id IS NULL
+  `).bind(p.providerMessageId, p.messageId, p.userId, p.idempotencyKey, p.provider, p.attempts);
+}
+
 export interface DeliveryAttemptPayload {
   id: string; messageId: string; userId: string; attemptNumber: number; idempotencyKey: string;
   provider: string; providerMessageId: string | null; status: DeliveryStatus; error: string | null;

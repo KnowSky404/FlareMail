@@ -149,6 +149,38 @@ describe('outbound workspace persistence', () => {
     database.close();
   });
 
+  test('a late first acceptance attaches the provider ID without restoring an older attempt', async () => {
+    const { env, database, session } = setup();
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const providerMessageId = 're_late_first';
+    const first = sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Late first acceptance', body: 'Body' }, {
+      requestId: 'late-first-acceptance',
+      gateway: { async send() {
+        started.resolve();
+        await finish.promise;
+        return { status: 'submitted', providerMessageId, remoteStatus: 200 };
+      } }
+    });
+    await started.promise;
+    const message = database.query<{ id: string }, []>('SELECT id FROM workspace_messages').get()!;
+    try {
+      await retryWorkspaceMessageDelivery(env, session, message.id, { gateway:
+        new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'retry timeout') })
+      });
+    } finally {
+      finish.resolve();
+      await first;
+    }
+    const delivery = () => database.query('SELECT status, attempts, provider_message_id FROM workspace_delivery_statuses WHERE message_id = ?').get(message.id);
+    expect(delivery()).toEqual({ status: 'submitting', attempts: 2, provider_message_id: providerMessageId });
+    await applyResendDeliveryWebhook(env, 'late-first-delivered', {
+      type: 'email.delivered', created_at: new Date().toISOString(), data: { email_id: providerMessageId }
+    });
+    expect(delivery()).toEqual({ status: 'delivered', attempts: 2, provider_message_id: providerMessageId });
+    database.close();
+  });
+
   test('transfers persisted labels when a draft is sent', async () => {
     const { env, database, session } = setup();
     const draft = await saveWorkspaceDraft(env, session, { toEmail: 'alice@example.net', subject: 'Labeled', body: 'Body' });

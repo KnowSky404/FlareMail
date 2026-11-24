@@ -12,6 +12,7 @@ import {
   insertOutboundEvent,
   insertOutboundStatus,
   markMatchedPendingOutboundEvents,
+  rememberAcceptedProviderId,
   upsertOutboundReceipt,
   upsertOutboundStatus,
   type DeliveryStatusPayload
@@ -260,6 +261,7 @@ async function submitPersistedMessage(
       attempts: attemptNumber, providerMessageId: result.providerMessageId, remoteTimestamp: completedAt });
     await env.DB.batch([
       upsertOutboundStatus(env.DB, state),
+      rememberAcceptedProviderId(env.DB, state),
       finishDeliveryAttempt(env.DB, { messageId: message.id, attemptNumber, providerMessageId: result.providerMessageId,
         status: 'submitted', error: null, completedAt }),
       clearSupersededReplayMarkers(env.DB, message.id),
