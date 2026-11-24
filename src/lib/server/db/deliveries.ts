@@ -118,7 +118,7 @@ export function upsertOutboundReceipt(db: D1Database, p: DeliveryReceiptPayload)
   `).bind(p.messageId, p.userId, p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt, p.createdAt, p.updatedAt);
 }
 
-export function updateOutboundReceiptForCurrentEvent(db: D1Database, p: DeliveryReceiptPayload) {
+export function updateOutboundReceiptForCurrentEvent(db: D1Database, p: DeliveryReceiptPayload & { providerMessageId: string }) {
   return db.prepare(`
     UPDATE workspace_outbound_receipts SET provider = ?, result_kind = ?, remote_status = ?, response_preview = ?,
       last_event = ?, last_event_at = ?, updated_at = ?
@@ -126,10 +126,11 @@ export function updateOutboundReceiptForCurrentEvent(db: D1Database, p: Delivery
       SELECT 1 FROM workspace_delivery_statuses AS s
       WHERE s.message_id = workspace_outbound_receipts.message_id
         AND s.user_id = workspace_outbound_receipts.user_id
+        AND s.provider_message_id = ?
         AND s.last_event = ? AND s.last_event_at = ?
     )
   `).bind(p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt,
-    p.updatedAt, p.messageId, p.userId, p.lastEvent, p.lastEventAt);
+    p.updatedAt, p.messageId, p.userId, p.providerMessageId, p.lastEvent, p.lastEventAt);
 }
 
 export function reconcileDeliveryStatus(db: D1Database, input: {
@@ -147,18 +148,23 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     WHEN 'sent' THEN 4 WHEN 'delayed' THEN 4 WHEN 'bounced' THEN 5 WHEN 'failed' THEN 5
     WHEN 'complained' THEN 6 WHEN 'suppressed' THEN 6 WHEN 'delivered' THEN 7 ELSE -1 END`;
   return db.prepare(`
-    UPDATE workspace_delivery_statuses SET
+    UPDATE workspace_delivery_statuses AS current SET
       status = ?, provider = ?, provider_message_id = ?, last_error = ?,
       sent_at = CASE WHEN ? = 'sent' THEN COALESCE(sent_at, ?) ELSE sent_at END,
       delivered_at = CASE WHEN ? = 'delivered' THEN COALESCE(delivered_at, ?) ELSE delivered_at END,
       last_event = ?, last_event_at = ?, updated_at = ?
-    WHERE message_id = ?
+    WHERE message_id = ? AND provider_message_id = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM workspace_delivery_attempts AS attempt
+        WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
+          AND attempt.provider_message_id IS NOT current.provider_message_id
+      )
       AND (status NOT IN ('delivered', 'bounced', 'failed', 'complained', 'suppressed') OR status = ?)
       AND (? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
   `).bind(
     input.targetStatus, input.provider, input.providerMessageId, input.lastError,
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
-    input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId,
+    input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }

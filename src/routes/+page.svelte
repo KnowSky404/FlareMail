@@ -254,6 +254,7 @@
     : managementView === 'domains' ? t('shell.domains') : t('shell.addresses'));
   let selectedMessageId = $state<string | null>(null);
   let deepLinkedMessage = $state<MailMessage | null>(null);
+  let focusDiagnostics = $state(false);
   let deepLinkedRefreshError = $state<string | null>(null);
   const deepLinkedFlagRevisions = new Map<string, { read: number; starred: number }>();
   let selectedMessageIds = $state<string[]>([]);
@@ -593,6 +594,14 @@
     if (authenticated && !authExpired && activeSection === 'profile' &&
       managementView === 'settings' && urlState.settingsTab === 'diagnostics') {
       untrack(() => void refreshOwnerMetrics());
+    }
+  });
+
+  $effect(() => {
+    if (focusDiagnostics && ProfilePane && activeSection === 'profile' &&
+      managementView === 'settings' && urlState.settingsTab === 'diagnostics') {
+      focusDiagnostics = false;
+      void tick().then(() => document.getElementById('settings-tab-diagnostics')?.focus({ preventScroll: true }));
     }
   });
 
@@ -1751,6 +1760,9 @@
       if (announce) {
         const current = selectedMessage;
         if (current && current.id === retainedId) await refreshDeepLinkedMessage(current);
+        if (current?.folder === 'sent' && current.id === selectedMessage?.id && deliveryDetailPendingId !== current.id) {
+          void loadDeliveryDetail(current, true);
+        }
         notify(t('notify.mailboxRefreshed'), 'success');
       }
     }
@@ -2457,12 +2469,7 @@
     try {
       const result = await submitMessage(withCurrentComposePersistence(input), composeSubmissionId);
 
-      deliveryDetails = Object.fromEntries(
-        Object.entries(deliveryDetails).filter(([id]) => id !== result.message.id)
-      );
-      deliveryDetailErrors = Object.fromEntries(
-        Object.entries(deliveryDetailErrors).filter(([id]) => id !== result.message.id)
-      );
+      deliveryDetailCache.invalidate(result.message.id);
       // A sent message may reuse its draft id. Drop the draft body snapshot so
       // the sent detail reloads transferred attachment metadata.
       workspaceBodyCache.invalidate(result.message.id);
@@ -3076,7 +3083,11 @@
   }
 
   function goFromNotifications(updates: Parameters<typeof updateWorkspaceUrl>[0]) {
-    const navigate = () => { void updateWorkspaceUrl(updates); };
+    const navigate = () => {
+      if (updates.messageId) deliveryDetailCache.invalidate(updates.messageId);
+      focusDiagnostics = updates.settingsTab === 'diagnostics';
+      void updateWorkspaceUrl(updates);
+    };
     if (managementNavigationGuard && activeSection === 'profile' && managementView !== 'settings') {
       if (managementNavigationGuard(navigate) !== false) navigate();
       return;
