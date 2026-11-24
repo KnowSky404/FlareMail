@@ -420,6 +420,12 @@ export class MailboxController {
   }
   previousPage() { return this.current?.previous() ?? Promise.resolve(false); }
   invalidate() { for (const pager of this.cache.values()) pager.invalidate(); }
+  invalidateAttention() {
+    for (const [key, pager] of this.cache) {
+      const params = new URLSearchParams(key);
+      if (params.get('folder') === 'sent' && params.get('filter') === 'attention') pager.invalidate();
+    }
+  }
   patchFlags(id: string, patch: FlagDelta) {
     const interrupted = this.current?.isPending ?? false;
     if (this.current?.isPreservingPage) this.interruptedPreservedPage = this.current;

@@ -25,13 +25,13 @@ function originOf(baseURL: string | undefined) {
   return url.origin;
 }
 
-async function seed(request: APIRequestContext, origin: string, id: string, status: string) {
+async function seed(request: APIRequestContext, origin: string, id: string, status: string, label = subject) {
   const response = await request.post(origin + `/cdn-cgi/local/explorer/api/d1/database/${target.databaseId}/raw`, { data: { batch: [
     { sql: `INSERT INTO workspace_messages
         (id, user_id, folder, from_name, from_email, to_name, to_email, subject, body, sender_address_id, sent_at, is_read)
         SELECT ?, user_id, 'sent', 'E2E Sender', 'e2e-admin@flaremail.test', 'Recipient', 'recipient@flaremail.test',
           ?, 'Synthetic delivery test body', ?, '2026-08-13T08:00:00.000Z', 1
-        FROM workspace_owner WHERE singleton = 1 AND user_id = ?`, params: [id, subject, primary, owner] },
+        FROM workspace_owner WHERE singleton = 1 AND user_id = ?`, params: [id, label, primary, owner] },
     { sql: `INSERT INTO workspace_delivery_statuses
         (message_id, user_id, status, attempts, idempotency_key, provider, provider_message_id, last_event_at)
         SELECT id, user_id, ?, 1, id, 'resend', id, '2026-08-13T08:00:00.000Z'
@@ -321,4 +321,65 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   expect((await post(ack)).status()).toBe(401);
   await login(page);
   expect((await getNotices(page.request, 'history')).notices.find((item) => item.id === bounce.id)?.state).toBe('acknowledged');
+});
+
+test('refreshes the notification scope, Sent filter, and receipt after delivery changes', async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop run covers delivery state refresh.');
+  const origin = originOf(baseURL);
+  const pendingId = 'e2e-attention-refresh';
+  const historyId = 'e2e-attention-refresh-history';
+  const pendingSubject = 'E2E Pending Refresh';
+  const historySubject = 'E2E History Refresh';
+  await seed(page.request, origin, pendingId, 'delayed', pendingSubject);
+  await seed(page.request, origin, historyId, 'suppressed', historySubject);
+  await login(page);
+  const history = (await getNotices(page.request)).notices.find((item) => item.messageId === historyId)!;
+  expect((await page.request.post(endpoint, {
+    headers: { origin }, data: { action: 'acknowledge', incident: { id: history.id, version: history.version } }
+  })).ok()).toBe(true);
+
+  await page.goto('/?folder=sent&filter=attention');
+  await expect(page.getByText(pendingSubject, { exact: true }).first()).toBeVisible();
+  await openFolder(page, '收件箱');
+  await notice(page).click();
+  await panel(page).getByRole('button', { name: '历史', exact: true }).click();
+
+  const releaseResponse = Promise.withResolvers<void>();
+  await page.route(endpoint, async (route) => {
+    await releaseResponse.promise;
+    await route.fulfill({ status: 503, json: { ok: false, error: { code: 'D1_UNAVAILABLE', message: 'synthetic unavailable' } } });
+  });
+  await Promise.all([
+    page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith(endpoint)),
+    panel(page).getByRole('listitem').filter({ hasText: historySubject }).getByRole('button', { name: '重新打开异常' }).click()
+  ]);
+  await panel(page).getByRole('button', { name: '关闭', exact: true }).press('Escape');
+  await expect(panel(page)).toBeHidden();
+  await notice(page).press('Enter');
+  await expect(panel(page).getByText('加载中…', { exact: true })).toBeVisible();
+  releaseResponse.resolve();
+  await expect(panel(page).getByRole('alert')).toContainText('未能更新投递异常');
+  await expect(panel(page).getByRole('listitem').getByText('投递延迟', { exact: true })).toBeVisible();
+  await page.unroute(endpoint);
+  await panel(page).getByRole('button', { name: '确认异常', exact: true }).click();
+  await expect(notice(page)).toHaveAccessibleName('通知');
+  await page.keyboard.press('Escape');
+  const freshPage = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/workspace/mailbox' && url.searchParams.get('filter') === 'attention' && response.ok();
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(/filter=attention/u);
+  await freshPage;
+  await expect(page.getByText(pendingSubject, { exact: true })).toHaveCount(0);
+
+  await page.goto('/?folder=sent');
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  await page.getByRole('button', { name: new RegExp(pendingSubject, 'u') }).click();
+  const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+  await expect(receipt.getByText(/已确认/u)).toBeVisible();
+  expect((await events(page.request, pendingId, 'email.delivered', 'attention-refresh-delivered')).ok()).toBe(true);
+  await page.getByRole('button', { name: '刷新邮件列表', exact: true }).click();
+  await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(receipt.getByRole('button', { name: '重试投递' })).toHaveCount(0);
 });
