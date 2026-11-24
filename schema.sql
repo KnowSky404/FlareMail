@@ -1087,7 +1087,7 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     AND old.provider_message_id IS NOT NULL AND new.provider_message_id IS old.provider_message_id
     AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention delay JOIN workspace_delivery_attention stale
-        ON stale.message_id = delay.message_id AND stale.user_id = delay.user_id AND stale.id > delay.id
+        ON stale.message_id = delay.message_id AND stale.user_id = delay.user_id AND stale.attempt_number > delay.attempt_number
       WHERE delay.message_id = new.message_id AND delay.user_id = new.user_id
         AND delay.kind = 'delayed' AND delay.closed_at IS NULL
         AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
@@ -1103,7 +1103,7 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
         AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
-        AND stale.id > workspace_delivery_attention.id
+        AND stale.attempt_number > workspace_delivery_attention.attempt_number
         AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     );
 
@@ -1113,16 +1113,16 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     SELECT stale.eligible_at FROM workspace_delivery_attention stale
     WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
       AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
-      AND stale.id > workspace_delivery_attention.id
+      AND stale.attempt_number > workspace_delivery_attention.attempt_number
       AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-    ORDER BY stale.id LIMIT 1
+    ORDER BY stale.attempt_number LIMIT 1
   )
   WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND kind <> 'delayed'
     AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
         AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
-        AND stale.id > workspace_delivery_attention.id
+        AND stale.attempt_number > workspace_delivery_attention.attempt_number
         AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     );
 

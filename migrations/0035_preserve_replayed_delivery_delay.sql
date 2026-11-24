@@ -24,7 +24,7 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     AND old.provider_message_id IS NOT NULL AND new.provider_message_id IS old.provider_message_id
     AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention delay JOIN workspace_delivery_attention stale
-        ON stale.message_id = delay.message_id AND stale.user_id = delay.user_id AND stale.id > delay.id
+        ON stale.message_id = delay.message_id AND stale.user_id = delay.user_id AND stale.attempt_number > delay.attempt_number
       WHERE delay.message_id = new.message_id AND delay.user_id = new.user_id
         AND delay.kind = 'delayed' AND delay.closed_at IS NULL
         AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
@@ -40,7 +40,7 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
         AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
-        AND stale.id > workspace_delivery_attention.id
+        AND stale.attempt_number > workspace_delivery_attention.attempt_number
         AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     );
 
@@ -50,16 +50,16 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     SELECT stale.eligible_at FROM workspace_delivery_attention stale
     WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
       AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
-      AND stale.id > workspace_delivery_attention.id
+      AND stale.attempt_number > workspace_delivery_attention.attempt_number
       AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-    ORDER BY stale.id LIMIT 1
+    ORDER BY stale.attempt_number LIMIT 1
   )
   WHERE message_id = new.message_id AND user_id = new.user_id AND closed_at IS NULL AND kind <> 'delayed'
     AND EXISTS (
       SELECT 1 FROM workspace_delivery_attention stale
       WHERE stale.message_id = new.message_id AND stale.user_id = new.user_id
         AND stale.kind = 'stale_submitting' AND stale.closed_at IS NULL
-        AND stale.id > workspace_delivery_attention.id
+        AND stale.attempt_number > workspace_delivery_attention.attempt_number
         AND stale.eligible_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     );
 
@@ -96,7 +96,8 @@ SELECT s.user_id, s.message_id, prior.attempt_number, 'delayed',
 FROM workspace_delivery_statuses s
 JOIN workspace_messages m ON m.id = s.message_id AND m.user_id = s.user_id AND m.folder = 'sent'
 JOIN workspace_delivery_attempts latest ON latest.message_id = s.message_id AND latest.user_id = s.user_id
-  AND latest.attempt_number = s.attempts AND latest.provider_message_id = s.provider_message_id
+  AND latest.attempt_number = s.attempts AND (latest.provider_message_id = s.provider_message_id
+    OR (s.status = 'submitting' AND latest.provider_message_id IS NULL))
 JOIN workspace_delivery_attempts prior ON prior.message_id = s.message_id AND prior.user_id = s.user_id
   AND prior.provider_message_id = s.provider_message_id AND prior.attempt_number = (
     SELECT MIN(previous.attempt_number) FROM workspace_delivery_attempts previous
@@ -114,7 +115,7 @@ LEFT JOIN workspace_outbound_events submission
   AND submission.provider_message_id = s.provider_message_id
 JOIN workspace_outbound_events e ON e.message_id = s.message_id AND e.user_id = s.user_id
   AND e.provider_message_id = s.provider_message_id AND e.event_type = 'email.delivery_delayed'
-WHERE s.status IN ('submitted', 'sent')
+WHERE s.status IN ('submitting', 'submitted', 'sent')
   AND e.event_created_at >= prior.started_at AND e.event_created_at <= latest.started_at
   AND strftime('%Y-%m-%dT%H:%M:%fZ', e.event_created_at) IS NOT NULL
   AND NOT EXISTS (
