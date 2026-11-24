@@ -3,6 +3,9 @@ import { isDeliveryTerminal, type DeliveryAttentionItem } from '$lib/domain/mail
 import { currentDeliveryAttentionStatement } from './delivery-attention';
 
 const terminalStatuses = "'delivered', 'bounced', 'failed', 'complained', 'suppressed'";
+const deferredPath = '$._flaremailDeferred';
+const wasDeferred = `CASE WHEN json_valid(payload_json)
+  THEN COALESCE(json_extract(payload_json, '${deferredPath}') = 1, 0) ELSE 0 END`;
 const unconfirmedAttempt = (alias: string) => `EXISTS (
   SELECT 1 FROM workspace_delivery_attempts AS attempt
   WHERE attempt.message_id = ${alias}.message_id AND attempt.attempt_number = ${alias}.attempts
@@ -35,7 +38,8 @@ export async function findDeliveryDetailRows(db: D1Database, userId: string, mes
     LEFT JOIN workspace_outbound_receipts r ON r.user_id = target.user_id AND r.message_id = target.message_id
   `).bind(userId, messageId);
   const events = db.prepare(`
-    SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json
+    SELECT svix_id, provider_message_id, event_type, event_created_at, summary,
+      CASE WHEN ${wasDeferred} THEN json_remove(payload_json, '${deferredPath}') ELSE payload_json END AS payload_json
     FROM workspace_outbound_events WHERE user_id = ? AND message_id = ? ORDER BY event_created_at DESC, created_at DESC
   `).bind(userId, messageId);
   const [record, history, incident] = await db.batch([status, events, currentDeliveryAttentionStatement(db, userId, messageId)]);
@@ -168,6 +172,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
   lastError: string;
   eventType: DeliveryEventType;
   eventCreatedAt: string;
+  fromDeferred?: boolean;
 }) {
   const currentRank = `CASE status
     WHEN 'draft' THEN 0 WHEN 'queued' THEN 1 WHEN 'submitting' THEN 2 WHEN 'submitted' THEN 3
@@ -181,13 +186,19 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       last_event = ?, last_event_at = ?, updated_at = ?
     WHERE message_id = ? AND provider_message_id = ?
       AND (? OR NOT (${unconfirmedAttempt('current')}))
+      AND (NOT ? OR NOT EXISTS (
+        SELECT 1 FROM workspace_delivery_attempts attempt
+        WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
+          AND substr(attempt.started_at, 1, 19) > substr(?, 1, 19)
+      ))
       AND (status NOT IN (${terminalStatuses}) OR status = ?)
       AND (? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
   `).bind(
     input.targetStatus, input.provider, input.providerMessageId, input.lastError,
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
-    Number(isDeliveryTerminal(input.targetStatus)), input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
+    Number(isDeliveryTerminal(input.targetStatus)), Number(input.fromDeferred ?? false), input.eventCreatedAt,
+    input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
 export function insertOutboundEvent(db: D1Database, p: DeliveryEventPayload) {
@@ -215,19 +226,32 @@ export async function hasOutboundEvent(db: D1Database, svixId: string) {
   return Boolean(await db.prepare(`SELECT svix_id FROM workspace_outbound_events WHERE svix_id = ?`).bind(svixId).first<{ svix_id: string }>());
 }
 
-export async function listUnmatchedOutboundEvents(db: D1Database, providerMessageId: string) {
-  return db.prepare(`SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json
+export function markDeferredOutboundEvent(db: D1Database, svixId: string) {
+  return db.prepare(`UPDATE workspace_outbound_events
+    SET payload_json = json_set(payload_json, '${deferredPath}', 1)
+    WHERE svix_id = ? AND EXISTS (
+      SELECT 1 FROM workspace_delivery_statuses d
+      WHERE d.message_id = workspace_outbound_events.message_id AND d.user_id = workspace_outbound_events.user_id
+        AND d.provider_message_id = workspace_outbound_events.provider_message_id AND ${unconfirmedAttempt('d')}
+    )`).bind(svixId);
+}
+
+export async function listPendingOutboundEvents(db: D1Database, providerMessageId: string) {
+  return db.prepare(`SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json,
+    ${wasDeferred} AS was_deferred
     FROM workspace_outbound_events
-    WHERE user_id = 'unmatched' AND provider_message_id = ?
-    ORDER BY event_created_at ASC, created_at ASC`)
-    .bind(providerMessageId).all<WorkspaceOutboundEventRow>();
+    WHERE provider_message_id = ? AND (user_id = 'unmatched' OR (${wasDeferred}))
+    ORDER BY event_created_at ASC, created_at ASC, rowid ASC`)
+    .bind(providerMessageId).all<WorkspaceOutboundEventRow & { was_deferred: number }>();
 }
 
 export function assignOutboundEvent(db: D1Database, svixId: string, messageId: string, userId: string, allowUnconfirmed: boolean) {
-  return db.prepare(`UPDATE workspace_outbound_events SET message_id = ?, user_id = ?
-    WHERE svix_id = ? AND user_id = 'unmatched' AND EXISTS (
+  return db.prepare(`UPDATE workspace_outbound_events
+    SET message_id = ?, user_id = ?, payload_json = json_remove(payload_json, '${deferredPath}')
+    WHERE svix_id = ? AND (user_id = 'unmatched'
+      OR (user_id = ? AND message_id = ? AND (${wasDeferred}))) AND EXISTS (
       SELECT 1 FROM workspace_delivery_statuses d
       WHERE d.message_id = ? AND d.user_id = ? AND d.provider_message_id = workspace_outbound_events.provider_message_id
         AND (? OR NOT (${unconfirmedAttempt('d')}))
-    )`).bind(messageId, userId, svixId, messageId, userId, Number(allowUnconfirmed));
+    )`).bind(messageId, userId, svixId, userId, messageId, messageId, userId, Number(allowUnconfirmed));
 }
