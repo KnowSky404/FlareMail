@@ -16,7 +16,7 @@ class TestStatement {
   async all<T>() { return { success: true, results: this.database.query(this.sql).all(...this.values) as T[] }; }
   execute() {
     const query = this.database.query(this.sql);
-    if (/^\s*(?:SELECT|WITH)\b/iu.test(this.sql)) return { success: true, results: query.all(...this.values), meta: { changes: 0 } };
+    if (/^\s*(?:SELECT|WITH)\b|\bRETURNING id\b/iu.test(this.sql)) return { success: true, results: query.all(...this.values), meta: { changes: 0 } };
     return { success: true, results: [], meta: { changes: query.run(...this.values).changes } };
   }
   async run() { return this.execute(); }
@@ -411,6 +411,29 @@ describe('Owner delivery attention', () => {
     expect(await findDeliveryDetailRows(env.DB, 'other-owner', 'message-1')).toMatchObject({
       status: null, receipt: null, attention: null, events: []
     });
+  });
+
+  test('keeps a newer sent webhook for the original ID when its replay predates the retry', async () => {
+    const { database, env } = setup();
+    const at = (minute: number) => `2026-01-01T00:0${minute}:00.000Z`;
+    await applyResendDeliveryWebhook(env, 'original-delay', payload('email.delivery_delayed', at(1)));
+    const original = (await page(env.DB)).notices[0]!;
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '${at(3)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = '${at(3)}', sent_at = NULL WHERE message_id = 'message-1';
+    `);
+    await applyResendDeliveryWebhook(env, 'stale-sent', payload('email.sent', at(0)));
+    await applyResendDeliveryWebhook(env, 'later-sent', payload('email.sent', at(2)));
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(2);
+    expect(database.query("SELECT status, sent_at FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get())
+      .toEqual({ status: 'sent', sent_at: at(2) });
+    expect((await page(env.DB)).notices.map(({ id }) => id)).toEqual([original.id]);
   });
 
   test.each([-60, 30])('attributes a deferred delay %i seconds from the start of a confirmed retry', async (offset) => {

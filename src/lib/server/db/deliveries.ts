@@ -211,6 +211,20 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
             WHERE prior.message_id = current.message_id AND prior.attempt_number < attempt.attempt_number
               AND prior.provider_message_id = current.provider_message_id
           ))
+          AND NOT (
+            ? = 'sent' AND EXISTS (
+              SELECT 1 FROM workspace_delivery_attention delay
+              WHERE delay.message_id = current.message_id AND delay.user_id = current.user_id
+                AND delay.delayed_provider_message_id = current.provider_message_id
+                AND delay.closed_at IS NULL AND delay.eligible_at <= ?
+            ) AND NOT EXISTS (
+              SELECT 1 FROM workspace_outbound_events newer
+              WHERE newer.message_id = current.message_id AND newer.user_id = current.user_id
+                AND newer.provider_message_id = current.provider_message_id
+                AND newer.event_type IN ('email.sent', 'email.delivery_delayed')
+                AND newer.event_created_at > ? AND newer.event_created_at <= attempt.started_at
+            )
+          )
       ))
       AND (status NOT IN (${terminalStatuses}) OR status = ?)
       AND (? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
@@ -219,6 +233,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
     terminal, terminal, input.eventCreatedAt, Number(input.fromDeferred ?? false),
+    input.targetStatus, input.eventCreatedAt, input.eventCreatedAt,
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
