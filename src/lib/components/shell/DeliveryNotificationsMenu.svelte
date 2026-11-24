@@ -42,8 +42,8 @@
   async function act(action: DeliveryAttentionAction, messageId?: string) {
     const changed = await onAct(action, messageId);
     if (changed) confirmation = null;
-    if (notifications.open) {
-      await tick();
+    await tick();
+    if (notifications.open && document.activeElement === document.body) {
       (notifications.view === 'pending' ? pendingTab : historyTab)?.focus({ preventScroll: true });
     }
   }
