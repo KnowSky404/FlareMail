@@ -141,12 +141,12 @@ describe('versioned D1 migrations', () => {
     db.exec(`
       INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
       SELECT value, 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'
-      FROM json_each('["legacy", "earlier-attempt", "early-webhook", "ignored-delay", "existing", "delivered", "same-id-retry", "new-id-retry"]');
+      FROM json_each('["legacy", "earlier-attempt", "early-webhook", "ignored-delay", "existing", "delivered", "same-id-retry", "new-id-retry", "stalled-retry"]');
       INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id,
         submitted_at, last_event, last_event_at)
-      SELECT id, user_id, CASE WHEN id = 'delivered' THEN 'delivered' ELSE 'sent' END,
-        CASE WHEN id IN ('earlier-attempt', 'same-id-retry', 'new-id-retry') THEN 2 ELSE 1 END, 'provider-' || id,
-        '2026-01-01T00:00:00.000Z', CASE WHEN id = 'delivered' THEN 'email.delivered' ELSE 'email.sent' END,
+      SELECT id, user_id, CASE id WHEN 'delivered' THEN 'delivered' WHEN 'stalled-retry' THEN 'submitting' ELSE 'sent' END,
+        CASE WHEN id IN ('earlier-attempt', 'same-id-retry', 'new-id-retry', 'stalled-retry') THEN 2 ELSE 1 END, 'provider-' || id,
+        '2026-01-01T00:00:00.000Z', CASE id WHEN 'delivered' THEN 'email.delivered' WHEN 'stalled-retry' THEN 'submission' ELSE 'email.sent' END,
         '2026-01-01T00:05:00.000Z' FROM workspace_messages;
       INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
       VALUES ('local:ignored-delay:submission:1', 'ignored-delay', 'owner', 'resend', 'provider-ignored-delay', 'submission', '2026-01-01T00:00:45.000Z');
@@ -167,6 +167,10 @@ describe('versioned D1 migrations', () => {
           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:30.000Z'),
         ('same-id-next', 'same-id-retry', 'owner', 2, 'provider-same-id-retry', 'submitted',
           '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z'),
+        ('stalled-first', 'stalled-retry', 'owner', 1, 'provider-stalled-retry', 'submitted',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:30.000Z'),
+        ('stalled-next', 'stalled-retry', 'owner', 2, NULL, 'submitting',
+          '2026-01-01T00:02:00.000Z', NULL),
         ('new-id-first', 'new-id-retry', 'owner', 1, 'provider-old', 'submitted',
           '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:30.000Z'),
         ('new-id-next', 'new-id-retry', 'owner', 2, 'provider-new-id-retry', 'submitted',
@@ -186,8 +190,18 @@ describe('versioned D1 migrations', () => {
       { message_id: 'early-webhook', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' },
       { message_id: 'existing', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'acknowledged' },
       { message_id: 'legacy', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' },
-      { message_id: 'same-id-retry', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' }
+      { message_id: 'same-id-retry', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' },
+      { message_id: 'stalled-retry', kind: 'stale_submitting', eligible_at: '2026-01-01T00:20:00.000Z', state: 'open' },
+      { message_id: 'stalled-retry', kind: 'delayed', eligible_at: '2026-01-01T00:01:00.000Z', state: 'open' }
     ]);
+    db.exec(`
+      UPDATE workspace_delivery_statuses
+      SET attempts = 3, last_event_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE message_id = 'stalled-retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'stalled-retry';
+    `);
+    expect(db.query("SELECT kind, state FROM workspace_delivery_attention WHERE message_id = 'stalled-retry' ORDER BY id").all())
+      .toEqual([{ kind: 'stale_submitting', state: 'resolved' }, { kind: 'delayed', state: 'open' }]);
     db.close();
   });
 

@@ -417,6 +417,15 @@ describe('Owner delivery attention', () => {
     expect((await page(env.DB, 'pending')).notices.map(({ kind }) => kind)).toEqual(['delayed']);
     expect(database.query("SELECT attempt_number FROM workspace_delivery_attention WHERE state = 'open'").get())
       .toEqual({ attempt_number: offset > 0 ? 2 : 1 });
+
+    if (offset < 0) {
+      const original = (await page(env.DB)).notices[0]!;
+      await changeDeliveryAttention(env.DB, 'user-1', { action: 'acknowledge', incident: ref(original) });
+      const late = await applyResendDeliveryWebhook(env, 'retry-late-delay', payload('email.delivery_delayed', eventAt));
+      expect(late).toMatchObject({ ignored: true });
+      expect((await page(env.DB)).notices).toEqual([]);
+      expect(await findCurrentDeliveryAttention(env.DB, 'user-1', 'message-1')).toMatchObject({ id: original.id, state: 'acknowledged' });
+    }
   });
 
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {

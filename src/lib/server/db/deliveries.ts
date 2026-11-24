@@ -174,6 +174,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
   eventCreatedAt: string;
   fromDeferred?: boolean;
 }) {
+  const terminal = Number(isDeliveryTerminal(input.targetStatus));
   const currentRank = `CASE status
     WHEN 'draft' THEN 0 WHEN 'queued' THEN 1 WHEN 'submitting' THEN 2 WHEN 'submitted' THEN 3
     WHEN 'sent' THEN 4 WHEN 'delayed' THEN 4 WHEN 'bounced' THEN 5 WHEN 'failed' THEN 5
@@ -186,9 +187,10 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       last_event = ?, last_event_at = ?, updated_at = ?
     WHERE message_id = ? AND provider_message_id = ?
       AND (? OR NOT (${unconfirmedAttempt('current')}))
-      AND (NOT ? OR NOT EXISTS (
+      AND (? OR NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attempts attempt
         WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
+          AND (attempt.attempt_number > 1 OR ?)
           AND substr(attempt.started_at, 1, 19) > substr(?, 1, 19)
       ))
       AND (status NOT IN (${terminalStatuses}) OR status = ?)
@@ -197,7 +199,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     input.targetStatus, input.provider, input.providerMessageId, input.lastError,
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
-    Number(isDeliveryTerminal(input.targetStatus)), Number(input.fromDeferred ?? false), input.eventCreatedAt,
+    terminal, terminal, Number(input.fromDeferred ?? false), input.eventCreatedAt,
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
