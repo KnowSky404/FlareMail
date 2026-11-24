@@ -121,10 +121,11 @@ JOIN workspace_delivery_attempts latest ON latest.message_id = s.message_id AND 
   AND latest.attempt_number = s.attempts AND (latest.provider_message_id = s.provider_message_id
     OR (s.last_event = 'submission' AND latest.provider_message_id IS NULL))
 JOIN workspace_delivery_attempts prior ON prior.message_id = s.message_id AND prior.user_id = s.user_id
-  AND prior.provider_message_id = s.provider_message_id AND prior.attempt_number = (
+  AND prior.attempt_number = (
     SELECT MIN(previous.attempt_number) FROM workspace_delivery_attempts previous
     WHERE previous.message_id = s.message_id AND previous.user_id = s.user_id
-      AND previous.attempt_number < s.attempts AND previous.provider_message_id = s.provider_message_id
+      AND previous.attempt_number < s.attempts
+      AND (previous.provider_message_id = s.provider_message_id OR previous.provider_message_id IS NULL)
       AND NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attempts replacement
         WHERE replacement.message_id = s.message_id AND replacement.user_id = s.user_id

@@ -18,15 +18,19 @@ class TestStatement {
   execute() {
     const query = this.database.query(this.sql);
     if (/^\s*(?:SELECT|WITH)\b/iu.test(this.sql)) return { success: true, results: query.all(...this.values) };
-    query.run(...this.values);
-    return { success: true, results: [] };
+    const result = query.run(...this.values);
+    return { success: true, results: [], meta: { changes: result.changes } };
   }
   async run() { return this.execute(); }
 }
 
 class TestD1 {
+  beforePrepare?: (sql: string) => void;
   constructor(readonly database: Database) {}
-  prepare(sql: string) { return new TestStatement(this.database, sql) as unknown as D1PreparedStatement; }
+  prepare(sql: string) {
+    this.beforePrepare?.(sql);
+    return new TestStatement(this.database, sql) as unknown as D1PreparedStatement;
+  }
   async batch(statements: D1PreparedStatement[]) {
     return this.database.transaction(() =>
       statements.map((statement) => (statement as unknown as TestStatement).execute()))();
@@ -219,6 +223,31 @@ describe('outbound workspace persistence', () => {
     });
     expect(await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id)).toMatchObject({
       status: 'delayed', attention: { kind: 'delayed', state: 'open' }
+    });
+  });
+
+  test('rejects a retry if a definitive failure commits before the attempt is claimed', async () => {
+    const { env, session, database } = setup();
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Concurrent failure', body: 'Body' }, {
+      requestId: 'terminal-before-claim', gateway: new FakeOutboundGateway({ providerMessageId: 're_race' })
+    });
+    await applyResendDeliveryWebhook(env, 'svix-race-delay', {
+      type: 'email.delivery_delayed', created_at: new Date().toISOString(), data: { email_id: 're_race' }
+    });
+    const d1 = env.DB as unknown as TestD1;
+    d1.beforePrepare = (sql) => {
+      if (!sql.includes('UPDATE workspace_delivery_statuses AS delivery')) return;
+      d1.beforePrepare = undefined;
+      database.query("UPDATE workspace_delivery_statuses SET status = 'failed', last_event = 'email.failed' WHERE message_id = ?").run(sent.message.id);
+    };
+    const retryGateway = new FakeOutboundGateway({ providerMessageId: 're_race' });
+    await expect(retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway: retryGateway }))
+      .rejects.toMatchObject({ code: 'DELIVERY_NOT_RETRYABLE', reason: 'status_not_retryable' });
+    expect(retryGateway.sent).toEqual([]);
+    expect(database.query('SELECT attempt_number FROM workspace_delivery_attempts WHERE message_id = ?').all(sent.message.id))
+      .toEqual([{ attempt_number: 1 }]);
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id)).toMatchObject({
+      status: 'failed', attention: { kind: 'failed', state: 'open' }
     });
   });
 
