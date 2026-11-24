@@ -355,12 +355,25 @@ export function markDeferredOutboundEvent(db: D1Database, svixId: string) {
     )`).bind(svixId);
 }
 
+export function listReadyDeferredProviderIds(db: D1Database) {
+  return db.prepare(`
+    SELECT delivery.provider_message_id AS id
+    FROM workspace_delivery_statuses delivery
+    JOIN workspace_outbound_events event ON event.provider_message_id = delivery.provider_message_id
+    WHERE event.provider = 'resend' AND NOT (${unconfirmedAttempt('delivery')})
+      AND (event.user_id = 'unmatched' OR (event.user_id = delivery.user_id AND ${wasDeferred}))
+    GROUP BY delivery.provider_message_id
+    ORDER BY MIN(event.event_created_at)
+    LIMIT 10
+  `).all<{ id: string }>();
+}
+
 export async function listPendingOutboundEvents(db: D1Database, providerMessageId: string) {
   return db.prepare(`SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json,
     ${wasDeferred} AS was_deferred
     FROM workspace_outbound_events
     WHERE provider_message_id = ? AND (user_id = 'unmatched' OR (${wasDeferred}))
-    ORDER BY event_created_at ASC, created_at ASC, rowid ASC`)
+    ORDER BY event_created_at ASC, created_at ASC, rowid ASC LIMIT 100`)
     .bind(providerMessageId).all<WorkspaceOutboundEventRow & { was_deferred: number }>();
 }
 

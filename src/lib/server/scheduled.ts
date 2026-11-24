@@ -2,12 +2,13 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { dispatchMailAiJobs } from '$lib/server/ai/dispatcher';
 import { refreshMailDomainHealth, refreshPreviewCatchAllHealth } from '$lib/server/mail-identities/health-refresh';
 import { dispatchTelegramOutbox } from '$lib/server/telegram/dispatcher';
+import { reconcileDeferredResendEvents } from '$lib/server/workspace/delivery';
 
 export interface ScheduledExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
-type ScheduledMaintenanceTask = 'telegram_outbox' | 'mail_domain_health' | 'preview_catch_all_health' | 'mail_ai_jobs';
+type ScheduledMaintenanceTask = 'telegram_outbox' | 'mail_domain_health' | 'preview_catch_all_health' | 'mail_ai_jobs' | 'deferred_delivery_events';
 
 export interface ScheduledMaintenanceDependencies {
   dispatchAi?: () => Promise<unknown>;
@@ -23,6 +24,7 @@ export function scheduleMaintenance(
   dependencies: ScheduledMaintenanceDependencies = {}
 ) {
   const tasks: Array<[ScheduledMaintenanceTask, () => Promise<unknown>]> = [
+    ['deferred_delivery_events', () => reconcileDeferredResendEvents(env)],
     ['mail_ai_jobs', dependencies.dispatchAi ?? (() => dispatchMailAiJobs(env))],
     ['telegram_outbox', dependencies.dispatchTelegram ?? (() => dispatchTelegramOutbox(env, { limit: 10, timeBudgetMs: 20_000, cleanup: true }))],
     ['mail_domain_health', dependencies.refreshMailHealth ?? (() => refreshMailDomainHealth(env))],
