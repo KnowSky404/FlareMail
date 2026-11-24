@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Check, CircleAlert, CircleCheck, Clock3, Eye, ExternalLink, MousePointerClick, RefreshCw, Send, TriangleAlert } from '@lucide/svelte';
-  import { getDeliveryRetryEligibility } from '$lib/domain/mail';
   import type { DeliveryAttentionAction, DeliveryDetail, DeliveryEvent, DeliveryEventType, DeliveryStatus, MailMessage } from '$lib/domain/mail';
   import { attentionKindLabel, attentionStateLabel } from '$lib/client/delivery-attention-labels';
   import { Button, StatusBadge } from '$lib/components/ui';
@@ -100,19 +99,6 @@
   const sortedEvents = $derived(
     [...(deliveryDetail?.events ?? [])].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   );
-  const retryEligibility = $derived(
-    message?.folder === 'sent' && currentStatus
-      ? getDeliveryRetryEligibility({
-        status: currentStatus,
-        lastEvent: deliveryDetail?.lastEvent ?? message.deliveryLastEvent,
-        resultKind: deliveryDetail?.resultKind ?? message.deliveryResultKind,
-        idempotencyKey: message.deliveryIdempotencyKey,
-        attemptStartedAt: message.deliveryAttemptStartedAt
-      })
-      : null
-  );
-  const retryable = $derived(Boolean(retryEligibility?.eligible));
-
   const statusTone = (status: string | null): 'success' | 'warning' | 'danger' | 'neutral' => {
     if (status === 'delivered' || status === 'sent') return 'success';
     if (status === 'queued' || status === 'submitting' || status === 'submitted' || status === 'delayed') return 'warning';
@@ -133,7 +119,7 @@
       <div class="flex items-center gap-2">
         {#if currentStatus}<StatusBadge status={currentStatus} tone={statusTone(currentStatus)}>{statusLabel(currentStatus)}</StatusBadge>{/if}
         {#if onReload}<button class="grid size-11 place-items-center rounded-[var(--radius-md)] text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" aria-label={t('mail.reloadReceipt')} title={t('mail.reloadReceipt')} onclick={() => onReload?.(message)} disabled={pending || loading}><RefreshCw class={loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" /></button>{/if}
-        {#if retryable && onRetry}<button class="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 text-xs font-semibold text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={() => onRetry?.(message)} disabled={pending}>{t('mail.retryDelivery')}</button>{/if}
+        {#if onRetry}<button class="inline-flex min-h-11 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 text-xs font-semibold text-[var(--fm-text-secondary)] hover:bg-[var(--fm-surface-hover)]" type="button" onclick={() => onRetry?.(message)} disabled={pending}>{t('mail.retryDelivery')}</button>{/if}
       </div>
     </div>
     {#if deliveryDetail?.attention}

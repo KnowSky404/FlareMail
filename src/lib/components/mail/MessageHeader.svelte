@@ -21,7 +21,6 @@
   import {
     parseAddressList,
     type InboundMessageDetail,
-    type DeliveryDetail,
     type MailMessage
   } from '$lib/domain/mail';
   import { translateCount } from '$lib/i18n';
@@ -30,7 +29,6 @@
 
   let {
     message = null,
-    deliveryDetail = null,
     inboundDetail = null,
     bodyControls,
     rawDownloadHref = null,
@@ -60,7 +58,6 @@
     trashMode = false
   }: {
     message?: MailMessage | null;
-    deliveryDetail?: DeliveryDetail | null;
     inboundDetail?: InboundMessageDetail | null;
     bodyControls?: Snippet;
     rawDownloadHref?: string | null;
@@ -155,14 +152,6 @@
     return 'neutral';
   };
 
-  const canRetry = $derived(
-    Boolean(
-      message?.folder === 'sent' &&
-        ((message.deliveryStatus && ['queued', 'submitting', 'submitted', 'delayed', 'failed'].includes(message.deliveryStatus)) ||
-          message.deliveryResultKind === 'temporary_failure' ||
-          message.deliveryResultKind === 'rate_limited')
-    )
-  );
   const hasActions = $derived(Boolean(
     trashMode
       ? onRestore || onPermanentDelete
@@ -263,7 +252,7 @@
                 {#if message.folder === 'inbox' && onToggleRead}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onToggleRead?.(message)}><Mail class="size-4" aria-hidden="true" />{message.read ? t('mail.markUnread') : t('mail.markRead')}</button>{/if}
                 {#if message.source === 'inbound' && onReloadInboundDetail}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onReloadInboundDetail?.(message)} disabled={pending || inboundDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{inboundDetailPending ? t('mail.loadingBody') : t('mail.reloadBody')}</button>{/if}
                 {#if message.folder === 'sent' && onReloadDeliveryDetail}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onReloadDeliveryDetail?.(message)} disabled={pending || deliveryDetailPending}><RotateCcw class="size-4" aria-hidden="true" />{deliveryDetailPending ? t('mail.loadingReceipt') : t('mail.reloadReceipt')}</button>{/if}
-                {#if canRetry && onRetryDelivery}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onRetryDelivery?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />{t('mail.retryDelivery')}</button>{/if}
+                {#if onRetryDelivery}<button class="menu-action fm-touch-target" role="menuitem" type="button" onclick={() => onRetryDelivery?.(message)} disabled={pending}><RotateCcw class="size-4" aria-hidden="true" />{t('mail.retryDelivery')}</button>{/if}
                 {#if downloadHref}<a class="menu-action fm-touch-target" role="menuitem" href={downloadHref} download rel="noopener noreferrer"><ArrowUpRight class="size-4" aria-hidden="true" />{t('mail.downloadRaw')}</a>{/if}
                 {#if onRemove}<button class="menu-action fm-touch-target text-[var(--fm-danger)]" role="menuitem" type="button" onclick={() => (removeConfirmOpen = true)}><Trash2 class="size-4" aria-hidden="true" />{t('mail.moveTrash')}</button>{/if}
               {/if}
