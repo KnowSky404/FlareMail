@@ -452,21 +452,23 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
   await standalone.close();
 
-  const focusId = 'e2e-attention-focus';
-  const focusSubject = 'E2E Attention Focus';
-  await seed(page.request, origin, focusId, 'delayed', focusSubject);
-  await page.goto('/?folder=sent&filter=attention');
-  const focusRow = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(focusSubject, 'u') });
-  await focusRow.click();
-  const focusReceipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
-  await expect(focusReceipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
-  expect((await events(page.request, focusId, 'email.delivered', 'attention-focus-delivered')).ok()).toBe(true);
-  await page.evaluate(() => {
-    const now = Date.now;
-    Date.now = () => now() + 31_000;
-    try { window.dispatchEvent(new Event('focus')); } finally { Date.now = now; }
-  });
-  await expect(focusRow).toHaveCount(0);
-  await expect(focusReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
-  await expect(focusReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
+  for (const filter of ['all', 'attention']) {
+    const focusId = `e2e-attention-focus-${filter}`;
+    const focusSubject = `E2E Attention Focus ${filter}`;
+    await seed(page.request, origin, focusId, 'delayed', focusSubject);
+    await page.goto(`/?folder=sent&filter=${filter}`);
+    const focusRow = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(focusSubject, 'u') });
+    await focusRow.click();
+    const focusReceipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+    await expect(focusReceipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+    expect((await events(page.request, focusId, 'email.delivered', `attention-focus-delivered-${filter}`)).ok()).toBe(true);
+    await page.evaluate(() => {
+      const now = Date.now;
+      Date.now = () => now() + 31_000;
+      try { window.dispatchEvent(new Event('focus')); } finally { Date.now = now; }
+    });
+    await expect(focusRow).toHaveCount(filter === 'attention' ? 0 : 1);
+    await expect(focusReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+    await expect(focusReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
+  }
 });
