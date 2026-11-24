@@ -106,7 +106,8 @@ test('finds an Owner-wide bounce from another identity and acknowledges it witho
   await expect(timeline.getByRole('button', { name: '重试投递' })).toHaveCount(0);
   await screenshot(page, info, 'delivery-detail');
   const startedAt = performance.now();
-  await timeline.getByRole('button', { name: '确认异常' }).click();
+  await timeline.getByRole('button', { name: '确认异常' }).press('Enter');
+  await expect(timeline.getByRole('heading', { name: '投递时间线' })).toBeFocused();
   const compactReader = page.viewportSize()!.width < 768;
   if (!compactReader) await expect(notice(page)).toHaveAccessibleName('通知');
   const badgeMs = compactReader ? null : performance.now() - startedAt;
