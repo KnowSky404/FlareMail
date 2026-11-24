@@ -1108,7 +1108,11 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
     (new.status IN ('delayed', 'failed', 'bounced', 'complained', 'suppressed')
       AND (kind <> new.status OR attempt_number <> new.attempts))
     OR (new.status IN ('submitted', 'sent', 'delivered')
-      AND NOT (kind = 'delayed' AND attempt_number = new.attempts AND new.status = 'sent'))
+      AND NOT (kind = 'delayed' AND (
+        (new.status = 'sent' AND attempt_number = new.attempts)
+        OR (new.status IN ('submitted', 'sent') AND old.provider_message_id IS NOT NULL
+          AND new.provider_message_id IS old.provider_message_id)
+      )))
   );
 
   INSERT INTO workspace_delivery_attention (user_id, message_id, attempt_number, kind, eligible_at)
@@ -1123,5 +1127,5 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
 END;
 
 
-UPDATE workspace_schema_metadata SET schema_version = 34,
+UPDATE workspace_schema_metadata SET schema_version = 35,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE schema_name = 'flaremail';

@@ -329,6 +329,23 @@ describe('Owner delivery attention', () => {
       .toEqual({ delivered_at: newDeliveredAt });
   });
 
+  test.each(['re_1', 're_new'])('keeps the prior delay only when retry acceptance replays provider ID %s', async (providerId) => {
+    const { database, env } = setup();
+    const db = env.DB;
+    const at = (second: number) => new Date(Date.now() + second * 1000).toISOString();
+    await applyResendDeliveryWebhook(env, 'delay-before-replay', payload('email.delivery_delayed', at(1)));
+    const original = (await page(db)).notices[0]!;
+    database.query("UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event_at = ? WHERE message_id = 'message-1'").run(at(2));
+    database.query("UPDATE workspace_delivery_statuses SET status = 'submitted', provider_message_id = ? WHERE message_id = 'message-1'").run(providerId);
+    const expected = providerId === 're_1' ? [original.id] : [];
+    expect((await page(db)).notices.map(({ id }) => id)).toEqual(expected);
+    await applyResendDeliveryWebhook(env, 'sent-after-replay', payload('email.sent', at(3), providerId));
+    expect((await page(db)).notices.map(({ id }) => id)).toEqual(expected);
+    await applyResendDeliveryWebhook(env, 'delivered-after-replay', payload('email.delivered', at(4), providerId));
+    expect((await page(db)).notices).toEqual([]);
+    expect((await page(db, 'history')).notices.find(({ id }) => id === original.id)?.state).toBe('resolved');
+  });
+
   test('accepts a definitive bounce for the last known provider ID after a retry times out', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'initial-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
@@ -373,9 +390,9 @@ describe('Owner delivery attention', () => {
     `);
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(1);
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
-    expect((await page(env.DB, 'pending')).notices.map(({ kind }) => kind)).toEqual(offset > 0 ? ['delayed'] : []);
+    expect((await page(env.DB, 'pending')).notices.map(({ kind }) => kind)).toEqual(['delayed']);
     expect(database.query("SELECT attempt_number FROM workspace_delivery_attention WHERE state = 'open'").get())
-      .toEqual(offset > 0 ? { attempt_number: 2 } : null);
+      .toEqual({ attempt_number: offset > 0 ? 2 : 1 });
   });
 
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {
