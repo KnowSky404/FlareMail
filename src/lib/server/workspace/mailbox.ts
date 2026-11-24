@@ -265,6 +265,7 @@ export async function mutateWorkspaceMailbox(
   }
   return {
     summaries,
+    ...(writtenIds ? { skippedCount: rows.length - writtenRows.length } : {}),
     metrics: await getMailboxMetrics(env.DB, workspace.userId, scope.identityFilter),
     metricsScope: { identityFilter: scope.identityFilter },
     scope,
