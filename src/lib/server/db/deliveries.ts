@@ -205,7 +205,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       AND (? OR NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attempts attempt
         WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
-          AND substr(attempt.started_at, 1, 19) > substr(?, 1, 19)
+          AND julianday(attempt.started_at) > julianday(?)
           AND (? OR EXISTS (
             SELECT 1 FROM workspace_delivery_attempts prior
             WHERE prior.message_id = current.message_id AND prior.attempt_number < attempt.attempt_number
@@ -236,6 +236,42 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
+export function retainProviderDelayAfterRetry(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string) {
+  const replacement = `
+    SELECT delivery.attempts, original.id AS original_id, retry.id AS retry_id
+    FROM workspace_delivery_statuses delivery
+    JOIN workspace_delivery_attempts attempt
+      ON attempt.message_id = delivery.message_id AND attempt.attempt_number = delivery.attempts
+    JOIN workspace_delivery_attention original
+      ON original.message_id = delivery.message_id AND original.user_id = delivery.user_id
+      AND original.delayed_provider_message_id = delivery.provider_message_id AND original.closed_at IS NULL
+      AND original.attempt_number < delivery.attempts
+    JOIN workspace_delivery_attention retry
+      ON retry.message_id = delivery.message_id AND retry.user_id = delivery.user_id
+      AND retry.attempt_number = delivery.attempts AND retry.delayed_provider_message_id IS NULL
+      AND retry.kind IN ('delayed', 'failed') AND retry.closed_at IS NULL
+    WHERE delivery.message_id = ? AND delivery.provider_message_id = ? AND delivery.last_event = 'submission'
+      AND delivery.status IN ('delayed', 'failed') AND attempt.completed_at IS NOT NULL
+      AND julianday(?) >= julianday(attempt.started_at)
+    ORDER BY original.attempt_number DESC LIMIT 1`;
+  const args = [messageId, providerMessageId, eventCreatedAt];
+  return [
+    db.prepare(`
+      UPDATE workspace_delivery_attention_clock SET version = version + 1
+      WHERE singleton = 1 AND EXISTS (${replacement})
+    `).bind(...args),
+    db.prepare(`
+      WITH replacement AS MATERIALIZED (${replacement})
+      UPDATE workspace_delivery_attention
+      SET attempt_number = CASE WHEN id = replacement.original_id THEN replacement.attempts ELSE attempt_number END,
+        version = CASE WHEN id = replacement.original_id THEN (SELECT version FROM workspace_delivery_attention_clock) ELSE version END,
+        state = CASE WHEN id = replacement.retry_id THEN 'superseded' ELSE state END,
+        closed_at = CASE WHEN id = replacement.retry_id THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now') ELSE closed_at END
+      FROM replacement WHERE id IN (replacement.original_id, replacement.retry_id)
+    `).bind(...args)
+  ];
+}
+
 export function resolveLocalDelayOnSent(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string) {
   return db.prepare(`
     UPDATE workspace_delivery_attention AS attention

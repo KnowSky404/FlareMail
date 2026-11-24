@@ -394,6 +394,32 @@ describe('Owner delivery attention', () => {
     expect((await page(db, 'history')).notices.find(({ id }) => id === rateLimit.id)?.state).toBe('resolved');
   });
 
+  test.each([false, true])('keeps the provider delay acknowledgement (%s) after an acknowledged rate limit', async (acknowledged) => {
+    const { database, env } = setup();
+    const db = env.DB;
+    const at = (minute: number) => `2026-01-01T00:0${minute}:00.000Z`;
+    await applyResendDeliveryWebhook(env, 'first-provider-delay', payload('email.delivery_delayed', at(1)));
+    const original = (await page(db)).notices[0]!;
+    if (acknowledged) await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(original) });
+    database.exec(`
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = '${at(2)}' WHERE message_id = 'message-1';
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at, completed_at)
+      VALUES ('limited', 'message-1', 'user-1', 2, 'resend', 'delayed', '${at(2)}', '${at(3)}');
+      UPDATE workspace_delivery_statuses SET status = 'delayed', last_event_at = '${at(3)}' WHERE message_id = 'message-1';
+    `);
+    const local = await findCurrentDeliveryAttention(db, 'user-1', 'message-1');
+    expect(local?.id).not.toBe(original.id);
+    await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(local!) });
+    await applyResendDeliveryWebhook(env, 'second-provider-delay', payload('email.delivery_delayed', at(4)));
+    const current = await findCurrentDeliveryAttention(db, 'user-1', 'message-1');
+    expect(current).toMatchObject({
+      id: original.id, state: acknowledged ? 'acknowledged' : 'open', occurredAt: original.occurredAt
+    });
+    expect(current?.version).toBeGreaterThan(local!.version);
+    expect((await page(db, 'history')).notices.find(({ id }) => id === local?.id)?.state).toBe('superseded');
+  });
+
   test('accepts a definitive bounce for the last known provider ID after a retry times out', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'initial-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
@@ -456,9 +482,9 @@ describe('Owner delivery attention', () => {
     expect((await page(env.DB)).notices.map(({ id }) => id)).toEqual([original.id]);
   });
 
-  test.each([-60, 30])('attributes a deferred delay %i seconds from the start of a confirmed retry', async (offset) => {
+  test.each([-100, 500])('attributes a deferred delay %i milliseconds from the start of a confirmed retry', async (offset) => {
     const { database, env } = setup();
-    const startedAt = Date.now();
+    const startedAt = Math.floor(Date.now() / 1000) * 1000 + 300;
     const now = new Date(startedAt).toISOString();
     await applyResendDeliveryWebhook(env, 'previous-delay', payload('email.delivery_delayed', now));
     database.exec(`
@@ -469,7 +495,7 @@ describe('Owner delivery attention', () => {
       UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
         last_event_at = '${now}' WHERE message_id = 'message-1';
     `);
-    const eventAt = new Date(startedAt + offset * 1000).toISOString();
+    const eventAt = new Date(startedAt + offset).toISOString();
     const newDelay = await applyResendDeliveryWebhook(env, 'retry-delay', payload('email.delivery_delayed', eventAt));
     expect(newDelay).toMatchObject({ matched: true, ignored: true });
     const pending = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');

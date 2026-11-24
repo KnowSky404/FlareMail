@@ -13,6 +13,7 @@ import {
   markDeferredOutboundEvent,
   reconcileDeliveryStatus,
   resolveLocalDelayOnSent,
+  retainProviderDelayAfterRetry,
   updateOutboundReceiptForCurrentEvent
 } from '$lib/server/db/deliveries';
 import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
@@ -147,6 +148,7 @@ function reconciliationStatements(
 ) {
   if (!event.statusUpdate || !event.resultKind) return [];
   return [
+    ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt) : []),
     reconcileDeliveryStatus(db, {
       messageId: outboundRow.message_id,
       targetStatus: event.statusUpdate,
