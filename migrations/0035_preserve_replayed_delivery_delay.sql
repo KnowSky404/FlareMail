@@ -119,7 +119,7 @@ FROM workspace_delivery_statuses s
 JOIN workspace_messages m ON m.id = s.message_id AND m.user_id = s.user_id AND m.folder = 'sent'
 JOIN workspace_delivery_attempts latest ON latest.message_id = s.message_id AND latest.user_id = s.user_id
   AND latest.attempt_number = s.attempts AND (latest.provider_message_id = s.provider_message_id
-    OR (s.status = 'submitting' AND latest.provider_message_id IS NULL))
+    OR (s.last_event = 'submission' AND latest.provider_message_id IS NULL))
 JOIN workspace_delivery_attempts prior ON prior.message_id = s.message_id AND prior.user_id = s.user_id
   AND prior.provider_message_id = s.provider_message_id AND prior.attempt_number = (
     SELECT MIN(previous.attempt_number) FROM workspace_delivery_attempts previous
@@ -137,7 +137,8 @@ LEFT JOIN workspace_outbound_events submission
   AND submission.provider_message_id = s.provider_message_id
 JOIN workspace_outbound_events e ON e.message_id = s.message_id AND e.user_id = s.user_id
   AND e.provider_message_id = s.provider_message_id AND e.event_type = 'email.delivery_delayed'
-WHERE s.status IN ('submitting', 'submitted', 'sent')
+WHERE (s.status IN ('submitting', 'submitted', 'sent')
+  OR (s.status IN ('delayed', 'failed') AND s.last_event = 'submission'))
   AND e.event_created_at >= prior.started_at AND e.event_created_at <= latest.started_at
   AND strftime('%Y-%m-%dT%H:%M:%fZ', e.event_created_at) IS NOT NULL
   AND NOT EXISTS (
@@ -152,6 +153,7 @@ WHERE s.status IN ('submitting', 'submitted', 'sent')
   AND NOT EXISTS (
     SELECT 1 FROM workspace_delivery_attention existing
     WHERE existing.message_id = s.message_id AND existing.user_id = s.user_id AND existing.kind = 'delayed'
+      AND (existing.delayed_provider_message_id IS s.provider_message_id OR existing.attempt_number = prior.attempt_number)
   )
 GROUP BY s.user_id, s.message_id, prior.attempt_number;
 

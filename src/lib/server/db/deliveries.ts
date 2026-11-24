@@ -190,8 +190,12 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       AND (? OR NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attempts attempt
         WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
-          AND (attempt.attempt_number > 1 OR ?)
           AND substr(attempt.started_at, 1, 19) > substr(?, 1, 19)
+          AND (? OR EXISTS (
+            SELECT 1 FROM workspace_delivery_attempts prior
+            WHERE prior.message_id = current.message_id AND prior.attempt_number < attempt.attempt_number
+              AND prior.provider_message_id = current.provider_message_id
+          ))
       ))
       AND (status NOT IN (${terminalStatuses}) OR status = ?)
       AND (? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
@@ -199,7 +203,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     input.targetStatus, input.provider, input.providerMessageId, input.lastError,
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
-    terminal, terminal, Number(input.fromDeferred ?? false), input.eventCreatedAt,
+    terminal, terminal, input.eventCreatedAt, Number(input.fromDeferred ?? false),
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
