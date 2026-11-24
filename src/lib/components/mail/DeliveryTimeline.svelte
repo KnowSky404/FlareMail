@@ -31,6 +31,7 @@
 
   const i18n = useLocale();
   const { t } = i18n;
+  let heading: HTMLHeadingElement | undefined = $state();
 
   const statusLabels = $derived<Record<string, string>>({
     queued: t('mail.statusQueued'),
@@ -125,7 +126,7 @@
   <section class="border-t border-[var(--fm-border)] pt-5" aria-labelledby="delivery-title">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h2 id="delivery-title" class="text-sm font-semibold text-[var(--fm-text)]">{t('mail.deliveryTimeline')}</h2>
+        <h2 id="delivery-title" bind:this={heading} tabindex="-1" class="text-sm font-semibold text-[var(--fm-text)]">{t('mail.deliveryTimeline')}</h2>
         <p class="mt-1 text-xs text-[var(--fm-text-muted)]">{t('mail.deliveryDisclaimer')}</p>
       </div>
       <div class="flex items-center gap-2">
@@ -139,9 +140,12 @@
       <div class="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--radius-md)] border border-[var(--fm-border)] px-3 py-1">
         <p class="text-xs text-[var(--fm-text-secondary)]" role="status">{t(attentionKindLabel[incident.kind])} · {t(attentionStateLabel[incident.state])}</p>
         {#if onAttentionAction && (incident.state === 'open' || incident.state === 'acknowledged')}
-          <Button variant="ghost" size="sm" disabled={pending || attentionPending || loading} onclick={() => onAttentionAction?.({
-            action: incident.state === 'open' ? 'acknowledge' : 'reopen', incident: { id: incident.id, version: incident.version }
-          }, incident.messageId)}>{t(incident.state === 'open' ? 'attention.acknowledge' : 'attention.reopen')}</Button>
+          <Button variant="ghost" size="sm" disabled={pending || attentionPending || loading} onclick={(event) => {
+            if (document.activeElement === event.currentTarget) heading?.focus({ preventScroll: true });
+            void onAttentionAction?.({
+              action: incident.state === 'open' ? 'acknowledge' : 'reopen', incident: { id: incident.id, version: incident.version }
+            }, incident.messageId);
+          }}>{t(incident.state === 'open' ? 'attention.acknowledge' : 'attention.reopen')}</Button>
         {/if}
       </div>
     {/if}
