@@ -3316,7 +3316,10 @@
 
     const refreshOnFocus = () => {
       void notifications.refresh().then((refreshed) => {
-        if (refreshed && authenticated && !authExpired) refreshAttentionMailbox();
+        if (!refreshed || !authenticated || authExpired) return;
+        const current = selectedMessage;
+        if (current && activeSection === 'sent' && mailFilter === 'attention') refreshAttentionReader(current.id);
+        else refreshAttentionMailbox();
       });
       void notifications.checkHealth();
     };

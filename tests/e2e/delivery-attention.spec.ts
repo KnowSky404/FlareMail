@@ -191,7 +191,7 @@ test('refreshes an open issue in another tab, handles failure, and keeps health 
   let degraded = true;
   await page.route('**/api/readiness?scope=system', async (route) => {
     if (!degraded) return route.continue();
-    await route.fulfill({ status: 503, json: { ok: false, error: { code: 'AUTHENTICATION_UNAVAILABLE', message: 'synthetic session store failure' } } });
+    await route.fulfill({ status: 503, json: { ok: false, error: { code: 'ACCESS_UNAVAILABLE', message: 'synthetic Access key lookup failure' } } });
   });
   await notice(page).click();
   await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
@@ -457,7 +457,9 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await seed(page.request, origin, focusId, 'delayed', focusSubject);
   await page.goto('/?folder=sent&filter=attention');
   const focusRow = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(focusSubject, 'u') });
-  await expect(focusRow).toBeVisible();
+  await focusRow.click();
+  const focusReceipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+  await expect(focusReceipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
   expect((await events(page.request, focusId, 'email.delivered', 'attention-focus-delivered')).ok()).toBe(true);
   await page.evaluate(() => {
     const now = Date.now;
@@ -465,4 +467,6 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
     try { window.dispatchEvent(new Event('focus')); } finally { Date.now = now; }
   });
   await expect(focusRow).toHaveCount(0);
+  await expect(focusReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(focusReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
 });

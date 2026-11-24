@@ -5,7 +5,7 @@ import { LatestRequest } from './latest-request';
 import { mutateDeliveryAttention } from './workspace-api';
 
 const checkedDependencyCodes = new Set([
-  'CONFIG_INVALID', 'AUTHENTICATION_UNAVAILABLE', 'D1_UNAVAILABLE', 'SCHEMA_NOT_READY', 'R2_UNAVAILABLE', 'INBOUND_ROUTING_NOT_READY'
+  'CONFIG_INVALID', 'AUTHENTICATION_UNAVAILABLE', 'ACCESS_UNAVAILABLE', 'D1_UNAVAILABLE', 'SCHEMA_NOT_READY', 'R2_UNAVAILABLE', 'INBOUND_ROUTING_NOT_READY'
 ]);
 const freshness = 30_000;
 
