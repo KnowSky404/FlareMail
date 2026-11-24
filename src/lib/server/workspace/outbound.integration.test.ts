@@ -204,6 +204,24 @@ describe('outbound workspace persistence', () => {
     expect(await retryWorkspaceMessageDelivery(env, otherSession, sent.message.id, { gateway: new FakeOutboundGateway() })).toBeNull();
   });
 
+  test('replays a delay received before the first retry confirmed the provider ID', async () => {
+    const { env, session, database } = setup();
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Unknown outcome', body: 'Body' }, {
+      requestId: 'unconfirmed-provider', gateway: new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'outcome unknown') })
+    });
+    database.query("UPDATE workspace_delivery_attempts SET started_at = datetime('now', '-1 minute') WHERE message_id = ?").run(sent.message.id);
+    const event = await applyResendDeliveryWebhook(env, 'svix-early-delay', {
+      type: 'email.delivery_delayed', created_at: new Date(Date.now() - 5000).toISOString(), data: { email_id: 're_unknown' }
+    });
+    expect(event).toMatchObject({ matched: false });
+    await retryWorkspaceMessageDelivery(env, session, sent.message.id, {
+      gateway: new FakeOutboundGateway({ providerMessageId: 're_unknown' })
+    });
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id)).toMatchObject({
+      status: 'delayed', attention: { kind: 'delayed', state: 'open' }
+    });
+  });
+
   test('keeps a definitive provider failure and rejects a same-key acceptance replay', async () => {
     const { env, session } = setup();
     const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Provider failure', body: 'Body' }, {

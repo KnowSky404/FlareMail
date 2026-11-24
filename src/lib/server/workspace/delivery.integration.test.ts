@@ -419,6 +419,8 @@ describe('Owner delivery attention', () => {
     const now = new Date(startedAt).toISOString();
     await applyResendDeliveryWebhook(env, 'previous-delay', payload('email.delivery_delayed', now));
     database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at)
+      VALUES ('original', 'message-1', 'user-1', 1, 'resend', 're_1', 'submitted', '2026-01-01T00:00:00.000Z');
       INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
       VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '${now}');
       UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
