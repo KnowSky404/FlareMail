@@ -14,6 +14,7 @@ import {
   listPendingOutboundEvents,
   listReadyDeferredProviderIds,
   markDeferredOutboundEvent,
+  markMatchedPendingOutboundEvents,
   reconcileDeliveryStatus,
   resolveLocalDelayOnSent,
   retainProviderDelayAfterRetry,
@@ -117,7 +118,10 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
   const eventRecord = serializeOutboundEventInsert({ svixId, messageId: outboundRow?.message_id ?? event.providerMessageId, userId: outboundRow?.user_id ?? 'unmatched', provider: event.provider, providerMessageId: event.providerMessageId, eventType: event.eventType, eventCreatedAt: event.createdAt, summary: event.summary, payloadJson: event.payloadJson });
   if (!outboundRow) {
     try {
-      await env.DB.batch([insertOutboundEvent(env.DB, eventRecord)]);
+      await env.DB.batch([
+        insertOutboundEvent(env.DB, eventRecord),
+        markMatchedPendingOutboundEvents(env.DB, event.providerMessageId)
+      ]);
     } catch (error) {
       if (error instanceof Error && /unique constraint|constraint failed/iu.test(error.message)) {
         return { duplicate: true, ignored: true, matched: false, messageId: null as string | null };
@@ -204,8 +208,9 @@ export async function reconcileDeferredResendEvents(env: CloudflareEnv) {
   if (!env.DB) return;
   const capabilities = await getWorkspaceCapabilities(env);
   if (!capabilities.outboundStatuses || !capabilities.outboundReceipts || !capabilities.outboundEvents) return;
-  const { results } = await listReadyDeferredProviderIds(env.DB);
-  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, 10)));
+  // One discovery read and at most four providers with two reads and four replay batches each.
+  const { results } = await listReadyDeferredProviderIds(env.DB, 4);
+  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, 4)));
   if (replays.some(({ status }) => status === 'rejected')) {
     throw new DeliveryPersistenceError('A deferred delivery event could not be replayed.');
   }

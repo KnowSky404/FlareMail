@@ -124,6 +124,22 @@ describe('Resend delivery reconciliation', () => {
     expect(database.query(`SELECT COUNT(*) AS count FROM workspace_outbound_events`).get()).toEqual({ count: 2 });
   });
 
+  test('schedules an unmatched webhook only when its provider ID becomes known during insertion', async () => {
+    const { database, env } = setup();
+    await applyResendDeliveryWebhook(env, 'system-mail', payload('email.delivered', '2027-01-15T08:04:00Z', 're_system'));
+    const d1 = env.DB as unknown as TestD1;
+    d1.beforeBatch = () => {
+      d1.beforeBatch = undefined;
+      database.query("UPDATE workspace_delivery_statuses SET provider_message_id = 're_race' WHERE message_id = 'message-1'").run();
+    };
+    await applyResendDeliveryWebhook(env, 'confirmed-mail', payload('email.delivered', '2027-01-15T08:05:00Z', 're_race'));
+    const pending = database.query(`SELECT svix_id FROM workspace_outbound_events
+      WHERE json_extract(payload_json, '$._flaremailDeferred') = 1`).all();
+    expect(pending).toEqual([{ svix_id: 'confirmed-mail' }]);
+    await reconcileDeferredResendEvents(env);
+    expect(database.query("SELECT status FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get()).toEqual({ status: 'delivered' });
+  });
+
   test('maps suppressed to a terminal suppressed state', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'svix-suppressed', payload('email.suppressed', '2027-01-15T08:05:00Z'));
@@ -499,6 +515,27 @@ describe('Owner delivery attention', () => {
     });
   });
 
+  test('keeps an acknowledged delay when a newer delay follows same-ID acceptance', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    const at = (minute: number) => `2026-01-01T00:0${minute}:00.000Z`;
+    await applyResendDeliveryWebhook(env, 'original-delay', payload('email.delivery_delayed', at(1)));
+    const original = (await page(db)).notices[0]!;
+    await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(original) });
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 're_1', 'submitted', '${at(2)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission', last_event_at = '${at(2)}'
+        WHERE message_id = 'message-1';
+      UPDATE workspace_delivery_statuses SET status = 'submitted', last_event_at = '${at(3)}' WHERE message_id = 'message-1';
+    `);
+    await applyResendDeliveryWebhook(env, 'retry-delay', payload('email.delivery_delayed', at(4)));
+    expect((await page(db)).notices).toEqual([]);
+    expect(await findDeliveryDetailRows(db, 'user-1', 'message-1')).toMatchObject({
+      status: 'delayed', attention: { id: original.id, state: 'acknowledged' }
+    });
+  });
+
   test('keeps a newer sent webhook for the original ID when its replay predates the retry', async () => {
     const { database, env } = setup();
     const at = (minute: number) => `2026-01-01T00:0${minute}:00.000Z`;
@@ -530,7 +567,9 @@ describe('Owner delivery attention', () => {
       UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission'
         WHERE message_id = 'message-1';
     `);
-    await applyResendDeliveryWebhook(env, 'cron-sent', payload('email.sent', '2026-01-01T00:02:00Z'));
+    for (let minute = 2; minute <= 6; minute++) {
+      await applyResendDeliveryWebhook(env, `cron-sent-${minute}`, payload('email.sent', `2026-01-01T00:0${minute}:00Z`));
+    }
     await reconcileDeferredResendEvents(env);
     expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('submitting');
     database.exec(`
@@ -543,6 +582,9 @@ describe('Owner delivery attention', () => {
     d1.beforeBatch = undefined;
     await reconcileDeferredResendEvents(env);
     expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('sent');
+    expect(database.query(`SELECT svix_id FROM workspace_outbound_events
+      WHERE json_extract(payload_json, '$._flaremailDeferred') = 1`).all()).toEqual([{ svix_id: 'cron-sent-6' }]);
+    await reconcileDeferredResendEvents(env);
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
   });
 
