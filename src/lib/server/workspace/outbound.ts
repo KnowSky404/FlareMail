@@ -288,6 +288,10 @@ async function submitPersistedMessage(
         messageId: message.id, userId: session.userId, provider, eventType: 'submission', eventCreatedAt: completedAt,
         summary: error.message, payloadJson: JSON.stringify({ status, kind: error.kind, remoteStatus: error.remoteStatus }) }))
     ]);
+    if (completed && attempts > 0) {
+      const current = await findDeliveryStatus(env.DB, session.userId, message.id);
+      if (current?.provider_message_id) await reconcilePendingResendEvents(env, current.provider_message_id).catch(() => undefined);
+    }
     if (error.kind === 'configuration' || error.kind === 'idempotency_conflict') throw error;
   }
 }

@@ -9,7 +9,7 @@ const wasDeferred = `CASE WHEN json_valid(payload_json)
 const unconfirmedAttempt = (alias: string) => `EXISTS (
   SELECT 1 FROM workspace_delivery_attempts AS attempt
   WHERE attempt.message_id = ${alias}.message_id AND attempt.attempt_number = ${alias}.attempts
-    AND attempt.provider_message_id IS NOT ${alias}.provider_message_id
+    AND attempt.provider_message_id IS NOT ${alias}.provider_message_id AND attempt.completed_at IS NULL
 )`;
 
 export async function listOutboundStatuses(db: D1Database, userId: string, capabilities: WorkspaceCapabilities) {
@@ -212,12 +212,11 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
               AND prior.provider_message_id = current.provider_message_id
           ))
           AND NOT (
-            ? = 'sent' AND EXISTS (
+            (? = 'sent' OR (? = 'delayed' AND NOT EXISTS (
               SELECT 1 FROM workspace_delivery_attention delay
               WHERE delay.message_id = current.message_id AND delay.user_id = current.user_id
-                AND delay.delayed_provider_message_id = current.provider_message_id
-                AND delay.closed_at IS NULL AND delay.eligible_at <= ?
-            ) AND NOT EXISTS (
+                AND delay.delayed_provider_message_id = current.provider_message_id AND delay.closed_at IS NULL
+            ))) AND NOT EXISTS (
               SELECT 1 FROM workspace_outbound_events newer
               WHERE newer.message_id = current.message_id AND newer.user_id = current.user_id
                 AND newer.provider_message_id = current.provider_message_id
@@ -226,17 +225,30 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
             )
           )
       ))
-      AND (status NOT IN (${terminalStatuses}) OR status = ?)
-      AND (? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
+      AND (last_event IS 'submission' OR status NOT IN (${terminalStatuses}) OR status = ?)
+      AND (last_event IS 'submission' OR ? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
   `).bind(
     input.targetStatus, input.provider, input.providerMessageId, input.lastError,
     input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
     terminal, terminal, input.eventCreatedAt, Number(input.fromDeferred ?? false),
-    input.targetStatus, input.eventCreatedAt, input.eventCreatedAt,
+    input.targetStatus, input.targetStatus, input.eventCreatedAt,
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt
   );
 }
+export function resolveLocalDelayOnSent(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string) {
+  return db.prepare(`
+    UPDATE workspace_delivery_attention AS attention
+    SET state = 'resolved', closed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE message_id = ? AND kind = 'delayed' AND closed_at IS NULL AND delayed_provider_message_id IS NULL
+      AND EXISTS (
+        SELECT 1 FROM workspace_delivery_statuses delivery
+        WHERE delivery.message_id = attention.message_id AND delivery.user_id = attention.user_id
+          AND delivery.provider_message_id = ? AND delivery.last_event = 'email.sent' AND delivery.last_event_at = ?
+      )
+  `).bind(messageId, providerMessageId, eventCreatedAt);
+}
+
 export function insertOutboundEvent(db: D1Database, p: DeliveryEventPayload) {
   return db.prepare(`INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, summary, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(p.svixId, p.messageId, p.userId, p.provider, p.providerMessageId ?? null, p.eventType, p.eventCreatedAt, p.summary, p.payloadJson, p.createdAt);

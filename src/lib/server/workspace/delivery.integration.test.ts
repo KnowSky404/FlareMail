@@ -413,6 +413,26 @@ describe('Owner delivery attention', () => {
     });
   });
 
+  test('records the first delay webhook for an old provider ID when the retry returns that ID', async () => {
+    const { database, env } = setup();
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '2026-01-01T00:03:00.000Z');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission',
+        last_event_at = '2026-01-01T00:03:00.000Z' WHERE message_id = 'message-1';
+    `);
+    const firstDelay = await applyResendDeliveryWebhook(env, 'deferred-first-delay', payload('email.delivery_delayed', '2026-01-01T00:02:00.000Z'));
+    expect(firstDelay).toMatchObject({ matched: true, ignored: true });
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(1);
+    expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: 'delayed', attention: { kind: 'delayed', state: 'open' }
+    });
+  });
+
   test('keeps a newer sent webhook for the original ID when its replay predates the retry', async () => {
     const { database, env } = setup();
     const at = (minute: number) => `2026-01-01T00:0${minute}:00.000Z`;
