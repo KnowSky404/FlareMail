@@ -100,6 +100,9 @@ describe('/api/readiness', () => {
     const previewMissing = await GET(event(preview, 'system-preview', true, '?scope=system'));
     expect(previewMissing.status).toBe(503);
     expect(await previewMissing.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
+    const previewMalformed = await GET(event({ ...preview, RESEND_WEBHOOK_SECRET: 'whsec_AAA=' }, 'system-preview', true, '?scope=system'));
+    expect(previewMalformed.status).toBe(503);
+    expect(await previewMalformed.json()).toMatchObject({ error: { code: 'CONFIG_INVALID' } });
     expect((await GET(event({ ...preview, RESEND_WEBHOOK_SECRET: secret }, 'system-preview', true, '?scope=system'))).status).toBe(200);
   });
 

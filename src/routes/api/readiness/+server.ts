@@ -4,6 +4,7 @@ import { validateEnvironment } from '$lib/server/config/env';
 import { mailHealthState, previewCatchAllError } from '$lib/domain/mail/health';
 import { listManagedMailDomains } from '$lib/server/db/mail-identities';
 import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
+import { isValidResendWebhookSecret } from '$lib/server/resend-webhook';
 import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
 import { readPreInboundBindings } from '$lib/server/inbound/pre-inbound';
 import { getRequestId, withApiHandler } from '$lib/server/http/api';
@@ -68,8 +69,9 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   const productionSystem = systemOnly && validation.config.appEnv === 'production';
   const sendProviderMissing = productionSystem && !validation.config.outboundProvider;
   const resendPreview = systemOnly && validation.config.appEnv === 'preview' && usesResend;
-  const resendWebhookMissing = (productionSystem || resendPreview) && !env?.RESEND_WEBHOOK_SECRET?.trim();
-  const configurationReady = validation.ok && !resendKeyMissing && !resendWebhookMissing && !sendProviderMissing;
+  const signingSecret = env?.RESEND_WEBHOOK_SECRET?.trim() ?? '';
+  const resendWebhookInvalid = (productionSystem || resendPreview) && !isValidResendWebhookSecret(signingSecret);
+  const configurationReady = validation.ok && !resendKeyMissing && !resendWebhookInvalid && !sendProviderMissing;
   if (!configurationReady) {
     console.error(JSON.stringify({
       level: 'error',
@@ -80,7 +82,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
         ...validation.errors.map(({ code }) => code),
         ...(resendKeyMissing ? ['missing_resend_api_key'] : []),
         ...(sendProviderMissing ? ['missing_outbound_provider'] : []),
-        ...(resendWebhookMissing ? ['missing_resend_webhook_secret'] : [])
+        ...(resendWebhookInvalid ? [signingSecret ? 'invalid_resend_webhook_secret' : 'missing_resend_webhook_secret'] : [])
       ]
     }));
   }
