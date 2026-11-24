@@ -472,6 +472,13 @@ CREATE INDEX IF NOT EXISTS idx_workspace_outbound_events_message_id
 CREATE INDEX IF NOT EXISTS idx_workspace_outbound_events_provider_message_id
   ON workspace_outbound_events(provider_message_id, event_created_at DESC);
 
+CREATE INDEX idx_workspace_outbound_events_pending_resend
+  ON workspace_outbound_events(event_created_at, provider_message_id)
+  WHERE provider = 'resend' AND provider_message_id IS NOT NULL AND (
+    user_id = 'unmatched' OR CASE WHEN json_valid(payload_json)
+      THEN COALESCE(json_extract(payload_json, '$._flaremailDeferred') = 1, 0) ELSE 0 END
+  );
+
 CREATE TABLE IF NOT EXISTS workspace_login_rate_limits (
   identity_hash TEXT PRIMARY KEY,
   attempt_count INTEGER NOT NULL CHECK (attempt_count > 0),
@@ -1162,5 +1169,5 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
 END;
 
 
-UPDATE workspace_schema_metadata SET schema_version = 35,
+UPDATE workspace_schema_metadata SET schema_version = 36,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE schema_name = 'flaremail';

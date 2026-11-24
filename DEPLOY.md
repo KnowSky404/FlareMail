@@ -71,8 +71,8 @@ This builds the application and runs global `cf deploy --mode production` in `wo
 
 Migrations remain append-only in `migrations/`; `schema.sql` is a snapshot. Local: `bun run db:migrate:local`. Remote: inspect the exact D1 UUID, pending list, recovery bookmark and current production-code compatibility first, then run `bun run db:migrate:remote` only with explicit authorization. Both scripts accept `-- --dry-run`, forwarding it to cf without applying migrations; unknown options fail before invoking cf. Never run fixtures or automated browser seeds against shared PRE/production data.
 
-Schema 35 requires a coordinated migration and Worker cutover if any running
-Worker using the database requires an earlier schema. See the [delivery attention upgrade checklist](docs/PRODUCTION_CHECKLIST.md#schema-35-delivery-attention-upgrade) for PRE isolation and rollback requirements.
+Schema 36 requires a coordinated migration and Worker cutover if any running
+Worker using the database requires an earlier schema. See the [delivery attention upgrade checklist](docs/PRODUCTION_CHECKLIST.md#schema-36-delivery-attention-upgrade) for PRE isolation and rollback requirements.
 
 Discover resource commands using anonymous queries such as `cf cli search "list database migrations"`; inspect help/schema and a dry-run before a new operation. cf's local SQL command is `cf d1 raw <database-id> --local --persist-to <isolated-state> --sql <sql>`; `cf d1 query` is not the local equivalent. Raw result column/value arrays are normalized by the maintenance scripts without discarding statement metadata.
 

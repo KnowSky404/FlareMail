@@ -260,7 +260,8 @@ describe('versioned D1 migrations', () => {
       '0032_ai_automatic_classification.sql',
       '0033_delivery_attention.sql',
       '0034_delivery_attention_backfill.sql',
-      '0035_preserve_replayed_delivery_delay.sql'
+      '0035_preserve_replayed_delivery_delay.sql',
+      '0036_index_pending_resend_events.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -395,7 +396,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 35 }
+      { schema_name: 'flaremail', schema_version: 36 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
