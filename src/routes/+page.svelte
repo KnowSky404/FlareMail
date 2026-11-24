@@ -2890,7 +2890,10 @@
               await acceptMutationMetrics(restored.metrics, null);
               trashController.invalidate();
               trashLoaded = false;
-              if (restored.originalFolder === 'sent') notifications.invalidate();
+              if (restored.originalFolder === 'sent') {
+                deliveryDetailCache.invalidate(result.removedId);
+                notifications.invalidate();
+              }
               workspaceSync?.publish({ type: 'mailbox-refresh', id: result.removedId,
                 ...(restored.originalFolder === 'sent' ? { delivery: true } : {}) });
               if (activeSection !== 'trash' && activeSection !== 'profile') await refreshWorkspace(false);
@@ -2922,7 +2925,10 @@
       await acceptMutationMetrics(result.metrics, null);
       removeTrashItemFromView(message.id);
       await trashController.refresh();
-      if (result.originalFolder === 'sent') notifications.invalidate();
+      if (result.originalFolder === 'sent') {
+        deliveryDetailCache.invalidate(message.id);
+        notifications.invalidate();
+      }
       workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id,
         ...(result.originalFolder === 'sent' ? { delivery: true } : {}) });
       notify(t('notify.restoredTo', { folder: result.originalFolder === 'archive' ? t('shell.archive') : result.originalFolder === 'sent' ? t('shell.sent') : result.originalFolder === 'drafts' ? t('shell.drafts') : t('shell.inbox') }), 'success');
