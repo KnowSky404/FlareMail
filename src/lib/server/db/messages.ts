@@ -16,8 +16,6 @@ export interface OwnedMailboxMutationRow {
   archived_at: string | null;
 }
 
-const placeholders = (values: string[]) => values.map(() => '?').join(', ');
-
 export interface MailboxMutationSqlScope {
   category?: InboxCategoryFilter;
   section: MailboxMutationSection;
@@ -114,8 +112,8 @@ export async function listOwnedMailboxMutationRows(
         m.from_email, m.to_email, m.to_json, m.message_id, m.in_reply_to, m."references"
       FROM workspace_messages AS m
       WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL${scopeClause.sql}
-        AND m.id IN (${placeholders(workspaceIds)})
-    `).bind(userId, ...scopeClause.bindings, ...workspaceIds).all<OwnedMailboxMutationRow & Pick<WorkspaceMessageRow, 'from_email' | 'to_email' | 'to_json' | 'message_id' | 'in_reply_to' | 'references' | 'subject'>>();
+        AND m.id IN (SELECT value FROM json_each(?))
+    `).bind(userId, ...scopeClause.bindings, JSON.stringify(workspaceIds)).all<OwnedMailboxMutationRow & Pick<WorkspaceMessageRow, 'from_email' | 'to_email' | 'to_json' | 'message_id' | 'in_reply_to' | 'references' | 'subject'>>();
     rows.push(...(result.results ?? []).map((row) => {
       const counterparty = row.folder === 'inbox' ? row.from_email : (parseAddressJson(row.to_json)[0]?.email || parseAddressList(row.to_email)[0]?.email || row.to_email);
       const reliable = hasReliableThreadContext(counterparty, row);
@@ -139,8 +137,8 @@ export async function listOwnedMailboxMutationRows(
       LEFT JOIN workspace_email_states AS s
         ON s.user_id = ? AND s.email_message_id = e.id
       WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL${scopeClause.sql}
-        AND e.id IN (${placeholders(inboundIds)})
-    `).bind(userId, userId, ...scopeClause.bindings, ...inboundIds).all<OwnedMailboxMutationRow & Pick<WorkspaceInboundRow, 'message_id' | 'in_reply_to' | 'references' | 'subject'> & { sender: string }>();
+        AND e.id IN (SELECT value FROM json_each(?))
+    `).bind(userId, userId, ...scopeClause.bindings, JSON.stringify(inboundIds)).all<OwnedMailboxMutationRow & Pick<WorkspaceInboundRow, 'message_id' | 'in_reply_to' | 'references' | 'subject'> & { sender: string }>();
     rows.push(...(result.results ?? []).map((row) => {
       const counterparty = parseAddress(row.sender).email;
       const reliable = hasReliableThreadContext(counterparty, row);
@@ -166,14 +164,14 @@ export async function resolveOwnedMailboxThreadMessageIds(
 ): Promise<string[]> {
   if (!threadKeys.length) return [];
   const ids: string[] = [];
-  const threadPlaceholders = placeholders(threadKeys);
+  const selectedThreads = JSON.stringify(threadKeys);
   const workspaceFolderScope = action === 'archive' || action === 'unarchive' ? "= 'inbox'" : "IN ('inbox', 'sent')";
   const workspaceRows = await db.prepare(`
     SELECT m.id FROM workspace_messages AS m
     WHERE m.user_id = ? AND m.deleted_at IS NULL AND m.folder ${workspaceFolderScope}
-      AND m.thread_key IN (${threadPlaceholders})
+      AND m.thread_key IN (SELECT value FROM json_each(?))
     LIMIT ?
-  `).bind(userId, ...threadKeys, maxResolved + 1).all<{ id: string }>();
+  `).bind(userId, selectedThreads, maxResolved + 1).all<{ id: string }>();
   ids.push(...(workspaceRows.results ?? []).map((row) => row.id));
   const inboundRows = await db.prepare(`
     SELECT 'email:' || e.id AS id
@@ -181,9 +179,9 @@ export async function resolveOwnedMailboxThreadMessageIds(
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
     WHERE e.owner_user_id = ? AND s.deleted_at IS NULL AND s.quarantined_at IS NULL
-      AND e.thread_key IN (${threadPlaceholders})
+      AND e.thread_key IN (SELECT value FROM json_each(?))
     LIMIT ?
-  `).bind(userId, userId, ...threadKeys, maxResolved + 1).all<{ id: string }>();
+  `).bind(userId, userId, selectedThreads, maxResolved + 1).all<{ id: string }>();
   ids.push(...(inboundRows.results ?? []).map((row) => row.id));
   return [...new Set(ids)];
 }
@@ -249,13 +247,13 @@ export function buildMailboxMutationStatements(
     const bindings: unknown[] = [];
     if (action === 'archive') bindings.push(timestamp);
     if (action === 'trash') bindings.push(timestamp);
-    bindings.push(timestamp, userId, ...workspaceIds);
+    bindings.push(timestamp, userId, JSON.stringify(workspaceIds));
     bindings.push(...scopeClause.bindings);
     statements.push(db.prepare(`
       UPDATE workspace_messages AS m
       SET ${setParts.join(', ')}
       WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL
-        AND m.id IN (${placeholders(workspaceIds)})${scopeClause.sql}
+        AND m.id IN (SELECT value FROM json_each(?))${scopeClause.sql}
       ${scope?.filter === 'attention' ? 'RETURNING id' : ''}
     `).bind(...bindings));
   }
