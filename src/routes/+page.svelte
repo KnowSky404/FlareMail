@@ -309,6 +309,7 @@
   let deliveryDetails = $state<Record<string, DeliveryDetail>>({});
   let inboundDetailErrors = $state<Record<string, string>>({});
   let deliveryDetailErrors = $state<Record<string, string>>({});
+  let manualDeliveryRefreshPending = $state(false);
   let inboundDetailPendingId = $state<string | null>(null);
   let deliveryDetailPendingId = $state<string | null>(null);
   let workspaceBodies = $state<Record<string, WorkspaceBodyDetail>>({});
@@ -3191,13 +3192,24 @@
   }
 
   async function handleReloadDeliveryDetail(message: MailMessage) {
-    await notifications.invalidate(true);
-    const ok = await loadDeliveryDetail(message, true);
-    if (ok) refreshAttentionMailbox();
-    notify(
-      ok ? t('notify.deliveryReloaded', { subject: message.subject }) : t('notify.deliveryReloadFailed'),
-      ok ? 'success' : 'error'
-    );
+    if (manualDeliveryRefreshPending) return;
+    const generation = workspaceAuthGeneration;
+    const isCurrent = () => authenticated && !authExpired &&
+      generation === workspaceAuthGeneration && selectedMessage?.id === message.id;
+    manualDeliveryRefreshPending = true;
+    try {
+      await notifications.invalidate(true);
+      if (!isCurrent()) return;
+      const ok = await loadDeliveryDetail(message, true);
+      if (!isCurrent() || (!ok && !deliveryDetailErrors[message.id])) return;
+      if (ok) refreshAttentionMailbox();
+      notify(
+        ok ? t('notify.deliveryReloaded', { subject: message.subject }) : t('notify.deliveryReloadFailed'),
+        ok ? 'success' : 'error'
+      );
+    } finally {
+      manualDeliveryRefreshPending = false;
+    }
   }
 
   function moveMessageSelection(direction: -1 | 1) {
@@ -3785,7 +3797,7 @@
                     message={selectedMessage}
                     deliveryDetail={selectedDeliveryDetail}
                     deliveryDetailError={selectedDeliveryDetailError}
-                    deliveryDetailPending={deliveryDetailPendingId === selectedMessage?.id}
+                    deliveryDetailPending={manualDeliveryRefreshPending || deliveryDetailPendingId === selectedMessage?.id}
                     inboundDetail={selectedInboundDetail}
                     inboundDetailError={selectedInboundDetailError}
                     inboundDetailPending={inboundDetailPendingId === selectedMessage?.id}
@@ -3844,7 +3856,7 @@
           message={selectedMessage}
           deliveryDetail={selectedDeliveryDetail}
           deliveryDetailError={selectedDeliveryDetailError}
-          deliveryDetailPending={deliveryDetailPendingId === selectedMessage.id}
+          deliveryDetailPending={manualDeliveryRefreshPending || deliveryDetailPendingId === selectedMessage.id}
           inboundDetail={selectedInboundDetail}
           inboundDetailError={selectedInboundDetailError}
           inboundDetailPending={inboundDetailPendingId === selectedMessage.id}
