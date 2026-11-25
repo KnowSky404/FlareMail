@@ -174,6 +174,33 @@ describe('Resend delivery reconciliation', () => {
     expect(database.query("SELECT status FROM workspace_delivery_statuses WHERE message_id = 'message-1'").get()).toEqual({ status: 'delivered' });
   });
 
+  test('drains legacy events with a stored timestamp missing from the payload', async () => {
+    const { database, env } = setup();
+    const insert = database.query(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json)
+      VALUES (?, 're_1', 'unmatched', 'resend', 're_1', ?, ?, ?)`);
+    for (let minute = 1; minute <= 4; minute++) {
+      insert.run('legacy-' + minute, 'email.opened', `2027-01-15T08:0${minute}:00.000Z`,
+        '{"type":"email.opened","data":{"email_id":"re_1"}}');
+    }
+    const sentAt = '2027-01-15T08:05:00.000Z';
+    insert.run('later-sent', 'email.sent', sentAt, JSON.stringify(payload('email.sent', sentAt)));
+    insert.run('invalid-date', 'email.sent', 'invalid', '{"type":"email.sent","data":{"email_id":"re_1"}}');
+    database.exec(readFileSync(new URL('../../../../migrations/0038_queue_legacy_resend_events.sql', import.meta.url), 'utf8'));
+    database.query('UPDATE workspace_schema_metadata SET schema_version = ?').run(FLAREMAIL_SCHEMA_VERSION);
+
+    expect(await reconcileDeferredResendEvents(env)).toBe(4);
+    expect(await reconcileDeferredResendEvents(env)).toBe(1);
+    expect(await reconcileDeferredResendEvents(env)).toBe(0);
+    expect(database.query('SELECT status, last_event_at FROM workspace_delivery_statuses').get())
+      .toEqual({ status: 'sent', last_event_at: sentAt });
+    expect(database.query(`SELECT svix_id FROM workspace_outbound_events
+      WHERE json_extract(payload_json, '$._flaremailDeferred') = 1`).all()).toEqual([]);
+    expect(database.query('SELECT COUNT(*) AS count FROM workspace_outbound_events').get()).toEqual({ count: 6 });
+    expect(database.query("SELECT payload_json FROM workspace_outbound_events WHERE svix_id = 'legacy-1'").get())
+      .toEqual({ payload_json: '{"type":"email.opened","data":{"email_id":"re_1"}}' });
+  });
+
   test('maps suppressed to a terminal suppressed state', async () => {
     const { database, env } = setup();
     await applyResendDeliveryWebhook(env, 'svix-suppressed', payload('email.suppressed', '2027-01-15T08:05:00Z'));
