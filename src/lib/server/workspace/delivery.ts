@@ -11,6 +11,7 @@ import {
   findOutboundByProviderMessageId,
   hasOutboundEvent,
   insertOutboundEvent,
+  keepDeferredDelayAfterSent,
   listPendingOutboundEvents,
   listReadyDeferredProviderIds,
   markDeferredOutboundEvent,
@@ -175,6 +176,7 @@ function reconciliationStatements(
       allowExpiredAttempt,
       claim
     }),
+    ...(fromDeferred && claim && event.statusUpdate === 'delayed' ? [keepDeferredDelayAfterSent(db, outboundRow.message_id, claim)] : []),
     ...(providerFailure ? [ensureProviderFailureAttention(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
     ...(event.statusUpdate === 'sent' ? [resolveLocalDelayOnSent(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
     upsertOutboundReceiptForCurrentEvent(db, {
