@@ -16,8 +16,9 @@ function replayGuard(claim?: DeferredEventClaim) {
     )`, args: [claim.svixId, claim.token] }
     : { sql: '', args: [] };
 }
-const wasDeferred = `CASE WHEN json_valid(payload_json)
-  THEN COALESCE(json_extract(payload_json, '${deferredPath}') = 1, 0) ELSE 0 END`;
+const hasDeferredMarker = (payload: string) => `CASE WHEN json_valid(${payload})
+  THEN COALESCE(json_extract(${payload}, '${deferredPath}') = 1, 0) ELSE 0 END`;
+const wasDeferred = hasDeferredMarker('payload_json');
 const expiredAttempt = "julianday(attempt.started_at) <= julianday('now', '-15 minutes')";
 const unconfirmedAttempt = (alias: string, allowExpired = false) => `EXISTS (
   SELECT 1 FROM workspace_delivery_attempts AS attempt
@@ -63,7 +64,7 @@ export async function findDeliveryDetailRows(db: D1Database, userId: string, mes
   const events = db.prepare(`
     SELECT svix_id, provider_message_id, event_type, event_created_at, summary,
       CASE WHEN ${wasDeferred} THEN json_remove(payload_json, '${deferredPath}') ELSE payload_json END AS payload_json
-    FROM workspace_outbound_events WHERE user_id = ? AND message_id = ? ORDER BY event_created_at DESC, created_at DESC
+    FROM workspace_outbound_events WHERE user_id = ? AND message_id = ? ORDER BY event_created_at DESC, rowid DESC
   `).bind(userId, messageId);
   const [record, history, incident] = await db.batch([status, events, currentDeliveryAttentionStatement(db, userId, messageId)]);
   const row = record.results[0] as (WorkspaceOutboundReceiptRow & { status: DeliveryStatus | null; receipt_id: string | null }) | undefined;
@@ -227,6 +228,15 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
 }) {
   const guard = replayGuard(input.claim);
   const terminal = Number(isDeliveryTerminal(input.targetStatus));
+  const replayTie = input.claim ? `
+    AND NOT (current.last_event_at IS ? AND EXISTS (
+      SELECT 1 FROM workspace_outbound_events applied
+      JOIN workspace_outbound_events replay ON replay.svix_id = ?
+      WHERE applied.message_id = current.message_id AND applied.user_id = current.user_id
+        AND applied.provider_message_id = current.provider_message_id AND applied.event_type = current.last_event
+        AND applied.event_created_at = current.last_event_at AND applied.rowid > replay.rowid
+        AND NOT (${hasDeferredMarker('applied.payload_json')})
+    ))` : '';
   const currentRank = `CASE status
     WHEN 'draft' THEN 0 WHEN 'queued' THEN 1 WHEN 'submitting' THEN 2 WHEN 'submitted' THEN 3
     WHEN 'sent' THEN 4 WHEN 'delayed' THEN 4 WHEN 'bounced' THEN 5 WHEN 'failed' THEN 5
@@ -253,7 +263,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
           )
       ))
       AND (last_event IS 'submission' OR status NOT IN (${terminalStatuses}) OR status = ?)
-      AND (last_event IS 'submission' OR ? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '')))
+      AND (last_event IS 'submission' OR ? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '') ${replayTie}))
       ${guard.sql}
   `).bind(
     input.targetStatus, input.provider, input.providerMessageId, input.lastError,
@@ -261,7 +271,8 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
     terminal, terminal, input.eventCreatedAt, Number(input.fromDeferred ?? false),
     input.targetStatus, input.eventCreatedAt,
-    input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt, ...guard.args
+    input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt,
+    ...(input.claim ? [input.eventCreatedAt, input.claim.svixId] : []), ...guard.args
   );
 }
 export function retainProviderDelayAfterRetry(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string, claim?: DeferredEventClaim, allowExpiredAttempt = false) {
@@ -418,14 +429,23 @@ export function markDeferredOutboundEvent(db: D1Database, svixId: string) {
     )`).bind(svixId);
 }
 
-export function markMatchedPendingOutboundEvents(db: D1Database, providerMessageId: string) {
+export function attachMatchedOutboundEvents(db: D1Database, providerMessageId: string) {
   return db.prepare(`
     UPDATE workspace_outbound_events AS event
-    SET message_id = delivery.message_id, user_id = delivery.user_id,
-      payload_json = json_set(payload_json, '${deferredPath}', 1)
-    FROM workspace_delivery_statuses AS delivery
-    WHERE event.provider = 'resend' AND event.provider_message_id = ? AND event.user_id = 'unmatched'
-      AND delivery.provider_message_id = event.provider_message_id AND json_valid(event.payload_json)
+    SET message_id = match.message_id, user_id = match.user_id,
+      payload_json = CASE WHEN match.pending THEN json_set(event.payload_json, '${deferredPath}', 1) ELSE event.payload_json END
+    FROM (
+      SELECT message_id, user_id, 1 AS pending FROM workspace_delivery_statuses WHERE provider_message_id = ?1
+      UNION ALL
+      SELECT MIN(attempt.message_id), MIN(attempt.user_id), 0
+      FROM workspace_delivery_attempts attempt
+      JOIN workspace_delivery_statuses delivery ON delivery.message_id = attempt.message_id AND delivery.user_id = attempt.user_id
+      WHERE attempt.provider_message_id = ?1
+        AND NOT EXISTS (SELECT 1 FROM workspace_delivery_statuses WHERE provider_message_id = ?1)
+      HAVING COUNT(DISTINCT attempt.message_id) = 1 AND COUNT(DISTINCT attempt.user_id) = 1
+    ) AS match
+    WHERE event.provider = 'resend' AND event.provider_message_id = ?1 AND event.user_id = 'unmatched'
+      AND json_valid(event.payload_json)
   `).bind(providerMessageId);
 }
 
@@ -459,7 +479,7 @@ export async function listPendingOutboundEvents(db: D1Database, providerMessageI
     ${wasDeferred} AS was_deferred
     FROM workspace_outbound_events
     WHERE provider_message_id = ? AND (user_id = 'unmatched' OR (${wasDeferred}))
-    ORDER BY event_created_at ASC, created_at ASC, rowid ASC LIMIT ?`)
+    ORDER BY event_created_at ASC, rowid ASC LIMIT ?`)
     .bind(providerMessageId, limit).all<WorkspaceOutboundEventRow & { was_deferred: number }>();
 }
 

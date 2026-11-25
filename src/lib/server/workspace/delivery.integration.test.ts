@@ -2,7 +2,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
-import { findDeliveryDetailRows, markMatchedPendingOutboundEvents, upsertOutboundReceipt, upsertOutboundStatus } from '$lib/server/db/deliveries';
+import { findDeliveryDetailRows, attachMatchedOutboundEvents, upsertOutboundReceipt, upsertOutboundStatus } from '$lib/server/db/deliveries';
 import { changeDeliveryAttention, findCurrentDeliveryAttention, getDeliveryAttentionSummary, listDeliveryAttention } from '$lib/server/db/delivery-attention';
 import { loadMailboxPage } from './mailbox';
 import { parseMailboxQuery } from './mailbox-query';
@@ -575,13 +575,13 @@ describe('Owner delivery attention', () => {
     expect((await page(env.DB)).notices.map(({ id }) => id)).toEqual([original.id]);
   });
 
-  test('keeps an early pending delay when a newer sent webhook applies before replay', async () => {
+  test.each(['2027-01-15T08:01:00Z', '2027-01-15T08:02:00Z'])('keeps the early delay after a sent webhook timestamped %s', async (sentAt) => {
     const { database, env } = setup();
     database.exec("UPDATE workspace_delivery_statuses SET status = 'submitting', provider_message_id = NULL");
     await applyResendDeliveryWebhook(env, 'early-delay', payload('email.delivery_delayed', '2027-01-15T08:01:00Z'));
     database.exec("UPDATE workspace_delivery_statuses SET status = 'submitted', provider_message_id = 're_1'");
-    await markMatchedPendingOutboundEvents(env.DB, 're_1').run();
-    await applyResendDeliveryWebhook(env, 'live-sent', payload('email.sent', '2027-01-15T08:02:00Z'));
+    await attachMatchedOutboundEvents(env.DB, 're_1').run();
+    await applyResendDeliveryWebhook(env, 'live-sent', payload('email.sent', sentAt));
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(1);
     expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
       status: 'sent', receipt: { last_event: 'email.sent' }, attention: { kind: 'delayed', state: 'open' }

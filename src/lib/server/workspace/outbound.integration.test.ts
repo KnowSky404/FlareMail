@@ -181,6 +181,42 @@ describe('outbound workspace persistence', () => {
     database.close();
   });
 
+  test('attaches events for a superseded attempt without affecting the current provider receipt', async () => {
+    const { env, database, session } = setup();
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const providerMessageId = 're_older_attempt';
+    const older = sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Superseded attempt', body: 'Body' }, {
+      requestId: 'superseded-attempt',
+      gateway: { async send() {
+        started.resolve();
+        await finish.promise;
+        return { status: 'submitted', providerMessageId, remoteStatus: 200 };
+      } }
+    });
+    await started.promise;
+    const message = database.query<{ id: string }, []>('SELECT id FROM workspace_messages').get()!;
+    try {
+      await applyResendDeliveryWebhook(env, 'older-bounce', {
+        type: 'email.bounced', created_at: new Date().toISOString(), data: { email_id: providerMessageId }
+      });
+      await retryWorkspaceMessageDelivery(env, session, message.id, {
+        gateway: new FakeOutboundGateway({ providerMessageId: 're_newer_attempt' })
+      });
+    } finally {
+      finish.resolve();
+      await older;
+    }
+    await applyResendDeliveryWebhook(env, 'older-delivered', {
+      type: 'email.delivered', created_at: new Date().toISOString(), data: { email_id: providerMessageId }
+    });
+    await reconcileDeferredResendEvents(env);
+    const receipt = await getWorkspaceMessageDeliveryDetail(env, session, message.id);
+    expect(receipt).toMatchObject({ status: 'submitted', resultKind: 'accepted', attention: null });
+    expect(receipt?.events.map(({ id }) => id)).toEqual(expect.arrayContaining(['older-bounce', 'older-delivered']));
+    database.close();
+  });
+
   test('transfers persisted labels when a draft is sent', async () => {
     const { env, database, session } = setup();
     const draft = await saveWorkspaceDraft(env, session, { toEmail: 'alice@example.net', subject: 'Labeled', body: 'Body' });

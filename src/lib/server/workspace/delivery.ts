@@ -15,7 +15,7 @@ import {
   listPendingOutboundEvents,
   listReadyDeferredProviderIds,
   markDeferredOutboundEvent,
-  markMatchedPendingOutboundEvents,
+  attachMatchedOutboundEvents,
   reconcileDeliveryStatus,
   resolveLocalDelayOnSent,
   retainProviderDelayAfterRetry,
@@ -121,7 +121,7 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
     try {
       await env.DB.batch([
         insertOutboundEvent(env.DB, eventRecord),
-        markMatchedPendingOutboundEvents(env.DB, event.providerMessageId)
+        attachMatchedOutboundEvents(env.DB, event.providerMessageId)
       ]);
     } catch (error) {
       if (error instanceof Error && /unique constraint|constraint failed/iu.test(error.message)) {
