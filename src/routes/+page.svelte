@@ -2502,7 +2502,13 @@
       notifications.invalidate();
       workspaceSync?.publish({ type: 'message-updated', id: result.message.id, delivery: true });
     } catch (error) {
-      notifications.invalidate();
+      if (error instanceof ClientApiError && ['IDEMPOTENCY_CONFLICT', 'OUTBOUND_UNAVAILABLE', 'DELIVERY_NOT_ACCEPTED'].includes(error.code ?? '')) {
+        const change = { type: 'mailbox-refresh', delivery: true } as const;
+        handleWorkspaceSync(change);
+        workspaceSync?.publish(change);
+      } else {
+        notifications.invalidate();
+      }
       notifyError(error, t('notify.sendFailed'));
     } finally {
       pending = false;

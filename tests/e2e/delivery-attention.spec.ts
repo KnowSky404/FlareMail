@@ -207,6 +207,39 @@ test('finds an Owner-wide bounce from another identity and acknowledges it witho
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('refreshes another tab after a send conflict that can persist a failure', async ({ page, context }, info) => {
+  test.skip(info.project.name !== 'desktop', 'Desktop covers the cross-tab send error path.');
+  await login(page);
+  const peer = await context.newPage();
+  await login(peer);
+  await openFolder(peer, '已发送');
+  const attentionMailbox = (url: URL) => url.pathname === '/api/workspace/mailbox' &&
+    url.searchParams.get('folder') === 'sent' && url.searchParams.get('filter') === 'attention';
+  await Promise.all([
+    peer.waitForResponse((response) => attentionMailbox(new URL(response.url())) && response.ok()),
+    peer.getByRole('button', { name: '待处理投递异常', exact: true }).click()
+  ]);
+
+  await page.route('**/api/send', (route) => route.fulfill({
+    status: 409,
+    json: { ok: false, error: { code: 'IDEMPOTENCY_CONFLICT', message: 'synthetic provider conflict after persistence' } }
+  }));
+  await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
+  const compose = page.getByRole('dialog', { name: '新邮件' });
+  await compose.getByRole('combobox', { name: '收件人', exact: true }).fill('delivery-test@flaremail.test');
+  await compose.getByRole('textbox', { name: '主题', exact: true }).fill('Synthetic send conflict');
+  await compose.getByRole('textbox', { name: '正文', exact: true }).fill('No provider request is made.');
+
+  await Promise.all([
+    peer.waitForResponse((response) => new URL(response.url()).pathname === endpoint + '/summary' && response.ok()),
+    peer.waitForResponse((response) => attentionMailbox(new URL(response.url())) && response.ok()),
+    compose.getByRole('button', { name: '发送邮件', exact: true }).click()
+  ]);
+  await expect(page.getByText(/投递服务拒绝了幂等重试/u)).toBeVisible();
+  await expect(compose).toBeVisible();
+  await peer.close();
+});
+
 test('reports a broken Access Owner mapping as degraded', async ({ page }) => {
   await login(page);
   await page.route('**/api/readiness?scope=system', (route) => route.fulfill({
