@@ -269,6 +269,37 @@ describe('versioned D1 migrations', () => {
     db.close();
   });
 
+  test('queues legacy unmatched webhooks only for exact known Resend IDs', () => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0037_recover_sent_resend_delays.sql');
+    db.exec(`
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id)
+      VALUES ('known', 'owner', 'submitted', 1, 're_known');
+      INSERT INTO workspace_outbound_events
+        (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json)
+      VALUES ('matched', 're_known', 'unmatched', 'resend', 're_known', 'email.bounced', '2026-01-01',
+        '{"type":"email.bounced","data":{"email_id":"re_known"}}'),
+        ('unknown', 're_unknown', 'unmatched', 'resend', 're_unknown', 'email.sent', '2026-01-01',
+        '{"type":"email.sent","data":{"email_id":"re_unknown"}}'),
+        ('other-provider', 're_known', 'unmatched', 'fake', 're_known', 'email.sent', '2026-01-01',
+        '{"type":"email.sent","data":{"email_id":"re_known"}}'),
+        ('invalid-json', 're_known', 'unmatched', 'resend', 're_known', 'email.sent', '2026-01-01', 'invalid');
+    `);
+    applyMigrations(db);
+    expect(db.query(`
+      SELECT svix_id, message_id, user_id, CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$._flaremailDeferred') END AS deferred
+      FROM workspace_outbound_events ORDER BY svix_id
+    `).all()).toEqual([
+      { svix_id: 'invalid-json', message_id: 're_known', user_id: 'unmatched', deferred: null },
+      { svix_id: 'matched', message_id: 'known', user_id: 'owner', deferred: 1 },
+      { svix_id: 'other-provider', message_id: 're_known', user_id: 'unmatched', deferred: null },
+      { svix_id: 'unknown', message_id: 're_unknown', user_id: 'unmatched', deferred: null }
+    ]);
+    expect(db.query('SELECT status FROM workspace_delivery_statuses').get()).toEqual({ status: 'submitted' });
+    db.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);
@@ -310,7 +341,8 @@ describe('versioned D1 migrations', () => {
       '0034_delivery_attention_backfill.sql',
       '0035_preserve_replayed_delivery_delay.sql',
       '0036_recover_pending_resend_events.sql',
-      '0037_recover_sent_resend_delays.sql'
+      '0037_recover_sent_resend_delays.sql',
+      '0038_queue_legacy_resend_events.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -445,7 +477,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 37 }
+      { schema_name: 'flaremail', schema_version: 38 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())

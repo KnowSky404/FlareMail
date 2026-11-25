@@ -172,4 +172,4 @@ Follow the [current SPEC](specs/ai-summary-and-automatic-classification.md). Mig
 
 ### Schema 36 delivery attention
 
-核对 PRE 与生产的 D1/R2/Owner 绑定。仅在已授权的独立 PRE 上执行待应用的 0033 至 0037 迁移及合成异常写入验收。共享 D1 必须等待兼容发布计划。业务验收检查跨身份定位、单条及批量确认、恢复历史、重开和系统健康，参照[异常关注 Spec](specs/delivery-attention-lifecycle.md)。
+核对 PRE 与生产的 D1/R2/Owner 绑定。仅在已授权的独立 PRE 上执行待应用的 0033 至 0038 迁移及合成异常写入验收。共享 D1 必须等待兼容发布计划。业务验收检查跨身份定位、单条及批量确认、恢复历史、重开和系统健康，参照[异常关注 Spec](specs/delivery-attention-lifecycle.md)。
