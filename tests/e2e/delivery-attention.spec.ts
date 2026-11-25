@@ -57,6 +57,28 @@ async function getNotices(request: APIRequestContext, view = 'pending'): Promise
   return (await response.json()).data;
 }
 
+test('keeps keyboard focus in notifications after loading the final page', async ({ page, baseURL }) => {
+  const origin = originOf(baseURL);
+  await seed(page.request, origin, 'e2e-attention-page-first', 'complained', 'First page');
+  await seed(page.request, origin, 'e2e-attention-page-last', 'complained', 'Final page');
+  await page.route((url) => url.pathname === endpoint, async (route) => {
+    const url = new URL(route.request().url());
+    url.searchParams.set('limit', '1');
+    await route.fulfill({ response: await route.fetch({ url: url.toString() }) });
+  });
+
+  await login(page);
+  await notice(page).press('Enter');
+  await panel(page).getByRole('combobox').selectOption('complained');
+  const items = panel(page).getByRole('listitem');
+  const more = panel(page).getByRole('button', { name: '加载更多', exact: true });
+  await expect(items).toHaveCount(1);
+  await more.press('Enter');
+  await expect(items).toHaveCount(2);
+  await expect(more).toHaveCount(0);
+  await expect(items.last().getByRole('button', { name: '查看邮件', exact: true })).toBeFocused();
+});
+
 test('finds an Owner-wide bounce from another identity and acknowledges it without changing the receipt', async ({ page, baseURL, consoleErrors }, info) => {
   const origin = originOf(baseURL);
   const id = 'e2e-attention-bounced';
