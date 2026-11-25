@@ -14,6 +14,8 @@ const endpoint = '/api/workspace/attention';
 const subject = 'E2E Delivery Exception';
 const notice = (page: Page) => page.getByRole('button', { name: /^(通知|Notifications)/u });
 const panel = (page: Page) => page.locator('#delivery-notifications-content');
+const targetedSummary = (url: URL, id: string) =>
+  url.pathname === endpoint + '/summary' && url.searchParams.get('messageId') === id;
 
 async function screenshot(page: Page, testInfo: TestInfo, name: string) {
   const directory = process.env.FLAREMAIL_ATTENTION_SCREENSHOTS;
@@ -114,6 +116,85 @@ test('refreshes the stale first page after loading more notifications', async ({
   await expect(items).toHaveCount(1);
 });
 
+test('refreshes a fresh panel when the summary changes without replaying events', async ({ page }) => {
+  const occurredAt = '2026-08-13T08:00:00.000Z';
+  let version = 1;
+  const summary = () => ({ pendingCount: version, snapshot: { asOf: occurredAt, version } });
+  await page.route('**/api/workspace/attention/summary', (route) =>
+    route.fulfill({ json: { ok: true, data: { ...summary(), replayed: 0 } } }));
+  await page.route((url) => url.pathname === endpoint, (route) => {
+    const data: DeliveryAttentionPage = {
+      notices: [{
+        id: version, version, messageId: String(version), kind: 'complained', state: 'open', occurredAt,
+        acknowledgedAt: null, closedAt: null, sender: 'e2e-admin@flaremail.test',
+        subject: version === 1 ? 'Original notice' : 'New notice'
+      }],
+      nextCursor: null,
+      summary: summary()
+    };
+    return route.fulfill({ json: { ok: true, data } });
+  });
+
+  await login(page);
+  await expect(notice(page)).toHaveAccessibleName(/1 条待处理投递异常/u);
+  const advanceClock = (milliseconds: number) => page.evaluate((delay) => {
+    const now = Date.now;
+    Date.now = () => now() + delay;
+  }, milliseconds);
+  await advanceClock(20_000);
+  await notice(page).press('Enter');
+  await expect(panel(page).getByText('Original notice', { exact: true })).toBeVisible();
+
+  version = 2;
+  await advanceClock(12_000);
+  const refresh = page.waitForResponse((response) => new URL(response.url()).pathname === endpoint + '/summary' &&
+    response.request().method() === 'POST' && response.ok());
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await refresh;
+  await expect(notice(page)).toHaveAccessibleName(/2 条待处理投递异常/u);
+  await expect(panel(page).getByText('New notice', { exact: true })).toBeVisible();
+});
+
+test('reloads notifications after a closed summary cancels the first page', async ({ page, baseURL }) => {
+  const origin = originOf(baseURL);
+  const id = 'e2e-attention-cancel-first-page';
+  const label = 'E2E Notification First Page';
+  await seed(page.request, origin, id, 'delayed', label);
+  const afterReplay = () => page.waitForResponse((response) => new URL(response.url()).pathname === endpoint + '/summary' &&
+    response.request().method() === 'POST' && response.ok());
+  const initialReplay = afterReplay();
+  await login(page);
+  await initialReplay;
+
+  const firstPageStarted = Promise.withResolvers<void>();
+  const releaseFirstPage = Promise.withResolvers<void>();
+  await page.route((url) => url.pathname === endpoint, async (route) => {
+    firstPageStarted.resolve();
+    await releaseFirstPage.promise;
+    await route.continue().catch(() => undefined);
+  }, { times: 1 });
+  const advanceClock = (milliseconds: number) => page.evaluate((delay) => {
+    const now = Date.now;
+    Date.now = () => now() + delay;
+  }, milliseconds);
+  try {
+    await advanceClock(20_000);
+    await notice(page).click();
+    await firstPageStarted.promise;
+    await panel(page).getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(panel(page)).toBeHidden();
+    await advanceClock(12_000);
+    const refreshed = afterReplay();
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await refreshed;
+    await notice(page).click();
+    await expect(panel(page).getByText(label, { exact: true })).toBeVisible();
+  } finally {
+    releaseFirstPage.resolve();
+    await page.request.delete('/api/workspace/messages/' + id, { headers: { origin } });
+  }
+});
+
 test('finds an Owner-wide bounce from another identity and acknowledges it without changing the receipt', async ({ page, baseURL, consoleErrors }, info) => {
   const origin = originOf(baseURL);
   const id = 'e2e-attention-bounced';
@@ -138,6 +219,11 @@ test('finds an Owner-wide bounce from another identity and acknowledges it witho
   await notice(page).press('Space');
   const close = panel(page).getByRole('button', { name: '关闭', exact: true });
   await expect(close).toBeFocused();
+  const selectedUrl = page.url();
+  await close.press('c');
+  await expect(page.getByRole('dialog', { name: '新邮件' })).toHaveCount(0);
+  await close.press('j');
+  await expect(page).toHaveURL(selectedUrl);
   await expect(panel(page).getByText('系统运行正常', { exact: true })).toBeVisible();
   await expect(panel(page).getByText(subject)).toBeVisible();
   await expect(page).toHaveTitle('FlareMail');
@@ -542,39 +628,42 @@ for (const filter of ['all', 'attention']) {
   });
 }
 
-test('refreshes Sent and the open receipt from the notification button', async ({ page, baseURL }, info) => {
-  test.skip(info.project.name !== 'desktop', 'The desktop workspace displays the Sent list and open receipt together.');
-  const origin = originOf(baseURL);
-  const id = 'e2e-attention-manual-refresh';
-  const label = 'E2E Manual Notification Refresh';
-  await seed(page.request, origin, id, 'delayed', label);
-  await login(page);
-  await page.goto('/?folder=sent&filter=attention');
-  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
-  const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
-  await row.click();
-  const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
-  await expect(receipt.getByRole('button', { name: '确认异常', exact: true })).toBeVisible();
-  await notice(page).click();
-  await expect(panel(page).getByText(label, { exact: true })).toBeVisible();
+for (const filter of ['all', 'attention']) {
+  test(`refreshes Sent and the open receipt from the notification button (${filter})`, async ({ page, baseURL }, info) => {
+    test.skip(info.project.name !== 'desktop', 'The desktop workspace displays the Sent list and open receipt together.');
+    const origin = originOf(baseURL);
+    const id = `e2e-attention-manual-refresh-${filter}`;
+    const label = `E2E Manual Notification Refresh ${filter}`;
+    await seed(page.request, origin, id, 'delayed', label);
+    await login(page);
+    await page.goto('/?folder=sent&filter=' + filter);
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
+    await row.click();
+    const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+    await expect(receipt.getByRole('button', { name: '确认异常', exact: true })).toBeVisible();
+    await notice(page).click();
+    await expect(panel(page).getByText(label, { exact: true })).toBeVisible();
 
-  expect((await events(page.request, id, 'email.delivered', 'attention-button-delivered')).ok()).toBe(true);
-  let summaryRefreshed = false;
-  const refreshedSummary = page.waitForResponse((response) =>
-    new URL(response.url()).pathname === '/api/workspace/attention/summary' &&
-    response.request().method() === 'POST' && response.ok()).then(() => { summaryRefreshed = true; });
-  const receiptReadAfterReplay = page.waitForRequest((request) =>
-    new URL(request.url()).pathname === `/api/workspace/messages/${id}/delivery`
-  ).then(() => summaryRefreshed);
-  await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
-  expect(await receiptReadAfterReplay).toBe(true);
-  await refreshedSummary;
+    expect((await events(page.request, id, 'email.delivered', 'attention-button-delivered-' + filter)).ok()).toBe(true);
+    let summaryRefreshed = false;
+    const refreshedSummary = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/api/workspace/attention/summary' &&
+      response.request().method() === 'POST' && response.ok()).then(() => { summaryRefreshed = true; });
+    const receiptReadAfterReplay = page.waitForRequest((request) =>
+      new URL(request.url()).pathname === `/api/workspace/messages/${id}/delivery`
+    ).then(() => summaryRefreshed);
+    await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
+    expect(await receiptReadAfterReplay).toBe(true);
+    await refreshedSummary;
 
-  await expect(panel(page).getByText(label, { exact: true })).toHaveCount(0);
-  await expect(row).toHaveCount(0);
-  await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
-  await expect(receipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
-});
+    await expect(panel(page).getByText(label, { exact: true })).toHaveCount(0);
+    if (filter === 'attention') await expect(row).toHaveCount(0);
+    else await expect(row).toContainText('已送达');
+    await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+    await expect(receipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
+  });
+}
 
 test('refreshes the notification scope, Sent filter, and receipt after delivery changes', async ({ page, baseURL }, info) => {
   test.skip(info.project.name !== 'desktop', 'One desktop run covers delivery state refresh.');
@@ -651,7 +740,7 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
   let replayFinished = false;
   const replayResponse = standalone.waitForResponse((response) =>
-    new URL(response.url()).pathname === endpoint + '/summary' &&
+    targetedSummary(new URL(response.url()), pendingId) &&
     response.request().method() === 'POST' && response.ok()).then(() => { replayFinished = true; });
   const standaloneReadAfterReplay = standalone.waitForRequest((request) =>
     new URL(request.url()).pathname === `/api/workspace/messages/${pendingId}/delivery`
@@ -659,7 +748,11 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await standaloneReceipt.getByRole('button', { name: '刷新投递回执', exact: true }).click();
   expect(await standaloneReadAfterReplay).toBe(true);
   await replayResponse;
-  await page.getByRole('button', { name: '刷新投递回执', exact: true }).click();
+  await Promise.all([
+    page.waitForResponse((response) => targetedSummary(new URL(response.url()), pendingId) &&
+      response.request().method() === 'POST' && response.ok()),
+    page.getByRole('button', { name: '刷新投递回执', exact: true }).click()
+  ]);
   await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(row).toHaveCount(0);
   await expect(page.getByRole('heading', { name: pendingSubject, exact: true })).toBeVisible();
@@ -687,6 +780,7 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
     await focusRow.click();
     const focusReceipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
     await expect(focusReceipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+    if (filter === 'all') await expect(focusRow).toContainText('投递延迟');
     expect((await events(page.request, focusId, 'email.delivered', `attention-focus-delivered-${filter}`)).ok()).toBe(true);
     const summaryStarted = Promise.withResolvers<void>();
     const releaseSummary = Promise.withResolvers<void>();
@@ -713,7 +807,8 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
         releaseSummary.resolve();
       }
     }
-    await expect(focusRow).toHaveCount(filter === 'attention' ? 0 : 1);
+    if (filter === 'attention') await expect(focusRow).toHaveCount(0);
+    else await expect(focusRow).toContainText('已送达');
     await expect(focusReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
     const header = page.locator('.fm-detail-shell').getByRole('heading', { name: focusSubject, exact: true });
     await expect(header.locator('..').getByText('已送达', { exact: true })).toBeVisible();
@@ -721,19 +816,20 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   }
 });
 
-test('keeps page three of Sent attention when the tab regains focus', async ({ page }, info) => {
-  test.skip(info.project.name !== 'desktop', 'One desktop run covers background pagination.');
+test('keeps page three of Sent attention on focus and page two on a receipt broadcast', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop run covers background pagination and receipt broadcasts.');
   await login(page);
   await openFolder(page, '已发送');
 
   const mailboxPath = (url: URL) => url.pathname === '/api/workspace/mailbox' &&
     url.searchParams.get('folder') === 'sent' && url.searchParams.get('filter') === 'attention';
   const cursors: (string | null)[] = [];
+  let pageTwoSubject = 'E2E Attention Page 2';
   await page.route(mailboxPath, async (route) => {
     const cursor = new URL(route.request().url()).searchParams.get('cursor');
     cursors.push(cursor);
     const number = Number(cursor ?? 1);
-    const label = 'E2E Attention Page ' + number;
+    const label = number === 2 ? pageTwoSubject : 'E2E Attention Page ' + number;
     const data: MailboxPage = {
       folder: 'sent', query: '', filter: 'attention', limit: 40, deliveryStatus: null,
       nextCursor: number < 3 ? String(number + 1) : null, hasMore: number < 3,
@@ -780,9 +876,18 @@ test('keeps page three of Sent attention when the tab regains focus', async ({ p
   await previous.click();
   await revalidated;
   await expect(pageRow(2)).toBeVisible();
+
+  pageTwoSubject = 'Updated E2E Attention Page 2';
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh', id: 'e2e-attention-page-2', delivery: true });
+    channel.close();
+  });
+  await expect(page.locator('.mail-list-panel').getByRole('button', { name: /Updated E2E Attention Page 2/u })).toBeVisible();
+  expect(cursors).toEqual([null, '2', '3', '2', null, '2']);
 });
 
-test('replays a manual refresh during confirmation and clears cached receipts', async ({ page, baseURL }, info) => {
+test('replays the selected receipt during confirmation and updates its cached copy', async ({ page, baseURL }, info) => {
   test.skip(info.project.name !== 'desktop', 'One desktop run covers the workspace receipt cache.');
   const origin = originOf(baseURL);
   const selected = 'E2E Confirmation In Flight';
@@ -813,11 +918,15 @@ test('replays a manual refresh during confirmation and clears cached receipts', 
   try {
     await item.getByRole('button', { name: '确认异常', exact: true }).click();
     await confirmationStarted.promise;
-    await page.keyboard.press('Escape');
-    expect((await events(page.request, cachedId, 'email.delivered', 'attention-cached-replay-delivered')).ok()).toBe(true);
+    await panel(page).getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(panel(page)).toBeHidden();
+    expect((await events(page.request, selectedId, 'email.delivered', 'attention-manual-replay-delivered')).ok()).toBe(true);
+    const selectedHeading = page.getByRole('heading', { name: selected, exact: true });
+    if (!await selectedHeading.isVisible()) await row(selected).click();
+    await expect(selectedHeading).toBeVisible();
     const replayStarted = Promise.withResolvers<void>();
     const releaseReplay = Promise.withResolvers<void>();
-    await page.route('**/api/workspace/attention/summary', async (route) => {
+    await page.route((url) => targetedSummary(url, selectedId), async (route) => {
       replayStarted.resolve();
       await releaseReplay.promise;
       await route.fulfill({ json: { ok: true, data: {
@@ -825,7 +934,7 @@ test('replays a manual refresh during confirmation and clears cached receipts', 
       } } });
     }, { times: 1 });
     const replay = page.waitForResponse((response) =>
-      new URL(response.url()).pathname === endpoint + '/summary' && response.request().method() === 'POST' && response.ok());
+      targetedSummary(new URL(response.url()), selectedId) && response.request().method() === 'POST' && response.ok());
     const refresh = receipt.getByRole('button', { name: '刷新投递回执', exact: true });
     try {
       await refresh.click();
@@ -838,7 +947,10 @@ test('replays a manual refresh during confirmation and clears cached receipts', 
     await replay;
     await expect(refresh).toBeEnabled();
     await expect(page.getByText('重新载入投递回执失败。', { exact: true })).toHaveCount(0);
+    await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
     await row(cached).click();
+    await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+    await row(selected).click();
     await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   } finally {
     releaseConfirmation.resolve();
@@ -848,15 +960,188 @@ test('replays a manual refresh during confirmation and clears cached receipts', 
   }
 });
 
-test('keeps notifications readable when replay POST fails', async ({ page, baseURL }, info) => {
-  test.skip(info.project.name !== 'desktop', 'One desktop run covers the notification API fallback.');
+test('reloads a cached receipt when an older provider failure replaces a local failure', async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop run covers switching between cached receipts.');
+  const origin = originOf(baseURL);
+  const failedId = 'e2e-attention-cached-local-failure';
+  const failedLabel = 'E2E Cached Local Failure';
+  const otherId = 'e2e-attention-cached-failure-other';
+  const otherLabel = 'E2E Other Visible Receipt';
+  const localFailureAt = new Date().toISOString();
+  const startedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  await seed(page.request, origin, failedId, 'failed', failedLabel);
+  await seed(page.request, origin, otherId, 'delayed', otherLabel);
+  const fixture = await page.request.post(origin + `/cdn-cgi/local/explorer/api/d1/database/${target.databaseId}/raw`, {
+    data: { batch: [
+      { sql: `UPDATE workspace_delivery_statuses SET last_event = 'submission', last_event_at = ?
+          WHERE message_id = ? AND user_id = ?`, params: [localFailureAt, failedId, owner] },
+      { sql: `INSERT INTO workspace_delivery_attempts
+          (id, message_id, user_id, attempt_number, idempotency_key, provider, provider_message_id, status, started_at, completed_at)
+          VALUES (?, ?, ?, 1, ?, 'resend', ?, 'failed', ?, ?)`,
+        params: [failedId, failedId, owner, failedId, failedId, startedAt, localFailureAt] },
+      { sql: `INSERT INTO workspace_outbound_receipts
+          (message_id, user_id, provider, result_kind, last_event, last_event_at)
+          VALUES (?, ?, 'resend', 'temporary_failure', 'submission', ?)`, params: [failedId, owner, localFailureAt] }
+    ] }
+  });
+  expect(fixture.ok()).toBe(true);
+  expect((await fixture.json()).result.map(({ success }: { success: boolean }) => success)).toEqual([true, true, true]);
+  await login(page);
+
+  try {
+    await page.goto('/?folder=sent');
+    const receiptPath = `/api/workspace/messages/${failedId}/delivery`;
+    let receiptReads = 0;
+    page.on('response', (response) => {
+      if (new URL(response.url()).pathname === receiptPath && response.ok()) receiptReads++;
+    });
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    const list = page.locator('.mail-list-panel');
+    const row = (label: string) => list.getByRole('button', { name: new RegExp(label, 'u') });
+    const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+    const retry = receipt.getByRole('button', { name: '重试发送', exact: true });
+    await row(failedLabel).click();
+    await expect(retry).toBeVisible();
+    await expect.poll(() => receiptReads).toBeGreaterThan(0);
+    await expect(receipt.getByRole('button', { name: '刷新投递回执', exact: true })).toBeEnabled();
+    const cachedReads = receiptReads;
+    await row(otherLabel).click();
+    const otherHeading = page.getByRole('heading', { name: otherLabel, exact: true });
+    await expect(otherHeading).toBeVisible();
+
+    expect((await events(page.request, failedId, 'email.failed', 'attention-cached-local-failure-webhook', -120)).ok()).toBe(true);
+    const current = await page.request.get(receiptPath);
+    expect(current.ok()).toBe(true);
+    const detail = (await current.json()).data.detail;
+    expect(detail).toMatchObject({ status: 'failed', lastEvent: 'email.failed' });
+    expect(Date.parse(detail.lastEventAt)).toBeLessThan(Date.parse(localFailureAt));
+
+    const refreshed = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/workspace/mailbox' && url.searchParams.get('folder') === 'sent' && response.ok();
+    });
+    await page.evaluate(() => {
+      const now = Date.now;
+      Date.now = () => now() + 31_000;
+      try { window.dispatchEvent(new Event('focus')); } finally { Date.now = now; }
+    });
+    await refreshed;
+    await expect(list.getByText('正在更新邮件…', { exact: true })).toHaveCount(0);
+    await expect(otherHeading).toBeVisible();
+    await row(failedLabel).click();
+    await expect(page.getByRole('heading', { name: failedLabel, exact: true })).toBeVisible();
+    await expect.poll(() => receiptReads).toBeGreaterThan(cachedReads);
+    await expect(retry).toHaveCount(0);
+  } finally {
+    for (const id of [failedId, otherId]) await page.request.delete('/api/workspace/messages/' + id, { headers: { origin } });
+  }
+});
+
+test('refreshes Sent attention after receipt replay even when the reader selection changed', async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'The desktop workspace shows the Sent list and the reader together.');
+  const origin = originOf(baseURL);
+  const first = { id: 'e2e-attention-replay-switch-first', subject: 'E2E Replay Before Selection Change' };
+  const second = { id: 'e2e-attention-replay-switch-second', subject: 'E2E Replay After Selection Change' };
+  for (const message of [first, second]) await seed(page.request, origin, message.id, 'delayed', message.subject);
+  await login(page);
+
+  const replayStarted = Promise.withResolvers<void>();
+  const releaseReplay = Promise.withResolvers<void>();
+  await page.route((url) => targetedSummary(url, first.id), async (route) => {
+    replayStarted.resolve();
+    await releaseReplay.promise;
+    await route.fulfill({ json: { ok: true, data: {
+      pendingCount: 1, snapshot: { asOf: new Date().toISOString(), version: 99 }, replayed: 1
+    } } });
+  }, { times: 1 });
+
+  try {
+    await page.goto('/?folder=sent&filter=attention');
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    const row = (subject: string) => page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(subject, 'u') });
+    const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+    await row(first.subject).click();
+    await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+    await receipt.getByRole('button', { name: '刷新投递回执', exact: true }).click();
+    await replayStarted.promise;
+
+    await row(second.subject).click();
+    const selected = page.getByRole('heading', { name: second.subject, exact: true });
+    await expect(selected).toBeVisible();
+    expect((await events(page.request, first.id, 'email.delivered', 'attention-replay-selection-changed')).ok()).toBe(true);
+    await expect(row(first.subject)).toBeVisible();
+    releaseReplay.resolve();
+
+    await expect(row(first.subject)).toHaveCount(0);
+    await expect(row(second.subject)).toBeVisible();
+    await expect(selected).toBeVisible();
+    await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+  } finally {
+    releaseReplay.resolve();
+    for (const message of [first, second]) {
+      await page.request.delete('/api/workspace/messages/' + message.id, { headers: { origin } });
+    }
+  }
+});
+
+test('keeps the open Sent attention reader after a message-specific update from another tab', async ({ page, context, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'The desktop split view displays the filtered list and reader together.');
+  const origin = originOf(baseURL);
+  const open = { id: 'e2e-attention-open-reader-broadcast', subject: 'E2E Open Reader Delivery Update' };
+  const remaining = { id: 'e2e-attention-remaining-reader-broadcast', subject: 'E2E Remaining Delivery Issue' };
+  for (const message of [open, remaining]) await seed(page.request, origin, message.id, 'delayed', message.subject);
+  await login(page);
+  const peer = await context.newPage();
+
+  try {
+    await peer.goto('/?folder=inbox');
+    await page.goto('/?folder=sent&filter=attention');
+    await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+    const list = page.locator('.mail-list-panel');
+    const openRow = list.getByRole('button', { name: new RegExp(open.subject, 'u') });
+    const remainingRow = list.getByRole('button', { name: new RegExp(remaining.subject, 'u') });
+    await openRow.click();
+    const heading = page.getByRole('heading', { name: open.subject, exact: true });
+    const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+    await expect(heading).toBeVisible();
+    await expect(remainingRow).toBeVisible();
+    await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+
+    expect((await events(peer.request, open.id, 'email.delivered', 'attention-open-reader-broadcast-delivered')).ok()).toBe(true);
+    await expect(openRow).toBeVisible();
+    await peer.evaluate((id) => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mailbox-refresh', id, delivery: true });
+      channel.close();
+    }, open.id);
+
+    await expect(openRow).toHaveCount(0);
+    await expect(remainingRow).toBeVisible();
+    await expect(heading).toBeVisible();
+    await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  } finally {
+    await peer.close();
+    for (const message of [open, remaining]) {
+      await page.request.delete('/api/workspace/messages/' + message.id, { headers: { origin } });
+    }
+  }
+});
+
+test('keeps stored notifications readable and reports replay failures', async ({ page, baseURL }) => {
   const origin = originOf(baseURL);
   const id = 'e2e-attention-replay-fallback';
   const label = 'E2E Replay Read Fallback';
   await seed(page.request, origin, id, 'delayed', label);
+  let outcome: 'unavailable' | 'partial' | 'ready' = 'unavailable';
   await page.route('**/api/workspace/attention/summary', async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
-    return route.fulfill({ status: 503, json: { ok: false, error: { code: 'REPLAY_FAILED', message: 'Replay unavailable' } } });
+    if (outcome === 'unavailable') {
+      return route.fulfill({ status: 503, json: { ok: false, error: { code: 'REPLAY_FAILED', message: 'Replay unavailable' } } });
+    }
+    return route.fulfill({ json: { ok: true, data: {
+      pendingCount: 1, snapshot: { asOf: new Date().toISOString(), version: 1 }, replayed: 0,
+      ...(outcome === 'partial' ? { replayFailed: true } : {})
+    } } });
   });
   const badge = page.waitForResponse((response) =>
     new URL(response.url()).pathname === endpoint + '/summary' && response.request().method() === 'GET' && response.ok());
@@ -864,8 +1149,116 @@ test('keeps notifications readable when replay POST fails', async ({ page, baseU
   try {
     await badge;
     await notice(page).click();
-    await expect(panel(page).getByRole('listitem').filter({ hasText: label })).toBeVisible();
+    const stored = panel(page).getByRole('listitem').filter({ hasText: label });
+    const warning = panel(page).getByRole('alert').filter({ hasText: '未能同步最新投递事件。' });
+    const refresh = panel(page).getByRole('button', { name: '刷新通知和系统状态' });
+    await expect(stored).toBeVisible();
+    await expect(warning).toBeVisible();
+
+    outcome = 'partial';
+    const replay = page.waitForResponse((response) => new URL(response.url()).pathname === endpoint + '/summary' &&
+      response.request().method() === 'POST' && response.ok());
+    await refresh.click();
+    await replay;
+    await expect(refresh).toBeEnabled();
+    await expect(stored).toBeVisible();
+    await expect(warning).toBeVisible();
+
+    outcome = 'ready';
+    await refresh.click();
+    await expect(warning).toHaveCount(0);
+    await expect(stored).toBeVisible();
   } finally {
+    await page.request.delete('/api/workspace/messages/' + id, { headers: { origin } });
+  }
+});
+
+test('keeps the saved receipt visible when targeted event synchronization fails', async ({ page, baseURL }) => {
+  const origin = originOf(baseURL);
+  const id = 'e2e-attention-receipt-replay-failure';
+  const label = 'E2E Saved Receipt After Replay Failure';
+  await seed(page.request, origin, id, 'delayed', label);
+  await login(page);
+  await page.context().route((url) => targetedSummary(url, id), (route) => route.fulfill({
+    json: { ok: true, data: {
+      pendingCount: 1, snapshot: { asOf: new Date().toISOString(), version: 1 }, replayed: 0, replayFailed: true
+    } }
+  }));
+  await page.goto('/?folder=sent');
+  const preview = page.getByRole('button', { name: '显示分栏预览', exact: true });
+  if (await preview.isVisible()) await preview.click();
+  await page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') }).click();
+  const standalone = await page.context().newPage();
+  await standalone.goto('/messages/' + id + '?folder=sent', { waitUntil: 'domcontentloaded' });
+  try {
+    for (const reader of [page, standalone]) {
+      const receipt = reader.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+      await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+      const saved = reader.waitForResponse((response) =>
+        new URL(response.url()).pathname === `/api/workspace/messages/${id}/delivery` && response.ok());
+      await receipt.getByRole('button', { name: '刷新投递回执', exact: true }).click();
+      await saved;
+      await expect(reader.getByRole('alert').filter({ hasText: '未能同步最新投递事件。' })).toBeVisible();
+      await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+    }
+  } finally {
+    await standalone.close();
+    await page.request.delete('/api/workspace/messages/' + id, { headers: { origin } });
+  }
+});
+
+test('allows another manual receipt refresh after session recovery', async ({ page, context, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop run covers recovery in the existing tab.');
+  const origin = originOf(baseURL);
+  const id = 'e2e-attention-replay-session-recovery';
+  const label = 'E2E Receipt Session Recovery';
+  await seed(page.request, origin, id, 'delayed', label);
+  await login(page);
+  await page.goto('/?folder=sent');
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
+  const heading = page.getByRole('heading', { name: label, exact: true });
+  await row.click();
+  await expect(heading).toBeVisible();
+  const refresh = page.getByRole('button', { name: '刷新投递回执', exact: true });
+
+  const replayStarted = Promise.withResolvers<void>();
+  const releaseReplay = Promise.withResolvers<void>();
+  await page.route((url) => targetedSummary(url, id), async (route) => {
+    replayStarted.resolve();
+    await releaseReplay.promise;
+    await route.continue().catch(() => undefined);
+  }, { times: 1 });
+  await page.route('**/api/workspace/session', (route) =>
+    route.fulfill({ status: 401, contentType: 'text/html', body: '<html>Access session expired</html>' }), { times: 1 });
+  try {
+    await refresh.click();
+    await replayStarted.promise;
+    await expect(refresh).toBeDisabled();
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.postMessage({ type: 'mail-identity-options-changed', nonce: 'e2e-receipt-auth-expiry', at: Date.now() });
+      channel.close();
+    });
+    const expired = page.getByRole('heading', { name: '登录状态已过期' });
+    await expect(expired).toBeVisible();
+    await context.clearCookies();
+    const reauthenticated = await context.newPage();
+    try {
+      await login(reauthenticated);
+      await expect(expired).toBeHidden();
+      if (!await heading.isVisible()) await row.click();
+      await expect(heading).toBeVisible();
+      await expect(refresh).toBeEnabled();
+      const nextReplay = page.waitForResponse((response) => targetedSummary(new URL(response.url()), id) &&
+        response.request().method() === 'POST' && response.ok());
+      await refresh.click();
+      await nextReplay;
+    } finally {
+      await reauthenticated.close();
+    }
+  } finally {
+    releaseReplay.resolve();
     await page.request.delete('/api/workspace/messages/' + id, { headers: { origin } });
   }
 });

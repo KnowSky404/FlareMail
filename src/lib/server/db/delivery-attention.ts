@@ -35,8 +35,9 @@ export function pendingDeliveryAttentionPredicate(messageAlias: string) {
 
 type SummaryRow = { pendingCount: number; version: number; asOf: string };
 
-function summaryStatement(db: D1Database, userId: string) {
+function summaryStatement(db: D1Database, userId: string, includeChanges = false) {
   return db.prepare(`SELECT COUNT(*) AS pendingCount, COALESCE(MAX(a.version), 0) AS version, ${now} AS asOf
+    ${includeChanges ? ', changes() AS changed' : ''}
     FROM workspace_delivery_attention a ${messageJoin}
     WHERE a.user_id = ? AND a.state = 'open' AND ${active('a')}`).bind(userId);
 }
@@ -104,14 +105,15 @@ export async function changeDeliveryAttention(db: D1Database, userId: string, ac
     const update = db.prepare(`UPDATE workspace_delivery_attention ${acknowledge} WHERE id IN (
       SELECT a.id FROM workspace_delivery_attention a ${messageJoin}
       WHERE a.user_id = ?1 AND a.state = 'open' AND ${active('a')}
-        AND a.version <= ?2 AND a.eligible_at <= ?3 AND ?3 <= ${now}) RETURNING id`)
+        AND a.version <= ?2 AND a.eligible_at <= ?3 AND ?3 <= ${now})`)
       .bind(userId, action.snapshot.version, action.snapshot.asOf);
-    const [result, count] = await db.batch([update, summaryStatement(db, userId)]);
-    const current = summary(count.results[0] as SummaryRow);
+    const [, count] = await db.batch([update, summaryStatement(db, userId, true)]);
+    const row = count.results[0] as SummaryRow & { changed: number };
+    const current = summary(row);
     if (action.snapshot.asOf > current.snapshot.asOf) {
       throw new ApiError(400, 'INVALID_ATTENTION_REQUEST', '投递异常参数无效。');
     }
-    return { changed: result.results.length, summary: current };
+    return { changed: row.changed, summary: current };
   }
   const { id, version } = action.incident;
   const reopening = action.action === 'reopen';

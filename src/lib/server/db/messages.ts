@@ -1,8 +1,10 @@
 import { inboxCategorySql } from './inbox-categories';
-import type { DeliveryStatus, InboxCategoryFilter, MailboxFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
+import type { DeliveryStatus, InboxCategoryFilter, MailboxFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection, MailSearchQuery } from '$lib/domain/mail';
 import { fromInboundMessageId, getMailThreadGroups, isInboundMessageId, parseAddressJson, parseAddressList } from '$lib/domain/mail';
+import { buildFtsSearchPlan, buildLabelSearchPredicate } from '$lib/server/search/fts';
 import { hasReliableThreadContext, mappedThreadKey, parseAddress, type WorkspaceCapabilities, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 import { pendingDeliveryAttentionPredicate } from './delivery-attention';
+import { workspaceSearchStatePredicates } from './mailbox';
 
 export interface OwnedMailboxMutationRow {
   id: string;
@@ -23,6 +25,7 @@ export interface MailboxMutationSqlScope {
   labelId?: string;
   filter?: MailboxFilter;
   deliveryStatuses?: readonly DeliveryStatus[] | null;
+  search?: MailSearchQuery | null;
 }
 
 export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
@@ -48,6 +51,18 @@ export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope 
       WHERE delivery.user_id = ${alias}.user_id AND delivery.message_id = ${alias}.id
       AND delivery.status IN (SELECT value FROM json_each(?)))`;
     bindings.push(JSON.stringify(scope.deliveryStatuses));
+  }
+  if (scope.search !== undefined) {
+    for (const predicate of workspaceSearchStatePredicates(alias, scope.filter, scope.search)) sectionSql += ` AND ${predicate}`;
+    if (scope.search?.filters.label.length) {
+      const labels = buildLabelSearchPredicate(scope.search, buildFtsSearchPlan(scope.search).labelExpression, 'message', alias);
+      if (labels) {
+        sectionSql += ` AND EXISTS (SELECT 1 FROM workspace_search_documents AS search_document
+          WHERE search_document.user_id = ${alias}.user_id AND search_document.entity_kind = 'message'
+            AND search_document.entity_id = ${alias}.id AND ${labels.sql})`;
+        bindings.push(...labels.bindings);
+      }
+    }
   }
   if (scope.category && scope.category !== 'all') {
     sectionSql += ` AND ${inboxCategorySql(`${alias}.from_email`, `${alias}.subject`, `${alias}.inbox_category_v2`, `${alias}.ai_inbox_category`)} = ?`;

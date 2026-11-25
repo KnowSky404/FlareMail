@@ -470,6 +470,13 @@ describe('versioned D1 migrations', () => {
     expect(pending.all()).toEqual(!hasDelay ? [] : [
       { kind: 'delayed', state: acknowledged ? 'acknowledged' : 'open', eligible_at: eligibility }
     ]);
+    if (ignored === 'email.bounced') {
+      // The final row lacks provenance distinguishing it from a real historical bounce.
+      expect(db.query(`SELECT state, eligible_at FROM workspace_delivery_attention
+        WHERE kind = 'bounced' AND closed_at IS NOT NULL`).all()).toEqual([
+        { state: 'resolved', eligible_at: at(90) }
+      ]);
+    }
     const lateItems = db.query<{ version: number }, []>("SELECT version FROM workspace_delivery_attention WHERE kind = 'delayed' AND closed_at IS NULL").all();
     for (const { version } of lateItems) expect(version).toBeGreaterThan(snapshot.version);
     expect(db.query("SELECT event_type FROM workspace_outbound_events WHERE svix_id = 'ignored-event'").get())

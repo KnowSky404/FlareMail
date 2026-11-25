@@ -5,6 +5,11 @@ import { currentDeliveryAttentionStatement } from './delivery-attention';
 const terminalStatuses = "'delivered', 'bounced', 'failed', 'complained', 'suppressed'";
 const deferredPath = '$._flaremailDeferred';
 const claimPath = '$._flaremailReplayClaim';
+const replayFailurePath = '$._flaremailReplayFailedAt';
+const terminalWaitPath = '$._flaremailWaitForTerminal';
+const terminalEventTypes = "'email.delivered', 'email.bounced', 'email.failed', 'email.complained', 'email.suppressed'";
+const progressEventTypes = "'email.sent', 'email.delivery_delayed'";
+const deferredMetadata = `'${deferredPath}', '${replayFailurePath}', '${terminalWaitPath}'`;
 
 export interface DeferredEventClaim { svixId: string; token: string }
 
@@ -50,7 +55,7 @@ const unconfirmedAttempt = (alias: string, allowExpired = false) => `EXISTS (
   SELECT 1 FROM workspace_delivery_attempts AS attempt
   WHERE attempt.message_id = ${alias}.message_id AND attempt.attempt_number = ${alias}.attempts
     AND attempt.provider_message_id IS NOT ${alias}.provider_message_id
-    AND attempt.completed_at IS NULL AND attempt.error IS NULL
+    AND attempt.status = 'submitting' AND attempt.completed_at IS NULL
     ${allowExpired ? `AND NOT (${expiredAttempt})` : ''}
 )`;
 
@@ -58,11 +63,15 @@ const unacceptedLocalFailure = (alias: string) =>
   `${alias}.status = 'failed' AND ${alias}.last_event IS 'submission' AND attempt.provider_message_id IS NULL`;
 
 // A later acceptance of the same ID can still make pending progress actionable.
-const progressHeldByRejection = (delivery: string, event: string) => `${event}.event_type IN ('email.sent', 'email.delivery_delayed') AND EXISTS (
+const progressHeldByRejection = (delivery: string, event: string) => `${event}.event_type IN (${progressEventTypes}) AND EXISTS (
   SELECT 1 FROM workspace_delivery_attempts attempt
   WHERE attempt.message_id = ${delivery}.message_id AND attempt.attempt_number = ${delivery}.attempts
     AND (${unacceptedLocalFailure(delivery)})
 )`;
+
+const readyDeferredEvent = (delivery: string, event: string) => `
+  (${event}.event_type IN (${terminalEventTypes}) OR NOT (${unconfirmedAttempt(delivery, true)}))
+  AND NOT (${progressHeldByRejection(delivery, event)})`;
 
 const newerProviderEvent = (alias: string) => `
   SELECT 1 FROM workspace_outbound_events newer
@@ -115,7 +124,7 @@ export async function findDeliveryDetailRows(db: D1Database, userId: string, mes
         THEN json_extract(e.payload_json, '$.data.email_id') = e.provider_message_id ELSE 0 END
     )
     SELECT svix_id, provider_message_id, event_type, event_created_at, summary,
-      CASE WHEN ${wasDeferred} THEN json_remove(payload_json, '${deferredPath}') ELSE payload_json END AS payload_json
+      CASE WHEN ${wasDeferred} THEN json_remove(payload_json, ${deferredMetadata}) ELSE payload_json END AS payload_json
     FROM timeline ORDER BY event_created_at DESC, sequence DESC
   `).bind(userId, messageId);
   const [record, history, incident] = await db.batch([status, events, currentDeliveryAttentionStatement(db, userId, messageId)]);
@@ -185,6 +194,9 @@ export function upsertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
     WHERE excluded.attempts >= workspace_delivery_statuses.attempts AND (
       COALESCE(workspace_delivery_statuses.last_event, '') NOT GLOB 'email.*'
       OR (excluded.provider_message_id IS NOT NULL AND excluded.provider_message_id IS NOT workspace_delivery_statuses.provider_message_id)
+      OR (excluded.status = 'failed' AND excluded.provider_message_id IS NULL AND excluded.attempts = workspace_delivery_statuses.attempts
+        AND workspace_delivery_statuses.status IN ('sent', 'delayed') AND workspace_delivery_statuses.last_event IN (${progressEventTypes})
+        AND ${unconfirmedAttempt('workspace_delivery_statuses')})
     )
   `).bind(p.messageId, p.userId, p.status, p.attempts, p.idempotencyKey, p.provider, p.providerMessageId,
     p.lastError, p.submittedAt, p.sentAt, p.deliveredAt, p.lastEvent, p.lastEventAt, p.createdAt, p.updatedAt);
@@ -522,6 +534,21 @@ export function markDeferredOutboundEvent(db: D1Database, svixId: string) {
     )`).bind(svixId);
 }
 
+export function stageLiveTerminalEvent(db: D1Database, svixId: string, claimToken?: string) {
+  return db.prepare(`UPDATE workspace_outbound_events AS live
+    SET payload_json = CASE WHEN EXISTS (
+      SELECT 1 FROM workspace_outbound_events queued
+      WHERE queued.provider = live.provider AND queued.provider_message_id = live.provider_message_id
+        AND queued.message_id = live.message_id AND queued.user_id = live.user_id
+        AND queued.rowid < live.rowid AND queued.event_type IN (${terminalEventTypes})
+        AND (${hasDeferredMarker('queued.payload_json')})
+    ) THEN json_set(live.payload_json, '${deferredPath}', 1, '${terminalWaitPath}', 1)
+      WHEN ?1 IS NOT NULL THEN json_set(live.payload_json, '${claimPath}', ?1)
+      ELSE live.payload_json END
+    WHERE live.svix_id = ?2 AND (?1 IS NOT NULL OR (${hasDeferredMarker('live.payload_json')}))`)
+    .bind(claimToken ?? null, svixId);
+}
+
 export function attachMatchedOutboundEvents(db: D1Database, providerMessageId: string) {
   return db.prepare(`
     UPDATE workspace_outbound_events AS event
@@ -544,16 +571,70 @@ export function attachMatchedOutboundEvents(db: D1Database, providerMessageId: s
   `).bind(providerMessageId);
 }
 
+export function recoverAcceptedProviderAfterRejection(db: D1Database, messageId: string, userId: string) {
+  return db.prepare(`WITH accepted AS MATERIALIZED (
+    SELECT prior.provider_message_id, prior.completed_at
+    FROM workspace_delivery_statuses delivery
+    JOIN workspace_delivery_attempts latest ON latest.message_id = delivery.message_id AND latest.user_id = delivery.user_id
+      AND latest.attempt_number = delivery.attempts AND latest.status = 'failed' AND latest.provider_message_id IS NULL
+    JOIN workspace_delivery_attempts prior ON prior.message_id = delivery.message_id AND prior.user_id = delivery.user_id
+      AND prior.attempt_number < delivery.attempts AND prior.status = 'submitted' AND prior.provider_message_id IS NOT NULL
+      AND prior.provider = delivery.provider AND prior.idempotency_key = delivery.idempotency_key
+    WHERE delivery.message_id = ?1 AND delivery.user_id = ?2 AND delivery.provider = 'resend'
+      AND delivery.status = 'failed' AND delivery.last_event = 'submission'
+    ORDER BY prior.attempt_number DESC LIMIT 1
+  )
+  UPDATE workspace_delivery_statuses AS delivery
+  SET (provider_message_id, submitted_at) = (SELECT provider_message_id, completed_at FROM accepted),
+    sent_at = NULL, delivered_at = NULL
+  WHERE delivery.message_id = ?1 AND delivery.user_id = ?2
+    AND EXISTS (SELECT 1 FROM accepted WHERE provider_message_id IS NOT delivery.provider_message_id)
+  `).bind(messageId, userId);
+}
+
+// This statement runs directly after recovery in the same batch.
+export function attachRecoveredOutboundEvents(db: D1Database, messageId: string, userId: string) {
+  return db.prepare(`UPDATE workspace_outbound_events AS event
+    SET message_id = delivery.message_id, user_id = delivery.user_id,
+      payload_json = json_set(event.payload_json, '${deferredPath}', 1)
+    FROM workspace_delivery_statuses delivery
+    WHERE changes() = 1 AND delivery.message_id = ? AND delivery.user_id = ?
+      AND event.provider = 'resend' AND event.provider_message_id = delivery.provider_message_id
+      AND event.user_id = 'unmatched' AND json_valid(event.payload_json)
+  `).bind(messageId, userId);
+}
+
 export function clearSupersededReplayMarkers(db: D1Database, messageId: string) {
   return db.prepare(`
-    UPDATE workspace_outbound_events AS event SET payload_json = json_remove(payload_json, '${deferredPath}')
+    UPDATE workspace_outbound_events AS event SET payload_json = json_remove(payload_json, ${deferredMetadata})
     FROM workspace_delivery_statuses AS delivery
     WHERE event.message_id = ? AND event.message_id = delivery.message_id AND event.user_id = delivery.user_id
       AND event.provider = 'resend' AND event.provider_message_id <> delivery.provider_message_id AND (${wasDeferred})
   `).bind(messageId);
 }
 
-export function listReadyDeferredProviderIds(db: D1Database, limit: number, userId?: string) {
+const visibleSentMessage = (delivery: string) => `EXISTS (
+  SELECT 1 FROM workspace_messages message
+  WHERE message.id = ${delivery}.message_id AND message.user_id = ${delivery}.user_id
+    AND message.folder = 'sent' AND message.deleted_at IS NULL
+)`;
+
+export function listReadyDeferredProviderIds(db: D1Database, limit: number, userId?: string, messageId?: string) {
+  if (messageId !== undefined) return db.prepare(`
+    SELECT delivery.provider_message_id AS id
+    FROM workspace_delivery_statuses delivery
+    WHERE delivery.user_id = ? AND delivery.message_id = ? AND delivery.provider_message_id IS NOT NULL
+      AND ${visibleSentMessage('delivery')}
+      AND EXISTS (
+        SELECT 1 FROM workspace_outbound_events AS event INDEXED BY idx_workspace_outbound_events_provider_message_id
+        WHERE event.provider_message_id = delivery.provider_message_id AND event.provider = 'resend'
+          AND event.user_id = delivery.user_id AND event.message_id = delivery.message_id
+          AND (${wasDeferred}) AND ${readyDeferredEvent('delivery', 'event')}
+      )
+  `).bind(userId ?? null, messageId).all<{ id: string }>();
+
+  const lastFailure = `MAX(json_extract(event.payload_json, '${replayFailurePath}'))`;
+  // A failed provider goes behind queued work and ahead of future arrivals.
   return db.prepare(`
     SELECT delivery.provider_message_id AS id
     FROM workspace_delivery_statuses delivery
@@ -563,17 +644,32 @@ export function listReadyDeferredProviderIds(db: D1Database, limit: number, user
       AND (${wasDeferred})
       AND event.user_id = delivery.user_id AND event.message_id = delivery.message_id
       AND (?1 IS NULL OR delivery.user_id = ?1)
-      AND NOT (${unconfirmedAttempt('delivery', true)})
-      AND NOT (${progressHeldByRejection('delivery', 'event')})
+      AND ${readyDeferredEvent('delivery', 'event')}
     GROUP BY delivery.provider_message_id
-    ORDER BY MIN(event.event_created_at)
+    ORDER BY COALESCE(${lastFailure}, MIN(julianday(event.created_at)), 0),
+      ${lastFailure} IS NOT NULL, MIN(event.event_created_at)
     LIMIT ?2
   `).bind(userId ?? null, limit).all<{ id: string }>();
 }
 
-export async function listPendingOutboundEvents(db: D1Database, providerMessageId: string, limit: number) {
+export function deferFailedReplayProvider(db: D1Database, providerMessageId: string, userId?: string) {
+  return db.prepare(`UPDATE workspace_outbound_events
+    SET payload_json = json_set(payload_json, '${replayFailurePath}', julianday('now'))
+    WHERE rowid = (
+      SELECT event.rowid FROM workspace_outbound_events event
+      JOIN workspace_delivery_statuses delivery ON delivery.provider_message_id = event.provider_message_id
+        AND delivery.message_id = event.message_id AND delivery.user_id = event.user_id
+      WHERE event.provider = 'resend' AND event.provider_message_id = ?1
+        AND (?2 IS NULL OR delivery.user_id = ?2) AND (${wasDeferred})
+        AND ${readyDeferredEvent('delivery', 'event')}
+      ORDER BY event.event_created_at, event.rowid LIMIT 1
+    )`).bind(providerMessageId, userId ?? null);
+}
+
+export async function listPendingOutboundEvents(db: D1Database, providerMessageId: string, limit: number, allowExpiredAttempt: boolean) {
   return db.prepare(`SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json,
-    ${wasDeferred} AS was_deferred
+    ${wasDeferred} AS was_deferred,
+    CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '${terminalWaitPath}') IS 1 ELSE 0 END AS waits_for_terminal
     FROM workspace_outbound_events event
     WHERE provider = 'resend' AND provider_message_id = ? AND ((${wasDeferred}) OR (
       user_id = 'unmatched' AND julianday(event_created_at) IS NOT NULL
@@ -582,27 +678,32 @@ export async function listPendingOutboundEvents(db: D1Database, providerMessageI
     ))
     AND NOT EXISTS (
       SELECT 1 FROM workspace_delivery_statuses delivery
-      WHERE delivery.provider_message_id = event.provider_message_id AND (${progressHeldByRejection('delivery', 'event')})
+      WHERE delivery.provider_message_id = event.provider_message_id AND (
+        (${progressHeldByRejection('delivery', 'event')})
+        OR (event.event_type IN (${progressEventTypes}) AND ${unconfirmedAttempt('delivery', allowExpiredAttempt)})
+      )
     )
-    ORDER BY event_created_at ASC, rowid ASC LIMIT ?`)
+    ORDER BY waits_for_terminal, CASE WHEN waits_for_terminal THEN rowid END, event_created_at, rowid LIMIT ?`)
     .bind(providerMessageId, limit).all<WorkspaceOutboundEventRow & { was_deferred: number }>();
 }
 
-export function clearPendingOutboundEvent(db: D1Database, svixId: string, messageId: string, userId: string) {
-  return db.prepare(`UPDATE workspace_outbound_events SET payload_json = json_remove(payload_json, '${deferredPath}')
-    WHERE svix_id = ? AND message_id = ? AND user_id = ? AND provider = 'resend' AND (${wasDeferred})`
+export function clearPendingOutboundEvent(db: D1Database, svixId: string, messageId: string, userId: string, visibleSentOnly = false) {
+  return db.prepare(`UPDATE workspace_outbound_events SET payload_json = json_remove(payload_json, ${deferredMetadata})
+    WHERE svix_id = ? AND message_id = ? AND user_id = ? AND provider = 'resend' AND (${wasDeferred})
+    ${visibleSentOnly ? `AND ${visibleSentMessage('workspace_outbound_events')}` : ''}`
   ).bind(svixId, messageId, userId);
 }
 
-export function assignOutboundEvent(db: D1Database, claim: DeferredEventClaim, messageId: string, userId: string, allowUnconfirmed: boolean, allowExpiredAttempt = false) {
+export function assignOutboundEvent(db: D1Database, claim: DeferredEventClaim, messageId: string, userId: string, allowUnconfirmed: boolean, allowExpiredAttempt = false, visibleSentOnly = false) {
   return db.prepare(`UPDATE workspace_outbound_events
-    SET message_id = ?, user_id = ?, payload_json = json_set(json_remove(payload_json, '${deferredPath}'), '${claimPath}', ?)
+    SET message_id = ?, user_id = ?, payload_json = json_set(json_remove(payload_json, ${deferredMetadata}), '${claimPath}', ?)
     WHERE svix_id = ? AND (user_id = 'unmatched'
       OR (user_id = ? AND message_id = ? AND (${wasDeferred}))) AND EXISTS (
       SELECT 1 FROM workspace_delivery_statuses d
       WHERE d.message_id = ? AND d.user_id = ? AND d.provider_message_id = workspace_outbound_events.provider_message_id
         AND (? OR NOT (${unconfirmedAttempt('d', allowExpiredAttempt)}))
         AND NOT (${progressHeldByRejection('d', 'workspace_outbound_events')})
+        ${visibleSentOnly ? `AND ${visibleSentMessage('d')}` : ''}
     )`).bind(messageId, userId, claim.token, claim.svixId, userId, messageId, messageId, userId, Number(allowUnconfirmed));
 }
 

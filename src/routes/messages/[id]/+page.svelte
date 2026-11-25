@@ -50,6 +50,7 @@
   let deliveryDetailError = $state('');
   let deliveryDetailPending = $state(false);
   let deliveryReplayPending = $state(false);
+  let deliveryReplayError = $state(false);
   let attentionPending = $state(false);
   const deliveryRequest = new LatestRequest();
   let deliveryDetailCheckedAt = 0;
@@ -142,6 +143,7 @@
     deliveryRequest.cancel();
     deliveryDetailPending = false;
     deliveryReplayPending = false;
+    deliveryReplayError = false;
     authRecoveryError = '';
     activeController?.abort();
     activeController = null;
@@ -204,12 +206,17 @@
   async function refreshDeliveryDetail() {
     if (!mounted || authExpired || message.folder !== 'sent' || !activeController || deliveryReplayPending) return;
     const { signal } = activeController;
+    const id = message.id;
+    const isCurrent = () => mounted && !authExpired && !signal.aborted && message.id === id;
     deliveryReplayPending = true;
+    deliveryReplayError = false;
     try {
-      const summary = await refreshDeliveryAttentionSummary(signal).catch(() => null);
+      const result = await refreshDeliveryAttentionSummary({ signal, messageId: id }).catch(() => null);
       if (signal.aborted) return;
-      if (summary?.replayed) sync?.publish({ type: 'mailbox-refresh', delivery: true });
+      if (result?.replayed) sync?.publish({ type: 'mailbox-refresh', id, delivery: true });
+      if (!isCurrent()) return;
       await reloadDeliveryDetail();
+      if (isCurrent()) deliveryReplayError = !result || result.replayFailed === true;
     } finally {
       if (!signal.aborted) deliveryReplayPending = false;
     }
@@ -414,6 +421,9 @@
     <main class="fm-reader-body min-h-0 flex-1 overflow-hidden pt-3 sm:pt-6">
       {#if mutationError}
         <p class="mb-3 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">{mutationError}</p>
+      {/if}
+      {#if deliveryReplayError}
+        <p class="mb-3 rounded-[var(--radius-md)] border border-[var(--fm-danger)]/35 bg-[var(--fm-danger-soft)] px-3 py-2 text-xs text-[var(--fm-danger)]" role="alert">{t('notify.deliveryReplayFailed')}</p>
       {/if}
       <MessageDetail
         onApplyAiCategory={applyAiCategory}

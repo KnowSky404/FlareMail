@@ -725,8 +725,13 @@ never as HTML. BCC, raw MIME, attachment bytes and secrets are not searchable.
 
 - `GET /api/workspace/attention/summary` returns `{ pendingCount, snapshot: { version, asOf } }`.
 - `POST /api/workspace/attention/summary` first reconciles ready Resend events
-  for the authenticated Owner, then returns the summary with a `replayed` event count. One request
-  processes up to four provider IDs and four events per ID. It sends no mail.
+  for the authenticated Owner, then returns the summary with a `replayed` event count.
+  A request processes up to four provider IDs and four events per ID. The optional
+  `messageId` query parameter limits replay to the current Resend ID of that owned
+  Sent message. An invalid or repeated parameter returns 400. An inaccessible
+  message triggers no replay. If replay fails, the response includes
+  `replayFailed: true`, the committed replay count and the available summary.
+  It sends no mail.
 - `GET /api/workspace/attention?view=pending|history&kind=<kind>&limit=20&cursor=<opaque>`
   returns `{ notices, nextCursor, summary }`. Pending is the default. The page
   limit is 1–50. The cursor is bound to the Owner, view and type. Each notice has

@@ -12,8 +12,10 @@ import {
   insertOutboundEvent,
   insertOutboundStatus,
   attachMatchedOutboundEvents,
+  attachRecoveredOutboundEvents,
   rememberAcceptedProviderId,
   recordAcceptedResponseOnWebhookReceipt,
+  recoverAcceptedProviderAfterRejection,
   upsertOutboundReceipt,
   upsertOutboundStatus,
   type DeliveryStatusPayload
@@ -261,6 +263,7 @@ async function submitPersistedMessage(
       rememberAcceptedProviderId(env.DB, state),
       finishDeliveryAttempt(env.DB, { messageId: message.id, attemptNumber, providerMessageId: result.providerMessageId,
         status: 'submitted', error: null, completedAt }),
+      ...(attempts > 0 ? [recoverAcceptedProviderAfterRejection(env.DB, message.id, session.userId)] : []),
       clearSupersededReplayMarkers(env.DB, message.id),
       attachMatchedOutboundEvents(env.DB, result.providerMessageId),
       upsertOutboundReceipt(env.DB, { messageId: message.id, userId: session.userId, provider, attemptNumber,
@@ -288,6 +291,10 @@ async function submitPersistedMessage(
       }),
       finishDeliveryAttempt(env.DB, { messageId: message.id, attemptNumber, providerMessageId: null,
         status, error: error.message, completedAt: completed }),
+      ...(status === 'failed' && attempts > 0 ? [
+        recoverAcceptedProviderAfterRejection(env.DB, message.id, session.userId),
+        attachRecoveredOutboundEvents(env.DB, message.id, session.userId)
+      ] : []),
       upsertOutboundReceipt(env.DB, { messageId: message.id, userId: session.userId, provider, attemptNumber,
         resultKind: resultKind(status, error), remoteStatus: error.remoteStatus, responsePreview: error.responsePreview,
         lastEvent: 'submission', lastEventAt: completedAt, createdAt: completedAt, updatedAt: completedAt }),

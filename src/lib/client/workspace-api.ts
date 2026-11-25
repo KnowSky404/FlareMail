@@ -209,10 +209,11 @@ export function fetchDeliveryDetail(messageId: string, signal?: AbortSignal) {
   );
 }
 
-export type DeliveryAttentionRefresh = DeliveryAttentionSummary & { replayed: number };
+export type DeliveryAttentionRefresh = DeliveryAttentionSummary & { replayed: number; replayFailed?: true };
 
-export function refreshDeliveryAttentionSummary(signal?: AbortSignal) {
-  return requestJson<DeliveryAttentionRefresh>('/api/workspace/attention/summary', { method: 'POST', signal });
+export function refreshDeliveryAttentionSummary({ signal, messageId }: { signal?: AbortSignal; messageId?: string } = {}) {
+  const query = messageId ? '?' + new URLSearchParams({ messageId }) : '';
+  return requestJson<DeliveryAttentionRefresh>('/api/workspace/attention/summary' + query, { method: 'POST', signal });
 }
 
 export function mutateDeliveryAttention(action: DeliveryAttentionAction, signal?: AbortSignal) {

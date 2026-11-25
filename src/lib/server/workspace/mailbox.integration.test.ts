@@ -1304,6 +1304,35 @@ describe('D1 mailbox pages', () => {
       expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
     });
 
+  test.each([
+    ['is:starred', "UPDATE workspace_messages SET is_starred = 0 WHERE id = 'sent-1'"],
+    ['is:unread', "UPDATE workspace_messages SET is_read = 1 WHERE id = 'sent-1'"],
+    ['label:review', "DELETE FROM mail_message_labels WHERE message_id = 'sent-1'"],
+    ['has:attachment', "DELETE FROM workspace_attachments WHERE id = 'sent-file'"]
+  ])('skips a Sent Attention thread message that stops matching %s before the write', async (search, change) => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      INSERT INTO workspace_users (id, name, role) VALUES ('user-1', 'Ada', 'owner');
+      UPDATE workspace_messages SET thread_key = 'legacy:sent-thread', is_starred = 1, is_read = 0 WHERE id = 'sent-1';
+      UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'sent-1';
+      INSERT INTO workspace_attachments (id, user_id, message_id, filename, content_type, size, r2_key, relation_type)
+      VALUES ('sent-file', 'user-1', 'sent-1', 'sent.txt', 'text/plain', 1, 'sent/file', 'message');
+    `);
+    const label = await createMailLabel(env.DB, workspace.userId, 'Review');
+    await setMailMessageLabel(env.DB, workspace.userId, label.id, { kind: 'workspace', id: 'sent-1' }, true);
+    const db = env.DB as unknown as TestD1;
+    db.beforeBatch = () => {
+      database.exec(change);
+      db.beforeBatch = undefined;
+    };
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'trash', messageIds: ['sent-1'], threadKeys: ['legacy:sent-thread'],
+      scope: mutationScope('sent', null, 'filtered', search, 'attention')
+    });
+    expect(result).toMatchObject({ summaries: [], skippedCount: 1 });
+    expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
+  });
+
   test.each([true, false])('counts a selection that leaves attention before anchor validation (%s) or expansion', async (beforeRequest) => {
     const { env, workspace, database } = fixture();
     database.exec(`
@@ -1322,6 +1351,27 @@ describe('D1 mailbox pages', () => {
       scope: mutationScope('sent', null, 'filtered', '', 'attention') };
     expect(await mutateWorkspaceMailbox(env, workspace, input)).toMatchObject({ summaries: [], skippedCount: 1 });
     expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
+  });
+
+  test('applies the full filtered Sent search to explicitly selected unthreaded messages', async () => {
+    const { env, workspace, database } = fixture();
+    database.exec(`
+      UPDATE workspace_messages SET subject = 'Invoice thread', thread_key = 'legacy:sent-thread' WHERE id = 'sent-1';
+      INSERT INTO workspace_messages
+        (id, user_id, folder, from_name, from_email, to_name, to_email, subject, sent_at)
+      VALUES ('unthreaded-invoice', 'user-1', 'sent', 'Ada', 'ada@example.test', 'Bob', 'bob@example.test', 'Invoice without thread', '2026-08-13T09:00:00.000Z'),
+        ('unthreaded-status', 'user-1', 'sent', 'Ada', 'ada@example.test', 'Bob', 'bob@example.test', 'Status update', '2026-08-13T09:00:00.000Z');
+      UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'sent-1';
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, last_event_at)
+      SELECT id, user_id, 'delayed', 1, '2026-08-13T09:00:00.000Z' FROM workspace_messages WHERE id LIKE 'unthreaded-%';
+    `);
+    const result = await mutateWorkspaceMailbox(env, workspace, {
+      action: 'trash', messageIds: ['sent-1', 'unthreaded-invoice', 'unthreaded-status'], threadKeys: ['legacy:sent-thread'],
+      scope: mutationScope('sent', null, 'filtered', 'subject:Invoice', 'attention')
+    });
+    expect(result.skippedCount).toBe(1);
+    expect(result.summaries.map(({ id }) => id).sort()).toEqual(['sent-1', 'unthreaded-invoice']);
+    expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'unthreaded-status'").get()).toEqual({ deleted_at: null });
   });
 
   test('filtered thread actions apply the current server-side search query', async () => {

@@ -27,12 +27,14 @@ class TestStatement {
 
 class TestD1 {
   beforePrepare?: (sql: string) => void;
+  beforeBatch?: () => Promise<void>;
   constructor(readonly database: Database) {}
   prepare(sql: string) {
     this.beforePrepare?.(sql);
     return new TestStatement(this.database, sql) as unknown as D1PreparedStatement;
   }
   async batch(statements: D1PreparedStatement[]) {
+    if (this.beforeBatch) await this.beforeBatch();
     return this.database.transaction(() =>
       statements.map((statement) => (statement as unknown as TestStatement).execute()))();
   }
@@ -154,6 +156,84 @@ describe('outbound workspace persistence', () => {
     database.close();
   });
 
+  test.each([-1, 1])('applies the queued terminal outcome before a live conflict offset by %s second', async (offset) => {
+    const { env, database, session } = setup();
+    const d1 = env.DB as unknown as TestD1;
+    const gateway = new FakeOutboundGateway({ providerMessageId: 're_terminal_order' });
+    const at = (second: number) => new Date(Date.UTC(2027, 0, 15, 8, 0, second)).toISOString();
+    const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Early bounce', body: 'Body' }, {
+      requestId: 'early-bounce',
+      gateway: {
+        async send(input) {
+          await applyResendDeliveryWebhook(env, 'early-bounce', {
+            type: 'email.bounced', created_at: at(1), data: { email_id: 're_terminal_order' }
+          });
+          d1.beforePrepare = (sql) => {
+            if (sql.includes('AS was_deferred')) throw new Error('transient replay read failure');
+          };
+          return gateway.send(input);
+        }
+      }
+    });
+    d1.beforePrepare = undefined;
+    expect(sent.message.deliveryStatus).toBe('submitted');
+    await applyResendDeliveryWebhook(env, 'live-delivery', {
+      type: 'email.delivered', created_at: at(1 + offset), data: { email_id: 're_terminal_order' }
+    });
+    await reconcileDeferredResendEvents(env);
+
+    const detail = await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id);
+    expect(detail).toMatchObject({
+      status: 'bounced', lastEvent: 'email.bounced', attention: { kind: 'bounced', state: 'open' }
+    });
+    expect(detail?.events.map(({ id }) => id)).toContain('live-delivery');
+    expect(await reconcileDeferredResendEvents(env)).toBe(0);
+    database.close();
+  });
+
+  test('orders a terminal webhook whose lookup raced with provider acceptance', async () => {
+    const { env, database, session } = setup();
+    const d1 = env.DB as unknown as TestD1;
+    const started = Promise.withResolvers<void>();
+    const accept = Promise.withResolvers<void>();
+    const providerMessageId = 're_terminal_acceptance';
+    const gateway = new FakeOutboundGateway({ providerMessageId });
+    const sent = sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Acceptance race', body: 'Body' }, {
+      requestId: 'terminal-acceptance-race',
+      gateway: {
+        async send(input) {
+          started.resolve();
+          await accept.promise;
+          return gateway.send(input);
+        }
+      }
+    });
+    const webhook = (id: string, type: string, second: number) => applyResendDeliveryWebhook(env, id, {
+      type, created_at: new Date(Date.UTC(2027, 0, 15, 8, 0, second)).toISOString(), data: { email_id: providerMessageId }
+    });
+    await started.promise;
+    await webhook('early-complaint', 'email.complained', 2);
+    await webhook('early-bounce', 'email.bounced', 1);
+    d1.beforeBatch = async () => {
+      d1.beforeBatch = undefined;
+      d1.beforePrepare = (sql) => {
+        if (sql.includes('AS was_deferred')) throw new Error('transient replay read failure');
+      };
+      accept.resolve();
+      await sent;
+      d1.beforePrepare = undefined;
+    };
+
+    expect(await webhook('racing-delivery', 'email.delivered', 0)).toMatchObject({ matched: false });
+    const { message } = await sent;
+    expect(message.deliveryStatus).toBe('submitted');
+    expect(await reconcileDeferredResendEvents(env)).toBe(3);
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, message.id)).toMatchObject({
+      status: 'bounced', lastEvent: 'email.bounced', attention: { kind: 'bounced', state: 'open' }
+    });
+    database.close();
+  });
+
   test('a late first acceptance attaches the provider ID without restoring an older attempt', async () => {
     const { env, database, session } = setup();
     const started = Promise.withResolvers<void>();
@@ -270,6 +350,52 @@ describe('outbound workspace persistence', () => {
     expect(detail?.events).toContainEqual(expect.objectContaining({ id: 'overlap-delivered', providerMessageId }));
     expect(database.query('SELECT provider_message_id, attempts FROM workspace_delivery_statuses WHERE message_id = ?').get(messageId))
       .toEqual({ provider_message_id: providerMessageId, attempts: 3 });
+    database.close();
+  });
+
+  test.each([false, true])('keeps the overlapping accepted ID when the newer retry is rejected (accepted first %s)', async (acceptedFirst) => {
+    const { env, database, session } = setup();
+    const priorId = 're_before_rejection';
+    const replacementId = 're_confirmed_replacement';
+    const sent = await sendWorkspaceMessage(env, session, {
+      toEmail: 'alice@example.net', subject: 'Overlapping rejection', body: 'Body'
+    }, { requestId: 'overlapping-rejection', gateway: new FakeOutboundGateway({ providerMessageId: priorId }) });
+    const messageId = sent.message.id;
+    await applyResendDeliveryWebhook(env, 'rejection-prior-delay', {
+      type: 'email.delivery_delayed', created_at: new Date().toISOString(), data: { email_id: priorId }
+    });
+
+    const olderStarted = Promise.withResolvers<void>();
+    const olderFinish = Promise.withResolvers<void>();
+    const newerStarted = Promise.withResolvers<void>();
+    const newerFinish = Promise.withResolvers<void>();
+    const older = retryWorkspaceMessageDelivery(env, session, messageId, { gateway: { async send() {
+      olderStarted.resolve();
+      await olderFinish.promise;
+      return { status: 'submitted', providerMessageId: replacementId, remoteStatus: 202 };
+    } } });
+    await Promise.race([olderStarted.promise, older]);
+    const newer = retryWorkspaceMessageDelivery(env, session, messageId, { gateway: { async send() {
+      newerStarted.resolve();
+      await newerFinish.promise;
+      throw new OutboundGatewayError('client_error', 'retry rejected', { remoteStatus: 422 });
+    } } });
+    try {
+      await Promise.race([newerStarted.promise, newer]);
+      if (acceptedFirst) { olderFinish.resolve(); await older; }
+      else { newerFinish.resolve(); await newer; }
+      expect(await applyResendDeliveryWebhook(env, 'replacement-delivered', {
+        type: 'email.delivered', created_at: new Date().toISOString(), data: { email_id: replacementId }
+      })).toMatchObject({ matched: false });
+    } finally {
+      olderFinish.resolve();
+      newerFinish.resolve();
+      await Promise.all([older, newer]);
+    }
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, messageId))
+      .toMatchObject({ status: 'delivered', resultKind: 'accepted', lastEvent: 'email.delivered', attention: null });
+    expect(database.query('SELECT provider_message_id, attempts FROM workspace_delivery_statuses WHERE message_id = ?').get(messageId))
+      .toEqual({ provider_message_id: replacementId, attempts: 3 });
     database.close();
   });
 
@@ -406,8 +532,8 @@ describe('outbound workspace persistence', () => {
     });
   });
 
-  test.each(['rate_limited', 'timeout'] as const)('replays a deferred sent event for the prior delivery after retry %s', async (kind) => {
-    const { env, session } = setup();
+  test.each(['rate_limited', 'timeout', 'network_unknown'] as const)('preserves the prior event until retry %s is settled', async (kind) => {
+    const { env, session, database } = setup();
     const providerId = 're_rate_limit_prior';
     const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Rate limit', body: 'Body' }, {
       requestId: 'rate-limit-replay', gateway: new FakeOutboundGateway({ providerMessageId: providerId })
@@ -424,10 +550,22 @@ describe('outbound workspace persistence', () => {
         throw new OutboundGatewayError(kind, `retry ${kind}`);
       }
     } });
-    expect(result?.message).toMatchObject({ deliveryStatus: 'sent', deliveryLastEvent: 'email.sent' });
+    if (kind === 'rate_limited') {
+      expect(result?.message).toMatchObject({ deliveryStatus: 'sent', deliveryLastEvent: 'email.sent' });
+    } else {
+      expect(result?.message).toMatchObject({ deliveryStatus: 'submitting', deliveryLastEvent: 'submission' });
+      expect(await applyResendDeliveryWebhook(env, 'sent-after-uncertain-retry', {
+        type: 'email.sent', created_at: new Date().toISOString(), data: { email_id: providerId }
+      })).toMatchObject({ matched: true, ignored: true });
+      expect(await reconcileDeferredResendEvents(env)).toBe(0);
+      database.query("UPDATE workspace_delivery_attempts SET started_at = datetime('now', '-16 minutes') WHERE message_id = ? AND attempt_number = 2")
+        .run(sent.message.id);
+      expect(await reconcileDeferredResendEvents(env)).toBe(2);
+    }
     expect(await getWorkspaceMessageDeliveryDetail(env, session, sent.message.id)).toMatchObject({
       status: 'sent', lastEvent: 'email.sent', attention: { kind: 'delayed', state: 'open' }
     });
+    database.close();
   });
 
   test.each([
@@ -466,7 +604,10 @@ describe('outbound workspace persistence', () => {
     expect(detail?.events).toContainEqual(expect.objectContaining({ id: 'prior-id-webhook', type }));
   });
 
-  test.each(['email.sent', 'email.delivery_delayed'] as const)('preserves %s replayed while a same-ID retry is still returning', async (type) => {
+  test.each([
+    ['email.sent', 'accepted'], ['email.delivery_delayed', 'accepted'],
+    ['email.sent', 'rejected'], ['email.delivery_delayed', 'rejected']
+  ] as const)('reconciles %s when an overdue same-ID retry is %s', async (type, outcome) => {
     const { env, session, database } = setup();
     const providerId = 're_slow_retry';
     const initial = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Slow retry', body: 'Body' }, {
@@ -476,6 +617,7 @@ describe('outbound workspace persistence', () => {
     await applyResendDeliveryWebhook(env, 'slow-original-delay', {
       type: 'email.delivery_delayed', created_at: new Date(Date.now() - 4000).toISOString(), data: { email_id: providerId }
     });
+    let replayed = 0;
     const retry = await retryWorkspaceMessageDelivery(env, session, messageId, { gateway: {
       async send() {
         database.query('UPDATE workspace_delivery_attempts SET started_at = ? WHERE message_id = ? AND attempt_number = 2')
@@ -484,16 +626,79 @@ describe('outbound workspace persistence', () => {
           type, created_at: new Date().toISOString(), data: { email_id: providerId }
         });
         expect(event).toMatchObject({ matched: true, ignored: true });
-        await reconcileDeferredResendEvents(env);
+        replayed = await reconcileDeferredResendEvents(env);
+        if (outcome === 'rejected') throw new OutboundGatewayError('client_error', 'retry rejected', { remoteStatus: 422 });
         return { status: 'submitted', providerMessageId: providerId, remoteStatus: 200 };
       }
     } });
-    expect(retry?.message).toMatchObject({ deliveryLastEvent: type, deliveryAttempts: 2 });
-    expect(await getWorkspaceMessageDeliveryDetail(env, session, messageId)).toMatchObject({
-      status: type === 'email.sent' ? 'sent' : 'delayed', lastEvent: type
-    });
+    expect(replayed).toBe(1);
+    const finalEvent = outcome === 'rejected' ? 'submission' : type;
+    const finalStatus = outcome === 'rejected' ? 'failed' : type === 'email.sent' ? 'sent' : 'delayed';
+    expect(retry?.message).toMatchObject({ deliveryStatus: finalStatus, deliveryLastEvent: finalEvent, deliveryAttempts: 2 });
+    const detail = await getWorkspaceMessageDeliveryDetail(env, session, messageId);
+    expect(detail).toMatchObject({ status: finalStatus, lastEvent: finalEvent });
+    if (outcome === 'rejected') {
+      expect(retry?.message).toMatchObject({ deliveryRemoteStatus: 422, deliveryResultKind: 'permanent_failure' });
+      expect(database.query(`SELECT state FROM workspace_delivery_attention
+        WHERE message_id = ? AND attempt_number = 2 AND kind = 'failed' AND closed_at IS NULL`).get(messageId))
+        .toEqual({ state: 'open' });
+    }
     expect(database.query('SELECT status, provider_message_id FROM workspace_delivery_attempts WHERE message_id = ? AND attempt_number = 2').get(messageId))
-      .toEqual({ status: 'submitted', provider_message_id: providerId });
+      .toEqual(outcome === 'rejected'
+        ? { status: 'failed', provider_message_id: null }
+        : { status: 'submitted', provider_message_id: providerId });
+  });
+
+  test.each(['scheduled', 'focused'])('replays an already-queued terminal event during a live retry (%s)', async (mode) => {
+    const { env, database, session } = setup();
+    const d1 = env.DB as unknown as TestD1;
+    const providerId = 're_queued_terminal_retry';
+    const gateway = new FakeOutboundGateway({ providerMessageId: providerId });
+    const webhook = (id: string, type: string, second: number) => applyResendDeliveryWebhook(env, id, {
+      type, created_at: new Date(Date.UTC(2027, 0, 15, 8, 0, second)).toISOString(), data: { email_id: providerId }
+    });
+    const { message } = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Queued terminal', body: 'Body' }, {
+      requestId: 'queued-terminal-retry',
+      gateway: {
+        async send(input) {
+          await webhook('queued-bounce', 'email.bounced', 10);
+          d1.beforePrepare = (sql) => {
+            if (sql.includes('AS was_deferred')) throw new Error('transient replay read failure');
+          };
+          return gateway.send(input);
+        }
+      }
+    });
+    d1.beforePrepare = undefined;
+    await webhook('live-delay', 'email.delivery_delayed', 0);
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const retry = retryWorkspaceMessageDelivery(env, session, message.id, { gateway: {
+      async send(input) {
+        started.resolve();
+        await finish.promise;
+        return gateway.send(input);
+      }
+    } });
+    await started.promise;
+    try {
+      for (let i = 1; i <= 4; i++) {
+        expect(await webhook(`held-sent-${i}`, 'email.sent', i)).toMatchObject({ ignored: true });
+      }
+      const scope = mode === 'focused' ? { userId: session.userId, messageId: message.id } : {};
+      expect(await reconcileDeferredResendEvents(env, scope)).toBe(1);
+      expect(await getWorkspaceMessageDeliveryDetail(env, session, message.id)).toMatchObject({
+        status: 'bounced', lastEvent: 'email.bounced', attention: { kind: 'bounced', state: 'open' }
+      });
+      expect(database.query(`SELECT COUNT(*) AS count FROM workspace_outbound_events
+        WHERE svix_id GLOB 'held-sent-*' AND json_extract(payload_json, '$._flaremailDeferred') = 1`).get())
+        .toEqual({ count: 4 });
+    } finally {
+      finish.resolve();
+      await retry;
+    }
+    expect((await retry)?.message).toMatchObject({ deliveryStatus: 'bounced', deliveryAttempts: 2 });
+    database.close();
   });
 
   test('records the successful HTTP response without replacing a same-ID bounce during retry', async () => {
