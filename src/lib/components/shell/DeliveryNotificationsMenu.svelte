@@ -9,12 +9,13 @@
   import { formatNumber, translateCount } from '$lib/i18n';
   import { useLocale } from '$lib/i18n/runtime.svelte';
 
-  let { notifications, onAct, onViewMessage, onOpenDiagnostics, onOpenChange }: {
+  let { notifications, onAct, onViewMessage, onOpenDiagnostics, onOpenChange, onRefresh }: {
     notifications: DeliveryNotifications;
     onAct: (action: DeliveryAttentionAction, messageId?: string) => Promise<boolean>;
     onViewMessage: (id: string) => void;
     onOpenDiagnostics: () => void;
     onOpenChange: (open: boolean) => void;
+    onRefresh: () => void;
   } = $props();
 
   const i18n = useLocale();
@@ -101,6 +102,7 @@
             <IconButton ariaLabel={t('attention.refresh')} title={t('attention.refresh')} onclick={() => {
               notifications.invalidate();
               void notifications.checkHealth(true);
+              onRefresh();
             }} disabled={notifications.loading || Boolean(notifications.mutation)}><RefreshCw size={16} aria-hidden="true" /></IconButton>
             <IconButton id="notification-close" tooltipSide="left" ariaLabel={t('common.close')} title={t('common.close')} onclick={() => close(true)}><X size={17} aria-hidden="true" /></IconButton>
           </div>

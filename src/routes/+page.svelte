@@ -3372,6 +3372,7 @@
   <DeliveryNotificationsMenu
     {notifications}
     onAct={handleAttentionAction}
+    onRefresh={refreshAttentionReader}
     onViewMessage={(messageId) => goFromNotifications({ section: 'sent', query: '', filter: 'all', identityFilter: null, messageId })}
     onOpenDiagnostics={() => goFromNotifications({ section: 'profile', managementView: 'settings', settingsTab: 'diagnostics' })}
     onOpenChange={(open) => { notifications.setOpen(open); onOpenChange(open); }}
