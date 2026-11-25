@@ -8,18 +8,26 @@ const claimPath = '$._flaremailReplayClaim';
 
 export interface DeferredEventClaim { svixId: string; token: string }
 
+// Events queued before the provider ID was known replay in provider timestamp order.
+const receivedBeforeAcceptance = (event: string) => `${event}.rowid < COALESCE((
+  SELECT MIN(acceptance.rowid) FROM workspace_outbound_events acceptance
+  WHERE acceptance.message_id = ${event}.message_id AND acceptance.user_id = ${event}.user_id
+    AND acceptance.provider = ${event}.provider AND acceptance.provider_message_id = ${event}.provider_message_id
+    AND acceptance.event_type = 'submission'
+), ${event}.rowid)`;
+
 function replayGuard(claim?: DeferredEventClaim, checkDelayOrder = false) {
   return claim
     ? { sql: `AND EXISTS (
       SELECT 1 FROM workspace_outbound_events claim
       WHERE claim.svix_id = ? AND json_extract(claim.payload_json, '${claimPath}') = ?
-      ${checkDelayOrder ? `AND NOT EXISTS (
+      ${checkDelayOrder ? `AND ((${receivedBeforeAcceptance('claim')}) OR NOT EXISTS (
         SELECT 1 FROM workspace_outbound_events sent
         WHERE sent.provider = claim.provider AND sent.provider_message_id = claim.provider_message_id
           AND (sent.user_id = 'unmatched' OR (sent.user_id = claim.user_id AND sent.message_id = claim.message_id))
           AND sent.event_type = 'email.sent' AND sent.rowid < claim.rowid
           AND julianday(sent.event_created_at) > julianday(claim.event_created_at)
-      )` : ''}
+      ))` : ''}
     )`, args: [claim.svixId, claim.token] }
     : { sql: '', args: [] };
 }
@@ -424,7 +432,8 @@ export function keepDeferredDelayAfterSent(db: D1Database, messageId: string, cl
         SELECT 1 FROM workspace_outbound_events sent
         WHERE sent.message_id = delivery.message_id AND sent.user_id = delivery.user_id
           AND sent.provider_message_id = delivery.provider_message_id AND sent.event_type = 'email.sent'
-          AND sent.event_created_at = delivery.last_event_at AND sent.rowid > delay.rowid
+          AND sent.event_created_at = delivery.last_event_at
+          AND (sent.rowid > delay.rowid OR ${receivedBeforeAcceptance('delay')})
       )
       AND NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attention attention

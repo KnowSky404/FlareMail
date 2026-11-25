@@ -737,6 +737,31 @@ describe('Owner delivery attention', () => {
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
   });
 
+  test.each([false, true])('keeps an older delay queued before first acceptance (sent already replayed %s)', async (sentReplayed) => {
+    const { database, env } = setup();
+    const sentAt = '2027-01-15T08:03:00.000Z';
+    database.exec("UPDATE workspace_delivery_statuses SET status = 'submitting', provider_message_id = NULL");
+    expect(await applyResendDeliveryWebhook(env, 'early-sent', payload('email.sent', sentAt))).toMatchObject({ matched: false });
+    expect(await applyResendDeliveryWebhook(env, 'early-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z')))
+      .toMatchObject({ matched: false });
+    database.exec(`
+      UPDATE workspace_delivery_statuses SET status = 'submitted', provider_message_id = 're_1';
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      VALUES ('local:message-1:submission:1', 'message-1', 'user-1', 'resend', 're_1', 'submission', '2027-01-15T08:04:00.000Z');
+    `);
+    await attachMatchedOutboundEvents(env.DB, 're_1').run();
+    if (sentReplayed) {
+      database.query("UPDATE workspace_delivery_statuses SET status = 'sent', last_event = 'email.sent', last_event_at = ?").run(sentAt);
+      database.query("UPDATE workspace_outbound_receipts SET last_event = 'email.sent', last_event_at = ?").run(sentAt);
+      database.exec("UPDATE workspace_outbound_events SET payload_json = json_remove(payload_json, '$._flaremailDeferred') WHERE svix_id = 'early-sent'");
+    }
+
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(sentReplayed ? 1 : 2);
+    expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: 'sent', receipt: { last_event: 'email.sent' }, attention: { kind: 'delayed', state: 'open' }
+    });
+  });
+
   test.each([true, false])('replays a sent webhook and older delay in arrival order (sent first %s)', async (sentFirst) => {
     const { database, env } = setup();
     const startedAt = '2027-01-15T08:01:00.000Z';
