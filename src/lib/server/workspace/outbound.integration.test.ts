@@ -379,6 +379,36 @@ describe('outbound workspace persistence', () => {
     });
   });
 
+  test.each([
+    ['email.sent', true], ['email.sent', false],
+    ['email.delivery_delayed', true], ['email.delivery_delayed', false]
+  ] as const)('keeps a newer local retry failure after pre-retry %s (queued %s)', async (type, queued) => {
+    const { env, session } = setup();
+    const providerId = 're_rejected_retry';
+    const initial = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Rejected retry', body: 'Body' }, {
+      requestId: 'rejected-retry', gateway: new FakeOutboundGateway({ providerMessageId: providerId })
+    });
+    const messageId = initial.message.id;
+    const at = (offset: number) => new Date(Date.now() + offset).toISOString();
+    await applyResendDeliveryWebhook(env, 'original-delay', {
+      type: 'email.delivery_delayed', created_at: at(-4_000), data: { email_id: providerId }
+    });
+    const olderWebhook = { type, created_at: at(-1_000), data: { email_id: providerId } };
+    await retryWorkspaceMessageDelivery(env, session, messageId, { gateway: {
+      async send() {
+        if (queued) expect(await applyResendDeliveryWebhook(env, 'pre-retry-webhook', olderWebhook)).toMatchObject({ ignored: true });
+        throw new OutboundGatewayError('client_error', 'retry rejected', { remoteStatus: 422, retryable: false });
+      }
+    } });
+    if (!queued) expect(await applyResendDeliveryWebhook(env, 'pre-retry-webhook', olderWebhook)).toMatchObject({ ignored: true });
+
+    const detail = await getWorkspaceMessageDeliveryDetail(env, session, messageId);
+    expect(detail).toMatchObject({
+      status: 'failed', resultKind: 'permanent_failure', lastEvent: 'submission', attention: { kind: 'failed', state: 'open' }
+    });
+    expect(detail?.events).toContainEqual(expect.objectContaining({ id: 'pre-retry-webhook', type }));
+  });
+
   test.each(['email.sent', 'email.delivery_delayed'] as const)('preserves %s replayed while a same-ID retry is still returning', async (type) => {
     const { env, session, database } = setup();
     const providerId = 're_slow_retry';
