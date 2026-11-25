@@ -3137,7 +3137,7 @@
         selectedMessageId = current.id;
         deepLinkedMessage = current;
       }
-      void mailboxController.refresh('sent', searchQuery, mailFilter, mailIdentityFilter);
+      void mailboxController.refresh('sent', searchQuery, mailFilter, mailIdentityFilter, null, 'all', true);
     }
   }
 
