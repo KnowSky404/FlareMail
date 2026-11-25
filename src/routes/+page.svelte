@@ -203,8 +203,9 @@
   const ownerMetricsRequest = new LatestRequest();
   let ownerMetrics = $state<WorkspaceMetrics | null>(null);
   const notifications = new DeliveryNotifications(() => {
-    refreshAttentionReader(undefined, true);
-    workspaceSync?.publish({ type: 'delivery-attention-changed' });
+    const change = { type: 'mailbox-refresh', delivery: true } as const;
+    handleWorkspaceSync(change, false);
+    workspaceSync?.publish(change);
   });
   const readActivation = new ReadActivationController();
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
@@ -1867,7 +1868,7 @@
     });
   }
 
-  function handleWorkspaceSync(event: import('$lib/client/workspace-sync').WorkspaceSyncEvent) {
+  function handleWorkspaceSync(event: import('$lib/client/workspace-sync').WorkspaceSyncEvent, refreshNotifications = true) {
     if (event.type === 'blocked-senders-changed') return;
     if (event.type === 'session-ended') {
       if (!authenticated) return;
@@ -1897,7 +1898,20 @@
       refreshAttentionReader(event.id);
       return;
     }
-    if (event.delivery) notifications.invalidate();
+    if (event.delivery) {
+      if (refreshNotifications) void notifications.invalidate();
+      if (!event.id) {
+        deliveryDetailCache.reset();
+        const current = selectedMessage;
+        if (current?.folder === 'sent' && messageReaderVisible) {
+          if (activeSection === 'sent' && mailFilter === 'attention') {
+            selectedMessageId = current.id;
+            deepLinkedMessage = current;
+          }
+          void loadDeliveryDetail(current, true);
+        }
+      }
+    }
 
     mailboxController.invalidate();
     metricsCache.clear();
@@ -1917,7 +1931,7 @@
       else void loadWorkspaceBody(current, true);
       if (current.folder === 'sent' && current.source === 'workspace') void loadDeliveryDetail(current, true);
     }
-    void refreshWorkspace(false).then(() => {
+    void refreshWorkspace(false, event.delivery === true && !event.id).then(() => {
       if (event.delivery && viewingDiagnostics) void refreshOwnerMetrics(true);
     });
   }
