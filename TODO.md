@@ -2,7 +2,7 @@
 
 ## 已完成，待操作者在隔离 preview / production 验证
 
-- 投递异常关注：顶部 Owner 提醒、待处理筛选、确认与重开、历史及独立系统健康。远程 rollout 需核对 schema 39 的兼容切换与回退边界。[投递异常 Spec](docs/specs/delivery-attention-lifecycle.md)
+- 投递异常关注：顶部 Owner 提醒、待处理筛选、确认与重开、历史及独立系统健康。远程 rollout 需核对 schema 40 的兼容切换与回退边界。[投递异常 Spec](docs/specs/delivery-attention-lifecycle.md)
 
 - `0011`–`0017` append-only migrations：多收件人、R2 正文分层、统一垃圾箱、入站技术元数据、owner-scoped FTS5、草稿/外发附件，以及 lease/retry/manual-review R2 cleanup queue。
 - To/CC/BCC 地址数组、Reply / Reply All / Forward、RFC threading headers，以及不污染正文的结构化 provider envelope。

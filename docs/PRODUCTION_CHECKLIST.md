@@ -375,8 +375,8 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
 - [ ] Rehearse rollback on the additive schema: original columns remain, but new-category choices are stored separately and older code will not see them. Preserve the upgraded data and deploy a compatible rollback binary rather than dropping columns/jobs or restoring over unreviewed new mail.
 
 
-## Schema 39 delivery attention upgrade
+## Schema 40 delivery attention upgrade
 
-- [ ] Review [migration and lifecycle](specs/delivery-attention-lifecycle.md), exact SHA and D1 size. The new Worker requires schema 39. Confirm PRE separation and inventory every live Worker and webhook binding that uses the affected database.
-- [ ] Prepare a verified recovery bookmark or snapshot and a schema-39-compatible code rollback, or schedule an approved controlled cutover. Apply pending migrations 0033 through 0039 in order and verify migration metadata, trigger/index existence, the unresolved delay backfill and deferred legacy failures, Owner visibility and authenticated system readiness.
+- [ ] Review [migration and lifecycle](specs/delivery-attention-lifecycle.md), exact SHA and D1 size. The new Worker requires schema 40. Confirm PRE separation and inventory every live Worker and webhook binding that uses the affected database.
+- [ ] Prepare a verified recovery bookmark or snapshot and a schema-40-compatible code rollback, or schedule an approved controlled cutover. Apply pending migrations 0033 through 0040 in order and verify migration metadata, trigger/index existence, the unresolved delay backfill and deferred legacy terminal outcomes, Owner visibility and authenticated system readiness.
 - [ ] Accept the full lifecycle with synthetic data only in isolated PRE. For shared environments use explicitly authorized read-only checks. In production verify Owner counts, existing sent states and history without changing a real message unless authorized.
