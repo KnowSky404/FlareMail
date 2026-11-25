@@ -147,8 +147,7 @@ export function upsertOutboundStatus(db: D1Database, p: DeliveryStatusPayload) {
         THEN excluded.delivered_at ELSE COALESCE(excluded.delivered_at, workspace_delivery_statuses.delivered_at) END,
       last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
     WHERE excluded.attempts >= workspace_delivery_statuses.attempts AND (
-      workspace_delivery_statuses.status NOT IN (${terminalStatuses})
-      OR COALESCE(workspace_delivery_statuses.last_event, '') NOT GLOB 'email.*'
+      COALESCE(workspace_delivery_statuses.last_event, '') NOT GLOB 'email.*'
       OR (excluded.provider_message_id IS NOT NULL AND excluded.provider_message_id IS NOT workspace_delivery_statuses.provider_message_id)
     )
   `).bind(p.messageId, p.userId, p.status, p.attempts, p.idempotencyKey, p.provider, p.providerMessageId,
@@ -209,7 +208,7 @@ export function upsertOutboundReceipt(db: D1Database, p: DeliveryReceiptPayload 
     INSERT INTO workspace_outbound_receipts (message_id, user_id, provider, result_kind, remote_status, response_preview, last_event, last_event_at, created_at, updated_at)
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (
       SELECT 1 FROM workspace_delivery_statuses WHERE message_id = ? AND user_id = ? AND attempts = ?
-        AND NOT (status IN (${terminalStatuses}) AND COALESCE(last_event, '') GLOB 'email.*')
+        AND COALESCE(last_event, '') NOT GLOB 'email.*'
     )
     ${upsertReceiptFields}
   `).bind(p.messageId, p.userId, p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt,
