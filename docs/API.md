@@ -724,8 +724,8 @@ never as HTML. BCC, raw MIME, attachment bytes and secrets are not searchable.
 ## Delivery attention
 
 - `GET /api/workspace/attention/summary` returns `{ pendingCount, snapshot: { version, asOf } }`.
-- `POST /api/workspace/attention/summary` returns the same summary and first
-  reconciles ready Resend events for the authenticated Owner. One request
+- `POST /api/workspace/attention/summary` first reconciles ready Resend events
+  for the authenticated Owner, then returns the summary with a `replayed` event count. One request
   processes up to four provider IDs and four events per ID. It sends no mail.
 - `GET /api/workspace/attention?view=pending|history&kind=<kind>&limit=20&cursor=<opaque>`
   returns `{ notices, nextCursor, summary }`. Pending is the default. The page

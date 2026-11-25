@@ -58,7 +58,7 @@ async function getNotices(request: APIRequestContext, view = 'pending'): Promise
   return (await response.json()).data;
 }
 
-test('keeps keyboard focus in notifications after loading the final page', async ({ page }) => {
+test('keeps focus and pages in notifications while replay remains due', async ({ page }) => {
   const occurredAt = '2026-08-13T08:00:00.000Z';
   await page.route((url) => url.pathname === endpoint, async (route) => {
     const lastPage = new URL(route.request().url()).searchParams.has('cursor');
@@ -75,15 +75,28 @@ test('keeps keyboard focus in notifications after loading the final page', async
     await route.fulfill({ json: { ok: true, data } });
   });
 
+  const nextReplay = () => page.waitForResponse((response) =>
+    new URL(response.url()).pathname === endpoint + '/summary' &&
+    response.request().method() === 'POST' && response.ok());
+  const initialReplay = nextReplay();
   await login(page);
+  await initialReplay;
   await notice(page).press('Enter');
   const items = panel(page).getByRole('listitem');
   const more = panel(page).getByRole('button', { name: '加载更多', exact: true });
   await expect(items).toHaveCount(1);
+  await page.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 31_000;
+  });
   await more.press('Enter');
   await expect(items).toHaveCount(2);
   await expect(more).toHaveCount(0);
   await expect(items.last().getByRole('button', { name: '查看邮件', exact: true })).toBeFocused();
+  const replay = nextReplay();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await replay;
+  await expect(items).toHaveCount(2);
 });
 
 test('finds an Owner-wide bounce from another identity and acknowledges it without changing the receipt', async ({ page, baseURL, consoleErrors }, info) => {
@@ -491,10 +504,15 @@ test('refreshes Sent and the open receipt from the notification button', async (
   await expect(panel(page).getByText(label, { exact: true })).toBeVisible();
 
   expect((await events(page.request, id, 'email.delivered', 'attention-button-delivered')).ok()).toBe(true);
+  let summaryRefreshed = false;
   const refreshedSummary = page.waitForResponse((response) =>
     new URL(response.url()).pathname === '/api/workspace/attention/summary' &&
-    response.request().method() === 'POST' && response.ok());
+    response.request().method() === 'POST' && response.ok()).then(() => { summaryRefreshed = true; });
+  const receiptReadAfterReplay = page.waitForRequest((request) =>
+    new URL(request.url()).pathname === `/api/workspace/messages/${id}/delivery`
+  ).then(() => summaryRefreshed);
   await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
+  expect(await receiptReadAfterReplay).toBe(true);
   await refreshedSummary;
 
   await expect(panel(page).getByText(label, { exact: true })).toHaveCount(0);

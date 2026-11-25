@@ -99,9 +99,9 @@
         <header>
           <h2>{t('attention.title')}</h2>
           <div class="flex gap-1">
-            <IconButton ariaLabel={t('attention.refresh')} title={t('attention.refresh')} onclick={() => {
-              notifications.invalidate();
+            <IconButton ariaLabel={t('attention.refresh')} title={t('attention.refresh')} onclick={async () => {
               void notifications.checkHealth(true);
+              await notifications.invalidate(true);
               onRefresh();
             }} disabled={notifications.loading || Boolean(notifications.mutation)}><RefreshCw size={16} aria-hidden="true" /></IconButton>
             <IconButton id="notification-close" tooltipSide="left" ariaLabel={t('common.close')} title={t('common.close')} onclick={() => close(true)}><X size={17} aria-hidden="true" /></IconButton>

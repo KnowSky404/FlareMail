@@ -9,6 +9,7 @@ const checkedDependencyCodes = new Set([
   'OWNER_MAPPING_REQUIRED', 'D1_UNAVAILABLE', 'SCHEMA_NOT_READY', 'R2_UNAVAILABLE', 'INBOUND_ROUTING_NOT_READY'
 ]);
 const freshness = 30_000;
+type ReplayedSummary = DeliveryAttentionSummary & { replayed: number };
 
 export class DeliveryNotifications {
   open = $state(false);
@@ -26,9 +27,12 @@ export class DeliveryNotifications {
   private enabled = false;
   private read = new LatestRequest();
   private write = new LatestRequest();
+  private replay = new LatestRequest();
+  private replayPromise: Promise<ReplayedSummary | undefined> | null = null;
   private readiness = new LatestRequest();
   private readAt = 0;
   private pageAt = 0;
+  private replayAt = 0;
   private checkedAt = 0;
   private refreshAfterMutation = false;
 
@@ -42,6 +46,8 @@ export class DeliveryNotifications {
     this.enabled = false;
     this.read.cancel();
     this.write.cancel();
+    this.replay.cancel();
+    this.replayPromise = null;
     this.readiness.cancel();
     this.open = false;
     this.summary = null;
@@ -54,7 +60,7 @@ export class DeliveryNotifications {
     this.mutation = null;
     this.actionError = null;
     this.health = 'unknown';
-    this.readAt = this.pageAt = this.checkedAt = 0;
+    this.readAt = this.pageAt = this.replayAt = this.checkedAt = 0;
     this.refreshAfterMutation = false;
   }
 
@@ -95,7 +101,22 @@ export class DeliveryNotifications {
     }
   }
 
-  async refresh(force = false, more = false) {
+  private replaySummary() {
+    if (this.replayPromise) return this.replayPromise;
+    const request = this.replay.begin();
+    this.replayPromise = requestJson<ReplayedSummary>(
+      '/api/workspace/attention/summary', { method: 'POST', signal: request.signal }
+    ).then((result) => {
+      if (!request.isCurrent()) return;
+      this.replayAt = Date.now();
+      return result;
+    }).finally(() => {
+      if (request.isCurrent()) this.replayPromise = null;
+    });
+    return this.replayPromise;
+  }
+
+  async refresh(force = false, more = false, forceReplay = false) {
     if (!this.enabled || (more && (this.loading || !this.cursor))) return;
     if (this.mutation) {
       if (force || this.open) {
@@ -106,45 +127,63 @@ export class DeliveryNotifications {
     }
     const list = this.open;
     const now = Date.now();
-    if (!force && !more && now - (list ? this.pageAt : this.readAt) < freshness) return;
-    const refreshSummary = !list || (!more && now - this.readAt >= freshness);
+    const replayDue = !more && (forceReplay || (!this.replayPromise && now - this.replayAt >= freshness));
+    if (!force && !more && now - (list ? this.pageAt : this.readAt) < freshness) {
+      if (!replayDue) return;
+      if (list) {
+        // Keep an open, fresh page in place when the only due work is replay.
+        const result = await this.replaySummary().catch(() => undefined);
+        if (result?.replayed && this.open) void this.refresh(true);
+        return result?.replayed;
+      }
+    }
     const request = this.read.begin();
     // Mark the request at dispatch to coalesce focus and open refreshes.
     if (list) this.pageAt = now;
     this.readAt = now;
     this.loading = list;
     this.loadError = false;
+    let replayed = 0;
     try {
-      if (refreshSummary) {
-        const summary = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { method: 'POST', signal: request.signal });
-        if (!request.isCurrent()) return;
-        this.summary = summary;
+      if (replayDue) {
+        const result = await this.replaySummary();
+        if (result) {
+          const { replayed: count, ...summary } = result;
+          replayed = count;
+          if (request.isCurrent()) this.summary = summary;
+        }
+        if (!request.isCurrent()) return replayed;
+      } else if (!list) {
+        const summary = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { signal: request.signal });
+        if (request.isCurrent()) this.summary = summary;
       }
       if (list) {
         const params = new URLSearchParams({ view: this.view });
         if (this.kind) params.set('kind', this.kind);
         if (more && this.cursor) params.set('cursor', this.cursor);
         const result = await requestJson<DeliveryAttentionPage>('/api/workspace/attention?' + params, { signal: request.signal });
-        if (!request.isCurrent()) return;
+        if (!request.isCurrent()) return replayed;
         this.notices = more
           ? [...this.notices, ...result.notices.filter((notice) => !this.notices.some(({ id }) => id === notice.id))]
           : result.notices;
         this.cursor = result.nextCursor;
         this.summary = result.summary;
       }
-      return request.isCurrent();
+      return replayed;
     } catch {
-      if (!request.isCurrent()) return;
-      this.loadError = true;
-      this.readAt = this.pageAt = 0;
+      if (request.isCurrent()) {
+        this.loadError = true;
+        this.readAt = this.pageAt = 0;
+      }
+      return replayed;
     } finally {
       if (request.isCurrent()) this.loading = false;
     }
   }
 
-  invalidate() {
+  invalidate(forceReplay = false) {
     this.pageAt = this.readAt = 0;
-    void this.refresh(true);
+    return this.refresh(true, false, forceReplay);
   }
 
   async act(action: DeliveryAttentionAction) {
