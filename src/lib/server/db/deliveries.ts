@@ -33,6 +33,17 @@ function replayGuard(claim?: DeferredEventClaim, checkDelayOrder = false) {
 }
 const hasDeferredMarker = (payload: string) => `CASE WHEN json_valid(${payload})
   THEN COALESCE(json_extract(${payload}, '${deferredPath}') = 1, 0) ELSE 0 END`;
+function queuedSentGuard(delayId?: string) {
+  return delayId ? { sql: `AND NOT EXISTS (
+    SELECT 1 FROM workspace_outbound_events delay
+    JOIN workspace_outbound_events sent ON sent.message_id = delay.message_id AND sent.user_id = delay.user_id
+      AND sent.provider = delay.provider AND sent.provider_message_id = delay.provider_message_id
+    WHERE delay.svix_id = ? AND sent.event_type = 'email.sent' AND sent.rowid < delay.rowid
+      AND julianday(sent.event_created_at) > julianday(delay.event_created_at)
+      AND (${hasDeferredMarker('sent.payload_json')})
+  )`, args: [delayId] } : { sql: '', args: [] };
+}
+
 const wasDeferred = hasDeferredMarker('payload_json');
 const expiredAttempt = "julianday(attempt.started_at) <= julianday('now', '-15 minutes')";
 const unconfirmedAttempt = (alias: string, allowExpired = false) => `EXISTS (
@@ -274,8 +285,10 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
   fromDeferred?: boolean;
   allowExpiredAttempt?: boolean;
   claim?: DeferredEventClaim;
+  liveDelayId?: string;
 }) {
   const guard = replayGuard(input.claim, input.targetStatus === 'delayed');
+  const liveGuard = queuedSentGuard(input.liveDelayId);
   const terminal = Number(isDeliveryTerminal(input.targetStatus));
   const replayTie = input.claim ? `
     AND NOT (current.last_event_at IS ? AND EXISTS (
@@ -308,13 +321,13 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       ))
       AND (last_event IS 'submission' OR status NOT IN (${terminalStatuses}) OR status = ?)
       AND (last_event IS 'submission' OR ? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '') ${replayTie}))
-      ${guard.sql}`;
+      ${guard.sql} ${liveGuard.sql}`;
   const applicableArgs = [
     input.messageId, input.providerMessageId,
     terminal, terminal, input.eventCreatedAt, Number(input.fromDeferred ?? false),
     input.targetStatus, input.eventCreatedAt,
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt,
-    ...(input.claim ? [input.eventCreatedAt, input.claim.svixId] : []), ...guard.args
+    ...(input.claim ? [input.eventCreatedAt, input.claim.svixId] : []), ...guard.args, ...liveGuard.args
   ];
   const update = db.prepare(`
     UPDATE workspace_delivery_statuses AS current SET
@@ -343,8 +356,12 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
   `).bind(input.messageId, ...applicableArgs);
   return [closeLocalDelay, update];
 }
-export function retainProviderDelayAfterRetry(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string, claim?: DeferredEventClaim, allowExpiredAttempt = false) {
+export function retainProviderDelayAfterRetry(
+  db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string,
+  { claim, allowExpiredAttempt = false, liveDelayId }: { claim?: DeferredEventClaim; allowExpiredAttempt?: boolean; liveDelayId?: string }
+) {
   const guard = replayGuard(claim, true);
+  const liveGuard = queuedSentGuard(liveDelayId);
   const replacement = `
     SELECT delivery.attempts, original.id AS original_id, retry.id AS retry_id
     FROM workspace_delivery_statuses delivery
@@ -372,9 +389,9 @@ export function retainProviderDelayAfterRetry(db: D1Database, messageId: string,
       AND (julianday(?) >= julianday(attempt.started_at) OR (
         NOT (${unacceptedLocalFailure('delivery')}) AND NOT EXISTS (${newerProviderEvent('delivery')})
       ))
-    ${guard.sql}
+    ${guard.sql} ${liveGuard.sql}
     ORDER BY original.attempt_number DESC, retry.attempt_number DESC LIMIT 1`;
-  const args = [messageId, providerMessageId, eventCreatedAt, eventCreatedAt, eventCreatedAt, eventCreatedAt, ...guard.args];
+  const args = [messageId, providerMessageId, eventCreatedAt, eventCreatedAt, eventCreatedAt, eventCreatedAt, ...guard.args, ...liveGuard.args];
   return [
     db.prepare(`
       UPDATE workspace_delivery_attention_clock SET version = version + 1

@@ -135,7 +135,7 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
   const statements: D1PreparedStatement[] = [
     insertOutboundEvent(env.DB, eventRecord),
     ...(event.statusUpdate && !isDeliveryTerminal(event.statusUpdate) ? [markDeferredOutboundEvent(env.DB, svixId)] : []),
-    ...reconciliationStatements(env.DB, outboundRow, event)
+    ...reconciliationStatements(env.DB, outboundRow, event, { liveDelayId: event.statusUpdate === 'delayed' ? svixId : undefined })
   ];
   try {
     await env.DB.batch(statements);
@@ -154,15 +154,14 @@ function reconciliationStatements(
   db: D1Database,
   outboundRow: NonNullable<Awaited<ReturnType<typeof findOutboundByProviderMessageId>>>,
   event: NormalizedResendWebhookEvent,
-  fromDeferred = false,
-  claim?: DeferredEventClaim,
-  allowExpiredAttempt = false
+  { fromDeferred = false, claim, allowExpiredAttempt = false, liveDelayId }:
+  { fromDeferred?: boolean; claim?: DeferredEventClaim; allowExpiredAttempt?: boolean; liveDelayId?: string }
 ) {
   if (!event.statusUpdate || !event.resultKind) return [];
   const providerFailure = event.eventType === 'email.failed';
   return [
     ...(providerFailure ? [supersedeLocalSubmissionFailure(db, outboundRow.message_id, event.providerMessageId, claim)] : []),
-    ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim, allowExpiredAttempt) : []),
+    ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt, { claim, allowExpiredAttempt, liveDelayId }) : []),
     ...reconcileDeliveryStatus(db, {
       messageId: outboundRow.message_id,
       targetStatus: event.statusUpdate,
@@ -174,7 +173,8 @@ function reconciliationStatements(
       eventCreatedAt: event.createdAt,
       fromDeferred,
       allowExpiredAttempt,
-      claim
+      claim,
+      liveDelayId
     }),
     ...(fromDeferred && claim && event.statusUpdate === 'delayed' ? [keepDeferredDelayAfterSent(db, outboundRow.message_id, claim)] : []),
     ...(providerFailure ? [ensureProviderFailureAttention(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
@@ -243,7 +243,7 @@ export async function reconcilePendingResendEvents(env: CloudflareEnv, providerM
     const claim = { svixId: row.svix_id, token: crypto.randomUUID() };
     const [assigned] = await env.DB.batch([
       assignOutboundEvent(env.DB, claim, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate), allowExpiredAttempt),
-      ...reconciliationStatements(env.DB, outboundRow, event, Boolean(row.was_deferred), claim, allowExpiredAttempt),
+      ...reconciliationStatements(env.DB, outboundRow, event, { fromDeferred: Boolean(row.was_deferred), claim, allowExpiredAttempt }),
       finishOutboundEventReplay(env.DB, claim)
     ]);
     reconciled += assigned.meta.changes;
