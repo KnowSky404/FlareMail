@@ -469,7 +469,10 @@ describe('outbound workspace persistence', () => {
 
   test('keeps an unknown network outcome in submitting state for same-key retry', async () => {
     const { database, env, session } = setup();
-    const gateway = new FakeOutboundGateway({ error: new OutboundGatewayError('network_unknown', 'outcome unknown') });
+    const gateway = { async send() {
+      await Bun.sleep(20);
+      throw new OutboundGatewayError('network_unknown', 'outcome unknown');
+    } };
     const result = await sendWorkspaceMessage(env, session,
       { toEmail: 'alice@example.net', subject: 'Hello', body: 'Body' },
       { requestId: 'compose-unknown', gateway });
@@ -477,6 +480,14 @@ describe('outbound workspace persistence', () => {
     expect(result.message.deliveryResultKind).toBe('temporary_failure');
     expect(database.query(`SELECT status, completed_at FROM workspace_delivery_attempts`).get())
       .toEqual({ status: 'submitting', completed_at: null });
+    const timing = database.query<{ startedAt: string; reportedAt: string; eligibleAt: string }, []>(`
+      SELECT attempt.started_at AS startedAt, receipt.last_event_at AS reportedAt, attention.eligible_at AS eligibleAt
+      FROM workspace_delivery_attempts attempt
+      JOIN workspace_outbound_receipts receipt USING (message_id)
+      JOIN workspace_delivery_attention attention USING (message_id)
+    `).get()!;
+    expect(Date.parse(timing.reportedAt)).toBeGreaterThan(Date.parse(timing.startedAt));
+    expect(timing.eligibleAt).toBe(new Date(Date.parse(timing.startedAt) + 15 * 60_000).toISOString());
     database.query(`UPDATE mail_addresses SET is_default_sender = 0 WHERE id = 'address-1'`).run();
     database.query(`INSERT INTO mail_addresses (
         id, owner_user_id, domain_id, email, local_part, display_name, signature,

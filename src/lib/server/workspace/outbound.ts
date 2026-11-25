@@ -279,8 +279,11 @@ async function submitPersistedMessage(
     const status = failedStatus(error);
     const completed = status === 'submitting' ? null : completedAt;
     await env.DB.batch([
-      upsertOutboundStatus(env.DB, statusPayload({ session, messageId: message.id, idempotencyKey, provider,
-        status, attempts: attemptNumber, lastError: error.message, remoteTimestamp: completedAt })),
+      upsertOutboundStatus(env.DB, {
+        ...statusPayload({ session, messageId: message.id, idempotencyKey, provider,
+          status, attempts: attemptNumber, lastError: error.message, remoteTimestamp: completedAt }),
+        lastEventAt: completed ?? startedAt
+      }),
       finishDeliveryAttempt(env.DB, { messageId: message.id, attemptNumber, providerMessageId: null,
         status, error: error.message, completedAt: completed }),
       upsertOutboundReceipt(env.DB, { messageId: message.id, userId: session.userId, provider, attemptNumber,
