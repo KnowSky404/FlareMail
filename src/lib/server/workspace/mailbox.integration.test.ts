@@ -1239,24 +1239,25 @@ describe('D1 mailbox pages', () => {
     expect((await mutateWorkspaceMailbox(env, workspace, input)).summaries.map(({ id }) => id)).toEqual(['sent-1']);
   });
 
-  test('skips a Sent thread message whose delivery status changes before the write', async () => {
-    const { env, workspace, database } = fixture();
-    database.exec(`
-      UPDATE workspace_messages SET thread_key = 'legacy:sent-thread' WHERE id = 'sent-1';
-      UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'sent-1';
-    `);
-    const db = env.DB as unknown as TestD1;
-    db.beforeBatch = () => {
-      database.exec("UPDATE workspace_delivery_statuses SET status = 'bounced' WHERE message_id = 'sent-1'");
-      db.beforeBatch = undefined;
-    };
-    const result = await mutateWorkspaceMailbox(env, workspace, {
-      action: 'trash', messageIds: ['sent-1'], threadKeys: ['legacy:sent-thread'],
-      scope: { ...mutationScope('sent', null, 'filtered', '', 'attention'), deliveryStatus: 'delayed' }
+  test.each([{ query: '', deliveryStatus: 'delayed' }, { query: 'status:delayed' }] as const)(
+    'skips a Sent thread message that leaves its delivery scope %o', async ({ query, ...deliveryScope }) => {
+      const { env, workspace, database } = fixture();
+      database.exec(`
+        UPDATE workspace_messages SET thread_key = 'legacy:sent-thread' WHERE id = 'sent-1';
+        UPDATE workspace_delivery_statuses SET status = 'delayed' WHERE message_id = 'sent-1';
+      `);
+      const db = env.DB as unknown as TestD1;
+      db.beforeBatch = () => {
+        database.exec("UPDATE workspace_delivery_statuses SET status = 'bounced' WHERE message_id = 'sent-1'");
+        db.beforeBatch = undefined;
+      };
+      const result = await mutateWorkspaceMailbox(env, workspace, {
+        action: 'trash', messageIds: ['sent-1'], threadKeys: ['legacy:sent-thread'],
+        scope: { ...mutationScope('sent', null, 'filtered', query, 'attention'), ...deliveryScope }
+      });
+      expect(result).toMatchObject({ summaries: [], skippedCount: 1 });
+      expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
     });
-    expect(result).toMatchObject({ summaries: [], skippedCount: 1 });
-    expect(database.query("SELECT deleted_at FROM workspace_messages WHERE id = 'sent-1'").get()).toEqual({ deleted_at: null });
-  });
 
   test.each([true, false])('counts a selection that leaves attention before anchor validation (%s) or expansion', async (beforeRequest) => {
     const { env, workspace, database } = fixture();

@@ -22,7 +22,7 @@ export interface MailboxMutationSqlScope {
   identityFilter: MailboxIdentityFilter | null;
   labelId?: string;
   filter?: MailboxFilter;
-  deliveryStatus?: DeliveryStatus | null;
+  deliveryStatuses?: readonly DeliveryStatus[] | null;
 }
 
 export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
@@ -43,10 +43,11 @@ export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope 
   if (scope.section === 'sent' && scope.filter === 'attention') {
     sectionSql += ` AND ${pendingDeliveryAttentionPredicate(alias)}`;
   }
-  if (scope.section === 'sent' && scope.deliveryStatus) {
+  if (scope.section === 'sent' && scope.deliveryStatuses) {
     sectionSql += ` AND EXISTS (SELECT 1 FROM workspace_delivery_statuses AS delivery
-      WHERE delivery.user_id = ${alias}.user_id AND delivery.message_id = ${alias}.id AND delivery.status = ?)`;
-    bindings.push(scope.deliveryStatus);
+      WHERE delivery.user_id = ${alias}.user_id AND delivery.message_id = ${alias}.id
+      AND delivery.status IN (SELECT value FROM json_each(?)))`;
+    bindings.push(JSON.stringify(scope.deliveryStatuses));
   }
   if (scope.category && scope.category !== 'all') {
     sectionSql += ` AND ${inboxCategorySql(`${alias}.from_email`, `${alias}.subject`, `${alias}.inbox_category_v2`, `${alias}.ai_inbox_category`)} = ?`;
@@ -260,7 +261,7 @@ export function buildMailboxMutationStatements(
       SET ${setParts.join(', ')}
       WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL
         AND m.id IN (SELECT value FROM json_each(?))${scopeClause.sql}
-      ${scope?.section === 'sent' && (scope.filter === 'attention' || scope.deliveryStatus) ? 'RETURNING id' : ''}
+      ${scope?.section === 'sent' && (scope.filter === 'attention' || scope.deliveryStatuses) ? 'RETURNING id' : ''}
     `).bind(...bindings));
   }
   statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp, scope)));

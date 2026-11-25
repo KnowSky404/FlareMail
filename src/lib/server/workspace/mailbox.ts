@@ -96,16 +96,16 @@ async function resolveFilteredMailboxThreadIds(
   db: D1Database,
   userId: string,
   scope: MailboxMutationScope,
-  threadKeys: string[]
+  threadKeys: string[],
+  search: ReturnType<typeof parseMailSearchQuery> | null
 ) {
-  const queryText = scope.query ?? '';
   const repositoryQuery = {
     folder: scope.section === 'sent' ? 'sent' as const : 'inbox' as const,
     section: scope.section,
     category: scope.category,
     limit: maxMailboxMutationIds + 1,
-    query: queryText,
-    search: queryText ? parseMailSearchQuery(queryText) : null,
+    query: scope.query ?? '',
+    search,
     filter: scope.filter ?? 'all',
     identityFilter: scope.identityFilter,
     deliveryStatus: scope.deliveryStatus ?? null,
@@ -188,9 +188,12 @@ export async function mutateWorkspaceMailbox(
   }
   if (scope.section === 'label') await requireMailLabel(env.DB, workspace.userId, scope.labelId!);
 
+  const search = scope.query ? parseMailSearchQuery(scope.query) : null;
+  let deliveryStatuses: readonly DeliveryStatus[] | null = search?.filters.status.length ? search.filters.status : null;
+  if (scope.deliveryStatus) deliveryStatuses = deliveryStatuses?.filter((status) => status === scope.deliveryStatus) ?? [scope.deliveryStatus];
   const filteredDelivery = scope.threadScope === 'filtered' && scope.section === 'sent' &&
-    (scope.filter === 'attention' || Boolean(scope.deliveryStatus));
-  const anchorScope = filteredDelivery ? { ...scope, filter: 'all' as const, deliveryStatus: null } : scope;
+    (scope.filter === 'attention' || deliveryStatuses !== null);
+  const anchorScope = filteredDelivery ? { ...scope, filter: 'all' as const } : scope;
   const directRows = directIds.length
     ? await listOwnedMailboxMutationRows(env.DB, workspace.userId, directIds, anchorScope)
     : [];
@@ -205,7 +208,7 @@ export async function mutateWorkspaceMailbox(
   }
 
   const resolvedIds = scope.threadScope === 'filtered'
-    ? await resolveFilteredMailboxThreadIds(env.DB, workspace.userId, scope, threadKeys)
+    ? await resolveFilteredMailboxThreadIds(env.DB, workspace.userId, scope, threadKeys, search)
     : scope.threadScope === 'owner'
       ? await resolveOwnedMailboxThreadMessageIds(
       env.DB,
@@ -224,7 +227,7 @@ export async function mutateWorkspaceMailbox(
     throw new ApiError(400, 'MAILBOX_SELECTION_TOO_LARGE', `一次最多操作 ${maxMailboxMutationIds} 封邮件。`);
   }
 
-  const writeScope = scope.threadScope === 'owner' ? null : scope;
+  const writeScope = scope.threadScope === 'owner' ? null : { ...scope, deliveryStatuses };
   const rows = await listOwnedMailboxMutationRows(env.DB, workspace.userId, messageIds, writeScope);
   const owned = new Map(rows.map((row) => [row.id, row]));
   if (!filteredDelivery && (rows.length !== messageIds.length || messageIds.some((id) => !owned.has(id)))) {
