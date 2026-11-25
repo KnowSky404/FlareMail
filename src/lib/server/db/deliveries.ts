@@ -523,7 +523,7 @@ export function clearSupersededReplayMarkers(db: D1Database, messageId: string) 
   `).bind(messageId);
 }
 
-export function listReadyDeferredProviderIds(db: D1Database, limit: number) {
+export function listReadyDeferredProviderIds(db: D1Database, limit: number, userId?: string) {
   return db.prepare(`
     SELECT delivery.provider_message_id AS id
     FROM workspace_delivery_statuses delivery
@@ -532,11 +532,12 @@ export function listReadyDeferredProviderIds(db: D1Database, limit: number) {
     WHERE event.provider = 'resend' AND event.provider_message_id IS NOT NULL
       AND (${wasDeferred})
       AND event.user_id = delivery.user_id AND event.message_id = delivery.message_id
+      AND (?1 IS NULL OR delivery.user_id = ?1)
       AND NOT (${unconfirmedAttempt('delivery', true)})
     GROUP BY delivery.provider_message_id
     ORDER BY MIN(event.event_created_at)
-    LIMIT ?
-  `).bind(limit).all<{ id: string }>();
+    LIMIT ?2
+  `).bind(userId ?? null, limit).all<{ id: string }>();
 }
 
 export async function listPendingOutboundEvents(db: D1Database, providerMessageId: string, limit: number) {
