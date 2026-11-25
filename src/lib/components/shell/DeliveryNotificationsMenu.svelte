@@ -48,6 +48,18 @@
     }
   }
 
+  async function loadMore(event: MouseEvent) {
+    const button = event.currentTarget as HTMLButtonElement;
+    const restoreFocus = document.activeElement === button;
+    const firstNewNotice = notifications.notices.length;
+    await notifications.refresh(true, true);
+    await tick();
+    if (!restoreFocus || !notifications.open || document.activeElement !== document.body) return;
+    const appended = root?.querySelectorAll<HTMLButtonElement>('.notices .notification-link')[firstNewNotice];
+    const tab = notifications.view === 'pending' ? pendingTab : historyTab;
+    (appended ?? (button.isConnected ? button : tab))?.focus();
+  }
+
   async function confirmAll() {
     confirmation = notifications.summary;
     await tick();
@@ -143,7 +155,7 @@
           </ul>
         {/if}
         {#if notifications.cursor}
-          <Button variant="ghost" size="sm" disabled={notifications.loading || Boolean(notifications.mutation)} onclick={() => notifications.refresh(true, true)}>{t('attention.loadMore')}</Button>
+          <Button variant="ghost" size="sm" disabled={notifications.loading || Boolean(notifications.mutation)} onclick={loadMore}>{t('attention.loadMore')}</Button>
         {/if}
         {#if confirmation}
           <div class="confirm">
