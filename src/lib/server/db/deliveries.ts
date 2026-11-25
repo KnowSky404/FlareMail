@@ -8,11 +8,18 @@ const claimPath = '$._flaremailReplayClaim';
 
 export interface DeferredEventClaim { svixId: string; token: string }
 
-function replayGuard(claim?: DeferredEventClaim) {
+function replayGuard(claim?: DeferredEventClaim, checkDelayOrder = false) {
   return claim
     ? { sql: `AND EXISTS (
       SELECT 1 FROM workspace_outbound_events claim
       WHERE claim.svix_id = ? AND json_extract(claim.payload_json, '${claimPath}') = ?
+      ${checkDelayOrder ? `AND NOT EXISTS (
+        SELECT 1 FROM workspace_outbound_events sent
+        WHERE sent.provider = claim.provider AND sent.provider_message_id = claim.provider_message_id
+          AND (sent.user_id = 'unmatched' OR (sent.user_id = claim.user_id AND sent.message_id = claim.message_id))
+          AND sent.event_type = 'email.sent' AND sent.rowid < claim.rowid
+          AND julianday(sent.event_created_at) > julianday(claim.event_created_at)
+      )` : ''}
     )`, args: [claim.svixId, claim.token] }
     : { sql: '', args: [] };
 }
@@ -241,7 +248,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
   allowExpiredAttempt?: boolean;
   claim?: DeferredEventClaim;
 }) {
-  const guard = replayGuard(input.claim);
+  const guard = replayGuard(input.claim, input.targetStatus === 'delayed');
   const terminal = Number(isDeliveryTerminal(input.targetStatus));
   const replayTie = input.claim ? `
     AND NOT (current.last_event_at IS ? AND EXISTS (
@@ -309,7 +316,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
   return [closeLocalDelay, update];
 }
 export function retainProviderDelayAfterRetry(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string, claim?: DeferredEventClaim, allowExpiredAttempt = false) {
-  const guard = replayGuard(claim);
+  const guard = replayGuard(claim, true);
   const replacement = `
     SELECT delivery.attempts, original.id AS original_id, retry.id AS retry_id
     FROM workspace_delivery_statuses delivery
@@ -386,7 +393,7 @@ export function ensureProviderFailureAttention(db: D1Database, messageId: string
 }
 
 export function keepDeferredDelayAfterSent(db: D1Database, messageId: string, claim: DeferredEventClaim) {
-  const guard = replayGuard(claim);
+  const guard = replayGuard(claim, true);
   return db.prepare(`
     INSERT INTO workspace_delivery_attention (user_id, message_id, attempt_number, kind, eligible_at, delayed_provider_message_id)
     SELECT delivery.user_id, delivery.message_id, delivery.attempts, 'delayed',
