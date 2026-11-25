@@ -206,6 +206,17 @@ test('finds an Owner-wide bounce from another identity and acknowledges it witho
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('reports a broken Access Owner mapping as degraded', async ({ page }) => {
+  await login(page);
+  await page.route('**/api/readiness?scope=system', (route) => route.fulfill({
+    status: 503,
+    json: { ok: false, error: { code: 'OWNER_MAPPING_REQUIRED', message: 'synthetic missing Owner mapping' } }
+  }));
+  await notice(page).press('Enter');
+  await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
+  await expect(panel(page).getByText('系统运行异常', { exact: true })).toBeVisible();
+});
+
 test('refreshes an open issue in another tab, handles failure, and keeps health independent', async ({ page, context, baseURL, consoleErrors }, info) => {
   test.skip(info.project.name !== 'desktop', 'One desktop run covers cross-tab synchronization and health changes.');
   const origin = originOf(baseURL);
