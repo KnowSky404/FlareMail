@@ -3317,14 +3317,15 @@
       }
     };
 
+    let lastAttentionFocusRefresh = 0;
     const refreshOnFocus = () => {
-      void notifications.refresh().then((refreshed) => {
-        if (!refreshed || !authenticated || authExpired) return;
-        const current = selectedMessage;
-        if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id);
-        else refreshAttentionMailbox();
-      });
+      void notifications.refresh();
       void notifications.checkHealth();
+      if (!authenticated || authExpired || Date.now() - lastAttentionFocusRefresh < 30_000) return;
+      lastAttentionFocusRefresh = Date.now();
+      const current = selectedMessage;
+      if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id);
+      else refreshAttentionMailbox();
     };
     window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('keydown', handleShortcut);
