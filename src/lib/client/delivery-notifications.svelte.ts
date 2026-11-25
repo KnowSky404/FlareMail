@@ -125,7 +125,7 @@ export class DeliveryNotifications {
         this.cursor = result.nextCursor;
         this.summary = result.summary;
       } else {
-        const result = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { signal: request.signal });
+        const result = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { method: 'POST', signal: request.signal });
         if (request.isCurrent()) this.summary = result;
       }
       return request.isCurrent();

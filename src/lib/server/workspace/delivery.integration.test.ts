@@ -7,6 +7,7 @@ import { changeDeliveryAttention, findCurrentDeliveryAttention, getDeliveryAtten
 import { loadMailboxPage } from './mailbox';
 import { parseMailboxQuery } from './mailbox-query';
 import { applyResendDeliveryWebhook, reconcileDeferredResendEvents, reconcilePendingResendEvents } from './delivery';
+import { GET as getAttentionSummary, POST as refreshAttentionSummary } from '../../../routes/api/workspace/attention/summary/+server';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -821,7 +822,7 @@ describe('Owner delivery attention', () => {
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
   });
 
-  test('scheduled reconciliation recovers the current provider event after a retry is abandoned', async () => {
+  test.each(['scheduled', 'summary'])('recovers the current provider event after a retry is abandoned (%s)', async (entryPoint) => {
     const { database, env } = setup();
     const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
     await applyResendDeliveryWebhook(env, 'delay-before-retry', payload('email.delivery_delayed', at(20)));
@@ -832,8 +833,28 @@ describe('Owner delivery attention', () => {
         WHERE message_id = 'message-1';
     `);
     await applyResendDeliveryWebhook(env, 'deferred-sent', payload('email.sent', at(17)));
-    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('submitting');
-    await reconcileDeferredResendEvents(env);
+    const delivery = () => findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
+    expect((await delivery()).status).toBe('submitting');
+    if (entryPoint === 'summary') {
+      const url = new URL('https://mail.example.test/api/workspace/attention/summary');
+      const summaryRequest = (userId?: string, method = 'POST') => ({
+        platform: { env }, request: new Request(url, { method }), url,
+        locals: { workspaceSession: userId ? { userId, storage: 'd1' } : null }
+      } as never);
+      expect((await refreshAttentionSummary(summaryRequest())).status).toBe(401);
+      expect((await getAttentionSummary(summaryRequest('user-1', 'GET'))).status).toBe(200);
+      expect((await refreshAttentionSummary(summaryRequest('other-owner'))).status).toBe(200);
+      expect((await delivery()).status).toBe('submitting');
+      const setStartedAt = database.query("UPDATE workspace_delivery_attempts SET started_at = ? WHERE id = 'interrupted'");
+      setStartedAt.run(at(1));
+      expect((await refreshAttentionSummary(summaryRequest('user-1'))).status).toBe(200);
+      expect((await delivery()).status).toBe('submitting');
+      setStartedAt.run(at(18));
+      expect((await refreshAttentionSummary(summaryRequest('user-1'))).status).toBe(200);
+      expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
+    } else {
+      await reconcileDeferredResendEvents(env);
+    }
     expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
       status: 'sent', receipt: { last_event: 'email.sent' }, attention: { kind: 'delayed' }
     });

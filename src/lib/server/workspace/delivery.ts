@@ -208,21 +208,21 @@ function deliveryPriority(status: string) {
   return -1;
 }
 
-export async function reconcileDeferredResendEvents(env: CloudflareEnv) {
+export async function reconcileDeferredResendEvents(env: CloudflareEnv, userId?: string) {
   if (!env.DB) return;
   const capabilities = await getWorkspaceCapabilities(env);
   if (!capabilities.outboundStatuses || !capabilities.outboundReceipts || !capabilities.outboundEvents) return;
   // One discovery read and at most four providers with two reads and four replay batches each.
-  const { results } = await listReadyDeferredProviderIds(env.DB, 4);
-  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, 4, true)));
+  const { results } = await listReadyDeferredProviderIds(env.DB, 4, userId);
+  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, 4, true, userId)));
   if (replays.some(({ status }) => status === 'rejected')) {
     throw new DeliveryPersistenceError('A deferred delivery event could not be replayed.');
   }
 }
 
-export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string, limit = 100, allowExpiredAttempt = false) {
+export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string, limit = 100, allowExpiredAttempt = false, userId?: string) {
   const outboundRow = await findOutboundByProviderMessageId(env.DB, providerMessageId);
-  if (!outboundRow) return 0;
+  if (!outboundRow || (userId !== undefined && outboundRow.user_id !== userId)) return 0;
   const pending = await listPendingOutboundEvents(env.DB, providerMessageId, limit);
   let reconciled = 0;
   for (const row of pending.results ?? []) {
