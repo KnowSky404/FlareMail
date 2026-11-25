@@ -3124,24 +3124,28 @@
     navigate();
   }
 
-  function refreshAttentionReader(id?: string) {
+  function refreshAttentionReader(id?: string, background = false) {
     const current = selectedMessage;
     if (id) deliveryDetailCache.invalidate(id);
     else deliveryDetailCache.reset();
     if (current?.folder === 'sent' && (!id || id === current.id)) void loadDeliveryDetail(current, true);
-    refreshAttentionMailbox();
+    refreshAttentionMailbox(background);
   }
 
-  function refreshAttentionMailbox() {
+  function refreshAttentionMailbox(background = false) {
+    const showingAttention = activeSection === 'sent' && mailFilter === 'attention';
+    if (background && showingAttention && (pagingDisabled || isTurningCurrentPage())) return;
+
     mailboxController.invalidateAttention();
-    if (activeSection === 'sent' && mailFilter === 'attention') {
-      const current = selectedMessage;
-      if (current && messageReaderVisible) {
-        selectedMessageId = current.id;
-        deepLinkedMessage = current;
-      }
-      void mailboxController.refresh('sent', searchQuery, mailFilter, mailIdentityFilter, null, 'all', true);
+    // The pager only rebuilds through page two, so leave deeper pages visible on focus.
+    if (!showingAttention || (background && mailboxPageNumber > 2)) return;
+
+    const current = selectedMessage;
+    if (current && messageReaderVisible) {
+      selectedMessageId = current.id;
+      deepLinkedMessage = current;
     }
+    void mailboxController.refresh('sent', searchQuery, mailFilter, mailIdentityFilter, null, 'all', true);
   }
 
   async function handleAttentionAction(action: DeliveryAttentionAction, id?: string) {
@@ -3324,8 +3328,8 @@
       if (!authenticated || authExpired || Date.now() - lastAttentionFocusRefresh < 30_000) return;
       lastAttentionFocusRefresh = Date.now();
       const current = selectedMessage;
-      if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id);
-      else refreshAttentionMailbox();
+      if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id, true);
+      else refreshAttentionMailbox(true);
     };
     window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('keydown', handleShortcut);
