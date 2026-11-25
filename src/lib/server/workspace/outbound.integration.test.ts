@@ -2,6 +2,7 @@ import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
 import { FakeOutboundGateway, MAX_OUTBOUND_ATTACHMENT_BYTES, OutboundGatewayError } from '$lib/server/outbound/gateway';
+import { recordAcceptedResponseOnWebhookReceipt } from '$lib/server/db/deliveries';
 import { FLAREMAIL_SCHEMA_VERSION } from '$lib/server/db/schema-version';
 import { retryWorkspaceMessageDelivery, sendWorkspaceMessage } from './outbound';
 import { applyResendDeliveryWebhook, getWorkspaceMessageDeliveryDetail, reconcileDeferredResendEvents } from './delivery';
@@ -406,6 +407,57 @@ describe('outbound workspace persistence', () => {
     });
     expect(database.query('SELECT status, provider_message_id FROM workspace_delivery_attempts WHERE message_id = ? AND attempt_number = 2').get(messageId))
       .toEqual({ status: 'submitted', provider_message_id: providerId });
+  });
+
+  test('records the successful HTTP response without replacing a same-ID bounce during retry', async () => {
+    const { env, database, session } = setup();
+    const providerId = 're_terminal_during_retry';
+    const first = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Terminal retry', body: 'Body' }, {
+      requestId: 'terminal-during-retry', gateway: new FakeOutboundGateway({ providerMessageId: providerId })
+    });
+    const id = first.message.id;
+    await applyResendDeliveryWebhook(env, 'terminal-retry-delay', {
+      type: 'email.delivery_delayed', created_at: new Date().toISOString(), data: { email_id: providerId }
+    });
+    const limited = await retryWorkspaceMessageDelivery(env, session, id, { gateway: new FakeOutboundGateway({
+      error: new OutboundGatewayError('rate_limited', 'Rate limited', { remoteStatus: 429 })
+    }) });
+    expect(limited?.message.deliveryRemoteStatus).toBe(429);
+
+    const bounceAt = new Date().toISOString();
+    const retried = await retryWorkspaceMessageDelivery(env, session, id, { gateway: {
+      async send() {
+        const event = await applyResendDeliveryWebhook(env, 'terminal-retry-bounce', {
+          type: 'email.bounced', created_at: bounceAt, data: { email_id: providerId }
+        });
+        expect(event).toMatchObject({ matched: true, ignored: false });
+        return { status: 'submitted', providerMessageId: providerId, remoteStatus: 200 };
+      }
+    } });
+    expect(retried?.message).toMatchObject({
+      deliveryStatus: 'bounced', deliveryResultKind: 'permanent_failure', deliveryLastEvent: 'email.bounced',
+      deliveryLastEventAt: bounceAt, deliveryRemoteStatus: 200, deliveryAttempts: 3
+    });
+
+    const current = { messageId: id, userId: session.userId, provider: 'resend', providerMessageId: providerId, attempts: 3 };
+    for (const mismatch of [{ attempts: 2 }, { provider: 'fake' }, { providerMessageId: 're_other' }, { userId: 'other-owner' }]) {
+      const result = await recordAcceptedResponseOnWebhookReceipt(env.DB, { ...current, ...mismatch }, 202).run();
+      expect(result.meta.changes).toBe(0);
+    }
+
+    const d1 = env.DB as unknown as TestD1;
+    d1.beforePrepare = (sql) => {
+      if (!sql.includes('INSERT INTO workspace_outbound_receipts')) return;
+      d1.beforePrepare = undefined;
+      database.query('UPDATE workspace_outbound_receipts SET remote_status = 202 WHERE message_id = ?').run(id);
+    };
+    const laterBounceAt = new Date(Date.parse(bounceAt) + 1_000).toISOString();
+    await applyResendDeliveryWebhook(env, 'terminal-retry-bounce-update', {
+      type: 'email.bounced', created_at: laterBounceAt, data: { email_id: providerId }
+    });
+    expect(database.query('SELECT remote_status, last_event_at FROM workspace_outbound_receipts WHERE message_id = ?').get(id))
+      .toEqual({ remote_status: 202, last_event_at: laterBounceAt });
+    database.close();
   });
 
   test('rejects a retry if a definitive failure commits before the attempt is claimed', async () => {
