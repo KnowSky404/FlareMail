@@ -133,8 +133,12 @@ describe('outbound workspace persistence', () => {
     } });
     await original.promise;
     try {
-      await retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway:
+      const newer = await retryWorkspaceMessageDelivery(env, session, sent.message.id, { gateway:
         new FakeOutboundGateway({ error: new OutboundGatewayError('rate_limited', 'newer throttle') })
+      });
+      expect(newer?.message).toMatchObject({
+        deliveryStatus: 'delayed', deliveryAttempts: 3, deliveryIdempotencyKey: expect.any(String),
+        deliveryAttemptStartedAt: expect.any(String)
       });
     } finally {
       resume.resolve();

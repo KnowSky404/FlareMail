@@ -188,7 +188,7 @@ export function finishDeliveryAttempt(db: D1Database, p: Pick<DeliveryAttemptPay
 export async function findDeliveryStatus(db: D1Database, userId: string, messageId: string) {
   return db.prepare(`SELECT s.message_id, s.user_id, s.status, s.attempts, s.idempotency_key, s.provider,
     s.provider_message_id, s.last_error, s.submitted_at, s.sent_at, s.delivered_at, s.last_event, s.last_event_at,
-    r.result_kind, r.remote_status, r.response_preview,
+    r.result_kind, r.remote_status, COALESCE(r.response_preview, '') AS response_preview,
     (SELECT MAX(started_at) FROM workspace_delivery_attempts AS a WHERE a.message_id = s.message_id) AS attempt_started_at
     FROM workspace_delivery_statuses AS s LEFT JOIN workspace_outbound_receipts AS r ON r.message_id = s.message_id AND r.user_id = s.user_id
     WHERE s.user_id = ? AND s.message_id = ?`)
@@ -196,7 +196,7 @@ export async function findDeliveryStatus(db: D1Database, userId: string, message
       message_id: string; user_id: string; status: DeliveryStatus; attempts: number; idempotency_key: string;
       provider: string; provider_message_id: string | null; last_error: string; submitted_at: string | null;
       sent_at: string | null; delivered_at: string | null; last_event: DeliveryEventType | null; last_event_at: string | null;
-      result_kind: DeliveryResultKind | null; remote_status: number | null; response_preview: string | null; attempt_started_at: string | null;
+      result_kind: DeliveryResultKind | null; remote_status: number | null; response_preview: string; attempt_started_at: string | null;
     }>();
 }
 const upsertReceiptFields = `

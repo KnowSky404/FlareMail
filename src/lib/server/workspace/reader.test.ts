@@ -78,6 +78,21 @@ describe('standalone message reader', () => {
     expect(inbound).toMatchObject({ id: 'email:inbound-1', source: 'inbound', subject: 'Inbound subject', body: '' });
   });
 
+  test('returns retry metadata for a Sent message opened directly', async () => {
+    const { db, env } = fixture();
+    const key = 'flaremail:send:workspace-1';
+    const startedAt = '2026-09-12T12:00:00.000Z';
+    db.exec(`
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, idempotency_key, last_event)
+      VALUES ('workspace-1', 'user-1', 'delayed', 1, '${key}', 'submission');
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, status, started_at)
+      VALUES ('attempt', 'workspace-1', 'user-1', 1, 'delayed', '${startedAt}');
+    `);
+    expect(await readWorkspaceMessage(env, session('user-1'), 'workspace-1')).toMatchObject({
+      body: '', deliveryStatus: 'delayed', deliveryIdempotencyKey: key, deliveryAttemptStartedAt: startedAt
+    });
+  });
+
   test('reports stored quarantine state even for a direct reader URL', async () => {
     const value = fixture();
     value.db.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, quarantined_at)

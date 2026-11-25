@@ -1,6 +1,7 @@
 import type { MailMessage, MailboxSection } from '$lib/domain/mail';
 import { fromInboundMessageId, isInboundMessageId, isInboxCategoryFilter, normalizeInboxCategory } from '$lib/domain/mail';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
+import { findDeliveryStatus } from '$lib/server/db/deliveries';
 import { findOwnedInboundState } from '$lib/server/db/inbound';
 import { mapInboundRow, mapWorkspaceMessageRow, type WorkspaceContext, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 
@@ -37,7 +38,9 @@ export async function readWorkspaceMessage(
   }
 
   const row = await findOwnedReaderWorkspaceMessage(env.DB, session.userId, messageId);
-  return row ? mapWorkspaceMessageRow(row) : null;
+  if (!row) return null;
+  const delivery = row.folder === 'sent' ? await findDeliveryStatus(env.DB, session.userId, messageId) : null;
+  return mapWorkspaceMessageRow(row, delivery ?? undefined);
 }
 
 function safeFolder(value: string | null, fallback: WorkspaceReturnFolder): WorkspaceReturnFolder {
