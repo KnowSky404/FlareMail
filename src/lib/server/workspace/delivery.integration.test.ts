@@ -850,9 +850,16 @@ describe('Owner delivery attention', () => {
       expect((await refreshAttentionSummary(summaryRequest('user-1'))).status).toBe(200);
       expect((await delivery()).status).toBe('submitting');
       setStartedAt.run(at(18));
+      await applyResendDeliveryWebhook(env, 'deferred-sent-later', payload('email.sent', at(16)));
+      const d1 = env.DB as unknown as TestD1;
+      let batches = 0;
+      d1.beforeBatch = () => { if (++batches === 2) throw new Error('transient write failure after a committed replay'); };
       const recovered = await refreshAttentionSummary(summaryRequest('user-1'));
+      d1.beforeBatch = undefined;
       expect(recovered.status).toBe(200);
       expect(await recovered.json()).toMatchObject({ data: { replayed: 1 } });
+      const retried = await refreshAttentionSummary(summaryRequest('user-1'));
+      expect(await retried.json()).toMatchObject({ data: { replayed: 1 } });
       expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
     } else {
       await reconcileDeferredResendEvents(env);

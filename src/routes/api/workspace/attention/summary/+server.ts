@@ -13,8 +13,11 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   const { userId } = await requireWorkspaceMailboxSession(event);
   const env = getRequestEnv(event)!;
   // Preview has no scheduled replay, so recover ready events before reading the summary.
-  const replayed = await reconcileDeferredResendEvents(env, userId).catch(() => {
+  const logReplayFailure = () => {
     console.error(JSON.stringify({ level: 'error', event: 'attention_deferred_delivery_replay_failed' }));
+  };
+  const replayed = await reconcileDeferredResendEvents(env, userId, logReplayFailure).catch(() => {
+    logReplayFailure();
     return 0;
   });
   return apiSuccess(event, { ...await getDeliveryAttentionSummary(env.DB, userId), replayed });

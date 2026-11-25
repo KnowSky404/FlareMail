@@ -500,6 +500,34 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   expect((await getNotices(page.request, 'history')).notices.find((item) => item.id === bounce.id)?.state).toBe('acknowledged');
 });
 
+test('refreshes Sent after startup replay commits', async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop replay covers the workspace startup path.');
+  const origin = originOf(baseURL);
+  const id = 'e2e-attention-startup-replay';
+  const label = 'E2E Startup Replay';
+  await seed(page.request, origin, id, 'delayed', label);
+  await login(page);
+  const replayStarted = Promise.withResolvers<void>();
+  const releaseReplay = Promise.withResolvers<void>();
+  await page.route('**/api/workspace/attention/summary', async (route) => {
+    replayStarted.resolve();
+    await releaseReplay.promise;
+    await route.fulfill({ json: { ok: true, data: {
+      pendingCount: 0, snapshot: { asOf: new Date().toISOString(), version: 99 }, replayed: 1
+    } } });
+  }, { times: 1 });
+  await page.goto('/?folder=sent&filter=attention');
+  const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
+  try {
+    await replayStarted.promise;
+    await expect(row).toBeVisible();
+    expect((await events(page.request, id, 'email.delivered', 'attention-startup-replay-delivered')).ok()).toBe(true);
+  } finally {
+    releaseReplay.resolve();
+  }
+  await expect(row).toHaveCount(0);
+});
+
 test('refreshes Sent and the open receipt from the notification button', async ({ page, baseURL }, info) => {
   test.skip(info.project.name !== 'desktop', 'The desktop workspace displays the Sent list and open receipt together.');
   const origin = originOf(baseURL);
