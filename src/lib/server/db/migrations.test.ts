@@ -388,12 +388,15 @@ describe('versioned D1 migrations', () => {
   });
 
   test.each([
-    ['email.bounced', null, 'submitted'],
-    ['email.bounced', 'email.sent', 'sent'],
-    ['email.delivered', 'email.delivery_delayed', 'delayed']
-  ] as const)('corrects an ignored legacy %s with later progress %s', (ignored, progress, expected) => {
+    ['email.bounced', null, 'submitted', false, false],
+    ['email.bounced', 'email.sent', 'sent', false, false],
+    ['email.bounced', 'email.sent', 'sent', true, false],
+    ['email.delivered', 'email.delivery_delayed', 'delayed', false, false],
+    ['email.bounced', 'email.sent', 'sent', false, true],
+    ['email.bounced', null, 'submitted', false, true]
+  ] as const)('corrects an ignored legacy %s with later progress %s (%s)', (ignored, progress, expected, acknowledged, earlierDelay) => {
     const db = createDatabase();
-    applyMigrationsThrough(db, '0039_queue_legacy_resend_failures.sql');
+    applyMigrationsThrough(db, '0032_ai_automatic_classification.sql');
     const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1_000).toISOString();
     db.exec(`
       INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
@@ -416,15 +419,30 @@ describe('versioned D1 migrations', () => {
     const providerEvent = (kind: string, seconds: number) =>
       JSON.stringify({ type: kind, created_at: at(seconds), data: { email_id: 're_1' } });
     event.run('local:ignored-terminal:submission:1', 're_1', 'submission', at(30), '{"status":"submitted"}', at(30));
+    if (earlierDelay) event.run('earlier-delay', 're_1', 'email.delivery_delayed', at(50), providerEvent('email.delivery_delayed', 50), at(50));
     event.run('local:ignored-terminal:submission:2', null, 'submission', at(80), '{"status":"failed"}', at(80));
     event.run('ignored-event', 're_1', ignored, at(90), providerEvent(ignored, 90), at(90));
     event.run('local:ignored-terminal:submission:3', 're_1', 'submission', at(180), '{"status":"submitted"}', at(180));
+    if (expected === 'sent' && !earlierDelay) {
+      event.run('verified-delay', 're_1', 'email.delivery_delayed', at(185), providerEvent('email.delivery_delayed', 185), at(185));
+    }
     if (progress) event.run('later-progress', 're_1', progress, at(190), providerEvent(progress, 190), at(190));
 
     const prior = '0040_recover_masked_resend_terminal_events.sql';
+    for (const migration of migrationFiles.slice(32, migrationFiles.indexOf(prior))) {
+      db.exec(readFileSync(join(migrationsDirectory, migration), 'utf8'));
+      db.query('INSERT INTO _test_migrations (name) VALUES (?)').run(migration);
+    }
+    const pending = db.query('SELECT kind, state, eligible_at FROM workspace_delivery_attention WHERE closed_at IS NULL');
+    const eligibility = at(earlierDelay ? 50 : expected === 'sent' ? 185 : 190);
+    expect(pending.all()).toEqual(expected === 'submitted' || earlierDelay ? [] : [{ kind: 'delayed', state: 'open', eligible_at: eligibility }]);
+    if (acknowledged) {
+      db.query("UPDATE workspace_delivery_attention SET state = 'acknowledged', acknowledged_at = ? WHERE kind = 'delayed'").run(at(195));
+    }
     db.exec(readFileSync(join(migrationsDirectory, prior), 'utf8'));
     db.query('INSERT INTO _test_migrations (name) VALUES (?)').run(prior);
     expect(db.query('SELECT status FROM workspace_delivery_statuses').get()).toEqual({ status: ignored.slice(6) });
+    const snapshot = db.query<{ version: number }, []>('SELECT version FROM workspace_delivery_attention_clock').get()!;
 
     applyMigrations(db);
 
@@ -434,8 +452,11 @@ describe('versioned D1 migrations', () => {
     expect(db.query('SELECT last_event, result_kind, remote_status FROM workspace_outbound_receipts').get()).toEqual({
       last_event: progress ?? 'submission', result_kind: expected === 'delayed' ? 'temporary_failure' : 'accepted', remote_status: 202
     });
-    expect(db.query('SELECT kind FROM workspace_delivery_attention WHERE closed_at IS NULL').all())
-      .toEqual(expected === 'delayed' ? [{ kind: 'delayed' }] : []);
+    expect(pending.all()).toEqual(expected === 'submitted' && !earlierDelay ? [] : [
+      { kind: 'delayed', state: acknowledged ? 'acknowledged' : 'open', eligible_at: eligibility }
+    ]);
+    const lateItems = db.query<{ version: number }, []>("SELECT version FROM workspace_delivery_attention WHERE kind = 'delayed' AND closed_at IS NULL").all();
+    for (const { version } of lateItems) expect(version).toBeGreaterThan(snapshot.version);
     expect(db.query("SELECT event_type FROM workspace_outbound_events WHERE svix_id = 'ignored-event'").get())
       .toEqual({ event_type: ignored });
     db.close();
