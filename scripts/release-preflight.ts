@@ -101,14 +101,6 @@ function hasAny(source: string, patterns: RegExp[]) {
   return patterns.some((pattern) => pattern.test(source));
 }
 
-function versionFromSource(source: string) {
-  return Number(
-    source.match(/INSERT\s+INTO\s+workspace_schema_metadata[\s\S]{0,512}?VALUES\s*\(\s*'flaremail'\s*,\s*(\d+)/u)?.[1] ??
-    source.match(/schema_version\s*=\s*(\d+)/u)?.[1] ??
-    NaN
-  );
-}
-
 function migrationVersion(file: string) {
   return Number(file.match(/^(\d{4})_/u)?.[1] ?? NaN);
 }
@@ -333,16 +325,18 @@ async function checkSchema(root: string): Promise<{ schema: PreflightCheck; heal
   const versions = files.map(migrationVersion);
   const expected = versions.map((_, index) => index + 1);
   const latest = versions.at(-1) ?? NaN;
-  const latestSql = files.length > 0 ? await readText(root, `migrations/${files.at(-1)}`) : '';
   const schemaVersionSource = await readText(root, 'src/lib/server/db/schema-version.ts');
   const declared = Number(schemaVersionSource.match(/=\s*(\d+)\s*;/u)?.[1] ?? NaN);
-  const migrationMarker = versionFromSource(latestSql);
+  let migrationMarker = NaN;
   let shapeAligned = false;
   let migratedTables: string[] = [];
   let snapshotTables: string[] = [];
   try {
     const migrated = new Database(':memory:');
     for (const file of files) migrated.exec(await readText(root, `migrations/${file}`));
+    migrationMarker = migrated.query<{ schema_version: number }, []>(
+      "SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = 'flaremail'"
+    ).get()?.schema_version ?? NaN;
     const snapshot = new Database(':memory:');
     snapshot.exec(await readText(root, 'schema.sql'));
     shapeAligned = sameSqliteShape(migrated, snapshot);
