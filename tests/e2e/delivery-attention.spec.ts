@@ -57,19 +57,25 @@ async function getNotices(request: APIRequestContext, view = 'pending'): Promise
   return (await response.json()).data;
 }
 
-test('keeps keyboard focus in notifications after loading the final page', async ({ page, baseURL }) => {
-  const origin = originOf(baseURL);
-  await seed(page.request, origin, 'e2e-attention-page-first', 'complained', 'First page');
-  await seed(page.request, origin, 'e2e-attention-page-last', 'complained', 'Final page');
+test('keeps keyboard focus in notifications after loading the final page', async ({ page }) => {
+  const occurredAt = '2026-08-13T08:00:00.000Z';
   await page.route((url) => url.pathname === endpoint, async (route) => {
-    const url = new URL(route.request().url());
-    url.searchParams.set('limit', '1');
-    await route.fulfill({ response: await route.fetch({ url: url.toString() }) });
+    const lastPage = new URL(route.request().url()).searchParams.has('cursor');
+    const id = lastPage ? 2 : 1;
+    const data: DeliveryAttentionPage = {
+      notices: [{
+        id, version: id, messageId: String(id), kind: 'complained', state: 'open', occurredAt,
+        acknowledgedAt: null, closedAt: null, sender: 'e2e-admin@flaremail.test',
+        subject: lastPage ? 'Final page' : 'First page'
+      }],
+      nextCursor: lastPage ? null : 'last-page',
+      summary: { pendingCount: 2, snapshot: { asOf: occurredAt, version: 2 } }
+    };
+    await route.fulfill({ json: { ok: true, data } });
   });
 
   await login(page);
   await notice(page).press('Enter');
-  await panel(page).getByRole('combobox').selectOption('complained');
   const items = panel(page).getByRole('listitem');
   const more = panel(page).getByRole('button', { name: '加载更多', exact: true });
   await expect(items).toHaveCount(1);
