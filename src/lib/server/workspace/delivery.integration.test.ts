@@ -549,6 +549,7 @@ describe('Owner delivery attention', () => {
     database.exec(readFileSync(new URL('../../../../migrations/0039_queue_legacy_resend_failures.sql', import.meta.url), 'utf8'));
     expect(database.query("SELECT json_extract(payload_json, '$._flaremailDeferred') AS queued FROM workspace_outbound_events WHERE svix_id = 'legacy-failure'").get())
       .toEqual({ queued: shouldReplay ? 1 : null });
+    database.exec(readFileSync(new URL('../../../../migrations/0040_recover_masked_resend_terminal_events.sql', import.meta.url), 'utf8'));
     await reconcileDeferredResendEvents(env);
     const detail = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
     expect(detail.status).toBe(shouldReplay ? 'failed' : status);
@@ -560,6 +561,65 @@ describe('Owner delivery attention', () => {
       await reconcileDeferredResendEvents(env);
       expect((await page(env.DB)).notices).toHaveLength(1);
     }
+  });
+
+  test.each([
+    ['bounce before an ignored failure', [['bounced', 130, 140], ['failed', 140, 130]], 'bounced', 140],
+    ['failure before an ignored bounce', [['failed', 130, 140], ['bounced', 140, 130]], 'failed', 140],
+    ['latest effective bounce', [['bounced', 130, 120], ['complained', 140, 125], ['bounced', 150, 135]], 'bounced', 135],
+    ['delivered before retry start', [['delivered', 110, 105]], 'delivered', 105],
+    ['complaint in flight', [['complained', 130, 125]], 'complained', 125],
+    ['suppression in flight', [['suppressed', 130, 125]], 'suppressed', 125],
+    ['ignored bounce before retry start', [['first-submission', 30, 30], ['failed', 100, 95], ['bounced', 110, 105]], 'failed', 95],
+    ['conflicting outcomes without a prior acceptance', [['failed', 100, 95], ['bounced', 110, 105]], 'submitted', 180],
+    ['terminal event after acceptance', [['bounced', 130, 125], ['delivered', 190, 175]], 'submitted', 180],
+    ['linked bounce over an unmatched earlier delivery', [['unmatched-delivered', 20, 20], ['first-submission', 30, 30], ['bounced', 130, 125]], 'bounced', 125],
+    ['current attempt before an older failure with a later provider timestamp', [['failed', 100, 145], ['failed', 130, 125]], 'failed', 125]
+  ] as const)('recovers a legacy same-ID terminal outcome: %s', async (_name, events, status, providerTime) => {
+    const { database, env } = setup();
+    const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1_000).toISOString();
+    database.exec(`
+      UPDATE workspace_schema_metadata SET schema_version = 37;
+      INSERT INTO workspace_delivery_attempts
+        (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at, completed_at)
+      VALUES ('first', 'message-1', 'user-1', 1, 'resend', 're_1', 'submitted', '${at(0)}', '${at(30)}'),
+        ('retry', 'message-1', 'user-1', 2, 'resend', 're_1', 'submitted', '${at(120)}', '${at(180)}');
+      UPDATE workspace_delivery_statuses SET attempts = 2, last_event_at = '${at(180)}';
+      UPDATE workspace_outbound_receipts SET last_event_at = '${at(180)}';
+    `);
+    const insert = database.query(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json, created_at)
+      VALUES (?, ?, ?, 'resend', 're_1', ?, ?, ?, ?)`);
+    const timeline = [...events, ['submission', 180, 180] as const].sort((a, b) => a[1] - b[1]);
+    for (const [kind, receivedAt, createdAt] of timeline) {
+      const submission = kind === 'submission' || kind === 'first-submission';
+      const unmatched = kind === 'unmatched-delivered';
+      const eventType = submission ? 'submission' : 'email.' + (unmatched ? 'delivered' : kind);
+      const id = submission ? 'local:message-1:submission:' + (kind === 'first-submission' ? 1 : 2) : kind + '-' + receivedAt;
+      insert.run(id, unmatched ? 're_1' : 'message-1', unmatched ? 'unmatched' : 'user-1',
+        eventType, at(createdAt), JSON.stringify(payload(eventType, at(createdAt))), at(receivedAt));
+    }
+
+    for (const migration of [
+      '0038_queue_legacy_resend_events.sql',
+      '0039_queue_legacy_resend_failures.sql',
+      '0040_recover_masked_resend_terminal_events.sql'
+    ]) {
+      database.exec(readFileSync(new URL('../../../../migrations/' + migration, import.meta.url), 'utf8'));
+    }
+    const eventType = status === 'submitted' ? 'submission' : 'email.' + status;
+    expect(database.query(`SELECT event_type, event_created_at FROM workspace_outbound_events
+      WHERE json_extract(payload_json, '$._flaremailDeferred') = 1`).all()).toEqual(
+      status === 'submitted' ? [] : [{ event_type: eventType, event_created_at: at(providerTime) }]
+    );
+    expect(database.query('SELECT COUNT(*) AS events FROM workspace_outbound_events').get()).toEqual({ events: timeline.length });
+    await reconcileDeferredResendEvents(env);
+    const detail = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
+    expect(detail).toMatchObject({ status, receipt: { last_event: eventType, last_event_at: at(providerTime) } });
+    const expectedNotices = status === 'submitted' || status === 'delivered' ? [] : [{ kind: status, state: 'open' }];
+    expect((await page(env.DB)).notices).toMatchObject(expectedNotices);
+    await reconcileDeferredResendEvents(env);
+    expect((await page(env.DB)).notices).toHaveLength(expectedNotices.length);
   });
 
   test('opens a provider failure after acknowledgement of the local submission failure', async () => {
