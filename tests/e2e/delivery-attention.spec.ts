@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import AxeBuilder from '@axe-core/playwright';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
+import type { MailboxPage } from '../../src/lib/domain/mail/types';
 import type { DeliveryAttentionPage, DeliveryAttentionSummary } from '../../src/lib/domain/mail/delivery-attention';
 import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openFolder, signResendWebhook, test } from './fixtures';
 
@@ -598,4 +599,65 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
     await expect(header.locator('..').getByText('已送达', { exact: true })).toBeVisible();
     await expect(focusReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
   }
+});
+
+test('keeps page three of Sent attention when the tab regains focus', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop run covers background pagination.');
+  await login(page);
+  await openFolder(page, '已发送');
+
+  const mailboxPath = (url: URL) => url.pathname === '/api/workspace/mailbox' &&
+    url.searchParams.get('folder') === 'sent' && url.searchParams.get('filter') === 'attention';
+  const cursors: (string | null)[] = [];
+  await page.route(mailboxPath, async (route) => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    cursors.push(cursor);
+    const number = Number(cursor ?? 1);
+    const label = 'E2E Attention Page ' + number;
+    const data: MailboxPage = {
+      folder: 'sent', query: '', filter: 'attention', limit: 40, deliveryStatus: null,
+      nextCursor: number < 3 ? String(number + 1) : null, hasMore: number < 3,
+      messages: [{
+        id: 'e2e-attention-page-' + number, folder: 'sent', source: 'workspace', deliveryStatus: 'delayed',
+        fromName: 'Sender', fromEmail: 'sender@example.test', toName: 'Recipient', toEmail: 'recipient@example.test',
+        subject: label, preview: '', body: '', sentAt: '2026-08-13T08:00:00.000Z', labels: [], read: true, starred: false
+      }]
+    };
+    await route.fulfill({ json: { ok: true, data: { page: data } } });
+  });
+
+  await page.getByRole('button', { name: '待处理投递异常', exact: true }).click();
+  const next = page.getByRole('button', { name: '下一页', exact: true });
+  const previous = page.getByRole('button', { name: '上一页', exact: true });
+  const pageRow = (number: number) => page.locator('.mail-list-panel')
+    .getByRole('button', { name: new RegExp('E2E Attention Page ' + number, 'u') });
+  await expect(pageRow(1)).toBeVisible();
+  await next.click();
+  await expect(pageRow(2)).toBeVisible();
+  await next.click();
+  await expect(pageRow(3)).toBeVisible();
+  await expect(next).toBeDisabled();
+
+  const refreshedSummary = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/workspace/attention/summary' && response.ok()
+  );
+  await page.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 31_000;
+    try {
+      window.dispatchEvent(new Event('blur'));
+      window.dispatchEvent(new Event('focus'));
+    } finally { Date.now = now; }
+  });
+  await refreshedSummary;
+  await expect(pageRow(3)).toBeVisible();
+  expect(cursors).toEqual([null, '2', '3']);
+
+  const revalidated = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return mailboxPath(url) && url.searchParams.get('cursor') === '2' && response.ok();
+  });
+  await previous.click();
+  await revalidated;
+  await expect(pageRow(2)).toBeVisible();
 });
