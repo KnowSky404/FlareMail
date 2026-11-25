@@ -845,3 +845,25 @@ test('replays a manual refresh during confirmation and clears cached receipts', 
     }
   }
 });
+
+test('keeps notifications readable when replay POST fails', async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop run covers the notification API fallback.');
+  const origin = originOf(baseURL);
+  const id = 'e2e-attention-replay-fallback';
+  const label = 'E2E Replay Read Fallback';
+  await seed(page.request, origin, id, 'delayed', label);
+  await page.route('**/api/workspace/attention/summary', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    return route.fulfill({ status: 503, json: { ok: false, error: { code: 'REPLAY_FAILED', message: 'Replay unavailable' } } });
+  });
+  const badge = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === endpoint + '/summary' && response.request().method() === 'GET' && response.ok());
+  await login(page);
+  try {
+    await badge;
+    await notice(page).click();
+    await expect(panel(page).getByRole('listitem').filter({ hasText: label })).toBeVisible();
+  } finally {
+    await page.request.delete('/api/workspace/messages/' + id, { headers: { origin } });
+  }
+});
