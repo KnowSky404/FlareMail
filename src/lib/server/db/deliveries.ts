@@ -341,6 +341,34 @@ export function ensureProviderFailureAttention(db: D1Database, messageId: string
   `).bind(messageId, providerMessageId, eventCreatedAt, ...guard.args);
 }
 
+export function keepDeferredDelayAfterSent(db: D1Database, messageId: string, claim: DeferredEventClaim) {
+  const guard = replayGuard(claim);
+  return db.prepare(`
+    INSERT INTO workspace_delivery_attention (user_id, message_id, attempt_number, kind, eligible_at, delayed_provider_message_id)
+    SELECT delivery.user_id, delivery.message_id, delivery.attempts, 'delayed',
+      MIN(strftime('%Y-%m-%dT%H:%M:%fZ', delay.event_created_at), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      delivery.provider_message_id
+    FROM workspace_delivery_statuses delivery
+    JOIN workspace_outbound_events delay ON delay.svix_id = ? AND delay.message_id = delivery.message_id
+      AND delay.user_id = delivery.user_id AND delay.provider_message_id = delivery.provider_message_id
+    WHERE delivery.message_id = ? AND delivery.status = 'sent' AND delivery.last_event = 'email.sent'
+      AND julianday(delay.event_created_at) <= julianday(delivery.last_event_at)
+      AND EXISTS (
+        SELECT 1 FROM workspace_outbound_events sent
+        WHERE sent.message_id = delivery.message_id AND sent.user_id = delivery.user_id
+          AND sent.provider_message_id = delivery.provider_message_id AND sent.event_type = 'email.sent'
+          AND sent.event_created_at = delivery.last_event_at AND sent.rowid > delay.rowid
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM workspace_delivery_attention attention
+        WHERE attention.message_id = delivery.message_id AND attention.user_id = delivery.user_id
+          AND attention.kind = 'delayed' AND attention.closed_at IS NULL
+          AND (attention.delayed_provider_message_id = delivery.provider_message_id OR attention.attempt_number = delivery.attempts)
+      )
+      ${guard.sql}
+  `).bind(claim.svixId, messageId, ...guard.args);
+}
+
 export function resolveLocalDelayOnSent(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string, claim?: DeferredEventClaim) {
   const guard = replayGuard(claim);
   return db.prepare(`
