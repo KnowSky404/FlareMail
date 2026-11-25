@@ -521,11 +521,20 @@ test('refreshes Sent after startup replay commits', async ({ page, baseURL }, in
   try {
     await replayStarted.promise;
     await expect(row).toBeVisible();
+    await page.evaluate(() => {
+      const channel = new BroadcastChannel('flaremail-workspace-v1');
+      channel.addEventListener('message', ({ data }) => {
+        if (data?.type !== 'delivery-attention-changed') return;
+        document.documentElement.dataset.observedReplaySync = 'true';
+        channel.close();
+      });
+    });
     expect((await events(page.request, id, 'email.delivered', 'attention-startup-replay-delivered')).ok()).toBe(true);
   } finally {
     releaseReplay.resolve();
   }
   await expect(row).toHaveCount(0);
+  await expect(page.locator('html')).toHaveAttribute('data-observed-replay-sync', 'true');
 });
 
 test('refreshes Sent and the open receipt from the notification button', async ({ page, baseURL }, info) => {

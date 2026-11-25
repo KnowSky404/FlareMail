@@ -202,7 +202,10 @@
   const metricsRequest = new LatestRequest();
   const ownerMetricsRequest = new LatestRequest();
   let ownerMetrics = $state<WorkspaceMetrics | null>(null);
-  const notifications = new DeliveryNotifications(refreshVisibleDelivery);
+  const notifications = new DeliveryNotifications(() => {
+    refreshVisibleDelivery();
+    workspaceSync?.publish({ type: 'delivery-attention-changed' });
+  });
   const readActivation = new ReadActivationController();
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let mailboxPageNumber = $state(1);
