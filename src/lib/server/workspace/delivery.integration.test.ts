@@ -735,6 +735,32 @@ describe('Owner delivery attention', () => {
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
   });
 
+  test.each([true, false])('replays a sent webhook and older delay in arrival order (sent first %s)', async (sentFirst) => {
+    const { database, env } = setup();
+    const startedAt = '2027-01-15T08:01:00.000Z';
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '${startedAt}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission', last_event_at = '${startedAt}'
+      WHERE message_id = 'message-1';
+    `);
+    const sent = () => applyResendDeliveryWebhook(env, 'deferred-newer-sent', payload('email.sent', '2027-01-15T08:03:00.000Z'));
+    const delayed = () => applyResendDeliveryWebhook(env, 'deferred-older-delay', payload('email.delivery_delayed', '2027-01-15T08:02:00.000Z'));
+    for (const apply of sentFirst ? [sent, delayed] : [delayed, sent]) {
+      expect(await apply()).toMatchObject({ matched: true, ignored: true });
+    }
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted' WHERE message_id = 'message-1';
+    `);
+
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(2);
+    expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: 'sent', receipt: { last_event: 'email.sent' }
+    });
+    expect((await page(env.DB)).notices.map(({ kind }) => kind)).toEqual(sentFirst ? [] : ['delayed']);
+  });
+
   test('scheduled reconciliation recovers a deferred event after a transient write failure', async () => {
     const { database, env } = setup();
     const now = Date.now();
