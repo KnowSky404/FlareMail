@@ -13,6 +13,7 @@ import {
   insertOutboundStatus,
   attachMatchedOutboundEvents,
   rememberAcceptedProviderId,
+  recordAcceptedResponseOnWebhookReceipt,
   upsertOutboundReceipt,
   upsertOutboundStatus,
   type DeliveryStatusPayload
@@ -265,6 +266,7 @@ async function submitPersistedMessage(
       upsertOutboundReceipt(env.DB, { messageId: message.id, userId: session.userId, provider, attemptNumber,
         resultKind: 'accepted', remoteStatus: result.remoteStatus, responsePreview: 'Provider accepted the message for delivery.',
         lastEvent: 'submission', lastEventAt: completedAt, createdAt: completedAt, updatedAt: completedAt }),
+      recordAcceptedResponseOnWebhookReceipt(env.DB, state, result.remoteStatus),
       insertOutboundEvent(env.DB, serializeOutboundEventInsert({ svixId: `local:${message.id}:submission:${attemptNumber}`,
         messageId: message.id, userId: session.userId, provider, providerMessageId: result.providerMessageId,
         eventType: 'submission', eventCreatedAt: completedAt, summary: 'Provider accepted the message for delivery.',

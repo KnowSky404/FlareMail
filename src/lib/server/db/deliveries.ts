@@ -205,10 +205,8 @@ export async function findDeliveryStatus(db: D1Database, userId: string, message
       result_kind: DeliveryResultKind | null; remote_status: number | null; response_preview: string; attempt_started_at: string | null;
     }>();
 }
-const upsertReceiptFields = `
-  ON CONFLICT(message_id) DO UPDATE SET provider = excluded.provider, result_kind = excluded.result_kind, remote_status = excluded.remote_status,
-    response_preview = excluded.response_preview, last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
-`;
+const upsertReceiptFields = `provider = excluded.provider, result_kind = excluded.result_kind,
+  response_preview = excluded.response_preview, last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at`;
 
 export function upsertOutboundReceipt(db: D1Database, p: DeliveryReceiptPayload & { attemptNumber: number }) {
   return db.prepare(`
@@ -217,9 +215,27 @@ export function upsertOutboundReceipt(db: D1Database, p: DeliveryReceiptPayload 
       SELECT 1 FROM workspace_delivery_statuses WHERE message_id = ? AND user_id = ? AND attempts = ?
         AND COALESCE(last_event, '') NOT GLOB 'email.*'
     )
-    ${upsertReceiptFields}
+    ON CONFLICT(message_id) DO UPDATE SET remote_status = excluded.remote_status, ${upsertReceiptFields}
   `).bind(p.messageId, p.userId, p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt,
     p.createdAt, p.updatedAt, p.messageId, p.userId, p.attemptNumber);
+}
+
+// A committed webhook owns the delivery outcome, but does not carry an HTTP response.
+export function recordAcceptedResponseOnWebhookReceipt(
+  db: D1Database,
+  p: Pick<DeliveryStatusPayload, 'messageId' | 'userId' | 'attempts' | 'provider' | 'providerMessageId'>,
+  remoteStatus: number
+) {
+  return db.prepare(`
+    UPDATE workspace_outbound_receipts AS receipt SET remote_status = ?
+    WHERE message_id = ? AND user_id = ? AND provider = ? AND last_event GLOB 'email.*'
+      AND EXISTS (
+        SELECT 1 FROM workspace_delivery_statuses delivery
+        WHERE delivery.message_id = receipt.message_id AND delivery.user_id = receipt.user_id
+          AND delivery.attempts = ? AND delivery.provider = receipt.provider AND delivery.provider_message_id = ?
+          AND delivery.last_event = receipt.last_event AND delivery.last_event_at = receipt.last_event_at
+      )
+  `).bind(remoteStatus, p.messageId, p.userId, p.provider, p.attempts, p.providerMessageId);
 }
 
 export function upsertOutboundReceiptForCurrentEvent(db: D1Database, p: DeliveryReceiptPayload & { providerMessageId: string; claim?: DeferredEventClaim }) {
@@ -230,7 +246,7 @@ export function upsertOutboundReceiptForCurrentEvent(db: D1Database, p: Delivery
       SELECT 1 FROM workspace_delivery_statuses
       WHERE message_id = ? AND user_id = ? AND provider_message_id = ? AND last_event = ? AND last_event_at = ?
     ) ${guard.sql}
-    ${upsertReceiptFields}
+    ON CONFLICT(message_id) DO UPDATE SET ${upsertReceiptFields}
   `).bind(p.messageId, p.userId, p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt,
     p.createdAt, p.updatedAt, p.messageId, p.userId, p.providerMessageId, p.lastEvent, p.lastEventAt, ...guard.args);
 }
