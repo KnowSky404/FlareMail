@@ -9,7 +9,7 @@ AI **默认关闭**。打开邮件只读取共享缓存，有有效摘要即展�
 1. Follow the existing [Preview](PREVIEW.md) and [production checklist](PRODUCTION_CHECKLIST.md)
    before publishing. Migration `0030_mail_ai_analyses.sql` adds the cache, quota
    and deletion triggers at schema 30; migration `0031_telegram_ai_summary.sql`
-   adds automatic Telegram consent at schema 31. Migration `0032_ai_automatic_classification.sql` adds the six-purpose categories, durable classification jobs and last-success timestamps at schema 32. The current application requires schema 41. See the [delivery attention cutover](PRODUCTION_CHECKLIST.md#schema-41-delivery-attention-upgrade) before upgrading a shared database. Run all migrations locally
+   adds automatic Telegram consent at schema 31. Migration `0032_ai_automatic_classification.sql` adds the six-purpose categories, durable classification jobs and last-success timestamps at schema 32. The current application requires schema 42. See the [delivery attention cutover](PRODUCTION_CHECKLIST.md#schema-42-delivery-attention-upgrade) before upgrading a shared database. Run all migrations locally
    with `bun run db:migrate:local`. Remote migration and deployment require their
    own authorization; this guide does not execute them.
 2. Create one cryptographically random 32-byte encryption key (64 hexadecimal

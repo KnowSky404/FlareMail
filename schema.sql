@@ -1169,5 +1169,5 @@ WHEN new.status <> old.status OR new.attempts <> old.attempts
 END;
 
 
-UPDATE workspace_schema_metadata SET schema_version = 41,
+UPDATE workspace_schema_metadata SET schema_version = 42,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE schema_name = 'flaremail';

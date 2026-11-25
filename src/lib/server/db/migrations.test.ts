@@ -477,6 +477,76 @@ describe('versioned D1 migrations', () => {
     db.close();
   });
 
+  test.each([
+    ['ignored after local failure', 75, false, 65],
+    ['acknowledged after migration', 75, true, 65],
+    ['applied after local failure', 85, false, 85]
+  ] as const)('preserves the effective historical failure receipt (%s)', (_label, secondFailure, acknowledged, expected) => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0032_ai_automatic_classification.sql');
+    const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1_000).toISOString();
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
+      VALUES ('retry', 'owner', 'sent', '', 'sender@example.test', '', '', '${at(0)}');
+      INSERT INTO workspace_delivery_statuses
+        (message_id, user_id, status, attempts, provider, provider_message_id, last_event, last_event_at)
+      VALUES ('retry', 'owner', 'submitted', 3, 'resend', 're_same', 'submission', '${at(180)}');
+      INSERT INTO workspace_outbound_receipts
+        (message_id, user_id, provider, result_kind, remote_status, last_event, last_event_at)
+      VALUES ('retry', 'owner', 'resend', 'accepted', 202, 'submission', '${at(180)}');
+      INSERT INTO workspace_delivery_attempts
+        (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at, completed_at)
+      VALUES ('initial', 'retry', 'owner', 1, 'resend', 're_same', 'submitted', '${at(0)}', '${at(30)}'),
+        ('intermediate', 'retry', 'owner', 2, 'resend', NULL, 'failed', '${at(60)}', '${at(80)}'),
+        ('latest', 'retry', 'owner', 3, 'resend', 're_same', 'submitted', '${at(120)}', '${at(180)}');
+    `);
+    const event = db.query(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, summary, payload_json, created_at)
+      VALUES (?, 'retry', 'owner', 'resend', ?, ?, ?, ?, ?, ?)`);
+    const failure = (svixId: string, seconds: number, received: number) => event.run(svixId, 're_same', 'email.failed', at(seconds),
+      svixId, JSON.stringify({ type: 'email.failed', created_at: at(seconds), data: { email_id: 're_same' } }), at(received));
+    event.run('local:retry:submission:1', 're_same', 'submission', at(30), '', '{"status":"submitted"}', at(30));
+    failure('effective-failure', 65, 70);
+    event.run('local:retry:submission:2', null, 'submission', at(80), '', '{"status":"failed"}', at(80));
+    failure('second-failure', secondFailure, 90);
+    event.run('local:retry:submission:3', 're_same', 'submission', at(180), '', '{"status":"submitted"}', at(180));
+
+    const prior = '0041_recover_terminal_outcomes_across_retries.sql';
+    for (const migration of migrationFiles.slice(32, migrationFiles.indexOf(prior) + 1)) {
+      db.exec(readFileSync(join(migrationsDirectory, migration), 'utf8'));
+      db.query('INSERT INTO _test_migrations (name) VALUES (?)').run(migration);
+    }
+    const status = db.query('SELECT status, last_event, last_event_at FROM workspace_delivery_statuses');
+    const receipt = db.query('SELECT result_kind, remote_status, last_event, last_event_at, response_preview FROM workspace_outbound_receipts');
+    const alert = db.query<{ id: number; attempt_number: number; state: string; eligible_at: string; acknowledged_at: string | null; version: number }, []>(
+      "SELECT id, attempt_number, state, eligible_at, acknowledged_at, version FROM workspace_delivery_attention WHERE kind = 'failed' AND closed_at IS NULL");
+    expect(status.get()).toEqual({ status: 'failed', last_event: 'email.failed', last_event_at: at(secondFailure) });
+    expect(receipt.get()).toMatchObject({ last_event_at: at(secondFailure), response_preview: 'second-failure' });
+    if (acknowledged) {
+      db.query("UPDATE workspace_delivery_attention SET state = 'acknowledged', acknowledged_at = ? WHERE kind = 'failed'").run(at(190));
+    }
+    const originalAlert = alert.get()!;
+    const timeline = db.query('SELECT svix_id, event_type, event_created_at, payload_json FROM workspace_outbound_events ORDER BY rowid');
+    const originalEvents = timeline.all();
+
+    applyMigrations(db);
+
+    expect(status.get()).toEqual({ status: 'failed', last_event: 'email.failed', last_event_at: at(expected) });
+    expect(receipt.get()).toEqual({
+      result_kind: 'permanent_failure', remote_status: 202, last_event: 'email.failed', last_event_at: at(expected),
+      response_preview: expected === secondFailure ? 'second-failure' : 'effective-failure'
+    });
+    const current = alert.get()!;
+    expect(current).toMatchObject({
+      id: originalAlert.id, attempt_number: 3, state: acknowledged ? 'acknowledged' : 'open',
+      eligible_at: at(expected), acknowledged_at: acknowledged ? at(190) : null
+    });
+    if (expected === secondFailure) expect(current.version).toBe(originalAlert.version);
+    else expect(current.version).toBeGreaterThan(originalAlert.version);
+    expect(timeline.all()).toEqual(originalEvents);
+    db.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);
@@ -522,7 +592,8 @@ describe('versioned D1 migrations', () => {
       '0038_queue_legacy_resend_events.sql',
       '0039_queue_legacy_resend_failures.sql',
       '0040_recover_masked_resend_terminal_events.sql',
-      '0041_recover_terminal_outcomes_across_retries.sql'
+      '0041_recover_terminal_outcomes_across_retries.sql',
+      '0042_correct_stale_legacy_failure_receipts.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -657,7 +728,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 41 }
+      { schema_name: 'flaremail', schema_version: 42 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
