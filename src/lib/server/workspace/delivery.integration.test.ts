@@ -850,7 +850,9 @@ describe('Owner delivery attention', () => {
       expect((await refreshAttentionSummary(summaryRequest('user-1'))).status).toBe(200);
       expect((await delivery()).status).toBe('submitting');
       setStartedAt.run(at(18));
-      expect((await refreshAttentionSummary(summaryRequest('user-1'))).status).toBe(200);
+      const recovered = await refreshAttentionSummary(summaryRequest('user-1'));
+      expect(recovered.status).toBe(200);
+      expect(await recovered.json()).toMatchObject({ data: { replayed: 1 } });
       expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
     } else {
       await reconcileDeferredResendEvents(env);

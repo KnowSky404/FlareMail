@@ -3167,7 +3167,7 @@
   }
 
   async function handleReloadDeliveryDetail(message: MailMessage) {
-    notifications.invalidate();
+    await notifications.invalidate(true);
     const ok = await loadDeliveryDetail(message, true);
     if (ok) refreshAttentionMailbox();
     notify(
@@ -3328,14 +3328,20 @@
     };
 
     let lastAttentionFocusRefresh = 0;
-    const refreshOnFocus = () => {
-      void notifications.refresh();
-      void notifications.checkHealth();
-      if (!authenticated || authExpired || Date.now() - lastAttentionFocusRefresh < 30_000) return;
-      lastAttentionFocusRefresh = Date.now();
+    const refreshFocusedDelivery = () => {
+      if (!authenticated || authExpired) return;
       const current = selectedMessage;
       if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id, true);
       else refreshAttentionMailbox(true);
+    };
+    const refreshOnFocus = () => {
+      void notifications.refresh().then((replayed) => {
+        if (replayed) refreshFocusedDelivery();
+      });
+      void notifications.checkHealth();
+      if (!authenticated || authExpired || Date.now() - lastAttentionFocusRefresh < 30_000) return;
+      lastAttentionFocusRefresh = Date.now();
+      refreshFocusedDelivery();
     };
     window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('keydown', handleShortcut);
