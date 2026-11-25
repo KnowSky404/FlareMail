@@ -440,6 +440,31 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   expect((await getNotices(page.request, 'history')).notices.find((item) => item.id === bounce.id)?.state).toBe('acknowledged');
 });
 
+test('refreshes Sent and the open receipt from the notification button', async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'The desktop workspace displays the Sent list and open receipt together.');
+  const origin = originOf(baseURL);
+  const id = 'e2e-attention-manual-refresh';
+  const label = 'E2E Manual Notification Refresh';
+  await seed(page.request, origin, id, 'delayed', label);
+  await login(page);
+  await page.goto('/?folder=sent&filter=attention');
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
+  await row.click();
+  const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+  await expect(receipt.getByRole('button', { name: '确认异常', exact: true })).toBeVisible();
+  await notice(page).click();
+  await expect(panel(page).getByText(label, { exact: true })).toBeVisible();
+
+  expect((await events(page.request, id, 'email.delivered', 'attention-button-delivered')).ok()).toBe(true);
+  await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
+
+  await expect(panel(page).getByText(label, { exact: true })).toHaveCount(0);
+  await expect(row).toHaveCount(0);
+  await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(receipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
+});
+
 test('refreshes the notification scope, Sent filter, and receipt after delivery changes', async ({ page, baseURL }, info) => {
   test.skip(info.project.name !== 'desktop', 'One desktop run covers delivery state refresh.');
   const origin = originOf(baseURL);
