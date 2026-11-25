@@ -88,6 +88,13 @@ describe('mailbox query contract', () => {
     expect(() => parseMailboxQuery(new URLSearchParams(`q=${'x'.repeat(201)}`))).toThrow(ApiError);
   });
 
+  test('requires the Sent section and folder for the attention filter', () => {
+    expect(parseMailboxQuery(new URLSearchParams('folder=sent&filter=attention')))
+      .toMatchObject({ section: 'sent', folder: 'sent', filter: 'attention' });
+    expect(() => parseMailboxQuery(new URLSearchParams('section=sent&filter=attention'))).toThrow(ApiError);
+    expect(() => parseMailboxQuery(new URLSearchParams('folder=sent&section=inbox&filter=attention'))).toThrow(ApiError);
+  });
+
   test('bounds the complete LIKE pattern by UTF-8 bytes', () => {
     expect(new TextEncoder().encode(buildD1LikeSearchPattern('x'.repeat(48))).byteLength).toBe(50);
     expect(() => buildD1LikeSearchPattern('x'.repeat(49))).toThrow(ApiError);

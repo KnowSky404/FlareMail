@@ -219,11 +219,7 @@ async function refreshedResult(env: CloudflareEnv, session: WorkspaceContext, me
   const row = await findOwnedWorkspaceMessage(env.DB, session.userId, messageId);
   if (!row) throw new Error('Persisted outbound message is missing from the workspace.');
   const delivery = await findDeliveryStatus(env.DB, session.userId, messageId);
-  const message = mapWorkspaceMessageRow(row, delivery ? {
-    message_id: messageId, status: delivery.status, attempts: delivery.attempts, delivered_at: delivery.delivered_at,
-    last_error: delivery.last_error, provider_message_id: delivery.provider_message_id, provider: delivery.provider,
-    result_kind: delivery.result_kind, remote_status: delivery.remote_status, response_preview: delivery.response_preview ?? '', last_event: delivery.last_event, last_event_at: delivery.last_event_at
-  } : undefined);
+  const message = mapWorkspaceMessageRow(row, delivery ?? undefined);
   return { message, metrics: await getMailboxMetrics(env.DB, session.userId), metricsScope: { identityFilter: null } };
 }
 

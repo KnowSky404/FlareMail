@@ -188,7 +188,7 @@ export function parseMailboxQuery(params: URLSearchParams): MailboxQuery {
   }
 
   const filterValue = params.get('filter') ?? 'all';
-  if (!filters.has(filterValue as MailboxFilter) || (filterValue === 'attention' && section !== 'sent')) {
+  if (!filters.has(filterValue as MailboxFilter) || (filterValue === 'attention' && (section !== 'sent' || folder !== 'sent'))) {
     throw new ApiError(400, 'INVALID_FILTER', '邮件筛选条件无效。', {
       filter: ['仅支持 all、unread、starred，或已发送邮件的 attention。']
     });
