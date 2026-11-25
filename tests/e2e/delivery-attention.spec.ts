@@ -491,7 +491,11 @@ test('refreshes Sent and the open receipt from the notification button', async (
   await expect(panel(page).getByText(label, { exact: true })).toBeVisible();
 
   expect((await events(page.request, id, 'email.delivered', 'attention-button-delivered')).ok()).toBe(true);
+  const refreshedSummary = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/workspace/attention/summary' &&
+    response.request().method() === 'POST' && response.ok());
   await panel(page).getByRole('button', { name: '刷新通知和系统状态' }).click();
+  await refreshedSummary;
 
   await expect(panel(page).getByText(label, { exact: true })).toHaveCount(0);
   await expect(row).toHaveCount(0);

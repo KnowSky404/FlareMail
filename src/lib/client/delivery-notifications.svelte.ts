@@ -105,14 +105,21 @@ export class DeliveryNotifications {
       return;
     }
     const list = this.open;
-    if (!force && !more && Date.now() - (list ? this.pageAt : this.readAt) < freshness) return;
+    const now = Date.now();
+    if (!force && !more && now - (list ? this.pageAt : this.readAt) < freshness) return;
+    const refreshSummary = !list || (!more && now - this.readAt >= freshness);
     const request = this.read.begin();
     // Mark the request at dispatch to coalesce focus and open refreshes.
-    if (list) this.pageAt = Date.now();
-    this.readAt = Date.now();
+    if (list) this.pageAt = now;
+    this.readAt = now;
     this.loading = list;
     this.loadError = false;
     try {
+      if (refreshSummary) {
+        const summary = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { method: 'POST', signal: request.signal });
+        if (!request.isCurrent()) return;
+        this.summary = summary;
+      }
       if (list) {
         const params = new URLSearchParams({ view: this.view });
         if (this.kind) params.set('kind', this.kind);
@@ -124,9 +131,6 @@ export class DeliveryNotifications {
           : result.notices;
         this.cursor = result.nextCursor;
         this.summary = result.summary;
-      } else {
-        const result = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { method: 'POST', signal: request.signal });
-        if (request.isCurrent()) this.summary = result;
       }
       return request.isCurrent();
     } catch {
