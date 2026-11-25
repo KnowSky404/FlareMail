@@ -62,9 +62,25 @@ export async function findDeliveryDetailRows(db: D1Database, userId: string, mes
     LEFT JOIN workspace_outbound_receipts r ON r.user_id = target.user_id AND r.message_id = target.message_id
   `).bind(userId, messageId);
   const events = db.prepare(`
+    WITH timeline AS (
+      SELECT e.*, e.rowid AS sequence FROM workspace_outbound_events e WHERE e.user_id = ?1 AND e.message_id = ?2
+      UNION ALL
+      SELECT e.*, e.rowid AS sequence FROM workspace_outbound_events e
+      WHERE e.provider = 'resend' AND e.user_id = 'unmatched' AND e.provider_message_id IN (
+        SELECT a.provider_message_id FROM workspace_delivery_attempts a
+        WHERE a.user_id = ?1 AND a.message_id = ?2 AND a.provider_message_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM workspace_delivery_statuses current WHERE current.provider_message_id = a.provider_message_id
+          ) AND NOT EXISTS (
+            SELECT 1 FROM workspace_delivery_attempts other
+            WHERE other.provider_message_id = a.provider_message_id AND (other.message_id <> ?2 OR other.user_id <> ?1)
+          )
+      ) AND CASE WHEN json_valid(e.payload_json)
+        THEN json_extract(e.payload_json, '$.data.email_id') = e.provider_message_id ELSE 0 END
+    )
     SELECT svix_id, provider_message_id, event_type, event_created_at, summary,
       CASE WHEN ${wasDeferred} THEN json_remove(payload_json, '${deferredPath}') ELSE payload_json END AS payload_json
-    FROM workspace_outbound_events WHERE user_id = ? AND message_id = ? ORDER BY event_created_at DESC, rowid DESC
+    FROM timeline ORDER BY event_created_at DESC, sequence DESC
   `).bind(userId, messageId);
   const [record, history, incident] = await db.batch([status, events, currentDeliveryAttentionStatement(db, userId, messageId)]);
   const row = record.results[0] as (WorkspaceOutboundReceiptRow & { status: DeliveryStatus | null; receipt_id: string | null }) | undefined;
@@ -241,13 +257,7 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
     WHEN 'draft' THEN 0 WHEN 'queued' THEN 1 WHEN 'submitting' THEN 2 WHEN 'submitted' THEN 3
     WHEN 'sent' THEN 4 WHEN 'delayed' THEN 4 WHEN 'bounced' THEN 5 WHEN 'failed' THEN 5
     WHEN 'complained' THEN 6 WHEN 'suppressed' THEN 6 WHEN 'delivered' THEN 7 ELSE -1 END`;
-  return db.prepare(`
-    UPDATE workspace_delivery_statuses AS current SET
-      status = ?, provider = ?, provider_message_id = ?, last_error = ?,
-      sent_at = CASE WHEN ? = 'sent' THEN COALESCE(sent_at, ?) ELSE sent_at END,
-      delivered_at = CASE WHEN ? = 'delivered' THEN COALESCE(delivered_at, ?) ELSE delivered_at END,
-      last_event = ?, last_event_at = ?, updated_at = ?
-    WHERE message_id = ? AND provider_message_id = ?
+  const applicable = `current.message_id = ? AND current.provider_message_id = ?
       AND (? OR NOT (${unconfirmedAttempt('current', input.allowExpiredAttempt)}))
       AND (? OR NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attempts attempt
@@ -264,16 +274,40 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       ))
       AND (last_event IS 'submission' OR status NOT IN (${terminalStatuses}) OR status = ?)
       AND (last_event IS 'submission' OR ? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '') ${replayTie}))
-      ${guard.sql}
-  `).bind(
-    input.targetStatus, input.provider, input.providerMessageId, input.lastError,
-    input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
-    input.eventType, input.eventCreatedAt, input.eventCreatedAt, input.messageId, input.providerMessageId,
+      ${guard.sql}`;
+  const applicableArgs = [
+    input.messageId, input.providerMessageId,
     terminal, terminal, input.eventCreatedAt, Number(input.fromDeferred ?? false),
     input.targetStatus, input.eventCreatedAt,
     input.targetStatus, input.targetRank, input.targetRank, input.eventCreatedAt,
     ...(input.claim ? [input.eventCreatedAt, input.claim.svixId] : []), ...guard.args
+  ];
+  const update = db.prepare(`
+    UPDATE workspace_delivery_statuses AS current SET
+      status = ?, provider = ?, provider_message_id = ?, last_error = ?,
+      sent_at = CASE WHEN ? = 'sent' THEN COALESCE(sent_at, ?) ELSE sent_at END,
+      delivered_at = CASE WHEN ? = 'delivered' THEN COALESCE(delivered_at, ?) ELSE delivered_at END,
+      last_event = ?, last_event_at = ?, updated_at = ?
+    WHERE ${applicable}
+  `).bind(
+    input.targetStatus, input.provider, input.providerMessageId, input.lastError,
+    input.targetStatus, input.eventCreatedAt, input.targetStatus, input.eventCreatedAt,
+    input.eventType, input.eventCreatedAt, input.eventCreatedAt,
+    ...applicableArgs
   );
+  if (input.targetStatus !== 'delayed') return [update];
+  const closeLocalDelay = db.prepare(`
+    UPDATE workspace_delivery_attention AS attention
+    SET state = 'superseded', closed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE attention.message_id = ? AND attention.kind = 'delayed' AND attention.closed_at IS NULL
+      AND attention.delayed_provider_message_id IS NULL AND EXISTS (
+        SELECT 1 FROM workspace_delivery_statuses AS current
+        WHERE ${applicable} AND current.message_id = attention.message_id
+          AND current.user_id = attention.user_id AND current.attempts = attention.attempt_number
+          AND current.status = 'delayed' AND current.last_event = 'submission'
+      )
+  `).bind(input.messageId, ...applicableArgs);
+  return [closeLocalDelay, update];
 }
 export function retainProviderDelayAfterRetry(db: D1Database, messageId: string, providerMessageId: string, eventCreatedAt: string, claim?: DeferredEventClaim, allowExpiredAttempt = false) {
   const guard = replayGuard(claim);
