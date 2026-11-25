@@ -101,6 +101,23 @@ describe('Resend delivery reconciliation', () => {
       .toEqual({ status: 'delivered', last_event_at: '2027-01-15T08:05:00.000Z', delivered_at: '2027-01-15T08:05:00.000Z' });
   });
 
+  test('shows unambiguous legacy events for a superseded provider ID without replaying them', async () => {
+    const { database, env } = setup();
+    for (const id of ['re_legacy', 're_ambiguous']) {
+      await applyResendDeliveryWebhook(env, id, payload('email.bounced', '2027-01-15T08:05:00Z', id));
+    }
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at)
+      VALUES ('old-1', 'message-1', 'user-1', 1, 'resend', 're_legacy', 'submitted', '2027-01-15T08:00:00.000Z'),
+        ('old-2', 'message-1', 'user-1', 2, 'resend', 're_ambiguous', 'submitted', '2027-01-15T08:00:00.000Z'),
+        ('other', 'message-2', 'user-2', 1, 'resend', 're_ambiguous', 'submitted', '2027-01-15T08:00:00.000Z');
+    `);
+    await reconcileDeferredResendEvents(env);
+    const detail = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
+    expect(detail.events.map(({ svix_id }) => svix_id)).toEqual(['re_legacy']);
+    expect(detail).toMatchObject({ status: 'submitted', receipt: { result_kind: 'accepted' }, attention: null });
+  });
+
   test('creates a terminal webhook receipt before any submission receipt exists', async () => {
     const { database, env } = setup();
     const at = '2027-01-15T08:05:00.000Z';
@@ -450,6 +467,26 @@ describe('Owner delivery attention', () => {
     expect(current).toMatchObject({ id: original.id, state: 'acknowledged' });
     expect(current?.version).toBeGreaterThan(rateLimit.version);
     expect((await page(db, 'history')).notices.find(({ id }) => id === rateLimit.id)?.state).toBe('resolved');
+  });
+
+  test('opens a distinct provider delay after an acknowledged submission rate limit', async () => {
+    const { database, env } = setup();
+    const db = env.DB;
+    database.exec(`
+      UPDATE workspace_delivery_statuses SET status = 'delayed', last_event = 'submission',
+        last_event_at = '2027-01-15T08:01:00.000Z' WHERE message_id = 'message-1';
+    `);
+    const rateLimit = (await page(db)).notices[0]!;
+    await changeDeliveryAttention(db, 'user-1', { action: 'acknowledge', incident: ref(rateLimit) });
+    await applyResendDeliveryWebhook(env, 'first-provider-delay-after-rate-limit',
+      payload('email.delivery_delayed', '2027-01-15T08:02:00Z'));
+    const notices = (await page(db)).notices;
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ kind: 'delayed', state: 'open' });
+    expect(notices[0]?.id).not.toBe(rateLimit.id);
+    expect((await page(db, 'history')).notices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: rateLimit.id, state: 'superseded' })
+    ]));
   });
 
   test.each([false, true])('keeps the provider delay acknowledgement (%s) after an acknowledged rate limit', async (acknowledged) => {

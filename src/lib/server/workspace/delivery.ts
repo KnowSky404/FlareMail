@@ -163,7 +163,7 @@ function reconciliationStatements(
   return [
     ...(providerFailure ? [supersedeLocalSubmissionFailure(db, outboundRow.message_id, event.providerMessageId, claim)] : []),
     ...(event.statusUpdate === 'delayed' ? retainProviderDelayAfterRetry(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim, allowExpiredAttempt) : []),
-    reconcileDeliveryStatus(db, {
+    ...reconcileDeliveryStatus(db, {
       messageId: outboundRow.message_id,
       targetStatus: event.statusUpdate,
       targetRank: deliveryPriority(event.statusUpdate),
