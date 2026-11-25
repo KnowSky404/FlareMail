@@ -792,6 +792,46 @@ describe('Owner delivery attention', () => {
     });
   });
 
+  test.each(['email.delivery_delayed', 'email.sent'] as const)('replays progress held during local rejection after same-ID acceptance (%s)', async (laterEvent) => {
+    const { database, env } = setup();
+    const at = (minute: number) => `2027-01-15T08:0${minute}:00.000Z`;
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts
+        (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at)
+      VALUES ('accepted', 'message-1', 'user-1', 1, 'resend', 're_1', 'submitted', '${at(0)}'),
+        ('rejected', 'message-1', 'user-1', 2, 'resend', NULL, 'submitting', '${at(1)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission', last_event_at = '${at(1)}';
+    `);
+    expect(await applyResendDeliveryWebhook(env, 'queued-while-submitting', payload('email.delivery_delayed', at(2))))
+      .toMatchObject({ ignored: true });
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET status = 'failed', completed_at = '${at(3)}', error = 'Rejected' WHERE id = 'rejected';
+      UPDATE workspace_delivery_statuses SET status = 'failed', last_event = 'submission', last_event_at = '${at(3)}';
+    `);
+    expect(await applyResendDeliveryWebhook(env, 'queued-after-rejection', payload(laterEvent, at(4))))
+      .toMatchObject({ ignored: true });
+    expect(await reconcileDeferredResendEvents(env)).toBe(0);
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
+    expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: 'failed', attention: { kind: 'failed', state: 'open' }
+    });
+
+    database.exec(`
+      INSERT INTO workspace_delivery_attempts
+        (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at)
+      VALUES ('accepted-again', 'message-1', 'user-1', 3, 'resend', 're_1', 'submitted', '${at(5)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitted', attempts = 3, last_event = 'submission', last_event_at = '${at(6)}';
+    `);
+    expect(await reconcileDeferredResendEvents(env)).toBe(2);
+    expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: laterEvent === 'email.sent' ? 'sent' : 'delayed',
+      receipt: { last_event: laterEvent, last_event_at: at(4) },
+      attention: { kind: 'delayed', state: 'open' }
+    });
+    expect(database.query("SELECT attempt_number FROM workspace_delivery_attention WHERE kind = 'delayed' AND closed_at IS NULL").get())
+      .toEqual({ attempt_number: 3 });
+  });
+
   test.each([false, true])('orders a live delay after a sent event still queued at acceptance (newer %s)', async (newer) => {
     const { database, env } = setup();
     const at = (minute: number) => `2027-01-15T08:0${minute}:00.000Z`;

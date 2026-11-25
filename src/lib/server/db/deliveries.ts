@@ -57,6 +57,13 @@ const unconfirmedAttempt = (alias: string, allowExpired = false) => `EXISTS (
 const unacceptedLocalFailure = (alias: string) =>
   `${alias}.status = 'failed' AND ${alias}.last_event IS 'submission' AND attempt.provider_message_id IS NULL`;
 
+// A later acceptance of the same ID can still make pending progress actionable.
+const progressHeldByRejection = (delivery: string, event: string) => `${event}.event_type IN ('email.sent', 'email.delivery_delayed') AND EXISTS (
+  SELECT 1 FROM workspace_delivery_attempts attempt
+  WHERE attempt.message_id = ${delivery}.message_id AND attempt.attempt_number = ${delivery}.attempts
+    AND (${unacceptedLocalFailure(delivery)})
+)`;
+
 const newerProviderEvent = (alias: string) => `
   SELECT 1 FROM workspace_outbound_events newer
   WHERE newer.message_id = ${alias}.message_id AND newer.user_id = ${alias}.user_id
@@ -506,12 +513,12 @@ export async function hasOutboundEvent(db: D1Database, svixId: string) {
 }
 
 export function markDeferredOutboundEvent(db: D1Database, svixId: string) {
-  return db.prepare(`UPDATE workspace_outbound_events
+  return db.prepare(`UPDATE workspace_outbound_events AS event
     SET payload_json = json_set(payload_json, '${deferredPath}', 1)
     WHERE svix_id = ? AND EXISTS (
       SELECT 1 FROM workspace_delivery_statuses d
-      WHERE d.message_id = workspace_outbound_events.message_id AND d.user_id = workspace_outbound_events.user_id
-        AND d.provider_message_id = workspace_outbound_events.provider_message_id AND ${unconfirmedAttempt('d')}
+      WHERE d.message_id = event.message_id AND d.user_id = event.user_id AND d.provider_message_id = event.provider_message_id
+        AND (${unconfirmedAttempt('d')} OR (${progressHeldByRejection('d', 'event')}))
     )`).bind(svixId);
 }
 
@@ -555,6 +562,7 @@ export function listReadyDeferredProviderIds(db: D1Database, limit: number, user
       AND event.user_id = delivery.user_id AND event.message_id = delivery.message_id
       AND (?1 IS NULL OR delivery.user_id = ?1)
       AND NOT (${unconfirmedAttempt('delivery', true)})
+      AND NOT (${progressHeldByRejection('delivery', 'event')})
     GROUP BY delivery.provider_message_id
     ORDER BY MIN(event.event_created_at)
     LIMIT ?2
@@ -564,12 +572,16 @@ export function listReadyDeferredProviderIds(db: D1Database, limit: number, user
 export async function listPendingOutboundEvents(db: D1Database, providerMessageId: string, limit: number) {
   return db.prepare(`SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json,
     ${wasDeferred} AS was_deferred
-    FROM workspace_outbound_events
+    FROM workspace_outbound_events event
     WHERE provider = 'resend' AND provider_message_id = ? AND ((${wasDeferred}) OR (
       user_id = 'unmatched' AND julianday(event_created_at) IS NOT NULL
       AND length(event_type) BETWEEN 1 AND 160 AND event_type NOT GLOB '*[^A-Za-z0-9._-]*'
       AND CASE WHEN json_valid(payload_json) THEN json_type(payload_json) = 'object' ELSE 0 END
     ))
+    AND NOT EXISTS (
+      SELECT 1 FROM workspace_delivery_statuses delivery
+      WHERE delivery.provider_message_id = event.provider_message_id AND (${progressHeldByRejection('delivery', 'event')})
+    )
     ORDER BY event_created_at ASC, rowid ASC LIMIT ?`)
     .bind(providerMessageId, limit).all<WorkspaceOutboundEventRow & { was_deferred: number }>();
 }
@@ -588,6 +600,7 @@ export function assignOutboundEvent(db: D1Database, claim: DeferredEventClaim, m
       SELECT 1 FROM workspace_delivery_statuses d
       WHERE d.message_id = ? AND d.user_id = ? AND d.provider_message_id = workspace_outbound_events.provider_message_id
         AND (? OR NOT (${unconfirmedAttempt('d', allowExpiredAttempt)}))
+        AND NOT (${progressHeldByRejection('d', 'workspace_outbound_events')})
     )`).bind(messageId, userId, claim.token, claim.svixId, userId, messageId, messageId, userId, Number(allowUnconfirmed));
 }
 
