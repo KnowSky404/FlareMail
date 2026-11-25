@@ -149,18 +149,17 @@ export class DeliveryNotifications {
     this.loadError = false;
     let replayed = 0;
     try {
-      if (replayDue) {
-        const result = await this.replaySummary();
-        if (result) {
-          const { replayed: count, ...summary } = result;
-          replayed = count;
-          if (request.isCurrent()) this.summary = summary;
-        }
-        if (!request.isCurrent()) {
-          if (replayed) void this.refresh(true);
-          return replayed;
-        }
-      } else if (!list) {
+      const result = replayDue ? await this.replaySummary().catch(() => undefined) : undefined;
+      if (result) {
+        const { replayed: count, ...summary } = result;
+        replayed = count;
+        if (request.isCurrent()) this.summary = summary;
+      }
+      if (!request.isCurrent()) {
+        if (replayed) void this.refresh(true);
+        return replayed;
+      }
+      if (!list && !result) {
         const summary = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { signal: request.signal });
         if (request.isCurrent()) this.summary = summary;
       }
