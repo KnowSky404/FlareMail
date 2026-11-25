@@ -591,16 +591,17 @@
     if (authenticated && !authExpired) untrack(() => notifications.start());
   });
 
+  const viewingDiagnostics = $derived(activeSection === 'profile' &&
+    managementView === 'settings' && urlState.settingsTab === 'diagnostics');
+
   $effect(() => {
-    if (authenticated && !authExpired && activeSection === 'profile' &&
-      managementView === 'settings' && urlState.settingsTab === 'diagnostics') {
+    if (authenticated && !authExpired && viewingDiagnostics) {
       untrack(() => void refreshOwnerMetrics());
     }
   });
 
   $effect(() => {
-    if (focusDiagnostics && ProfilePane && activeSection === 'profile' &&
-      managementView === 'settings' && urlState.settingsTab === 'diagnostics') {
+    if (focusDiagnostics && ProfilePane && viewingDiagnostics) {
       focusDiagnostics = false;
       void tick().then(() => document.getElementById('settings-tab-diagnostics')?.focus({ preventScroll: true }));
     }
@@ -1913,7 +1914,9 @@
       else void loadWorkspaceBody(current, true);
       if (current.folder === 'sent' && current.source === 'workspace') void loadDeliveryDetail(current, true);
     }
-    if (authenticated) void refreshWorkspace(false);
+    void refreshWorkspace(false).then(() => {
+      if (event.delivery && viewingDiagnostics) void refreshOwnerMetrics(true);
+    });
   }
 
   function applyMailboxPage(page: MailboxPage, append: boolean) {

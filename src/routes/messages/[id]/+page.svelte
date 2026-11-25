@@ -50,6 +50,7 @@
   let deliveryDetailPending = $state(false);
   let attentionPending = $state(false);
   const deliveryRequest = new LatestRequest();
+  let deliveryDetailCheckedAt = 0;
   let mutationPending = $state(false);
   let mutationError = $state('');
   let statusRefreshError = $state(false);
@@ -186,7 +187,10 @@
     deliveryDetailError = '';
     try {
       const result = await fetchDeliveryDetail(message.id, request.signal);
-      if (request.isCurrent()) deliveryDetail = result.detail;
+      if (request.isCurrent()) {
+        deliveryDetail = result.detail;
+        deliveryDetailCheckedAt = Date.now();
+      }
     } catch (error) {
       if (request.isCurrent()) deliveryDetailError = errorMessage(error, t('mail.deliveryDetailFailed'));
     } finally {
@@ -288,6 +292,10 @@
       enterAuthExpired(source ?? 'worker-session');
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    const refreshDeliveryOnFocus = () => {
+      if (!deliveryDetailPending && Date.now() - deliveryDetailCheckedAt >= 30_000) void reloadDeliveryDetail();
+    };
+    window.addEventListener('focus', refreshDeliveryOnFocus);
     if (isClientAuthExpired()) enterAuthExpired('worker-session');
     else authSessionSync.publish({ type: 'authenticated' });
 
@@ -350,6 +358,7 @@
       readActivation.reset();
       activeController = null;
       window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+      window.removeEventListener('focus', refreshDeliveryOnFocus);
       sync?.close();
       sync = null;
       authSessionSync?.close();

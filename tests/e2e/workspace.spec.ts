@@ -1688,10 +1688,25 @@ test('keeps a reply-all sender tied to the selected delivery after changing iden
 test('uses global service metrics and exposes typed API errors with a request ID', async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'The desktop workspace exposes global diagnostics.');
   await login(page);
-  await page.goto('/?folder=settings&tab=diagnostics');
+  await page.goto('/?folder=settings&tab=diagnostics&identity=address:00000000-0000-4000-8000-000000000021');
   const diagnostics = page.locator('#settings-diagnostics');
   await expect(diagnostics.getByRole('heading', { name: '全局投递统计' })).toBeVisible();
-  await expect(diagnostics).toContainText('长时间提交中');
+  const staleSubmitting = diagnostics.getByText('长时间提交中', { exact: true }).locator('..').locator('dd');
+  await expect(staleSubmitting).toHaveText(/^[0-9]+$/u);
+  const ownerMetrics = (url: URL) => url.pathname === '/api/workspace/mailbox/metrics' && !url.searchParams.has('identity');
+  await page.route(ownerMetrics, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.data.metrics.staleDeliveryCount = 23;
+    await route.fulfill({ response, json: body });
+  });
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh', delivery: true });
+    channel.close();
+  });
+  await expect(staleSubmitting).toHaveText('23');
+  await page.unroute(ownerMetrics);
   await page.goto('/?folder=inbox');
 
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });

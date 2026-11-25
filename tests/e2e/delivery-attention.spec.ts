@@ -467,6 +467,13 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toBeVisible();
 
   expect((await events(page.request, pendingId, 'email.delivered', 'attention-refresh-delivered')).ok()).toBe(true);
+  await standalone.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 31_000;
+    try { window.dispatchEvent(new Event('focus')); } finally { Date.now = now; }
+  });
+  await expect(standaloneReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '刷新投递回执', exact: true }).click();
   await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(row).toHaveCount(0);
