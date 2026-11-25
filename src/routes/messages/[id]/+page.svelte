@@ -309,7 +309,8 @@
         return;
       }
       if (event.type === 'mail-identity-options-changed' || event.type === 'blocked-senders-changed') return;
-      if (event.id === message.id && !authExpired) {
+      const unscopedDeliveryRefresh = event.type === 'mailbox-refresh' && event.delivery && !event.id && message.folder === 'sent';
+      if ((event.id === message.id || unscopedDeliveryRefresh) && !authExpired) {
         void refreshMessageFromWorkspace();
         if (event.delivery) void reloadDeliveryDetail();
       }

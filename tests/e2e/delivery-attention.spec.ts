@@ -484,6 +484,13 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   await expect(standalone.getByRole('button', { name: '取消星标', exact: true })).toBeVisible();
   await expect(standaloneReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
+  expect((await page.request.delete('/api/workspace/messages/' + pendingId, { headers: { origin } })).ok()).toBe(true);
+  await page.evaluate(() => {
+    const channel = new BroadcastChannel('flaremail-workspace-v1');
+    channel.postMessage({ type: 'mailbox-refresh', delivery: true });
+    channel.close();
+  });
+  await expect(standalone).toHaveURL((url) => url.pathname === '/');
   await standalone.close();
 
   for (const filter of ['all', 'attention']) {
@@ -496,11 +503,31 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
     const focusReceipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
     await expect(focusReceipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
     expect((await events(page.request, focusId, 'email.delivered', `attention-focus-delivered-${filter}`)).ok()).toBe(true);
+    const summaryStarted = Promise.withResolvers<void>();
+    const releaseSummary = Promise.withResolvers<void>();
+    if (filter === 'attention') {
+      await page.route('**/api/workspace/attention/summary', async (route) => {
+        summaryStarted.resolve();
+        await releaseSummary.promise;
+        await route.abort().catch(() => undefined);
+      }, { times: 1 });
+    }
     await page.evaluate(() => {
       const now = Date.now;
       Date.now = () => now() + 31_000;
       try { window.dispatchEvent(new Event('focus')); } finally { Date.now = now; }
     });
+    if (filter === 'attention') {
+      try {
+        await summaryStarted.promise;
+        const listResponse = page.waitForResponse((response) => new URL(response.url()).pathname === endpoint && response.ok());
+        await notice(page).click();
+        await listResponse;
+        await page.keyboard.press('Escape');
+      } finally {
+        releaseSummary.resolve();
+      }
+    }
     await expect(focusRow).toHaveCount(filter === 'attention' ? 0 : 1);
     await expect(focusReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
     const header = page.locator('.fm-detail-shell').getByRole('heading', { name: focusSubject, exact: true });
