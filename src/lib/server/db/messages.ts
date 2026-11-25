@@ -1,5 +1,5 @@
 import { inboxCategorySql } from './inbox-categories';
-import type { InboxCategoryFilter, MailboxFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
+import type { DeliveryStatus, InboxCategoryFilter, MailboxFilter, MailboxIdentityFilter, MailboxMutationAction, MailboxMutationSection } from '$lib/domain/mail';
 import { fromInboundMessageId, getMailThreadGroups, isInboundMessageId, parseAddressJson, parseAddressList } from '$lib/domain/mail';
 import { hasReliableThreadContext, mappedThreadKey, parseAddress, type WorkspaceCapabilities, type WorkspaceInboundRow, type WorkspaceMessageRow } from '$lib/server/workspace/shared';
 import { pendingDeliveryAttentionPredicate } from './delivery-attention';
@@ -22,6 +22,7 @@ export interface MailboxMutationSqlScope {
   identityFilter: MailboxIdentityFilter | null;
   labelId?: string;
   filter?: MailboxFilter;
+  deliveryStatus?: DeliveryStatus | null;
 }
 
 export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope | null) {
@@ -41,6 +42,11 @@ export function workspaceScopeSql(alias: string, scope: MailboxMutationSqlScope 
   const bindings: unknown[] = scope.section === 'label' ? [scope.labelId ?? ''] : [];
   if (scope.section === 'sent' && scope.filter === 'attention') {
     sectionSql += ` AND ${pendingDeliveryAttentionPredicate(alias)}`;
+  }
+  if (scope.section === 'sent' && scope.deliveryStatus) {
+    sectionSql += ` AND EXISTS (SELECT 1 FROM workspace_delivery_statuses AS delivery
+      WHERE delivery.user_id = ${alias}.user_id AND delivery.message_id = ${alias}.id AND delivery.status = ?)`;
+    bindings.push(scope.deliveryStatus);
   }
   if (scope.category && scope.category !== 'all') {
     sectionSql += ` AND ${inboxCategorySql(`${alias}.from_email`, `${alias}.subject`, `${alias}.inbox_category_v2`, `${alias}.ai_inbox_category`)} = ?`;
@@ -254,7 +260,7 @@ export function buildMailboxMutationStatements(
       SET ${setParts.join(', ')}
       WHERE m.user_id = ? AND m.folder IN ('inbox', 'sent') AND m.deleted_at IS NULL
         AND m.id IN (SELECT value FROM json_each(?))${scopeClause.sql}
-      ${scope?.filter === 'attention' ? 'RETURNING id' : ''}
+      ${scope?.section === 'sent' && (scope.filter === 'attention' || scope.deliveryStatus) ? 'RETURNING id' : ''}
     `).bind(...bindings));
   }
   statements.push(...inboundIds.map((inboundId) => inboundMutationStatement(db, userId, inboundId, action, timestamp, scope)));

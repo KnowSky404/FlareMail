@@ -1686,15 +1686,13 @@ test('keeps a reply-all sender tied to the selected delivery after changing iden
 });
 
 test('uses global service metrics and exposes typed API errors with a request ID', async ({ page, consoleErrors }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'The desktop topbar exposes the service summary.');
+  test.skip(testInfo.project.name !== 'desktop', 'The desktop workspace exposes global diagnostics.');
   await login(page);
-
-  const serviceStatus = page.locator('details.status-menu');
-  const serviceSummary = page.getByRole('button', { name: /^通知/u });
-  await expect(serviceSummary).toBeVisible();
-  await serviceSummary.click();
-  await expect(serviceStatus).toContainText('指标覆盖整个工作区');
-  await expect(serviceStatus).toContainText('长时间提交中');
+  await page.goto('/?folder=settings&tab=diagnostics');
+  const diagnostics = page.locator('#settings-diagnostics');
+  await expect(diagnostics.getByRole('heading', { name: '全局投递统计' })).toBeVisible();
+  await expect(diagnostics).toContainText('长时间提交中');
+  await page.goto('/?folder=inbox');
 
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
@@ -1712,7 +1710,7 @@ test('uses global service metrics and exposes typed API errors with a request ID
   });
   const detail = page.getByRole('region', { name: '邮件详情' });
   await detail.getByRole('button', { name: /(?:加星|取消星标)/u }).click();
-  const errorToast = page.getByRole('alert').filter({ hasText: '模拟运行时故障' });
+  const errorToast = page.getByRole('alert').filter({ hasText: '工作区数据服务暂不可用' });
   await expect(errorToast).toContainText('详情 ID：runtime-toast-e2e');
   await errorToast.getByRole('button', { name: '关闭通知' }).click();
   await expect(errorToast).toBeHidden();

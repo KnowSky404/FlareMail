@@ -695,8 +695,8 @@ identity and is not narrowed to the selected page or search. Clients discard
 metrics from a different identity scope and refresh when a message delta does
 not fit the current page.
 
-For a filtered Sent attention mutation, `skippedCount` counts messages whose
-attention changed before the write. The summaries include only applied writes.
+For filtered Sent mutations scoped by attention or delivery status, `skippedCount`
+counts messages that leave the requested scope before the write. The summaries include only applied writes.
 
 Trash has no identity filter: entering it clears the current identity filter,
 and its list/empty operation is Owner-global. A bulk `trash` action from
