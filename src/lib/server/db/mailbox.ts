@@ -1,4 +1,4 @@
-import { pendingDeliveryAttentionPredicate } from './delivery-attention';
+import { pendingDeliveryAttentionMessageIds } from './delivery-attention';
 import { inboxCategorySql } from './inbox-categories';
 import type { DeliveryStatus, InboxCategoryFilter, MailFolder, MailboxFilter, MailboxIdentityFilter, MailboxSection, MailSearchQuery, WorkspaceMetrics } from '$lib/domain/mail';
 import { buildFtsSearchPlan, buildLabelSearchPredicate } from '$lib/server/search/fts';
@@ -80,6 +80,7 @@ export async function listWorkspaceMessagePage(
   const searchPlan = input.search ? buildFtsSearchPlan(input.search) : null;
   const labelSearch = input.search ? buildLabelSearchPredicate(input.search, searchPlan?.labelExpression ?? null, 'message') : null;
   const wantsTrash = input.search?.filters.is.includes('trash') ?? false;
+  const attention = input.filter === 'attention';
   const wantsArchive = input.search?.filters.is.includes('archived') ?? false;
   const conditions = [
     'm.user_id = ?',
@@ -93,8 +94,8 @@ export async function listWorkspaceMessagePage(
     input.starredOnly ? 'm.is_starred = 1' : '1 = 1',
     identityPredicate('m', input.folder === 'sent' ? 'sender_address_id' : 'recipient_address_id')
   ];
-  if (input.filter === 'attention') conditions.push('m.deleted_at IS NULL', pendingDeliveryAttentionPredicate('m'));
-  const bindings: unknown[] = [userId, input.folder];
+  if (attention) conditions.push('m.deleted_at IS NULL');
+  const bindings: unknown[] = attention ? [userId, userId, input.folder] : [userId, input.folder];
   if (input.category && input.category !== 'all') {
     conditions.push(`${inboxCategorySql('m.from_email', 'm.subject', 'm.inbox_category_v2', 'm.ai_inbox_category')} = ?`);
     bindings.push(input.category);
@@ -160,6 +161,11 @@ export async function listWorkspaceMessagePage(
     : `NULL`;
 
   const includeDelivery = input.folder === 'sent' || Boolean(input.deliveryStatus || input.search?.filters.status.length);
+  // A Sent mailbox can be large even when it has no pending attention.
+  const pageSource = attention
+    ? `(${pendingDeliveryAttentionMessageIds}) AS pending
+      CROSS JOIN workspace_messages AS m ON m.id = pending.message_id`
+    : 'workspace_messages AS m';
   const pageSelect = `
     SELECT
       m.id, m.folder, m.from_name, m.from_email, m.to_name, m.to_email,
@@ -193,14 +199,14 @@ export async function listWorkspaceMessagePage(
       NULL AS delivery_last_event_at,
       NULL AS delivery_idempotency_key,
       NULL AS delivery_attempt_started_at`}
-    FROM workspace_messages AS m
+    FROM ${pageSource}
     ${searchJoins}
     ${includeDelivery ? `    LEFT JOIN workspace_delivery_statuses AS ds
       ON ds.user_id = m.user_id AND ds.message_id = m.id
     LEFT JOIN workspace_outbound_receipts AS r
       ON r.user_id = m.user_id AND r.message_id = m.id` : ''}
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || input.filter === 'attention' || input.labelId || (input.category && input.category !== 'all'))
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || attention || input.labelId || (input.category && input.category !== 'all'))
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.sent_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`);

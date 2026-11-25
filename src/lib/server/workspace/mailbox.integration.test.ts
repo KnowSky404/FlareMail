@@ -297,6 +297,51 @@ describe('quarantined mailbox visibility', () => {
 });
 
 describe('D1 mailbox pages', () => {
+  test('pages distinct Sent attention from the pending index with Owner, identity and search scope', async () => {
+    const { env, workspace, database } = fixture();
+    insertCrossAddressThread(database);
+    database.exec(`
+      UPDATE workspace_messages SET sender_address_id = 'address-a' WHERE id = 'sent-1';
+      WITH variants(id, owner, sender, subject, deleted_at) AS (VALUES
+        ('sent-2', 'user-1', 'address-a', 'Delivery update', NULL),
+        ('sent-outside', 'user-1', 'address-b', 'Delivery update', NULL),
+        ('sent-no-match', 'user-1', 'address-a', 'Monthly report', NULL),
+        ('sent-trash', 'user-1', 'address-a', 'Delivery update', '2026-08-14T00:00:00.000Z'),
+        ('sent-foreign', 'user-2', 'address-a', 'Delivery update', NULL),
+        ('sent-future', 'user-1', 'address-a', 'Delivery update', NULL)
+      )
+      INSERT INTO workspace_messages
+        (id, user_id, folder, from_name, from_email, to_name, to_email, subject, sent_at, sender_address_id, deleted_at)
+      SELECT id, owner, 'sent', '', 'ada@example.test', '', 'bob@example.test', subject, '2026-08-13T09:00:00.000Z', sender, deleted_at
+      FROM variants;
+      INSERT INTO workspace_delivery_attention (user_id, message_id, kind, attempt_number, eligible_at)
+      SELECT user_id, id, 'bounced', 1,
+        CASE WHEN id = 'sent-future' THEN '2099-01-01T00:00:00.000Z' ELSE '2026-08-13T09:10:00.000Z' END
+      FROM workspace_messages WHERE folder = 'sent';
+      INSERT INTO workspace_delivery_attention (user_id, message_id, kind, attempt_number, eligible_at)
+      VALUES ('user-1', 'sent-1', 'failed', 1, '2026-08-13T09:10:00.000Z');
+    `);
+
+    const unscoped = await loadMailboxPage(env, workspace, query('sent', { filter: 'attention' }));
+    expect(unscoped.searchTotal).toBe(4);
+    const sql = (env.DB as unknown as TestD1).queries.find((sql) => sql.includes('AS search_total'))!;
+    const plan = database.query<{ detail: string }, SQLQueryBindings[]>(`EXPLAIN QUERY PLAN ${sql}`)
+      .all(null, null, 'user-1', 'user-1', 'sent', 41).map(({ detail }) => detail);
+    const pending = plan.findIndex((step) => /SEARCH a .*workspace_delivery_attention_pending/u.test(step));
+    const message = plan.findIndex((step) => /SEARCH m .*\(id=\?\)/u.test(step));
+    expect(pending).toBeGreaterThanOrEqual(0);
+    expect(message).toBeGreaterThan(pending);
+
+    const params = { folder: 'sent', filter: 'attention', identity: 'address:address-a', q: 'subject:Delivery', limit: '1' };
+    const first = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams(params)));
+    expect(first.messages.map(({ id }) => id)).toEqual(['sent-2']);
+    expect(first.searchTotal).toBe(2);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await loadMailboxPage(env, workspace, parseMailboxQuery(new URLSearchParams({ ...params, cursor: first.nextCursor! })));
+    expect(second.messages.map(({ id }) => id)).toEqual(['sent-1']);
+    expect(second.nextCursor).toBeNull();
+  });
+
   test('reports indexed attachment presence for inbound, workspace, sent and draft rows', async () => {
     const { env, workspace, database } = fixture();
     database.exec(`
