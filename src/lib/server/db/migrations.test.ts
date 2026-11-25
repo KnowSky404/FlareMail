@@ -221,15 +221,17 @@ describe('versioned D1 migrations', () => {
     db.close();
   });
 
-  test('recovers in-flight same-ID delays missing after schema 35 without reopening known outcomes', () => {
+  test('recovers in-flight same-ID delays before and after a same-ID sent event without reopening known outcomes', () => {
     const db = createDatabase();
     applyMigrationsThrough(db, '0032_ai_automatic_classification.sql');
     db.exec(`
       INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
       SELECT value, 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'
-      FROM json_each('["in-flight", "replaced", "terminal", "acknowledged"]');
+      FROM json_each('["in-flight", "in-flight-sent", "replaced", "terminal", "sent-terminal", "acknowledged"]');
       INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, provider_message_id, last_event, last_event_at)
-      SELECT id, user_id, 'submitted', 2, 'current-' || id, 'submission', '2026-01-01T00:03:00.000Z'
+      SELECT id, user_id, CASE WHEN id IN ('in-flight-sent', 'sent-terminal') THEN 'sent' ELSE 'submitted' END,
+        2, 'current-' || id, CASE WHEN id IN ('in-flight-sent', 'sent-terminal') THEN 'email.sent' ELSE 'submission' END,
+        '2026-01-01T00:03:00.000Z'
       FROM workspace_messages;
       INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider_message_id, status, started_at, completed_at)
       SELECT id || '-first', id, user_id, 1, CASE id WHEN 'replaced' THEN 'different-id' ELSE 'current-' || id END,
@@ -240,10 +242,14 @@ describe('versioned D1 migrations', () => {
       SELECT id || '-delayed', id, user_id, 'resend', 'current-' || id, 'email.delivery_delayed', '2026-01-01T00:02:30.000Z'
       FROM workspace_messages;
       INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
-      VALUES ('terminal-delivered', 'terminal', 'owner', 'resend', 'current-terminal', 'email.delivered', '2026-01-01T00:02:40.000Z');
+      VALUES ('terminal-delivered', 'terminal', 'owner', 'resend', 'current-terminal', 'email.delivered', '2026-01-01T00:02:40.000Z'),
+        ('sent-terminal-delivered', 'sent-terminal', 'owner', 'resend', 'current-sent-terminal', 'email.delivered', '2026-01-01T00:02:40.000Z');
       INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
       SELECT 'local:' || id || ':submission:2', id, user_id, 'resend', 'current-' || id, 'submission', '2026-01-01T00:03:00.000Z'
       FROM workspace_messages;
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      SELECT id || '-sent', id, user_id, 'resend', 'current-' || id, 'email.sent', '2026-01-01T00:03:30.000Z'
+      FROM workspace_messages WHERE id IN ('in-flight-sent', 'sent-terminal');
     `);
     for (const file of ['0033_delivery_attention.sql', '0034_delivery_attention_backfill.sql', '0035_preserve_replayed_delivery_delay.sql']) {
       db.exec(readFileSync(join(migrationsDirectory, file), 'utf8'));
@@ -257,7 +263,8 @@ describe('versioned D1 migrations', () => {
     applyMigrations(db);
     expect(db.query('SELECT message_id, state FROM workspace_delivery_attention ORDER BY message_id').all()).toEqual([
       { message_id: 'acknowledged', state: 'acknowledged' },
-      { message_id: 'in-flight', state: 'open' }
+      { message_id: 'in-flight', state: 'open' },
+      { message_id: 'in-flight-sent', state: 'open' }
     ]);
     db.close();
   });
@@ -302,7 +309,8 @@ describe('versioned D1 migrations', () => {
       '0033_delivery_attention.sql',
       '0034_delivery_attention_backfill.sql',
       '0035_preserve_replayed_delivery_delay.sql',
-      '0036_recover_pending_resend_events.sql'
+      '0036_recover_pending_resend_events.sql',
+      '0037_recover_sent_resend_delays.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -437,7 +445,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 36 }
+      { schema_name: 'flaremail', schema_version: 37 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
