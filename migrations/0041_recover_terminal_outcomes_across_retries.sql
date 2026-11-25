@@ -131,6 +131,101 @@ WHERE event.message_id = outcome.message_id AND event.user_id = outcome.user_id
     AND CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailDeferred') = 1 ELSE 0 END
   ));
 
+-- An incorrectly restored terminal outcome could have closed a verified same-ID delay.
+-- Snapshots taken while the delay was closed must not select it after restoration.
+UPDATE workspace_delivery_attention_clock SET version = version + 1
+WHERE singleton = 1 AND EXISTS (
+  SELECT 1 FROM workspace_outbound_events event
+  WHERE event.event_type IN ('submission', 'email.sent', 'email.delivery_delayed')
+    AND CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailTerminalRecovery41') = 1 ELSE 0 END
+);
+
+WITH delays_to_restore AS (
+  SELECT saved.id, delivery.attempts, ROW_NUMBER() OVER (
+    PARTITION BY saved.message_id ORDER BY saved.closed_at DESC, saved.attempt_number DESC, saved.id DESC
+  ) AS preference
+  FROM workspace_outbound_events event
+  JOIN workspace_delivery_statuses delivery ON delivery.message_id = event.message_id AND delivery.user_id = event.user_id
+    AND delivery.provider_message_id = event.provider_message_id
+  JOIN workspace_delivery_attention saved ON saved.message_id = delivery.message_id AND saved.user_id = delivery.user_id
+    AND saved.delayed_provider_message_id = delivery.provider_message_id AND saved.kind = 'delayed'
+  WHERE event.event_type IN ('submission', 'email.sent', 'email.delivery_delayed')
+    AND CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailTerminalRecovery41') = 1 ELSE 0 END
+    AND julianday(saved.closed_at) >= julianday(event.created_at)
+    AND julianday(saved.closed_at) <= (
+      SELECT julianday(updated_at) FROM workspace_schema_metadata WHERE schema_name = 'flaremail' AND schema_version = 40
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM workspace_delivery_attention current
+      WHERE current.message_id = delivery.message_id AND current.user_id = delivery.user_id
+        AND current.kind = 'delayed' AND current.closed_at IS NULL
+        AND (current.attempt_number = delivery.attempts OR current.delayed_provider_message_id = delivery.provider_message_id)
+    )
+)
+UPDATE workspace_delivery_attention AS attention
+SET attempt_number = restore.attempts,
+  state = CASE WHEN acknowledged_at IS NULL THEN 'open' ELSE 'acknowledged' END,
+  closed_at = NULL, version = (SELECT version FROM workspace_delivery_attention_clock WHERE singleton = 1)
+FROM delays_to_restore restore
+WHERE restore.preference = 1 AND attention.id = restore.id;
+
+-- An ignored terminal event can also have prevented earlier migrations from recording a delay.
+WITH earlier_delays AS (
+  SELECT delivery.message_id, delivery.user_id, delivery.attempts, delivery.provider_message_id,
+    observed.rowid, observed.event_created_at, prior_acceptance.rowid AS prior_accepted_row,
+    observation_attempt.attempt_number AS observation_attempt, observation_attempt.started_at
+  FROM workspace_outbound_events event
+  JOIN workspace_delivery_statuses delivery ON delivery.message_id = event.message_id AND delivery.user_id = event.user_id
+    AND delivery.provider_message_id = event.provider_message_id
+  JOIN workspace_outbound_events prior_acceptance ON prior_acceptance.svix_id = 'local:' || delivery.message_id || ':submission:' || (
+    SELECT MAX(prior.attempt_number) FROM workspace_delivery_attempts prior
+    WHERE prior.message_id = delivery.message_id AND prior.user_id = delivery.user_id
+      AND prior.attempt_number < delivery.attempts AND prior.provider_message_id = delivery.provider_message_id
+  )
+    AND prior_acceptance.message_id = delivery.message_id AND prior_acceptance.user_id = delivery.user_id
+    AND prior_acceptance.provider = 'resend' AND prior_acceptance.provider_message_id = delivery.provider_message_id
+    AND prior_acceptance.event_type = 'submission'
+  JOIN workspace_outbound_events observed ON observed.message_id = delivery.message_id AND observed.user_id = delivery.user_id
+    AND observed.provider = 'resend' AND observed.provider_message_id = delivery.provider_message_id
+    AND observed.event_type = 'email.delivery_delayed' AND observed.rowid > prior_acceptance.rowid AND observed.rowid <= event.rowid
+  JOIN workspace_delivery_attempts observation_attempt
+    ON observation_attempt.message_id = delivery.message_id AND observation_attempt.user_id = delivery.user_id
+    AND observation_attempt.attempt_number = (
+      SELECT MAX(known.attempt_number) FROM workspace_delivery_attempts known
+      WHERE known.message_id = delivery.message_id AND known.user_id = delivery.user_id AND known.attempt_number <= delivery.attempts
+        AND julianday(known.started_at) < julianday(observed.created_at)
+    )
+  WHERE event.event_type IN ('submission', 'email.sent', 'email.delivery_delayed')
+    AND CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailTerminalRecovery41') = 1 ELSE 0 END
+    AND NOT EXISTS (
+      SELECT 1 FROM workspace_delivery_attention existing
+      WHERE existing.message_id = delivery.message_id AND existing.user_id = delivery.user_id AND existing.kind = 'delayed'
+        AND existing.closed_at IS NULL
+        AND (existing.attempt_number = delivery.attempts OR existing.delayed_provider_message_id = delivery.provider_message_id)
+    )
+)
+INSERT INTO workspace_delivery_attention (user_id, message_id, attempt_number, kind, eligible_at, delayed_provider_message_id)
+SELECT delay.user_id, delay.message_id, delay.attempts, 'delayed',
+  MIN(MIN(strftime('%Y-%m-%dT%H:%M:%fZ', delay.event_created_at)), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  delay.provider_message_id
+FROM earlier_delays delay
+LEFT JOIN workspace_outbound_events reset ON reset.svix_id = 'local:' || delay.message_id || ':submission:' || delay.observation_attempt
+  AND reset.message_id = delay.message_id AND reset.user_id = delay.user_id AND reset.provider = 'resend'
+  AND reset.event_type = 'submission' AND reset.provider_message_id IS NULL AND reset.rowid < delay.rowid
+  AND reset.rowid > delay.prior_accepted_row AND json_valid(reset.payload_json)
+WHERE (reset.rowid IS NULL OR json_extract(reset.payload_json, '$.status') IS NOT 'failed')
+  AND NOT EXISTS (
+    SELECT 1 FROM workspace_outbound_events sent
+    WHERE sent.message_id = delay.message_id AND sent.user_id = delay.user_id
+      AND sent.provider = 'resend' AND sent.provider_message_id = delay.provider_message_id
+      AND sent.event_type = 'email.sent' AND sent.rowid < delay.rowid
+      AND sent.rowid > COALESCE(reset.rowid, delay.prior_accepted_row)
+      AND julianday(sent.created_at) > julianday(delay.started_at)
+      AND julianday(sent.event_created_at) > julianday(delay.event_created_at)
+  )
+  AND julianday(delay.event_created_at) IS NOT NULL
+GROUP BY delay.user_id, delay.message_id, delay.attempts, delay.provider_message_id;
+
 -- Restore the receipt before the new Worker can reconcile more webhooks.
 UPDATE workspace_delivery_statuses AS delivery
 SET status = CASE event.event_type
