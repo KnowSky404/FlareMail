@@ -62,7 +62,7 @@ effective_outcomes AS (
 -- Earlier migrations may have queued competing terminal events from the same acceptance window.
 UPDATE workspace_outbound_events AS event
 SET payload_json = CASE WHEN event.rowid = outcome.event_row
-  THEN json_set(event.payload_json, '$._flaremailDeferred', 1)
+  THEN json_set(json_remove(event.payload_json, '$._flaremailDeferred'), '$._flaremailTerminalRecovery40', 1)
   ELSE json_remove(event.payload_json, '$._flaremailDeferred') END
 FROM effective_outcomes outcome
 WHERE outcome.preference = 1 AND event.message_id = outcome.message_id AND event.user_id = outcome.user_id
@@ -72,6 +72,68 @@ WHERE outcome.preference = 1 AND event.message_id = outcome.message_id AND event
     event.event_type IN ('email.failed', 'email.delivered', 'email.bounced', 'email.complained', 'email.suppressed')
     AND CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailDeferred') = 1 ELSE 0 END
   ));
+
+-- Restore the receipt before the new Worker can reconcile more webhooks.
+UPDATE workspace_delivery_statuses AS delivery
+SET status = substr(event.event_type, 7),
+  last_error = CASE event.event_type
+    WHEN 'email.bounced' THEN 'The provider reported a bounce.'
+    WHEN 'email.failed' THEN 'The provider reported a delivery failure.'
+    WHEN 'email.complained' THEN 'The provider reported a recipient complaint.'
+    WHEN 'email.suppressed' THEN 'The provider suppressed the message.'
+    ELSE '' END,
+  delivered_at = CASE WHEN event.event_type = 'email.delivered' THEN COALESCE(delivery.delivered_at, event.event_created_at)
+    ELSE delivery.delivered_at END,
+  last_event = event.event_type, last_event_at = event.event_created_at, updated_at = event.event_created_at
+FROM workspace_outbound_events event
+WHERE delivery.message_id = event.message_id AND delivery.user_id = event.user_id
+  AND delivery.provider_message_id = event.provider_message_id
+  AND CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailTerminalRecovery40') = 1 ELSE 0 END;
+
+INSERT INTO workspace_outbound_receipts
+  (message_id, user_id, provider, result_kind, response_preview, last_event, last_event_at, created_at, updated_at)
+SELECT event.message_id, event.user_id, 'resend',
+  CASE WHEN event.event_type = 'email.delivered' THEN 'accepted' ELSE 'permanent_failure' END,
+  event.summary, event.event_type, event.event_created_at, event.event_created_at, event.event_created_at
+FROM workspace_outbound_events event
+JOIN workspace_delivery_statuses delivery ON delivery.message_id = event.message_id AND delivery.user_id = event.user_id
+  AND delivery.provider_message_id = event.provider_message_id AND delivery.last_event = event.event_type
+  AND delivery.last_event_at = event.event_created_at
+WHERE CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailTerminalRecovery40') = 1 ELSE 0 END
+ON CONFLICT(message_id) DO UPDATE SET provider = excluded.provider, result_kind = excluded.result_kind,
+  response_preview = excluded.response_preview, last_event = excluded.last_event, last_event_at = excluded.last_event_at,
+  updated_at = excluded.updated_at
+WHERE workspace_outbound_receipts.user_id = excluded.user_id;
+
+UPDATE workspace_outbound_events SET payload_json = json_remove(payload_json, '$._flaremailTerminalRecovery40')
+WHERE CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$._flaremailTerminalRecovery40') = 1 ELSE 0 END;
+
+-- Keep the full precision of a submission start when deriving its timeout.
+DROP VIEW IF EXISTS workspace_delivery_attention_source;
+CREATE VIEW workspace_delivery_attention_source AS
+SELECT ds.user_id, ds.message_id, ds.attempts AS attempt_number,
+  CASE WHEN ds.status = 'submitting' THEN 'stale_submitting' ELSE ds.status END AS kind,
+  CASE WHEN ds.status = 'submitting'
+    THEN strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(ds.last_event_at, ds.updated_at, ds.created_at), '+15 minutes')
+    ELSE MIN(
+      COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(ds.last_event_at, ds.updated_at, ds.created_at)),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    )
+  END AS eligible_at
+FROM workspace_delivery_statuses ds
+JOIN workspace_messages m ON m.id = ds.message_id AND m.user_id = ds.user_id AND m.folder = 'sent'
+WHERE ds.status IN ('submitting', 'delayed', 'failed', 'bounced', 'complained', 'suppressed');
+
+-- A later still-submitting event must not postpone an alert that was already due.
+UPDATE workspace_delivery_attention AS attention
+SET eligible_at = source.eligible_at
+FROM workspace_delivery_attention_source source
+WHERE source.user_id = attention.user_id AND source.message_id = attention.message_id
+  AND source.attempt_number = attention.attempt_number AND source.kind = 'stale_submitting'
+  AND attention.kind = 'stale_submitting' AND attention.closed_at IS NULL
+  AND attention.eligible_at = strftime('%Y-%m-%dT%H:%M:%S.000Z', source.eligible_at)
+  AND attention.eligible_at <> source.eligible_at;
 
 UPDATE workspace_schema_metadata SET schema_version = 40,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE schema_name = 'flaremail';
