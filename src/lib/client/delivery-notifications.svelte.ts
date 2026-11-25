@@ -152,7 +152,10 @@ export class DeliveryNotifications {
           replayed = count;
           if (request.isCurrent()) this.summary = summary;
         }
-        if (!request.isCurrent()) return replayed;
+        if (!request.isCurrent()) {
+          if (replayed) void this.refresh(true);
+          return replayed;
+        }
       } else if (!list) {
         const summary = await requestJson<DeliveryAttentionSummary>('/api/workspace/attention/summary', { signal: request.signal });
         if (request.isCurrent()) this.summary = summary;

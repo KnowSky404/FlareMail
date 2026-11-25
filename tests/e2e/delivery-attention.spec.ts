@@ -60,6 +60,15 @@ async function getNotices(request: APIRequestContext, view = 'pending'): Promise
 
 test('keeps focus and pages in notifications while replay remains due', async ({ page }) => {
   const occurredAt = '2026-08-13T08:00:00.000Z';
+  const replayStarted = Promise.withResolvers<void>();
+  const releaseReplay = Promise.withResolvers<void>();
+  let appliedReplay = false;
+  await page.route('**/api/workspace/attention/summary', async (route) => {
+    replayStarted.resolve();
+    await releaseReplay.promise;
+    appliedReplay = true;
+    await route.fulfill({ json: { ok: true, data: { pendingCount: 2, snapshot: { asOf: occurredAt, version: 2 }, replayed: 1 } } });
+  }, { times: 1 });
   await page.route((url) => url.pathname === endpoint, async (route) => {
     const lastPage = new URL(route.request().url()).searchParams.has('cursor');
     const id = lastPage ? 2 : 1;
@@ -67,7 +76,7 @@ test('keeps focus and pages in notifications while replay remains due', async ({
       notices: [{
         id, version: id, messageId: String(id), kind: 'complained', state: 'open', occurredAt,
         acknowledgedAt: null, closedAt: null, sender: 'e2e-admin@flaremail.test',
-        subject: lastPage ? 'Final page' : 'First page'
+        subject: lastPage ? 'Final page' : appliedReplay ? 'Updated first page' : 'First page'
       }],
       nextCursor: lastPage ? null : 'last-page',
       summary: { pendingCount: 2, snapshot: { asOf: occurredAt, version: 2 } }
@@ -78,13 +87,17 @@ test('keeps focus and pages in notifications while replay remains due', async ({
   const nextReplay = () => page.waitForResponse((response) =>
     new URL(response.url()).pathname === endpoint + '/summary' &&
     response.request().method() === 'POST' && response.ok());
-  const initialReplay = nextReplay();
   await login(page);
-  await initialReplay;
+  await replayStarted.promise;
   await notice(page).press('Enter');
   const items = panel(page).getByRole('listitem');
   const more = panel(page).getByRole('button', { name: '加载更多', exact: true });
-  await expect(items).toHaveCount(1);
+  try {
+    await expect(items.first().getByText('First page', { exact: true })).toBeVisible();
+  } finally {
+    releaseReplay.resolve();
+  }
+  await expect(items.first().getByText('Updated first page', { exact: true })).toBeVisible();
   await page.evaluate(() => {
     const now = Date.now;
     Date.now = () => now() + 31_000;
