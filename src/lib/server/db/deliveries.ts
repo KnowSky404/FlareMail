@@ -565,9 +565,19 @@ export async function listPendingOutboundEvents(db: D1Database, providerMessageI
   return db.prepare(`SELECT svix_id, provider_message_id, event_type, event_created_at, summary, payload_json,
     ${wasDeferred} AS was_deferred
     FROM workspace_outbound_events
-    WHERE provider_message_id = ? AND (user_id = 'unmatched' OR (${wasDeferred}))
+    WHERE provider = 'resend' AND provider_message_id = ? AND ((${wasDeferred}) OR (
+      user_id = 'unmatched' AND julianday(event_created_at) IS NOT NULL
+      AND length(event_type) BETWEEN 1 AND 160 AND event_type NOT GLOB '*[^A-Za-z0-9._-]*'
+      AND CASE WHEN json_valid(payload_json) THEN json_type(payload_json) = 'object' ELSE 0 END
+    ))
     ORDER BY event_created_at ASC, rowid ASC LIMIT ?`)
     .bind(providerMessageId, limit).all<WorkspaceOutboundEventRow & { was_deferred: number }>();
+}
+
+export function clearPendingOutboundEvent(db: D1Database, svixId: string, messageId: string, userId: string) {
+  return db.prepare(`UPDATE workspace_outbound_events SET payload_json = json_remove(payload_json, '${deferredPath}')
+    WHERE svix_id = ? AND message_id = ? AND user_id = ? AND provider = 'resend' AND (${wasDeferred})`
+  ).bind(svixId, messageId, userId);
 }
 
 export function assignOutboundEvent(db: D1Database, claim: DeferredEventClaim, messageId: string, userId: string, allowUnconfirmed: boolean, allowExpiredAttempt = false) {

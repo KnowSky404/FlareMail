@@ -16,6 +16,7 @@ import {
   listReadyDeferredProviderIds,
   markDeferredOutboundEvent,
   attachMatchedOutboundEvents,
+  clearPendingOutboundEvent,
   reconcileDeliveryStatus,
   resolveLocalDelayOnSent,
   retainProviderDelayAfterRetry,
@@ -236,8 +237,11 @@ export async function reconcilePendingResendEvents(env: CloudflareEnv, providerM
   for (const row of pending.results ?? []) {
     let event: NormalizedResendWebhookEvent;
     try {
-      event = normalizeResendWebhookEvent(JSON.parse(row.payload_json));
+      event = normalizeResendWebhookEvent({
+        type: row.event_type, created_at: row.event_created_at, data: { email_id: row.provider_message_id }
+      });
     } catch {
+      await clearPendingOutboundEvent(env.DB, row.svix_id, outboundRow.message_id, outboundRow.user_id).run();
       continue;
     }
     const claim = { svixId: row.svix_id, token: crypto.randomUUID() };
