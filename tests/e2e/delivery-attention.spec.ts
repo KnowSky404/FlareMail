@@ -644,6 +644,16 @@ test('refreshes the notification scope, Sent filter, and receipt after delivery 
   });
   await expect(standaloneReceipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(standaloneReceipt.getByRole('button', { name: '确认异常', exact: true })).toHaveCount(0);
+  let replayFinished = false;
+  const replayResponse = standalone.waitForResponse((response) =>
+    new URL(response.url()).pathname === endpoint + '/summary' &&
+    response.request().method() === 'POST' && response.ok()).then(() => { replayFinished = true; });
+  const standaloneReadAfterReplay = standalone.waitForRequest((request) =>
+    new URL(request.url()).pathname === `/api/workspace/messages/${pendingId}/delivery`
+  ).then(() => replayFinished);
+  await standaloneReceipt.getByRole('button', { name: '刷新投递回执', exact: true }).click();
+  expect(await standaloneReadAfterReplay).toBe(true);
+  await replayResponse;
   await page.getByRole('button', { name: '刷新投递回执', exact: true }).click();
   await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   await expect(row).toHaveCount(0);
@@ -765,4 +775,55 @@ test('keeps page three of Sent attention when the tab regains focus', async ({ p
   await previous.click();
   await revalidated;
   await expect(pageRow(2)).toBeVisible();
+});
+
+test('replays a manual refresh during confirmation and clears cached receipts', async ({ page, baseURL }, info) => {
+  test.skip(info.project.name !== 'desktop', 'One desktop run covers the workspace receipt cache.');
+  const origin = originOf(baseURL);
+  const selected = 'E2E Confirmation In Flight';
+  const cached = 'E2E Previously Opened Receipt';
+  const selectedId = 'e2e-attention-confirm-in-flight';
+  const cachedId = 'e2e-attention-cached-replay';
+  await seed(page.request, origin, selectedId, 'delayed', selected);
+  await seed(page.request, origin, cachedId, 'delayed', cached);
+  await login(page);
+  await page.goto('/?folder=sent');
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+  const row = (label: string) => page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
+  const receipt = page.locator('section[aria-labelledby="delivery-title"]').filter({ visible: true });
+  await row(cached).click();
+  await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+  await row(selected).click();
+  await expect(receipt.getByText('投递延迟', { exact: true }).first()).toBeVisible();
+  await notice(page).click();
+  const item = panel(page).getByRole('listitem').filter({ hasText: selected });
+  const confirmationStarted = Promise.withResolvers<void>();
+  const releaseConfirmation = Promise.withResolvers<void>();
+  await page.route((url) => url.pathname === endpoint, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    confirmationStarted.resolve();
+    await releaseConfirmation.promise;
+    await route.abort().catch(() => undefined);
+  });
+  try {
+    await item.getByRole('button', { name: '确认异常', exact: true }).click();
+    await confirmationStarted.promise;
+    await page.keyboard.press('Escape');
+    expect((await events(page.request, cachedId, 'email.delivered', 'attention-cached-replay-delivered')).ok()).toBe(true);
+    await page.route('**/api/workspace/attention/summary', async (route) =>
+      route.fulfill({ json: { ok: true, data: {
+        pendingCount: 1, snapshot: { asOf: new Date().toISOString(), version: 99 }, replayed: 1
+      } } }), { times: 1 });
+    const replay = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === endpoint + '/summary' && response.request().method() === 'POST' && response.ok());
+    await receipt.getByRole('button', { name: '刷新投递回执', exact: true }).click();
+    await replay;
+    await row(cached).click();
+    await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
+  } finally {
+    releaseConfirmation.resolve();
+    for (const id of [selectedId, cachedId]) {
+      await page.request.delete('/api/workspace/messages/' + id, { headers: { origin } });
+    }
+  }
 });

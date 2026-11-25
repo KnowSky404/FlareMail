@@ -203,7 +203,7 @@
   const ownerMetricsRequest = new LatestRequest();
   let ownerMetrics = $state<WorkspaceMetrics | null>(null);
   const notifications = new DeliveryNotifications(() => {
-    refreshVisibleDelivery();
+    refreshAttentionReader(undefined, true);
     workspaceSync?.publish({ type: 'delivery-attention-changed' });
   });
   const readActivation = new ReadActivationController();

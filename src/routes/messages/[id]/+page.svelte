@@ -18,6 +18,7 @@
     fetchWorkspaceMessage,
     fetchWorkspaceSession,
     mutateDeliveryAttention,
+    refreshDeliveryAttentionSummary,
     updateMessageFlags
   } from '$lib/client/workspace-api';
   import {
@@ -48,6 +49,7 @@
   let deliveryDetail = $state<DeliveryDetail | null>(null);
   let deliveryDetailError = $state('');
   let deliveryDetailPending = $state(false);
+  let deliveryReplayPending = $state(false);
   let attentionPending = $state(false);
   const deliveryRequest = new LatestRequest();
   let deliveryDetailCheckedAt = 0;
@@ -65,7 +67,7 @@
   let refreshPending = false;
   const readActivation = new ReadActivationController();
   let authRecoveryPromise: Promise<boolean> | null = null;
-  let pending = $derived(authExpired || inboundDetailPending || workspaceBodyPending || deliveryDetailPending || mutationPending);
+  let pending = $derived(authExpired || inboundDetailPending || workspaceBodyPending || deliveryDetailPending || deliveryReplayPending || mutationPending);
 
   const errorMessage = (value: unknown, fallback: string) =>
     formatApiError(value, t, fallback);
@@ -139,6 +141,7 @@
     attentionPending = false;
     deliveryRequest.cancel();
     deliveryDetailPending = false;
+    deliveryReplayPending = false;
     authRecoveryError = '';
     activeController?.abort();
     activeController = null;
@@ -195,6 +198,20 @@
       if (request.isCurrent()) deliveryDetailError = errorMessage(error, t('mail.deliveryDetailFailed'));
     } finally {
       if (request.isCurrent()) deliveryDetailPending = false;
+    }
+  }
+
+  async function refreshDeliveryDetail() {
+    if (!mounted || authExpired || message.folder !== 'sent' || !activeController || deliveryReplayPending) return;
+    const { signal } = activeController;
+    deliveryReplayPending = true;
+    try {
+      const summary = await refreshDeliveryAttentionSummary(signal).catch(() => null);
+      if (signal.aborted) return;
+      if (summary?.replayed) sync?.publish({ type: 'delivery-attention-changed' });
+      await reloadDeliveryDetail();
+    } finally {
+      if (!signal.aborted) deliveryReplayPending = false;
     }
   }
 
@@ -410,7 +427,7 @@
         {deliveryDetailPending}
         {attentionPending}
         onAttentionAction={changeAttention}
-        onReloadDeliveryDetail={reloadDeliveryDetail}
+        onReloadDeliveryDetail={refreshDeliveryDetail}
         {workspaceBody}
         {workspaceAttachments}
         {workspaceBodyError}
