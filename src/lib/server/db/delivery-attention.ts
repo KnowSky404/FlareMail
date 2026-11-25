@@ -22,10 +22,15 @@ const active = (alias: string) => `${alias}.closed_at IS NULL AND ${alias}.eligi
 const itemColumns = `a.id, a.version, a.message_id AS messageId, a.kind, a.state,
   a.eligible_at AS occurredAt, a.acknowledged_at AS acknowledgedAt, a.closed_at AS closedAt`;
 
+const pending = `a.state = 'open' AND ${active('a')}`;
+
+export const pendingDeliveryAttentionMessageIds = `SELECT DISTINCT a.message_id
+  FROM workspace_delivery_attention a INDEXED BY workspace_delivery_attention_pending
+  WHERE a.user_id = ? AND ${pending}`;
+
 export function pendingDeliveryAttentionPredicate(messageAlias: string) {
   return `EXISTS (SELECT 1 FROM workspace_delivery_attention a INDEXED BY workspace_delivery_attention_message
-    WHERE a.message_id = ${messageAlias}.id AND a.user_id = ${messageAlias}.user_id
-      AND a.state = 'open' AND ${active('a')})`;
+    WHERE a.message_id = ${messageAlias}.id AND a.user_id = ${messageAlias}.user_id AND ${pending})`;
 }
 
 type SummaryRow = { pendingCount: number; version: number; asOf: string };
