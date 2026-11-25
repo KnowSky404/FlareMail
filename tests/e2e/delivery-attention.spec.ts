@@ -58,15 +58,15 @@ async function getNotices(request: APIRequestContext, view = 'pending'): Promise
   return (await response.json()).data;
 }
 
-test('keeps focus and pages in notifications while replay remains due', async ({ page }) => {
+test('refreshes the stale first page after loading more notifications', async ({ page }) => {
   const occurredAt = '2026-08-13T08:00:00.000Z';
   const replayStarted = Promise.withResolvers<void>();
   const releaseReplay = Promise.withResolvers<void>();
-  let appliedReplay = false;
+  let firstPageSubject = 'First page';
   await page.route('**/api/workspace/attention/summary', async (route) => {
     replayStarted.resolve();
     await releaseReplay.promise;
-    appliedReplay = true;
+    firstPageSubject = 'Updated first page';
     await route.fulfill({ json: { ok: true, data: { pendingCount: 2, snapshot: { asOf: occurredAt, version: 2 }, replayed: 1 } } });
   }, { times: 1 });
   await page.route((url) => url.pathname === endpoint, async (route) => {
@@ -76,7 +76,7 @@ test('keeps focus and pages in notifications while replay remains due', async ({
       notices: [{
         id, version: id, messageId: String(id), kind: 'complained', state: 'open', occurredAt,
         acknowledgedAt: null, closedAt: null, sender: 'e2e-admin@flaremail.test',
-        subject: lastPage ? 'Final page' : appliedReplay ? 'Updated first page' : 'First page'
+        subject: lastPage ? 'Final page' : firstPageSubject
       }],
       nextCursor: lastPage ? null : 'last-page',
       summary: { pendingCount: 2, snapshot: { asOf: occurredAt, version: 2 } }
@@ -106,10 +106,12 @@ test('keeps focus and pages in notifications while replay remains due', async ({
   await expect(items).toHaveCount(2);
   await expect(more).toHaveCount(0);
   await expect(items.last().getByRole('button', { name: '查看邮件', exact: true })).toBeFocused();
+  firstPageSubject = 'New first page';
   const replay = nextReplay();
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await replay;
-  await expect(items).toHaveCount(2);
+  await expect(items.first().getByText('New first page', { exact: true })).toBeVisible();
+  await expect(items).toHaveCount(1);
 });
 
 test('finds an Owner-wide bounce from another identity and acknowledges it without changing the receipt', async ({ page, baseURL, consoleErrors }, info) => {

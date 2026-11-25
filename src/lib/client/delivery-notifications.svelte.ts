@@ -143,7 +143,7 @@ export class DeliveryNotifications {
     }
     const request = this.read.begin();
     // Mark the request at dispatch to coalesce focus and open refreshes.
-    if (list) this.pageAt = now;
+    if (list && !more) this.pageAt = now;
     this.readAt = now;
     this.loading = list;
     this.loadError = false;
