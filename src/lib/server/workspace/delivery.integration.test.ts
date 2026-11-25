@@ -101,6 +101,22 @@ describe('Resend delivery reconciliation', () => {
       .toEqual({ status: 'delivered', last_event_at: '2027-01-15T08:05:00.000Z', delivered_at: '2027-01-15T08:05:00.000Z' });
   });
 
+  test('creates a terminal webhook receipt before any submission receipt exists', async () => {
+    const { database, env } = setup();
+    const at = '2027-01-15T08:05:00.000Z';
+    database.exec("DELETE FROM workspace_outbound_receipts WHERE message_id = 'message-1'");
+    await applyResendDeliveryWebhook(env, 'early-bounce', payload('email.bounced', at));
+    const check = async () => expect(await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).toMatchObject({
+      status: 'bounced', receipt: { last_event: 'email.bounced', result_kind: 'permanent_failure' }
+    });
+    await check();
+    await upsertOutboundReceipt(env.DB, {
+      messageId: 'message-1', userId: 'user-1', attemptNumber: 1, provider: 'resend', resultKind: 'accepted',
+      remoteStatus: 200, responsePreview: '', lastEvent: 'submission', lastEventAt: at, createdAt: at, updatedAt: at
+    }).run();
+    await check();
+  });
+
   test('stores unknown and engagement events without changing delivery state', async () => {
     const { database, env } = setup();
     const unknown = await applyResendDeliveryWebhook(env, 'svix-future', payload('email.future_event', '2027-01-15T08:06:00Z'));

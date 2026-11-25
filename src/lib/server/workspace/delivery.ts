@@ -19,7 +19,7 @@ import {
   resolveLocalDelayOnSent,
   retainProviderDelayAfterRetry,
   supersedeLocalSubmissionFailure,
-  updateOutboundReceiptForCurrentEvent,
+  upsertOutboundReceiptForCurrentEvent,
   type DeferredEventClaim
 } from '$lib/server/db/deliveries';
 import { mapEventRowToDeliveryEvent, mapWorkspaceMessageRow, nowIso, serializeOutboundEventInsert, type DeliveryDetail, type WorkspaceContext } from '$lib/server/workspace/shared';
@@ -177,7 +177,7 @@ function reconciliationStatements(
     }),
     ...(providerFailure ? [ensureProviderFailureAttention(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
     ...(event.statusUpdate === 'sent' ? [resolveLocalDelayOnSent(db, outboundRow.message_id, event.providerMessageId, event.createdAt, claim)] : []),
-    updateOutboundReceiptForCurrentEvent(db, {
+    upsertOutboundReceiptForCurrentEvent(db, {
       messageId: outboundRow.message_id,
       userId: outboundRow.user_id,
       provider: event.provider,
