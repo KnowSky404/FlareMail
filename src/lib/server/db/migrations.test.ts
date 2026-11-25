@@ -323,6 +323,70 @@ describe('versioned D1 migrations', () => {
     db.close();
   });
 
+  test.each([
+    ['before timeout', 'submitting', false, 'bounced', 65],
+    ['after timeout', 'submitting', true, 'failed', 68],
+    ['after local failure', 'failed', true, 'failed', 50],
+    ['older failure after local failure', 'failed', true, 'bounced', 65],
+    ['newer failure after local failure', 'failed', true, 'failed', 85]
+  ] as const)('recovers a terminal outcome across an unconfirmed same-ID retry (%s)', (label, localStatus, afterReset, status, statusTime) => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0039_queue_legacy_resend_failures.sql');
+    const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1_000).toISOString();
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
+      VALUES ('retry-gap', 'owner', 'sent', '', 'sender@example.test', '', '', '${at(0)}');
+      INSERT INTO workspace_delivery_statuses
+        (message_id, user_id, status, attempts, provider, provider_message_id, last_event, last_event_at)
+      VALUES ('retry-gap', 'owner', 'submitted', 3, 'resend', 're_1', 'submission', '${at(180)}');
+      INSERT INTO workspace_outbound_receipts
+        (message_id, user_id, provider, result_kind, remote_status, last_event, last_event_at)
+      VALUES ('retry-gap', 'owner', 'resend', 'accepted', 202, 'submission', '${at(180)}');
+      INSERT INTO workspace_delivery_attempts
+        (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at)
+      VALUES ('initial', 'retry-gap', 'owner', 1, 'resend', 're_1', 'submitted', '${at(0)}'),
+        ('timed-out', 'retry-gap', 'owner', 2, 'resend', NULL, '${localStatus}', '${at(60)}'),
+        ('latest', 'retry-gap', 'owner', 3, 'resend', 're_1', 'submitted', '${at(120)}');
+    `);
+    const event = db.query(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json, created_at)
+      VALUES (?, 'retry-gap', 'owner', 'resend', ?, ?, ?, ?, ?)`);
+    event.run('local:retry-gap:submission:1', 're_1', 'submission', at(30), '{"status":"submitted"}', at(30));
+    const legacyFailed = label === 'after local failure';
+    const firstKind = legacyFailed ? 'email.failed' : 'email.bounced';
+    const firstTime = legacyFailed ? 50 : 65;
+    event.run('first-outcome', 're_1', firstKind, at(firstTime),
+      JSON.stringify({ type: firstKind, created_at: at(firstTime), data: { email_id: 're_1' } }), at(legacyFailed ? 55 : 70));
+    const reset = () => event.run('local:retry-gap:submission:2', null, 'submission', at(80),
+      JSON.stringify({ status: localStatus }), at(80));
+    if (afterReset) reset();
+    const laterKind = legacyFailed ? 'email.bounced' : 'email.failed';
+    const laterTime = label === 'newer failure after local failure' ? 85 : 68;
+    event.run('later-outcome', 're_1', laterKind, at(laterTime),
+      JSON.stringify({ type: laterKind, created_at: at(laterTime), data: { email_id: 're_1' } }), at(afterReset ? 90 : 75));
+    if (!afterReset) reset();
+    event.run('local:retry-gap:submission:3', 're_1', 'submission', at(180), '{"status":"submitted"}', at(180));
+
+    const prior = '0040_recover_masked_resend_terminal_events.sql';
+    db.exec(readFileSync(join(migrationsDirectory, prior), 'utf8'));
+    db.query('INSERT INTO _test_migrations (name) VALUES (?)').run(prior);
+    expect(db.query('SELECT status FROM workspace_delivery_statuses').get()).toEqual({ status: 'submitted' });
+
+    applyMigrations(db);
+
+    expect(db.query('SELECT status, last_event_at FROM workspace_delivery_statuses').get()).toEqual({
+      status, last_event_at: at(statusTime)
+    });
+    expect(db.query('SELECT last_event, result_kind, remote_status FROM workspace_outbound_receipts').get()).toEqual({
+      last_event: 'email.' + status, result_kind: 'permanent_failure', remote_status: 202
+    });
+    expect(db.query('SELECT kind, state, attempt_number FROM workspace_delivery_attention').all()).toEqual([
+      { kind: status, state: 'open', attempt_number: 3 }
+    ]);
+    expect(db.query('SELECT COUNT(*) AS count FROM workspace_outbound_events').get()).toEqual({ count: 5 });
+    db.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);
@@ -367,7 +431,8 @@ describe('versioned D1 migrations', () => {
       '0037_recover_sent_resend_delays.sql',
       '0038_queue_legacy_resend_events.sql',
       '0039_queue_legacy_resend_failures.sql',
-      '0040_recover_masked_resend_terminal_events.sql'
+      '0040_recover_masked_resend_terminal_events.sql',
+      '0041_recover_terminal_outcomes_across_retries.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -502,7 +567,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 40 }
+      { schema_name: 'flaremail', schema_version: 41 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())
