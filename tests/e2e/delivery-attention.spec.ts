@@ -813,14 +813,29 @@ test('replays a manual refresh during confirmation and clears cached receipts', 
     await confirmationStarted.promise;
     await page.keyboard.press('Escape');
     expect((await events(page.request, cachedId, 'email.delivered', 'attention-cached-replay-delivered')).ok()).toBe(true);
-    await page.route('**/api/workspace/attention/summary', async (route) =>
-      route.fulfill({ json: { ok: true, data: {
+    const replayStarted = Promise.withResolvers<void>();
+    const releaseReplay = Promise.withResolvers<void>();
+    await page.route('**/api/workspace/attention/summary', async (route) => {
+      replayStarted.resolve();
+      await releaseReplay.promise;
+      await route.fulfill({ json: { ok: true, data: {
         pendingCount: 1, snapshot: { asOf: new Date().toISOString(), version: 99 }, replayed: 1
-      } } }), { times: 1 });
+      } } });
+    }, { times: 1 });
     const replay = page.waitForResponse((response) =>
       new URL(response.url()).pathname === endpoint + '/summary' && response.request().method() === 'POST' && response.ok());
-    await receipt.getByRole('button', { name: '刷新投递回执', exact: true }).click();
+    const refresh = receipt.getByRole('button', { name: '刷新投递回执', exact: true });
+    try {
+      await refresh.click();
+      await replayStarted.promise;
+      await expect(refresh).toBeDisabled();
+      await refresh.dispatchEvent('click');
+    } finally {
+      releaseReplay.resolve();
+    }
     await replay;
+    await expect(refresh).toBeEnabled();
+    await expect(page.getByText('重新载入投递回执失败。', { exact: true })).toHaveCount(0);
     await row(cached).click();
     await expect(receipt.getByText('已送达', { exact: true }).first()).toBeVisible();
   } finally {
