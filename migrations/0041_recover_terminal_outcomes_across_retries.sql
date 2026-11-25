@@ -187,7 +187,7 @@ WITH earlier_delays AS (
     AND prior_acceptance.event_type = 'submission'
   JOIN workspace_outbound_events observed ON observed.message_id = delivery.message_id AND observed.user_id = delivery.user_id
     AND observed.provider = 'resend' AND observed.provider_message_id = delivery.provider_message_id
-    AND observed.event_type = 'email.delivery_delayed' AND observed.rowid > prior_acceptance.rowid AND observed.rowid <= event.rowid
+    AND observed.event_type = 'email.delivery_delayed' AND observed.rowid <= event.rowid
   JOIN workspace_delivery_attempts observation_attempt
     ON observation_attempt.message_id = delivery.message_id AND observation_attempt.user_id = delivery.user_id
     AND observation_attempt.attempt_number = (
@@ -197,6 +197,15 @@ WITH earlier_delays AS (
     )
   WHERE event.event_type IN ('submission', 'email.sent', 'email.delivery_delayed')
     AND CASE WHEN json_valid(event.payload_json) THEN json_extract(event.payload_json, '$._flaremailTerminalRecovery41') = 1 ELSE 0 END
+    -- Legacy replay assigned the event in place, keeping its pre-acceptance rowid.
+    AND (observed.rowid > prior_acceptance.rowid OR (
+      prior_acceptance.svix_id = 'local:' || delivery.message_id || ':submission:' || observation_attempt.attempt_number
+      AND CASE WHEN json_valid(observed.payload_json)
+        THEN json_extract(observed.payload_json, '$.type') = observed.event_type
+          AND json_extract(observed.payload_json, '$.data.email_id') = delivery.provider_message_id
+          AND COALESCE(json_extract(observed.payload_json, '$._flaremailDeferred'), 0) <> 1
+        ELSE 0 END
+    ))
     AND NOT EXISTS (
       SELECT 1 FROM workspace_delivery_attention existing
       WHERE existing.message_id = delivery.message_id AND existing.user_id = delivery.user_id AND existing.kind = 'delayed'
@@ -218,8 +227,13 @@ WHERE (reset.rowid IS NULL OR json_extract(reset.payload_json, '$.status') IS NO
     SELECT 1 FROM workspace_outbound_events sent
     WHERE sent.message_id = delay.message_id AND sent.user_id = delay.user_id
       AND sent.provider = 'resend' AND sent.provider_message_id = delay.provider_message_id
-      AND sent.event_type = 'email.sent' AND sent.rowid < delay.rowid
-      AND sent.rowid > COALESCE(reset.rowid, delay.prior_accepted_row)
+      AND sent.event_type = 'email.sent' AND sent.rowid > COALESCE(reset.rowid, delay.prior_accepted_row)
+      -- A newer sent receipt in the replay window makes the legacy ordering uncertain.
+      AND (sent.rowid < delay.rowid OR (delay.rowid < delay.prior_accepted_row AND julianday(sent.created_at) <= (
+        SELECT MIN(julianday(next.started_at)) FROM workspace_delivery_attempts next
+        WHERE next.message_id = delay.message_id AND next.user_id = delay.user_id
+          AND next.attempt_number > delay.observation_attempt
+      )))
       AND julianday(sent.created_at) > julianday(delay.started_at)
       AND julianday(sent.event_created_at) > julianday(delay.event_created_at)
   )
