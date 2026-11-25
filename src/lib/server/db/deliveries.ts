@@ -536,6 +536,8 @@ export function attachMatchedOutboundEvents(db: D1Database, providerMessageId: s
       WHERE attempt.provider_message_id = ?1
         AND NOT EXISTS (SELECT 1 FROM workspace_delivery_statuses WHERE provider_message_id = ?1)
       HAVING COUNT(DISTINCT attempt.message_id) = 1 AND COUNT(DISTINCT attempt.user_id) = 1
+        -- Keep events eligible for replay while a newer attempt can make this ID current.
+        AND MAX(${unconfirmedAttempt('delivery')}) = 0
     ) AS match
     WHERE event.provider = 'resend' AND event.provider_message_id = ?1 AND event.user_id = 'unmatched'
       AND json_valid(event.payload_json)

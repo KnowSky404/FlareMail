@@ -222,6 +222,57 @@ describe('outbound workspace persistence', () => {
     database.close();
   });
 
+  test.each([false, true])('replays early events when overlapping retries accept the same replacement ID (older returned %s)', async (olderReturned) => {
+    const { env, database, session } = setup();
+    const priorId = 're_before_overlap';
+    const providerMessageId = 're_shared_replacement';
+    const sent = await sendWorkspaceMessage(env, session, {
+      toEmail: 'alice@example.net', subject: 'Overlapping replacement', body: 'Body'
+    }, { requestId: 'overlapping-replacement', gateway: new FakeOutboundGateway({ providerMessageId: priorId }) });
+    const messageId = sent.message.id;
+    await applyResendDeliveryWebhook(env, 'overlap-prior-delay', {
+      type: 'email.delivery_delayed', created_at: new Date().toISOString(), data: { email_id: priorId }
+    });
+
+    const olderStarted = Promise.withResolvers<void>();
+    const olderFinish = Promise.withResolvers<void>();
+    const newerStarted = Promise.withResolvers<void>();
+    const newerFinish = Promise.withResolvers<void>();
+    const accepted = new FakeOutboundGateway({ providerMessageId });
+    const older = retryWorkspaceMessageDelivery(env, session, messageId, { gateway: { async send(input) {
+      olderStarted.resolve();
+      await olderFinish.promise;
+      return accepted.send(input);
+    } } });
+    await Promise.race([olderStarted.promise, older]);
+    const newer = retryWorkspaceMessageDelivery(env, session, messageId, { gateway: { async send(input) {
+      newerStarted.resolve();
+      await newerFinish.promise;
+      return accepted.send(input);
+    } } });
+    try {
+      await Promise.race([newerStarted.promise, newer]);
+      const deliver = () => applyResendDeliveryWebhook(env, 'overlap-delivered', {
+        type: 'email.delivered', created_at: new Date().toISOString(), data: { email_id: providerMessageId }
+      });
+      if (!olderReturned) expect(await deliver()).toMatchObject({ matched: false });
+      olderFinish.resolve();
+      expect((await older)?.message).toMatchObject({ deliveryStatus: 'submitting', deliveryAttempts: 3 });
+      if (olderReturned) expect(await deliver()).toMatchObject({ matched: false });
+    } finally {
+      olderFinish.resolve();
+      newerFinish.resolve();
+      await Promise.all([older, newer]);
+    }
+
+    const detail = await getWorkspaceMessageDeliveryDetail(env, session, messageId);
+    expect(detail).toMatchObject({ status: 'delivered', lastEvent: 'email.delivered', attention: null });
+    expect(detail?.events).toContainEqual(expect.objectContaining({ id: 'overlap-delivered', providerMessageId }));
+    expect(database.query('SELECT provider_message_id, attempts FROM workspace_delivery_statuses WHERE message_id = ?').get(messageId))
+      .toEqual({ provider_message_id: providerMessageId, attempts: 3 });
+    database.close();
+  });
+
   test('transfers persisted labels when a draft is sent', async () => {
     const { env, database, session } = setup();
     const draft = await saveWorkspaceDraft(env, session, { toEmail: 'alice@example.net', subject: 'Labeled', body: 'Body' });
