@@ -2,14 +2,15 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { WorkspaceCapabilities } from '$lib/server/workspace/shared';
 import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
 
-async function isCurrentSchema(env?: CloudflareEnv): Promise<boolean> {
+async function isCurrentSchema(env?: CloudflareEnv, throwOnProbeError = false): Promise<boolean> {
   if (!env?.DB) return false;
   try {
     const row = await env.DB.prepare(
       'SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?'
     ).bind('flaremail').first<{ schema_version: number }>();
     return isSupportedWorkspaceSchemaVersion(row?.schema_version);
-  } catch {
+  } catch (error) {
+    if (throwOnProbeError) throw error;
     return false;
   }
 }
@@ -22,8 +23,10 @@ const emptyCapabilities = (): WorkspaceCapabilities => ({
   drafts: false, inboundStates: false, outboundStatuses: false, outboundReceipts: false, outboundEvents: false, recipientArrays: false
 });
 
-export async function getWorkspaceCapabilities(env?: CloudflareEnv): Promise<WorkspaceCapabilities> {
-  return await isCurrentSchema(env)
+export async function getWorkspaceCapabilities(
+  env?: CloudflareEnv, { throwOnProbeError = false } = {}
+): Promise<WorkspaceCapabilities> {
+  return await isCurrentSchema(env, throwOnProbeError)
     ? { drafts: true, inboundStates: true, outboundStatuses: true, outboundReceipts: true, outboundEvents: true, recipientArrays: true }
     : emptyCapabilities();
 }

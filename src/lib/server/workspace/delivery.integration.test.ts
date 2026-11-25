@@ -25,8 +25,12 @@ class TestStatement {
 
 class TestD1 {
   beforeBatch?: () => void;
+  beforePrepare?: (sql: string) => void;
   constructor(readonly database: Database) {}
-  prepare(sql: string) { return new TestStatement(this.database, sql) as unknown as D1PreparedStatement; }
+  prepare(sql: string) {
+    this.beforePrepare?.(sql);
+    return new TestStatement(this.database, sql) as unknown as D1PreparedStatement;
+  }
   async batch(statements: D1PreparedStatement[]) {
     this.beforeBatch?.();
     return this.database.transaction(() =>
@@ -199,6 +203,133 @@ describe('Resend delivery reconciliation', () => {
     expect(database.query('SELECT COUNT(*) AS count FROM workspace_outbound_events').get()).toEqual({ count: 6 });
     expect(database.query("SELECT payload_json FROM workspace_outbound_events WHERE svix_id = 'legacy-1'").get())
       .toEqual({ payload_json: '{"type":"email.opened","data":{"email_id":"re_1"}}' });
+  });
+
+  test('focuses a summary refresh on the visible owned Sent message beyond the Owner batch limit', async () => {
+    const { database, env } = setup();
+    const request = async (query: string) => {
+      const url = new URL('https://mail.example.test/api/workspace/attention/summary' + query);
+      return refreshAttentionSummary({
+        platform: { env }, request: new Request(url, { method: 'POST' }), url,
+        locals: { workspaceSession: { userId: 'user-1', storage: 'd1' } }
+      } as never);
+    };
+    const queue = (id: string, owner: string, providerId: string, minute: number) => {
+      const at = `2027-01-15T08:${String(minute).padStart(2, '0')}:00.000Z`;
+      database.query(`INSERT INTO workspace_outbound_events
+        (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json)
+        VALUES (?, ?, ?, 'resend', ?, 'email.delivered', ?, '{"_flaremailDeferred":1}')`)
+        .run(`${id}-${minute}`, id, owner, providerId, at);
+    };
+    for (const [index, id] of ['ahead-1', 'ahead-2', 'ahead-3', 'ahead-4', 'foreign', 'trashed', 'inbox'].entries()) {
+      const owner = id === 'foreign' ? 'user-2' : 'user-1';
+      const providerId = `re_${id}`;
+      addDelivery(database, id, 'submitted', undefined, owner);
+      database.query("UPDATE workspace_delivery_statuses SET provider = 'resend', provider_message_id = ? WHERE message_id = ?")
+        .run(providerId, id);
+      queue(id, owner, providerId, index + 1);
+    }
+    database.exec(`UPDATE workspace_messages SET deleted_at = '2027-01-15' WHERE id = 'trashed';
+      UPDATE workspace_messages SET folder = 'inbox' WHERE id = 'inbox';`);
+    for (let minute = 10; minute < 15; minute++) queue('message-1', 'user-1', 're_1', minute);
+
+    for (const id of ['unknown', 'foreign', 'trashed', 'inbox']) {
+      const response = await request('?messageId=' + id);
+      expect(response.status).toBe(200);
+      const { data } = await response.json() as { data: unknown };
+      expect(data).toMatchObject({ pendingCount: 0, replayed: 0 });
+    }
+    expect((await request('?messageId=')).status).toBe(400);
+    expect((await request('?messageId=message-1&messageId=foreign')).status).toBe(400);
+
+    let discoveryPlan: string[] = [];
+    const d1 = env.DB as unknown as TestD1;
+    d1.beforePrepare = (sql) => {
+      if (!sql.includes('SELECT delivery.provider_message_id AS id')) return;
+      discoveryPlan = database.query<{ detail: string }, [string, string]>('EXPLAIN QUERY PLAN ' + sql)
+        .all('user-1', 'message-1').map(({ detail }) => detail);
+    };
+    const response = await request('?messageId=message-1');
+    d1.beforePrepare = undefined;
+    expect(response.status).toBe(200);
+    expect(discoveryPlan.join('\n')).toMatch(/SEARCH event.*idx_workspace_outbound_events_provider_message_id \(provider_message_id=\?\)/u);
+    expect(discoveryPlan.join('\n')).not.toContain('SCAN event');
+    const { data } = await response.json() as { data: unknown };
+    expect(data).toMatchObject({ pendingCount: 0, replayed: 4 });
+    expect(data).not.toHaveProperty('replayFailed');
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('delivered');
+    expect(database.query(`SELECT message_id FROM workspace_delivery_statuses WHERE status = 'delivered'`).all())
+      .toEqual([{ message_id: 'message-1' }]);
+    expect(database.query(`SELECT svix_id FROM workspace_outbound_events WHERE message_id = 'message-1'
+      AND json_extract(payload_json, '$._flaremailDeferred') = 1`).all()).toEqual([{ svix_id: 'message-1-14' }]);
+  });
+
+  test('reports a failed replay schema probe with the stored attention summary', async () => {
+    const { database, env } = setup();
+    const url = new URL('https://mail.example.test/api/workspace/attention/summary?messageId=message-1');
+    const refresh = () => refreshAttentionSummary({
+      platform: { env }, request: new Request(url, { method: 'POST' }), url,
+      locals: { workspaceSession: { userId: 'user-1', storage: 'd1' } }
+    } as never);
+    await applyResendDeliveryWebhook(env, 'probe-delay', payload('email.delivery_delayed', '2027-01-15T08:01:00Z'));
+    database.exec(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json)
+      VALUES ('probe-delivered', 'message-1', 'user-1', 'resend', 're_1', 'email.delivered',
+        '2027-01-15T08:02:00.000Z', '{"_flaremailDeferred":1}')`);
+    const d1 = env.DB as unknown as TestD1;
+    d1.beforePrepare = (sql) => {
+      if (!sql.includes('SELECT schema_version FROM workspace_schema_metadata')) return;
+      d1.beforePrepare = undefined;
+      throw new Error('D1 schema probe timed out');
+    };
+    const failed = await refresh();
+    expect(failed.status).toBe(200);
+    const getData = async (response: Response) => (await response.json() as { data: unknown }).data;
+    expect(await getData(failed)).toMatchObject({ pendingCount: 1, replayed: 0, replayFailed: true });
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('delayed');
+
+    database.query('UPDATE workspace_schema_metadata SET schema_version = ?').run(FLAREMAIL_SCHEMA_VERSION - 1);
+    const unsupported = await getData(await refresh());
+    expect(unsupported).toMatchObject({ pendingCount: 1, replayed: 0 });
+    expect(unsupported).not.toHaveProperty('replayFailed');
+
+    database.query('UPDATE workspace_schema_metadata SET schema_version = ?').run(FLAREMAIL_SCHEMA_VERSION);
+    const recovered = await getData(await refresh());
+    expect(recovered).toMatchObject({ pendingCount: 0, replayed: 1 });
+    expect(recovered).not.toHaveProperty('replayFailed');
+  });
+
+  test('repeated failures in the oldest ready providers do not block healthy providers', async () => {
+    const { database, env } = setup();
+    const queue = database.query(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json)
+      VALUES (?, ?, 'user-1', 'resend', ?, 'email.delivered', ?, '{"_flaremailDeferred":1}')`);
+    for (let index = 1; index <= 4; index++) {
+      const id = `blocked-${index}`;
+      const providerId = `re_${id}`;
+      addDelivery(database, id, 'submitted');
+      database.query("UPDATE workspace_delivery_statuses SET provider = 'resend', provider_message_id = ? WHERE message_id = ?")
+        .run(providerId, id);
+      queue.run(id, id, providerId, `2027-01-15T08:0${index}:00.000Z`);
+    }
+    queue.run('healthy', 'message-1', 're_1', '2027-01-15T08:05:00.000Z');
+    database.exec(`CREATE TRIGGER reject_selected_replays BEFORE UPDATE OF payload_json ON workspace_outbound_events
+      WHEN OLD.svix_id GLOB 'blocked-*' AND json_type(NEW.payload_json, '$._flaremailReplayClaim') = 'text'
+      BEGIN SELECT RAISE(ABORT, 'provider replay failed'); END;`);
+
+    let failures = 0;
+    const refresh = { userId: 'user-1', onFailure: () => { failures++; } };
+    expect(await reconcileDeferredResendEvents(env, refresh)).toBe(0);
+    expect(failures).toBe(1);
+    expect(await reconcileDeferredResendEvents(env, refresh)).toBe(1);
+    expect(failures).toBe(2);
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('delivered');
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'blocked-4')).events[0]?.payload_json)
+      .not.toContain('_flaremail');
+
+    database.exec('DROP TRIGGER reject_selected_replays');
+    expect(await reconcileDeferredResendEvents(env, { ...refresh, messageId: 'blocked-4' })).toBe(1);
+    expect((await findDeliveryDetailRows(env.DB, 'user-1', 'blocked-4')).status).toBe('delivered');
   });
 
   test('maps suppressed to a terminal suppressed state', async () => {
@@ -466,7 +597,12 @@ describe('Owner delivery attention', () => {
     project.run(3, at(-15));
     const before = await page(db);
     expect(before.notices.map(({ kind }) => kind)).toEqual(['stale_submitting']);
-    await applyResendDeliveryWebhook(env, 'late-provider-delay', payload('email.delivery_delayed', at(-1)));
+    expect(await applyResendDeliveryWebhook(env, 'late-provider-delay', payload('email.delivery_delayed', at(-1))))
+      .toMatchObject({ ignored: true });
+    expect(await reconcileDeferredResendEvents(env)).toBe(0);
+    database.query("UPDATE workspace_delivery_attempts SET started_at = ? WHERE id = 'returned'").run(at(-930));
+    project.run(3, at(-930));
+    expect(await reconcileDeferredResendEvents(env)).toBe(1);
     const restored = (await page(db)).notices[0]!;
     expect(restored.id).toBe(original.id);
     expect(restored.version).toBeGreaterThan(before.summary.snapshot.version);
@@ -915,7 +1051,7 @@ describe('Owner delivery attention', () => {
     expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
   });
 
-  test.each(['scheduled', 'summary'])('recovers the current provider event after a retry is abandoned (%s)', async (entryPoint) => {
+  test.each(['scheduled', 'summary', 'focused summary'])('recovers the current provider event after a retry is abandoned (%s)', async (entryPoint) => {
     const { database, env } = setup();
     const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
     await applyResendDeliveryWebhook(env, 'delay-before-retry', payload('email.delivery_delayed', at(20)));
@@ -928,8 +1064,9 @@ describe('Owner delivery attention', () => {
     await applyResendDeliveryWebhook(env, 'deferred-sent', payload('email.sent', at(17)));
     const delivery = () => findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
     expect((await delivery()).status).toBe('submitting');
-    if (entryPoint === 'summary') {
+    if (entryPoint !== 'scheduled') {
       const url = new URL('https://mail.example.test/api/workspace/attention/summary');
+      if (entryPoint === 'focused summary') url.searchParams.set('messageId', 'message-1');
       const summaryRequest = (userId?: string, method = 'POST') => ({
         platform: { env }, request: new Request(url, { method }), url,
         locals: { workspaceSession: userId ? { userId, storage: 'd1' } : null }
@@ -950,7 +1087,7 @@ describe('Owner delivery attention', () => {
       const recovered = await refreshAttentionSummary(summaryRequest('user-1'));
       d1.beforeBatch = undefined;
       expect(recovered.status).toBe(200);
-      expect(await recovered.json()).toMatchObject({ data: { replayed: 1 } });
+      expect(await recovered.json()).toMatchObject({ data: { replayed: 1, replayFailed: true } });
       const retried = await refreshAttentionSummary(summaryRequest('user-1'));
       expect(await retried.json()).toMatchObject({ data: { replayed: 1 } });
       expect(await reconcilePendingResendEvents(env, 're_1')).toBe(0);
@@ -1072,6 +1209,7 @@ describe('Owner delivery attention', () => {
     addDelivery(database, 'hidden', 'bounced');
     addDelivery(database, 'reopened', 'bounced');
     addDelivery(database, 'included', 'failed');
+    addDelivery(database, 'also-included', 'bounced');
     addDelivery(database, 'potentially-stale', 'submitting', new Date().toISOString());
     database.query("UPDATE workspace_messages SET deleted_at = '2026-01-01' WHERE id = 'hidden'").run();
     const reopened = (await findCurrentDeliveryAttention(db, 'user-1', 'reopened'))!;
@@ -1082,12 +1220,12 @@ describe('Owner delivery attention', () => {
     database.query("UPDATE workspace_messages SET deleted_at = NULL WHERE id = 'hidden'").run();
     database.query("UPDATE workspace_delivery_statuses SET last_event_at = '2026-01-01' WHERE message_id = 'potentially-stale'").run();
     const all = { action: 'acknowledge_all', snapshot } as const;
-    expect((await changeDeliveryAttention(db, 'user-1', all)).changed).toBe(1);
+    expect((await changeDeliveryAttention(db, 'user-1', all)).changed).toBe(2);
     expect((await changeDeliveryAttention(db, 'user-1', all)).changed).toBe(0);
     expect((await page(db)).notices.map(({ messageId }) => messageId).sort())
       .toEqual(['arrived-late', 'hidden', 'potentially-stale', 'reopened']);
     database.query("UPDATE workspace_messages SET deleted_at = '2026-01-01' WHERE id = 'included'").run();
-    expect((await page(db, 'history')).notices).toEqual([]);
+    expect((await page(db, 'history')).notices).toMatchObject([{ messageId: 'also-included', state: 'acknowledged' }]);
     database.query("UPDATE workspace_messages SET deleted_at = NULL WHERE id = 'included'").run();
     expect(await findCurrentDeliveryAttention(db, 'user-1', 'included')).toMatchObject({ state: 'acknowledged' });
     database.query("DELETE FROM workspace_messages WHERE id = 'included'").run();

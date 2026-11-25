@@ -17,9 +17,11 @@ import {
   markDeferredOutboundEvent,
   attachMatchedOutboundEvents,
   clearPendingOutboundEvent,
+  deferFailedReplayProvider,
   reconcileDeliveryStatus,
   resolveLocalDelayOnSent,
   retainProviderDelayAfterRetry,
+  stageLiveTerminalEvent,
   supersedeLocalSubmissionFailure,
   upsertOutboundReceiptForCurrentEvent,
   type DeferredEventClaim
@@ -118,11 +120,13 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
   if (await hasOutboundEvent(env.DB, svixId)) return { duplicate: true, ignored: false, matched: true, messageId: null as string | null };
   const outboundRow = await findOutboundByProviderMessageId(env.DB, event.providerMessageId);
   const eventRecord = serializeOutboundEventInsert({ svixId, messageId: outboundRow?.message_id ?? event.providerMessageId, userId: outboundRow?.user_id ?? 'unmatched', provider: event.provider, providerMessageId: event.providerMessageId, eventType: event.eventType, eventCreatedAt: event.createdAt, summary: event.summary, payloadJson: event.payloadJson });
+  const terminal = event.statusUpdate && isDeliveryTerminal(event.statusUpdate);
   if (!outboundRow) {
     try {
       await env.DB.batch([
         insertOutboundEvent(env.DB, eventRecord),
-        attachMatchedOutboundEvents(env.DB, event.providerMessageId)
+        attachMatchedOutboundEvents(env.DB, event.providerMessageId),
+        ...(terminal ? [stageLiveTerminalEvent(env.DB, svixId)] : [])
       ]);
     } catch (error) {
       if (error instanceof Error && /unique constraint|constraint failed/iu.test(error.message)) {
@@ -133,10 +137,14 @@ export async function applyResendDeliveryWebhook(env: CloudflareEnv | undefined,
     return { duplicate: false, ignored: true, matched: false, messageId: null as string | null };
   }
 
+  const claim = terminal ? { svixId, token: crypto.randomUUID() } : undefined;
   const statements: D1PreparedStatement[] = [
     insertOutboundEvent(env.DB, eventRecord),
-    ...(event.statusUpdate && !isDeliveryTerminal(event.statusUpdate) ? [markDeferredOutboundEvent(env.DB, svixId)] : []),
-    ...reconciliationStatements(env.DB, outboundRow, event, { liveDelayId: event.statusUpdate === 'delayed' ? svixId : undefined })
+    ...(claim ? [stageLiveTerminalEvent(env.DB, svixId, claim.token)] : event.statusUpdate ? [markDeferredOutboundEvent(env.DB, svixId)] : []),
+    ...reconciliationStatements(env.DB, outboundRow, event, {
+      claim, liveDelayId: event.statusUpdate === 'delayed' ? svixId : undefined
+    }),
+    ...(claim ? [finishOutboundEventReplay(env.DB, claim)] : [])
   ];
   try {
     await env.DB.batch(statements);
@@ -209,17 +217,29 @@ function deliveryPriority(status: string) {
   return -1;
 }
 
-export async function reconcileDeferredResendEvents(env: CloudflareEnv, userId?: string, onFailure?: () => void) {
+export async function reconcileDeferredResendEvents(env: CloudflareEnv, {
+  userId, messageId, onFailure
+}: { userId?: string; messageId?: string; onFailure?: () => void } = {}) {
   if (!env.DB) return 0;
-  const capabilities = await getWorkspaceCapabilities(env);
+  const capabilities = await getWorkspaceCapabilities(env, { throwOnProbeError: true });
   if (!capabilities.outboundStatuses || !capabilities.outboundReceipts || !capabilities.outboundEvents) return 0;
   // One discovery read and at most four providers with two reads and four replay batches each.
-  const { results } = await listReadyDeferredProviderIds(env.DB, 4, userId);
+  const { results } = await listReadyDeferredProviderIds(env.DB, messageId === undefined ? 4 : 1, userId, messageId);
   let replayed = 0;
-  const replays = await Promise.allSettled(results.map(({ id }) => reconcilePendingResendEvents(env, id, {
-    limit: 4, allowExpiredAttempt: true, userId,
-    onReplayed: (count) => { replayed += count; }
-  })));
+  const replays = await Promise.allSettled(results.map(async ({ id }) => {
+    try {
+      await reconcilePendingResendEvents(env, id, {
+        limit: 4, allowExpiredAttempt: true, userId, messageId,
+        onReplayed: (count) => { replayed += count; }
+      });
+    } catch (error) {
+      if (messageId === undefined) {
+        try { await deferFailedReplayProvider(env.DB, id, userId).run(); }
+        catch { /* The original replay failure still needs to reach the caller. */ }
+      }
+      throw error;
+    }
+  }));
   if (replays.some(({ status }) => status === 'rejected')) {
     if (!onFailure) throw new DeliveryPersistenceError('A deferred delivery event could not be replayed.');
     onFailure();
@@ -228,11 +248,13 @@ export async function reconcileDeferredResendEvents(env: CloudflareEnv, userId?:
 }
 
 export async function reconcilePendingResendEvents(env: CloudflareEnv, providerMessageId: string, {
-  limit = 100, allowExpiredAttempt = false, userId, onReplayed
-}: { limit?: number; allowExpiredAttempt?: boolean; userId?: string; onReplayed?: (count: number) => void } = {}) {
+  limit = 100, allowExpiredAttempt = false, userId, messageId, onReplayed
+}: { limit?: number; allowExpiredAttempt?: boolean; userId?: string; messageId?: string; onReplayed?: (count: number) => void } = {}) {
   const outboundRow = await findOutboundByProviderMessageId(env.DB, providerMessageId);
-  if (!outboundRow || (userId !== undefined && outboundRow.user_id !== userId)) return 0;
-  const pending = await listPendingOutboundEvents(env.DB, providerMessageId, limit);
+  const visibleSentOnly = messageId !== undefined;
+  if (!outboundRow || (userId !== undefined && outboundRow.user_id !== userId) ||
+    (visibleSentOnly && outboundRow.message_id !== messageId)) return 0;
+  const pending = await listPendingOutboundEvents(env.DB, providerMessageId, limit, allowExpiredAttempt);
   let reconciled = 0;
   for (const row of pending.results ?? []) {
     let event: NormalizedResendWebhookEvent;
@@ -241,12 +263,13 @@ export async function reconcilePendingResendEvents(env: CloudflareEnv, providerM
         type: row.event_type, created_at: row.event_created_at, data: { email_id: row.provider_message_id }
       });
     } catch {
-      await clearPendingOutboundEvent(env.DB, row.svix_id, outboundRow.message_id, outboundRow.user_id).run();
+      await clearPendingOutboundEvent(env.DB, row.svix_id, outboundRow.message_id, outboundRow.user_id, visibleSentOnly).run();
       continue;
     }
     const claim = { svixId: row.svix_id, token: crypto.randomUUID() };
     const [assigned] = await env.DB.batch([
-      assignOutboundEvent(env.DB, claim, outboundRow.message_id, outboundRow.user_id, !event.statusUpdate || isDeliveryTerminal(event.statusUpdate), allowExpiredAttempt),
+      assignOutboundEvent(env.DB, claim, outboundRow.message_id, outboundRow.user_id,
+        !event.statusUpdate || isDeliveryTerminal(event.statusUpdate), allowExpiredAttempt, visibleSentOnly),
       ...reconciliationStatements(env.DB, outboundRow, event, { fromDeferred: Boolean(row.was_deferred), claim, allowExpiredAttempt }),
       finishOutboundEventReplay(env.DB, claim)
     ]);

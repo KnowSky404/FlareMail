@@ -97,7 +97,8 @@ async function resolveFilteredMailboxThreadIds(
   userId: string,
   scope: MailboxMutationScope,
   threadKeys: string[],
-  search: ReturnType<typeof parseMailSearchQuery> | null
+  search: ReturnType<typeof parseMailSearchQuery> | null,
+  unthreadedIds?: string[]
 ) {
   const repositoryQuery = {
     folder: scope.section === 'sent' ? 'sent' as const : 'inbox' as const,
@@ -109,7 +110,8 @@ async function resolveFilteredMailboxThreadIds(
     filter: scope.filter ?? 'all',
     identityFilter: scope.identityFilter,
     deliveryStatus: scope.deliveryStatus ?? null,
-    threadKeys
+    threadKeys,
+    unthreadedIds
   };
   const workspacePage = await listWorkspaceMessagePage(db, userId, repositoryQuery);
   const workspaceIds = (workspacePage.results ?? []).map((row) => row.id);
@@ -207,8 +209,12 @@ export async function mutateWorkspaceMailbox(
     }
   }
 
+  const selectedWithoutThread = directRows.filter((row) => !row.thread_key).map((row) => row.id);
+  const filterUnthreaded = scope.threadScope === 'filtered' && scope.section === 'sent';
   const resolvedIds = scope.threadScope === 'filtered'
-    ? await resolveFilteredMailboxThreadIds(env.DB, workspace.userId, scope, threadKeys, search)
+    ? await resolveFilteredMailboxThreadIds(
+      env.DB, workspace.userId, scope, threadKeys, search, filterUnthreaded ? selectedWithoutThread : undefined
+    )
     : scope.threadScope === 'owner'
       ? await resolveOwnedMailboxThreadMessageIds(
       env.DB,
@@ -218,8 +224,8 @@ export async function mutateWorkspaceMailbox(
       maxMailboxMutationIds
     )
       : [];
-  const selectedWithoutThread = directRows.filter((row) => !row.thread_key).map((row) => row.id);
-  const expanded = new Set([...(scope.threadScope === 'filtered' ? selectedWithoutThread : directIds), ...resolvedIds]);
+  const explicitIds = scope.threadScope === 'filtered' ? selectedWithoutThread : directIds;
+  const expanded = new Set(filterUnthreaded ? resolvedIds : [...explicitIds, ...resolvedIds]);
   const skippedSelected = filteredDelivery ? directIds.filter((id) => !expanded.has(id)).length : 0;
   const messageIds = [...expanded];
   if (messageIds.length === 0 && !skippedSelected) throw new ApiError(400, 'MAILBOX_SELECTION_EMPTY', '请选择至少一封邮件。');
@@ -227,7 +233,9 @@ export async function mutateWorkspaceMailbox(
     throw new ApiError(400, 'MAILBOX_SELECTION_TOO_LARGE', `一次最多操作 ${maxMailboxMutationIds} 封邮件。`);
   }
 
-  const writeScope = scope.threadScope === 'owner' ? null : { ...scope, deliveryStatuses };
+  const writeScope = scope.threadScope === 'owner' ? null : {
+    ...scope, deliveryStatuses, ...(filteredDelivery ? { search } : {})
+  };
   const rows = await listOwnedMailboxMutationRows(env.DB, workspace.userId, messageIds, writeScope);
   const owned = new Map(rows.map((row) => [row.id, row]));
   if (!filteredDelivery && (rows.length !== messageIds.length || messageIds.some((id) => !owned.has(id)))) {

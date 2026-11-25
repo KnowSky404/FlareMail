@@ -84,6 +84,7 @@
     fetchWorkspaceSession,
     permanentlyDeleteTrashItem,
     persistDraft,
+    refreshDeliveryAttentionSummary,
     restoreTrashItem,
     retryDelivery,
     submitMessage,
@@ -310,6 +311,7 @@
   let inboundDetailErrors = $state<Record<string, string>>({});
   let deliveryDetailErrors = $state<Record<string, string>>({});
   let manualDeliveryRefreshPending = $state(false);
+  const manualDeliveryRefreshRequest = new LatestRequest();
   let inboundDetailPendingId = $state<string | null>(null);
   let deliveryDetailPendingId = $state<string | null>(null);
   let workspaceBodies = $state<Record<string, WorkspaceBodyDetail>>({});
@@ -363,6 +365,11 @@
     bulkLabelRequest.cancel();
     labelActionPending = false;
     bulkLabelPending = false;
+  }
+
+  function cancelManualDeliveryRefresh() {
+    manualDeliveryRefreshRequest.cancel();
+    manualDeliveryRefreshPending = false;
   }
 
   function replySource(message: MailMessage): MailMessage {
@@ -422,6 +429,7 @@
     if (authExpired) return;
     authExpired = true;
     notifications.reset();
+    cancelManualDeliveryRefresh();
     ownerMetricsRequest.cancel();
     workspaceAuthGeneration += 1;
     if (labelEditorMode && labelActionPending) labelEditorInterrupted = true;
@@ -1100,6 +1108,7 @@
     metricsCache.clear();
     if (options?.resetUserScoped) {
       notifications.reset();
+      cancelManualDeliveryRefresh();
       if (authenticated && !authExpired) notifications.start();
       ownerMetricsRequest.cancel();
       ownerMetrics = null;
@@ -1160,6 +1169,7 @@
 
   function resetWorkspace() {
     notifications.reset();
+    cancelManualDeliveryRefresh();
     ownerMetricsRequest.cancel();
     ownerMetrics = null;
     workspaceAuthGeneration += 1;
@@ -1901,14 +1911,15 @@
     }
     if (event.delivery) {
       if (refreshNotifications) void notifications.invalidate();
+      const current = selectedMessage;
+      if (current?.folder === 'sent' && messageReaderVisible && activeSection === 'sent' &&
+          mailFilter === 'attention' && (!event.id || event.id === current.id)) {
+        selectedMessageId = current.id;
+        deepLinkedMessage = current;
+      }
       if (!event.id) {
         deliveryDetailCache.reset();
-        const current = selectedMessage;
         if (current?.folder === 'sent' && messageReaderVisible) {
-          if (activeSection === 'sent' && mailFilter === 'attention') {
-            selectedMessageId = current.id;
-            deepLinkedMessage = current;
-          }
           void loadDeliveryDetail(current, true);
         }
       }
@@ -1932,7 +1943,7 @@
       else void loadWorkspaceBody(current, true);
       if (current.folder === 'sent' && current.source === 'workspace') void loadDeliveryDetail(current, true);
     }
-    void refreshWorkspace(false, event.delivery === true && !event.id).then(() => {
+    void refreshWorkspace(false, event.delivery === true).then(() => {
       if (event.delivery && viewingDiagnostics) void refreshOwnerMetrics(true);
     });
   }
@@ -1942,9 +1953,13 @@
     for (const message of page.messages) {
       if (message.folder !== 'sent') continue;
       const receipt = deliveryDetails[message.id];
+      const lastEvent = message.deliveryLastEvent ?? null;
+      const lastEventAt = message.deliveryLastEventAt ?? null;
       if ((receipt && (receipt.status !== message.deliveryStatus ||
-        (message.deliveryLastEventAt && (!receipt.lastEventAt || message.deliveryLastEventAt > receipt.lastEventAt)))) ||
-        (deliveryDetailPendingId === message.id && current?.id === message.id && current.deliveryStatus !== message.deliveryStatus)) {
+        receipt.lastEvent !== lastEvent || receipt.lastEventAt !== lastEventAt)) ||
+        (deliveryDetailPendingId === message.id && current?.id === message.id &&
+          (current.deliveryStatus !== message.deliveryStatus || (current.deliveryLastEvent ?? null) !== lastEvent ||
+            (current.deliveryLastEventAt ?? null) !== lastEventAt))) {
         deliveryDetailCache.invalidate(message.id);
       }
     }
@@ -3148,19 +3163,41 @@
     navigate();
   }
 
-  function refreshAttentionReader(id?: string, background = false) {
+  function refreshAttentionReader(id?: string) {
     const current = selectedMessage;
     if (id) deliveryDetailCache.invalidate(id);
     else deliveryDetailCache.reset();
     if (current?.folder === 'sent' && (!id || id === current.id)) void loadDeliveryDetail(current, true);
-    refreshAttentionMailbox(background);
+    refreshAttentionMailbox();
   }
 
   function refreshVisibleDelivery() {
     if (!authenticated || authExpired) return;
     const current = selectedMessage;
-    if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id, true);
-    else refreshAttentionMailbox(true);
+    if (current?.folder === 'sent' && messageReaderVisible && deliveryDetailPendingId !== current.id) {
+      deliveryDetailCache.invalidate(current.id);
+      void loadDeliveryDetail(current, true);
+    }
+    if (!refreshRegularSentMailbox(true)) refreshAttentionMailbox(true);
+  }
+
+  function refreshRegularSentMailbox(background = false) {
+    if (activeSection !== 'sent' || mailFilter === 'attention') return false;
+    if (mailboxLoading || mailboxLoadingMore || mailboxRefreshing || isTurningCurrentPage()) return true;
+    if (background && (pagingDisabled || mailboxPageNumber > 2)) return true;
+
+    const current = selectedMessage;
+    if (current && messageReaderVisible) {
+      selectedMessageId = current.id;
+      deepLinkedMessage = current;
+    }
+    void refreshWorkspace(false, true);
+    return true;
+  }
+
+  function refreshAfterNotifications() {
+    refreshAttentionReader();
+    refreshRegularSentMailbox();
   }
 
   function refreshAttentionMailbox(background = false) {
@@ -3192,23 +3229,32 @@
   }
 
   async function handleReloadDeliveryDetail(message: MailMessage) {
-    if (manualDeliveryRefreshPending) return;
-    const generation = workspaceAuthGeneration;
-    const isCurrent = () => authenticated && !authExpired &&
-      generation === workspaceAuthGeneration && selectedMessage?.id === message.id;
+    if (!authenticated || authExpired || manualDeliveryRefreshPending) return;
+    const request = manualDeliveryRefreshRequest.begin();
+    const sameSession = () => request.isCurrent() && authenticated && !authExpired;
+    const isCurrent = () => sameSession() && selectedMessage?.id === message.id;
     manualDeliveryRefreshPending = true;
     try {
-      await notifications.invalidate(true);
+      const result = await refreshDeliveryAttentionSummary({ messageId: message.id, signal: request.signal }).catch(() => null);
+      if (!sameSession()) return;
+      if (result?.replayed) {
+        workspaceSync?.publish({ type: 'mailbox-refresh', id: message.id, delivery: true });
+        if (!refreshRegularSentMailbox()) refreshAttentionMailbox();
+      }
+      void notifications.invalidate('stored');
       if (!isCurrent()) return;
+
       const ok = await loadDeliveryDetail(message, true);
-      if (!isCurrent() || (!ok && !deliveryDetailErrors[message.id])) return;
-      if (ok) refreshAttentionMailbox();
+      const replayFailed = !result || result.replayFailed === true;
+      if (!isCurrent() || (!ok && !deliveryDetailErrors[message.id] && !replayFailed)) return;
+      if (ok && !result?.replayed && !refreshRegularSentMailbox()) refreshAttentionMailbox();
       notify(
-        ok ? t('notify.deliveryReloaded', { subject: message.subject }) : t('notify.deliveryReloadFailed'),
-        ok ? 'success' : 'error'
+        replayFailed ? t('notify.deliveryReplayFailed')
+          : ok ? t('notify.deliveryReloaded', { subject: message.subject }) : t('notify.deliveryReloadFailed'),
+        ok && !replayFailed ? 'success' : 'error'
       );
     } finally {
-      manualDeliveryRefreshPending = false;
+      if (request.isCurrent()) manualDeliveryRefreshPending = false;
     }
   }
 
@@ -3330,9 +3376,11 @@
 
     const handleShortcut = (event: KeyboardEvent) => {
       if (!authenticated || composeOpen || event.defaultPrevented) return;
-      const dialog = event.target instanceof Element ? event.target.closest('[role="dialog"][aria-modal="true"]') : null;
-      if (aboutOpen || (dialog && (!dialog.hasAttribute('data-reader-dialog') || event.key === 'Escape'))) {
-        // Firefox's unmodified "/" quick-find would take focus from the modal.
+      const target = event.target instanceof Element ? event.target : null;
+      const dialog = target?.closest('[role="dialog"][aria-modal="true"]');
+      if (aboutOpen || target?.closest('#delivery-notifications-content') ||
+          (dialog && (!dialog.hasAttribute('data-reader-dialog') || event.key === 'Escape'))) {
+        // Firefox's unmodified "/" quick-find would take focus from the dialog.
         if (event.key === '/' && !isEditableShortcutTarget(event.target) && !event.ctrlKey && !event.metaKey && !event.altKey) event.preventDefault();
         return;
       }
@@ -3379,6 +3427,7 @@
       recordWorkspaceHistory = null;
       window.removeEventListener('focus', refreshOnFocus);
       notifications.reset();
+      cancelManualDeliveryRefresh();
       document.removeEventListener('keydown', handleShortcut);
       window.removeEventListener('popstate', syncBrowserWorkspaceUrl);
       window.removeEventListener('popstate', captureShallowPopstate, { capture: true });
@@ -3416,7 +3465,7 @@
   <DeliveryNotificationsMenu
     {notifications}
     onAct={handleAttentionAction}
-    onRefresh={refreshAttentionReader}
+    onRefresh={refreshAfterNotifications}
     onViewMessage={(messageId) => goFromNotifications({ section: 'sent', query: '', filter: 'all', identityFilter: null, messageId })}
     onOpenDiagnostics={() => goFromNotifications({ section: 'profile', managementView: 'settings', settingsTab: 'diagnostics' })}
     onOpenChange={(open) => { notifications.setOpen(open); onOpenChange(open); }}

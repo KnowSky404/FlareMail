@@ -129,6 +129,7 @@
         </label>
 
         {#if notifications.loadError}<p class="notice-error" role="alert">{t('attention.loadFailed')}</p>{/if}
+        {#if notifications.replayError}<p class="notice-error" role="alert">{t('notify.deliveryReplayFailed')}</p>{/if}
         {#if notifications.actionError}<p class="notice-error" role="alert">{t(notifications.actionError === 'changed' ? 'attention.changed' : 'attention.actionFailed')}</p>{/if}
         {#if notifications.loading}<p class="notice-empty" role="status">{t('common.loading')}</p>{/if}
         {#if !notifications.loading && !notifications.loadError && notifications.notices.length === 0}

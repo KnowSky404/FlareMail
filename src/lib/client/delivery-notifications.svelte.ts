@@ -19,12 +19,14 @@ export class DeliveryNotifications {
   kind = $state<DeliveryAttentionKind | null>(null);
   loading = $state(false);
   loadError = $state(false);
+  replayError = $state(false);
   mutation = $state<DeliveryAttentionAction | null>(null);
   actionError = $state<'changed' | 'failed' | null>(null);
   health = $state<SystemHealth>('unknown');
 
   private enabled = false;
   private read = new LatestRequest();
+  private readRequest: ReturnType<LatestRequest['begin']> | null = null;
   private write = new LatestRequest();
   private replay = new LatestRequest();
   private replayPromise: Promise<DeliveryAttentionRefresh | undefined> | null = null;
@@ -58,6 +60,7 @@ export class DeliveryNotifications {
     this.kind = null;
     this.loading = false;
     this.loadError = false;
+    this.replayError = false;
     this.mutation = null;
     this.actionError = null;
     this.health = 'unknown';
@@ -105,18 +108,23 @@ export class DeliveryNotifications {
   private replaySummary() {
     if (this.replayPromise) return this.replayPromise;
     const request = this.replay.begin();
-    this.replayPromise = refreshDeliveryAttentionSummary(request.signal).then((result) => {
+    this.replayPromise = refreshDeliveryAttentionSummary({ signal: request.signal }).then((result) => {
       if (!request.isCurrent()) return;
       this.replayAt = Date.now();
+      this.replayError = result.replayFailed === true;
       if (result.replayed) this.onReplay();
       return result;
+    }).catch(() => {
+      if (request.isCurrent()) this.replayError = true;
+      return undefined;
     }).finally(() => {
       if (request.isCurrent()) this.replayPromise = null;
     });
     return this.replayPromise;
   }
 
-  async refresh(force = false, more = false, forceReplay = false) {
+  async refresh(force = false, more = false, replay: boolean | 'stored' = false) {
+    const forceReplay = replay === true;
     if (!this.enabled || (more && (this.loading || !this.cursor))) return;
     if (this.mutation) {
       if (force || this.open) {
@@ -124,36 +132,46 @@ export class DeliveryNotifications {
         this.loading = this.open;
       }
       if (forceReplay) {
-        const result = await this.replaySummary().catch(() => undefined);
+        const result = await this.replaySummary();
         if (result?.replayed && !this.mutation) void this.refresh(true);
       }
       return;
     }
     const list = this.open;
     const now = Date.now();
-    const replayDue = !more && (forceReplay || (!this.replayPromise && now - this.replayAt >= freshness));
-    if (!force && !more && now - (list ? this.pageAt : this.readAt) < freshness) {
+    const replayDue = replay !== 'stored' && !more && (forceReplay || (!this.replayPromise && now - this.replayAt >= freshness));
+    if (!force && !more && ((list && this.loading) || now - (list ? this.pageAt : this.readAt) < freshness)) {
       if (!replayDue) return;
       if (list) {
-        // Keep an open, fresh page in place when the only due work is replay.
-        const result = await this.replaySummary().catch(() => undefined);
-        if (result?.replayed && this.open) void this.refresh(true);
-        return result?.replayed;
+        // Keep a fresh or loading page in place when the only due work is replay.
+        const request = this.readRequest;
+        const previous = this.summary;
+        const result = await this.replaySummary();
+        if (!result) return;
+        const { replayed, pendingCount, snapshot } = result;
+        const summary = { pendingCount, snapshot };
+        let summaryChanged = false;
+        if (request?.isCurrent() && this.summary === previous) {
+          summaryChanged = summary.pendingCount !== previous?.pendingCount || summary.snapshot.version !== previous?.snapshot.version;
+          this.summary = summary;
+        }
+        if (this.open && (replayed || summaryChanged)) void this.refresh(true);
+        return replayed;
       }
     }
     const request = this.read.begin();
-    // Mark the request at dispatch to coalesce focus and open refreshes.
-    if (list && !more) this.pageAt = now;
+    this.readRequest = request;
+    // Coalesce summary reads at dispatch. A list only becomes fresh after it loads.
     this.readAt = now;
     this.loading = list;
     this.loadError = false;
     let replayed = 0;
     try {
-      const result = replayDue ? await this.replaySummary().catch(() => undefined) : undefined;
+      const result = replayDue ? await this.replaySummary() : undefined;
       if (result) {
-        const { replayed: count, ...summary } = result;
+        const { replayed: count, pendingCount, snapshot } = result;
         replayed = count;
-        if (request.isCurrent()) this.summary = summary;
+        if (request.isCurrent()) this.summary = { pendingCount, snapshot };
       }
       if (!request.isCurrent()) {
         if (replayed) void this.refresh(true);
@@ -174,6 +192,7 @@ export class DeliveryNotifications {
           : result.notices;
         this.cursor = result.nextCursor;
         this.summary = result.summary;
+        if (!more) this.pageAt = Date.now();
       }
       return replayed;
     } catch {
@@ -187,9 +206,9 @@ export class DeliveryNotifications {
     }
   }
 
-  invalidate(forceReplay = false) {
+  invalidate(replay: boolean | 'stored' = false) {
     this.pageAt = this.readAt = 0;
-    return this.refresh(true, false, forceReplay);
+    return this.refresh(true, false, replay);
   }
 
   async act(action: DeliveryAttentionAction) {

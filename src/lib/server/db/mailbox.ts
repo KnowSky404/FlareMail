@@ -25,6 +25,8 @@ export interface MailboxRepositoryQuery {
   deliveryStatus: DeliveryStatus | null;
   /** Optional thread anchors used by a bounded bulk-operation preview/resolution. */
   threadKeys?: string[];
+  /** Explicitly selected unthreaded Sent messages that must satisfy the same filters. */
+  unthreadedIds?: string[];
 }
 
 export interface WorkspaceMessagePageRow extends WorkspaceMessageRow {
@@ -44,10 +46,17 @@ export interface WorkspaceMessagePageRow extends WorkspaceMessageRow {
   delivery_attempt_started_at: string | null;
 }
 
-function flagPredicate(filter: MailboxFilter, readColumn: string, starredColumn: string) {
-  if (filter === 'unread') return `${readColumn} = 0`;
-  if (filter === 'starred') return `${starredColumn} = 1`;
-  return '1 = 1';
+export function workspaceSearchStatePredicates(alias: string, filter: MailboxFilter | undefined, search: MailSearchQuery | null) {
+  const conditions: string[] = [];
+  if (filter === 'unread' || search?.filters.is.includes('unread')) conditions.push(`${alias}.is_read = 0`);
+  if (filter === 'starred' || search?.filters.is.includes('starred')) conditions.push(`${alias}.is_starred = 1`);
+  const hasAttachment = search?.filters.hasAttachment;
+  if (hasAttachment !== undefined && hasAttachment !== null) {
+    conditions.push(`${hasAttachment ? '' : 'NOT '}EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment
+      WHERE search_attachment.user_id = ${alias}.user_id AND search_attachment.message_id = ${alias}.id
+        AND search_attachment.relation_type IN ('inbound', 'message'))`);
+  }
+  return conditions;
 }
 
 function identityPredicate(alias: string, addressColumn: string, ownerColumn = `${alias}.user_id`) {
@@ -90,7 +99,7 @@ export async function listWorkspaceMessagePage(
       wantsTrash ? '1 = 1' :
       input.folder === 'inbox' && input.section === 'archive' ? 'm.archived_at IS NOT NULL' :
       input.folder === 'inbox' ? 'm.archived_at IS NULL' : '1 = 1',
-    flagPredicate(input.filter, 'm.is_read', 'm.is_starred'),
+    ...workspaceSearchStatePredicates('m', input.filter, input.search),
     input.starredOnly ? 'm.is_starred = 1' : '1 = 1',
     identityPredicate('m', input.folder === 'sent' ? 'sender_address_id' : 'recipient_address_id')
   ];
@@ -110,12 +119,7 @@ export async function listWorkspaceMessagePage(
   }
   if (input.search) {
     for (const value of input.search.filters.is) {
-      if (value === 'unread') conditions.push('m.is_read = 0');
-      if (value === 'starred') conditions.push('m.is_starred = 1');
       if (value === 'archived') conditions.push("m.folder = 'inbox'");
-    }
-    if (input.search.filters.hasAttachment !== null) {
-      conditions.push(`${input.search.filters.hasAttachment ? '' : 'NOT '}EXISTS (SELECT 1 FROM workspace_attachments AS search_attachment WHERE search_attachment.user_id = m.user_id AND search_attachment.message_id = m.id AND search_attachment.relation_type IN ('inbound', 'message'))`);
     }
     for (const value of input.search.filters.after) {
       conditions.push('m.sent_at >= ?');
@@ -139,8 +143,12 @@ export async function listWorkspaceMessagePage(
     bindings.push(input.deliveryStatus);
   }
   if (input.threadKeys?.length) {
-    conditions.push(`m.thread_key IN (SELECT value FROM json_each(?))`);
+    const threads = 'm.thread_key IN (SELECT value FROM json_each(?))';
+    conditions.push(input.unthreadedIds?.length
+      ? `(${threads} OR m.id IN (SELECT value FROM json_each(?)))`
+      : threads);
     bindings.push(JSON.stringify(input.threadKeys));
+    if (input.unthreadedIds?.length) bindings.push(JSON.stringify(input.unthreadedIds));
   }
   if (input.labelId) {
     conditions.push(`EXISTS (SELECT 1 FROM mail_message_labels AS labeled

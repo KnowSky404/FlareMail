@@ -65,13 +65,14 @@ type LabelSearchSource = 'message' | 'draft' | 'inbound';
 
 /** Match legacy FTS labels or current Owner-owned user labels for one mail source. */
 export function buildLabelSearchPredicate(
-  search: MailSearchQuery, labelExpression: string | null, source: LabelSearchSource
+  search: MailSearchQuery, labelExpression: string | null, source: LabelSearchSource,
+  alias = { message: 'm', draft: 'd', inbound: 'e' }[source]
 ): { sql: string; bindings: string[] } | null {
   if (!labelExpression) return null;
   const columns = {
-    message: { owner: 'm.user_id', kind: 'workspace', id: 'm.id' },
-    draft: { owner: 'd.user_id', kind: 'draft', id: 'd.id' },
-    inbound: { owner: 'e.owner_user_id', kind: 'inbound', id: 'e.id' }
+    message: { owner: `${alias}.user_id`, kind: 'workspace' },
+    draft: { owner: `${alias}.user_id`, kind: 'draft' },
+    inbound: { owner: `${alias}.owner_user_id`, kind: 'inbound' }
   }[source];
   const keys = search.filters.label.map((value) => value.normalize('NFC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase('und'));
   return {
@@ -82,7 +83,7 @@ export function buildLabelSearchPredicate(
       JOIN mail_labels AS named_label
         ON named_label.owner_user_id = searched_label.owner_user_id AND named_label.id = searched_label.label_id
       WHERE searched_label.owner_user_id = ${columns.owner}
-        AND searched_label.message_kind = ? AND searched_label.message_id = ${columns.id}
+        AND searched_label.message_kind = ? AND searched_label.message_id = ${alias}.id
         AND named_label.name_key IN (${keys.map(() => '?').join(', ')})
     ))`,
     bindings: [labelExpression, columns.kind, ...keys]
