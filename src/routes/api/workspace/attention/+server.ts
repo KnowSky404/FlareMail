@@ -25,7 +25,6 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
 
 export const POST: RequestHandler = withApiHandler(async (event) => {
   const { userId } = await requireWorkspaceMailboxSession(event);
-  const requestTime = Date.now();
   const body = await readJsonBody<unknown>(event, { maxBytes: 2048 });
   if (!isRecord(body)) throw invalid();
   let action: DeliveryAttentionAction;
@@ -33,7 +32,7 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
     const { asOf, version } = body.snapshot;
     if ((version !== 0 && !isVersion(version)) || typeof asOf !== 'string' ||
       !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u.test(asOf) ||
-      !Number.isFinite(Date.parse(asOf)) || new Date(asOf).toISOString() !== asOf || Date.parse(asOf) > requestTime) throw invalid();
+      !Number.isFinite(Date.parse(asOf)) || new Date(asOf).toISOString() !== asOf) throw invalid();
     action = { action: body.action, snapshot: { asOf, version } };
   } else if ((body.action === 'acknowledge' || body.action === 'reopen') && isRecord(body.incident)) {
     const { id, version } = body.incident;

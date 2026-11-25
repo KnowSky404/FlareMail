@@ -98,11 +98,15 @@ export async function changeDeliveryAttention(db: D1Database, userId: string, ac
   if (action.action === 'acknowledge_all') {
     const update = db.prepare(`UPDATE workspace_delivery_attention ${acknowledge} WHERE id IN (
       SELECT a.id FROM workspace_delivery_attention a ${messageJoin}
-      WHERE a.user_id = ? AND a.state = 'open' AND ${active('a')}
-        AND a.version <= ? AND a.eligible_at <= ?) RETURNING id`)
+      WHERE a.user_id = ?1 AND a.state = 'open' AND ${active('a')}
+        AND a.version <= ?2 AND a.eligible_at <= ?3 AND ?3 <= ${now}) RETURNING id`)
       .bind(userId, action.snapshot.version, action.snapshot.asOf);
     const [result, count] = await db.batch([update, summaryStatement(db, userId)]);
-    return { changed: result.results.length, summary: summary(count.results[0] as SummaryRow) };
+    const current = summary(count.results[0] as SummaryRow);
+    if (action.snapshot.asOf > current.snapshot.asOf) {
+      throw new ApiError(400, 'INVALID_ATTENTION_REQUEST', '投递异常参数无效。');
+    }
+    return { changed: result.results.length, summary: current };
   }
   const { id, version } = action.incident;
   const reopening = action.action === 'reopen';

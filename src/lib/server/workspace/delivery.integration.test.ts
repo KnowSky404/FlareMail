@@ -876,6 +876,18 @@ describe('Owner delivery attention', () => {
     }
   });
 
+  test('uses the database clock to reject future bulk confirmation snapshots without changing notices', async () => {
+    const { database, env } = setup();
+    addDelivery(database, 'pending', 'bounced');
+    const { snapshot } = await getDeliveryAttentionSummary(env.DB, 'user-1');
+    await expect(changeDeliveryAttention(env.DB, 'user-1', {
+      action: 'acknowledge_all',
+      snapshot: { ...snapshot, asOf: '9999-12-31T23:59:59.999Z' }
+    })).rejects.toMatchObject({ status: 400, code: 'INVALID_ATTENTION_REQUEST' });
+    expect((await page(env.DB)).notices).toMatchObject([{ messageId: 'pending', state: 'open' }]);
+    expect((await changeDeliveryAttention(env.DB, 'user-1', { action: 'acknowledge_all', snapshot })).changed).toBe(1);
+  });
+
   test('bulk confirmation is idempotent and excludes new, newly stale, restored and reopened incidents', async () => {
     const { database, env } = setup();
     const db = env.DB;
