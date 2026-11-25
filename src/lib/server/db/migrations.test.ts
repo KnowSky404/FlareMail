@@ -387,6 +387,60 @@ describe('versioned D1 migrations', () => {
     db.close();
   });
 
+  test.each([
+    ['email.bounced', null, 'submitted'],
+    ['email.bounced', 'email.sent', 'sent'],
+    ['email.delivered', 'email.delivery_delayed', 'delayed']
+  ] as const)('corrects an ignored legacy %s with later progress %s', (ignored, progress, expected) => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0039_queue_legacy_resend_failures.sql');
+    const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1_000).toISOString();
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
+      VALUES ('ignored-terminal', 'owner', 'sent', '', 'sender@example.test', '', '', '${at(0)}');
+      INSERT INTO workspace_delivery_statuses
+        (message_id, user_id, status, attempts, provider, provider_message_id, last_event, last_event_at)
+      VALUES ('ignored-terminal', 'owner', '${expected}', 3, 'resend', 're_1', '${progress ?? 'submission'}', '${at(progress ? 190 : 180)}');
+      INSERT INTO workspace_outbound_receipts
+        (message_id, user_id, provider, result_kind, remote_status, last_event, last_event_at)
+      VALUES ('ignored-terminal', 'owner', 'resend', 'accepted', 202, 'submission', '${at(180)}');
+      INSERT INTO workspace_delivery_attempts
+        (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at)
+      VALUES ('initial', 'ignored-terminal', 'owner', 1, 'resend', 're_1', 'submitted', '${at(0)}'),
+        ('failed-locally', 'ignored-terminal', 'owner', 2, 'resend', NULL, 'failed', '${at(60)}'),
+        ('latest', 'ignored-terminal', 'owner', 3, 'resend', 're_1', 'submitted', '${at(120)}');
+    `);
+    const event = db.query(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json, created_at)
+      VALUES (?, 'ignored-terminal', 'owner', 'resend', ?, ?, ?, ?, ?)`);
+    const providerEvent = (kind: string, seconds: number) =>
+      JSON.stringify({ type: kind, created_at: at(seconds), data: { email_id: 're_1' } });
+    event.run('local:ignored-terminal:submission:1', 're_1', 'submission', at(30), '{"status":"submitted"}', at(30));
+    event.run('local:ignored-terminal:submission:2', null, 'submission', at(80), '{"status":"failed"}', at(80));
+    event.run('ignored-event', 're_1', ignored, at(90), providerEvent(ignored, 90), at(90));
+    event.run('local:ignored-terminal:submission:3', 're_1', 'submission', at(180), '{"status":"submitted"}', at(180));
+    if (progress) event.run('later-progress', 're_1', progress, at(190), providerEvent(progress, 190), at(190));
+
+    const prior = '0040_recover_masked_resend_terminal_events.sql';
+    db.exec(readFileSync(join(migrationsDirectory, prior), 'utf8'));
+    db.query('INSERT INTO _test_migrations (name) VALUES (?)').run(prior);
+    expect(db.query('SELECT status FROM workspace_delivery_statuses').get()).toEqual({ status: ignored.slice(6) });
+
+    applyMigrations(db);
+
+    expect(db.query('SELECT status, last_event, delivered_at FROM workspace_delivery_statuses').get()).toEqual({
+      status: expected, last_event: progress ?? 'submission', delivered_at: null
+    });
+    expect(db.query('SELECT last_event, result_kind, remote_status FROM workspace_outbound_receipts').get()).toEqual({
+      last_event: progress ?? 'submission', result_kind: expected === 'delayed' ? 'temporary_failure' : 'accepted', remote_status: 202
+    });
+    expect(db.query('SELECT kind FROM workspace_delivery_attention WHERE closed_at IS NULL').all())
+      .toEqual(expected === 'delayed' ? [{ kind: 'delayed' }] : []);
+    expect(db.query("SELECT event_type FROM workspace_outbound_events WHERE svix_id = 'ignored-event'").get())
+      .toEqual({ event_type: ignored });
+    db.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);
