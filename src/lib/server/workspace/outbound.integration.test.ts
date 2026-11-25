@@ -380,10 +380,12 @@ describe('outbound workspace persistence', () => {
   });
 
   test.each([
-    ['email.sent', true], ['email.sent', false],
-    ['email.delivery_delayed', true], ['email.delivery_delayed', false]
-  ] as const)('keeps a newer local retry failure after pre-retry %s (queued %s)', async (type, queued) => {
-    const { env, session } = setup();
+    ['email.sent', true, -1_000], ['email.sent', false, -1_000],
+    ['email.delivery_delayed', true, -1_000], ['email.delivery_delayed', false, -1_000],
+    ['email.sent', true, 1_000], ['email.sent', false, 1_000],
+    ['email.delivery_delayed', true, 1_000], ['email.delivery_delayed', false, 1_000]
+  ] as const)('keeps a rejected retry after prior-ID %s (queued %s, offset %s)', async (type, queued, offset) => {
+    const { env, session, database } = setup();
     const providerId = 're_rejected_retry';
     const initial = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Rejected retry', body: 'Body' }, {
       requestId: 'rejected-retry', gateway: new FakeOutboundGateway({ providerMessageId: providerId })
@@ -393,20 +395,24 @@ describe('outbound workspace persistence', () => {
     await applyResendDeliveryWebhook(env, 'original-delay', {
       type: 'email.delivery_delayed', created_at: at(-4_000), data: { email_id: providerId }
     });
-    const olderWebhook = { type, created_at: at(-1_000), data: { email_id: providerId } };
+    const priorWebhook = () => {
+      const retry = database.query<{ started_at: string }, [string]>(
+        'SELECT started_at FROM workspace_delivery_attempts WHERE message_id = ? AND attempt_number = 2').get(messageId)!;
+      return { type, created_at: new Date(Date.parse(retry.started_at) + offset).toISOString(), data: { email_id: providerId } };
+    };
     await retryWorkspaceMessageDelivery(env, session, messageId, { gateway: {
       async send() {
-        if (queued) expect(await applyResendDeliveryWebhook(env, 'pre-retry-webhook', olderWebhook)).toMatchObject({ ignored: true });
+        if (queued) expect(await applyResendDeliveryWebhook(env, 'prior-id-webhook', priorWebhook())).toMatchObject({ ignored: true });
         throw new OutboundGatewayError('client_error', 'retry rejected', { remoteStatus: 422, retryable: false });
       }
     } });
-    if (!queued) expect(await applyResendDeliveryWebhook(env, 'pre-retry-webhook', olderWebhook)).toMatchObject({ ignored: true });
+    if (!queued) expect(await applyResendDeliveryWebhook(env, 'prior-id-webhook', priorWebhook())).toMatchObject({ ignored: true });
 
     const detail = await getWorkspaceMessageDeliveryDetail(env, session, messageId);
     expect(detail).toMatchObject({
       status: 'failed', resultKind: 'permanent_failure', lastEvent: 'submission', attention: { kind: 'failed', state: 'open' }
     });
-    expect(detail?.events).toContainEqual(expect.objectContaining({ id: 'pre-retry-webhook', type }));
+    expect(detail?.events).toContainEqual(expect.objectContaining({ id: 'prior-id-webhook', type }));
   });
 
   test.each(['email.sent', 'email.delivery_delayed'] as const)('preserves %s replayed while a same-ID retry is still returning', async (type) => {

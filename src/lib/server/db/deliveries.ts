@@ -308,16 +308,15 @@ export function reconcileDeliveryStatus(db: D1Database, input: {
       AND (? OR NOT EXISTS (
         SELECT 1 FROM workspace_delivery_attempts attempt
         WHERE attempt.message_id = current.message_id AND attempt.attempt_number = current.attempts
-          AND julianday(attempt.started_at) > julianday(?)
-          AND (? OR EXISTS (
-            SELECT 1 FROM workspace_delivery_attempts prior
-            WHERE prior.message_id = current.message_id AND prior.attempt_number < attempt.attempt_number
-              AND prior.provider_message_id = current.provider_message_id
+          AND ((${unacceptedLocalFailure('current')}) OR (
+            julianday(attempt.started_at) > julianday(?)
+            AND (? OR EXISTS (
+              SELECT 1 FROM workspace_delivery_attempts prior
+              WHERE prior.message_id = current.message_id AND prior.attempt_number < attempt.attempt_number
+                AND prior.provider_message_id = current.provider_message_id
+            ))
+            AND NOT (? IN ('sent', 'delayed') AND NOT EXISTS (${newerProviderEvent('current')}))
           ))
-          AND NOT (
-            ? IN ('sent', 'delayed') AND NOT (${unacceptedLocalFailure('current')})
-            AND NOT EXISTS (${newerProviderEvent('current')})
-          )
       ))
       AND (last_event IS 'submission' OR status NOT IN (${terminalStatuses}) OR status = ?)
       AND (last_event IS 'submission' OR ? > ${currentRank} OR (? = ${currentRank} AND ? >= COALESCE(last_event_at, '') ${replayTie}))
@@ -386,9 +385,8 @@ export function retainProviderDelayAfterRetry(
         OR (delivery.last_event IS 'submission' AND attempt.provider_message_id IS NULL
           AND (attempt.completed_at IS NOT NULL OR attempt.error IS NOT NULL ${allowExpiredAttempt ? `OR ${expiredAttempt}` : ''}))
       )
-      AND (julianday(?) >= julianday(attempt.started_at) OR (
-        NOT (${unacceptedLocalFailure('delivery')}) AND NOT EXISTS (${newerProviderEvent('delivery')})
-      ))
+      AND NOT (${unacceptedLocalFailure('delivery')})
+      AND (julianday(?) >= julianday(attempt.started_at) OR NOT EXISTS (${newerProviderEvent('delivery')}))
     ${guard.sql} ${liveGuard.sql}
     ORDER BY original.attempt_number DESC, retry.attempt_number DESC LIMIT 1`;
   const args = [messageId, providerMessageId, eventCreatedAt, eventCreatedAt, eventCreatedAt, eventCreatedAt, ...guard.args, ...liveGuard.args];
