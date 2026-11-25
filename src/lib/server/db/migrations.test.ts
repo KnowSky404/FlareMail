@@ -300,6 +300,29 @@ describe('versioned D1 migrations', () => {
     db.close();
   });
 
+  test('corrects an existing submission timeout without losing millisecond precision', () => {
+    const db = createDatabase();
+    applyMigrationsThrough(db, '0039_queue_legacy_resend_failures.sql');
+    db.exec(`
+      INSERT INTO workspace_messages (id, user_id, folder, from_name, from_email, to_name, to_email, sent_at)
+      VALUES ('submitting', 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01'),
+        ('already-stale', 'owner', 'sent', '', 'sender@example.test', '', '', '2026-01-01');
+      INSERT INTO workspace_delivery_statuses (message_id, user_id, status, attempts, last_event_at)
+      VALUES ('submitting', 'owner', 'submitting', 1, '2026-01-01T12:00:00.900Z'),
+        ('already-stale', 'owner', 'submitting', 1, '2026-01-01T12:00:01.900Z');
+      UPDATE workspace_delivery_statuses SET last_event_at = '2026-01-01T12:30:00.900Z'
+      WHERE message_id = 'already-stale';
+    `);
+    const eligible = db.query('SELECT eligible_at FROM workspace_delivery_attention WHERE message_id = ?');
+    expect(eligible.get('submitting')).toEqual({ eligible_at: '2026-01-01T12:15:00.000Z' });
+
+    applyMigrations(db);
+
+    expect(eligible.get('submitting')).toEqual({ eligible_at: '2026-01-01T12:15:00.900Z' });
+    expect(eligible.get('already-stale')).toEqual({ eligible_at: '2026-01-01T12:15:01.000Z' });
+    db.close();
+  });
+
   test('builds the latest schema from an empty database', () => {
     const db = createDatabase();
     applyMigrations(db);

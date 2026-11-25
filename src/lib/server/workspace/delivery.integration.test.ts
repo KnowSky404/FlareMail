@@ -575,7 +575,7 @@ describe('Owner delivery attention', () => {
     ['terminal event after acceptance', [['bounced', 130, 125], ['delivered', 190, 175]], 'submitted', 180],
     ['linked bounce over an unmatched earlier delivery', [['unmatched-delivered', 20, 20], ['first-submission', 30, 30], ['bounced', 130, 125]], 'bounced', 125],
     ['current attempt before an older failure with a later provider timestamp', [['failed', 100, 145], ['failed', 130, 125]], 'failed', 125]
-  ] as const)('recovers a legacy same-ID terminal outcome: %s', async (_name, events, status, providerTime) => {
+  ] as const)('recovers a legacy same-ID terminal outcome: %s', async (name, events, status, providerTime) => {
     const { database, env } = setup();
     const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1) + seconds * 1_000).toISOString();
     database.exec(`
@@ -608,12 +608,14 @@ describe('Owner delivery attention', () => {
       database.exec(readFileSync(new URL('../../../../migrations/' + migration, import.meta.url), 'utf8'));
     }
     const eventType = status === 'submitted' ? 'submission' : 'email.' + status;
-    expect(database.query(`SELECT event_type, event_created_at FROM workspace_outbound_events
-      WHERE json_extract(payload_json, '$._flaremailDeferred') = 1`).all()).toEqual(
-      status === 'submitted' ? [] : [{ event_type: eventType, event_created_at: at(providerTime) }]
-    );
+    expect(database.query(`SELECT event_type FROM workspace_outbound_events
+      WHERE json_extract(payload_json, '$._flaremailDeferred') = 1
+        OR json_extract(payload_json, '$._flaremailTerminalRecovery40') = 1`).all()).toEqual([]);
     expect(database.query('SELECT COUNT(*) AS events FROM workspace_outbound_events').get()).toEqual({ events: timeline.length });
-    await reconcileDeferredResendEvents(env);
+    if (name === 'bounce before an ignored failure') {
+      const competingWebhook = await applyResendDeliveryWebhook(env, 'delivered-after-cutover', payload('email.delivered', at(190)));
+      expect(competingWebhook).toMatchObject({ matched: true, ignored: true });
+    }
     const detail = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
     expect(detail).toMatchObject({ status, receipt: { last_event: eventType, last_event_at: at(providerTime) } });
     const expectedNotices = status === 'submitted' || status === 'delivered' ? [] : [{ kind: status, state: 'open' }];

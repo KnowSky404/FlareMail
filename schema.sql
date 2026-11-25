@@ -1052,7 +1052,7 @@ CREATE VIEW workspace_delivery_attention_source AS
 SELECT ds.user_id, ds.message_id, ds.attempts AS attempt_number,
   CASE WHEN ds.status = 'submitting' THEN 'stale_submitting' ELSE ds.status END AS kind,
   CASE WHEN ds.status = 'submitting'
-    THEN strftime('%Y-%m-%dT%H:%M:%S.000Z', COALESCE(ds.last_event_at, ds.updated_at, ds.created_at), '+15 minutes')
+    THEN strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(ds.last_event_at, ds.updated_at, ds.created_at), '+15 minutes')
     ELSE MIN(
       COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', COALESCE(ds.last_event_at, ds.updated_at, ds.created_at)),
         strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
