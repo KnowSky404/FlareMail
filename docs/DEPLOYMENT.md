@@ -316,8 +316,8 @@ delivery timeline before choosing any separately authorized resend workflow.
 ## Delivery attention recovery
 
 Migration 0033 adds attention storage, and 0034 backfills unresolved delays.
-The current Worker requires schema 38 exactly. Keep attention history during code
+The current Worker requires schema 39 exactly. Keep attention history during code
 rollback with a tested compatible build. If a database restore is required,
 review all post-bookmark mail, session and attention writes and follow the
 existing isolated restore procedure before switching production. See the
-[schema 38 cutover checklist](PRODUCTION_CHECKLIST.md#schema-38-delivery-attention-upgrade).
+[schema 39 cutover checklist](PRODUCTION_CHECKLIST.md#schema-39-delivery-attention-upgrade).
