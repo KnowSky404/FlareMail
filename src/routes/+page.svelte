@@ -202,7 +202,7 @@
   const metricsRequest = new LatestRequest();
   const ownerMetricsRequest = new LatestRequest();
   let ownerMetrics = $state<WorkspaceMetrics | null>(null);
-  const notifications = new DeliveryNotifications();
+  const notifications = new DeliveryNotifications(refreshVisibleDelivery);
   const readActivation = new ReadActivationController();
   let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let mailboxPageNumber = $state(1);
@@ -3138,6 +3138,13 @@
     refreshAttentionMailbox(background);
   }
 
+  function refreshVisibleDelivery() {
+    if (!authenticated || authExpired) return;
+    const current = selectedMessage;
+    if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id, true);
+    else refreshAttentionMailbox(true);
+  }
+
   function refreshAttentionMailbox(background = false) {
     const showingAttention = activeSection === 'sent' && mailFilter === 'attention';
     if (background && showingAttention && (pagingDisabled || isTurningCurrentPage())) return;
@@ -3328,20 +3335,12 @@
     };
 
     let lastAttentionFocusRefresh = 0;
-    const refreshFocusedDelivery = () => {
-      if (!authenticated || authExpired) return;
-      const current = selectedMessage;
-      if (current?.folder === 'sent' && messageReaderVisible) refreshAttentionReader(current.id, true);
-      else refreshAttentionMailbox(true);
-    };
     const refreshOnFocus = () => {
-      void notifications.refresh().then((replayed) => {
-        if (replayed) refreshFocusedDelivery();
-      });
+      void notifications.refresh();
       void notifications.checkHealth();
       if (!authenticated || authExpired || Date.now() - lastAttentionFocusRefresh < 30_000) return;
       lastAttentionFocusRefresh = Date.now();
-      refreshFocusedDelivery();
+      refreshVisibleDelivery();
     };
     window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('keydown', handleShortcut);

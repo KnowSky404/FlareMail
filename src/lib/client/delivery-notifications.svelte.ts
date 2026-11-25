@@ -36,6 +36,8 @@ export class DeliveryNotifications {
   private checkedAt = 0;
   private refreshAfterMutation = false;
 
+  constructor(private readonly onReplay: () => void) {}
+
   start() {
     this.enabled = true;
     void this.refresh();
@@ -109,6 +111,7 @@ export class DeliveryNotifications {
     ).then((result) => {
       if (!request.isCurrent()) return;
       this.replayAt = Date.now();
+      if (result.replayed) this.onReplay();
       return result;
     }).finally(() => {
       if (request.isCurrent()) this.replayPromise = null;
