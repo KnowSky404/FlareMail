@@ -182,37 +182,34 @@ export async function findDeliveryStatus(db: D1Database, userId: string, message
       result_kind: DeliveryResultKind | null; remote_status: number | null; response_preview: string | null; attempt_started_at: string | null;
     }>();
 }
+const upsertReceiptFields = `
+  ON CONFLICT(message_id) DO UPDATE SET provider = excluded.provider, result_kind = excluded.result_kind, remote_status = excluded.remote_status,
+    response_preview = excluded.response_preview, last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
+`;
+
 export function upsertOutboundReceipt(db: D1Database, p: DeliveryReceiptPayload & { attemptNumber: number }) {
   return db.prepare(`
     INSERT INTO workspace_outbound_receipts (message_id, user_id, provider, result_kind, remote_status, response_preview, last_event, last_event_at, created_at, updated_at)
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (
       SELECT 1 FROM workspace_delivery_statuses WHERE message_id = ? AND user_id = ? AND attempts = ?
+        AND NOT (status IN (${terminalStatuses}) AND COALESCE(last_event, '') GLOB 'email.*')
     )
-    ON CONFLICT(message_id) DO UPDATE SET provider = excluded.provider, result_kind = excluded.result_kind, remote_status = excluded.remote_status,
-      response_preview = excluded.response_preview, last_event = excluded.last_event, last_event_at = excluded.last_event_at, updated_at = excluded.updated_at
-    WHERE NOT EXISTS (
-      SELECT 1 FROM workspace_delivery_statuses s
-      WHERE s.message_id = excluded.message_id AND s.user_id = excluded.user_id
-        AND s.status IN (${terminalStatuses}) AND s.last_event GLOB 'email.*'
-    )
+    ${upsertReceiptFields}
   `).bind(p.messageId, p.userId, p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt,
     p.createdAt, p.updatedAt, p.messageId, p.userId, p.attemptNumber);
 }
 
-export function updateOutboundReceiptForCurrentEvent(db: D1Database, p: DeliveryReceiptPayload & { providerMessageId: string; claim?: DeferredEventClaim }) {
+export function upsertOutboundReceiptForCurrentEvent(db: D1Database, p: DeliveryReceiptPayload & { providerMessageId: string; claim?: DeferredEventClaim }) {
   const guard = replayGuard(p.claim);
   return db.prepare(`
-    UPDATE workspace_outbound_receipts SET provider = ?, result_kind = ?, remote_status = ?, response_preview = ?,
-      last_event = ?, last_event_at = ?, updated_at = ?
-    WHERE message_id = ? AND user_id = ? AND EXISTS (
-      SELECT 1 FROM workspace_delivery_statuses AS s
-      WHERE s.message_id = workspace_outbound_receipts.message_id
-        AND s.user_id = workspace_outbound_receipts.user_id
-        AND s.provider_message_id = ?
-        AND s.last_event = ? AND s.last_event_at = ?
+    INSERT INTO workspace_outbound_receipts (message_id, user_id, provider, result_kind, remote_status, response_preview, last_event, last_event_at, created_at, updated_at)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (
+      SELECT 1 FROM workspace_delivery_statuses
+      WHERE message_id = ? AND user_id = ? AND provider_message_id = ? AND last_event = ? AND last_event_at = ?
     ) ${guard.sql}
-  `).bind(p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt,
-    p.updatedAt, p.messageId, p.userId, p.providerMessageId, p.lastEvent, p.lastEventAt, ...guard.args);
+    ${upsertReceiptFields}
+  `).bind(p.messageId, p.userId, p.provider, p.resultKind, p.remoteStatus, p.responsePreview, p.lastEvent, p.lastEventAt,
+    p.createdAt, p.updatedAt, p.messageId, p.userId, p.providerMessageId, p.lastEvent, p.lastEventAt, ...guard.args);
 }
 
 export function reconcileDeliveryStatus(db: D1Database, input: {
