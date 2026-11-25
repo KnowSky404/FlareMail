@@ -2,14 +2,13 @@ import type { DeliveryAttentionAction, DeliveryAttentionKind, DeliveryAttentionN
 import type { SystemHealth } from '$lib/domain/runtime-state';
 import { ClientApiError, requestJson } from './api';
 import { LatestRequest } from './latest-request';
-import { mutateDeliveryAttention } from './workspace-api';
+import { mutateDeliveryAttention, refreshDeliveryAttentionSummary, type DeliveryAttentionRefresh } from './workspace-api';
 
 const checkedDependencyCodes = new Set([
   'CONFIG_INVALID', 'AUTHENTICATION_UNAVAILABLE', 'ACCESS_UNAVAILABLE',
   'OWNER_MAPPING_REQUIRED', 'D1_UNAVAILABLE', 'SCHEMA_NOT_READY', 'R2_UNAVAILABLE', 'INBOUND_ROUTING_NOT_READY'
 ]);
 const freshness = 30_000;
-type ReplayedSummary = DeliveryAttentionSummary & { replayed: number };
 
 export class DeliveryNotifications {
   open = $state(false);
@@ -28,7 +27,7 @@ export class DeliveryNotifications {
   private read = new LatestRequest();
   private write = new LatestRequest();
   private replay = new LatestRequest();
-  private replayPromise: Promise<ReplayedSummary | undefined> | null = null;
+  private replayPromise: Promise<DeliveryAttentionRefresh | undefined> | null = null;
   private readiness = new LatestRequest();
   private readAt = 0;
   private pageAt = 0;
@@ -106,9 +105,7 @@ export class DeliveryNotifications {
   private replaySummary() {
     if (this.replayPromise) return this.replayPromise;
     const request = this.replay.begin();
-    this.replayPromise = requestJson<ReplayedSummary>(
-      '/api/workspace/attention/summary', { method: 'POST', signal: request.signal }
-    ).then((result) => {
+    this.replayPromise = refreshDeliveryAttentionSummary(request.signal).then((result) => {
       if (!request.isCurrent()) return;
       this.replayAt = Date.now();
       if (result.replayed) this.onReplay();
@@ -125,6 +122,10 @@ export class DeliveryNotifications {
       if (force || this.open) {
         this.refreshAfterMutation = true;
         this.loading = this.open;
+      }
+      if (forceReplay) {
+        const result = await this.replaySummary().catch(() => undefined);
+        if (result?.replayed && !this.mutation) void this.refresh(true);
       }
       return;
     }

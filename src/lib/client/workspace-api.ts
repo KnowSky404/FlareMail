@@ -209,6 +209,12 @@ export function fetchDeliveryDetail(messageId: string, signal?: AbortSignal) {
   );
 }
 
+export type DeliveryAttentionRefresh = DeliveryAttentionSummary & { replayed: number };
+
+export function refreshDeliveryAttentionSummary(signal?: AbortSignal) {
+  return requestJson<DeliveryAttentionRefresh>('/api/workspace/attention/summary', { method: 'POST', signal });
+}
+
 export function mutateDeliveryAttention(action: DeliveryAttentionAction, signal?: AbortSignal) {
   return requestJson<{ changed: number; summary: DeliveryAttentionSummary }>('/api/workspace/attention', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(action), signal
