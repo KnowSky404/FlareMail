@@ -208,7 +208,7 @@
     try {
       const summary = await refreshDeliveryAttentionSummary(signal).catch(() => null);
       if (signal.aborted) return;
-      if (summary?.replayed) sync?.publish({ type: 'delivery-attention-changed' });
+      if (summary?.replayed) sync?.publish({ type: 'mailbox-refresh', delivery: true });
       await reloadDeliveryDetail();
     } finally {
       if (!signal.aborted) deliveryReplayPending = false;

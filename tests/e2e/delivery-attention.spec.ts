@@ -500,42 +500,45 @@ test('enforces API session, scope, versions, provider ordering, and retry bounda
   expect((await getNotices(page.request, 'history')).notices.find((item) => item.id === bounce.id)?.state).toBe('acknowledged');
 });
 
-test('refreshes Sent after startup replay commits', async ({ page, baseURL }, info) => {
-  test.skip(info.project.name !== 'desktop', 'One desktop replay covers the workspace startup path.');
-  const origin = originOf(baseURL);
-  const id = 'e2e-attention-startup-replay';
-  const label = 'E2E Startup Replay';
-  await seed(page.request, origin, id, 'delayed', label);
-  await login(page);
-  const replayStarted = Promise.withResolvers<void>();
-  const releaseReplay = Promise.withResolvers<void>();
-  await page.route('**/api/workspace/attention/summary', async (route) => {
-    replayStarted.resolve();
-    await releaseReplay.promise;
-    await route.fulfill({ json: { ok: true, data: {
-      pendingCount: 0, snapshot: { asOf: new Date().toISOString(), version: 99 }, replayed: 1
-    } } });
-  }, { times: 1 });
-  await page.goto('/?folder=sent&filter=attention');
-  const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
-  try {
-    await replayStarted.promise;
-    await expect(row).toBeVisible();
-    await page.evaluate(() => {
-      const channel = new BroadcastChannel('flaremail-workspace-v1');
-      channel.addEventListener('message', ({ data }) => {
-        if (data?.type !== 'delivery-attention-changed') return;
-        document.documentElement.dataset.observedReplaySync = 'true';
-        channel.close();
+for (const filter of ['all', 'attention']) {
+  test(`refreshes Sent after startup replay commits (${filter})`, async ({ page, baseURL }, info) => {
+    test.skip(info.project.name !== 'desktop', 'One desktop replay covers the workspace startup path.');
+    const origin = originOf(baseURL);
+    const id = `e2e-attention-startup-replay-${filter}`;
+    const label = `E2E Startup Replay ${filter}`;
+    await seed(page.request, origin, id, 'delayed', label);
+    await login(page);
+    const replayStarted = Promise.withResolvers<void>();
+    const releaseReplay = Promise.withResolvers<void>();
+    await page.route('**/api/workspace/attention/summary', async (route) => {
+      replayStarted.resolve();
+      await releaseReplay.promise;
+      await route.fulfill({ json: { ok: true, data: {
+        pendingCount: 0, snapshot: { asOf: new Date().toISOString(), version: 99 }, replayed: 1
+      } } });
+    }, { times: 1 });
+    await page.goto(`/?folder=sent&filter=${filter}`);
+    const row = page.locator('.mail-list-panel').getByRole('button', { name: new RegExp(label, 'u') });
+    try {
+      await replayStarted.promise;
+      await expect(row).toBeVisible();
+      await page.evaluate(() => {
+        const channel = new BroadcastChannel('flaremail-workspace-v1');
+        channel.addEventListener('message', ({ data }) => {
+          if (data?.type !== 'mailbox-refresh' || data.delivery !== true) return;
+          document.documentElement.dataset.observedReplaySync = 'true';
+          channel.close();
+        });
       });
-    });
-    expect((await events(page.request, id, 'email.delivered', 'attention-startup-replay-delivered')).ok()).toBe(true);
-  } finally {
-    releaseReplay.resolve();
-  }
-  await expect(row).toHaveCount(0);
-  await expect(page.locator('html')).toHaveAttribute('data-observed-replay-sync', 'true');
-});
+      expect((await events(page.request, id, 'email.delivered', `attention-startup-replay-delivered-${filter}`)).ok()).toBe(true);
+    } finally {
+      releaseReplay.resolve();
+    }
+    if (filter === 'attention') await expect(row).toHaveCount(0);
+    else await expect(row.getByText('已送达', { exact: true })).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-observed-replay-sync', 'true');
+  });
+}
 
 test('refreshes Sent and the open receipt from the notification button', async ({ page, baseURL }, info) => {
   test.skip(info.project.name !== 'desktop', 'The desktop workspace displays the Sent list and open receipt together.');
