@@ -2019,7 +2019,8 @@
       if (sameIdentityScope(metricsScope, mailIdentityFilter)) {
         acceptMetrics(result.result.metrics, metricsScope);
       }
-      const affectsAttention = action === 'trash' && result.result.summaries.some((message) => message.folder === 'sent');
+      const skippedCount = result.result.skippedCount ?? 0;
+      const affectsAttention = skippedCount > 0 || (action === 'trash' && result.result.summaries.some((message) => message.folder === 'sent'));
       if (affectsAttention) notifications.invalidate();
       if (action === 'trash') {
         trashController.invalidate();
@@ -2039,7 +2040,6 @@
       workspaceSync?.publish({ type: 'mailbox-refresh', ...(affectsAttention ? { delivery: true } : {}) });
       if (archiveAction && authGeneration !== workspaceAuthGeneration) return;
       toastController.dismissPassive();
-      const skippedCount = result.result.skippedCount ?? 0;
       if (skippedCount > 0) {
         notify(t('notify.bulkAttentionChanged', { count: skippedCount }), 'warning');
         return;

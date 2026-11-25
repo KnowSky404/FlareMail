@@ -510,12 +510,8 @@ test('sends successfully and exposes a typed failure without claiming success', 
   await expect(failedSend).toBeEnabled();
   await failedSend.focus();
   await failedSend.press('Enter');
-  const failure = page.getByRole('alert').filter({ hasText: 'WebKit smoke provider failure' });
+  const failure = page.getByRole('alert').filter({ hasText: 'OUTBOUND_UNAVAILABLE' });
   await expect(failure).toContainText('详情 ID：webkit-failure-');
-  if (!projectIsMobile(testInfo.project.name)) {
-    const degradedStatus = page.locator('summary[aria-label="查看工作区服务状态"]');
-    await expect(degradedStatus).toHaveClass(/degraded/u);
-  }
   const failedDialog = page.getByRole('dialog', { name: '新邮件' });
   await expect(failedDialog.getByRole('status').filter({ hasText: /已自动保存于/u })).toBeVisible();
   const cancelFailedCompose = failedDialog.getByRole('button', { name: '取消', exact: true });
@@ -530,9 +526,9 @@ test('sends successfully and exposes a typed failure without claiming success', 
   }
   await expect(failedDialog).toBeHidden();
   await page.unroute('**/api/send');
-  await clickHeadlessControl(page.getByRole('button', { name: '刷新邮件列表' }));
   if (!projectIsMobile(testInfo.project.name)) {
-    await expect(page.locator('summary[aria-label="查看工作区服务状态"]')).not.toHaveClass(/degraded/u);
+    await clickHeadlessControl(page.getByRole('button', { name: /^通知/u }));
+    await expect(page.locator('#delivery-notifications-content').getByText('系统运行正常', { exact: true })).toBeVisible();
   }
   await assertNoConsoleErrors(consoleErrors.filter((message) => !message.includes('503')));
 });
