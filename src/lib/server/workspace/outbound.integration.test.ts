@@ -378,6 +378,36 @@ describe('outbound workspace persistence', () => {
     });
   });
 
+  test.each(['email.sent', 'email.delivery_delayed'] as const)('preserves %s replayed while a same-ID retry is still returning', async (type) => {
+    const { env, session, database } = setup();
+    const providerId = 're_slow_retry';
+    const initial = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Slow retry', body: 'Body' }, {
+      requestId: 'slow-retry-replay', gateway: new FakeOutboundGateway({ providerMessageId: providerId })
+    });
+    const messageId = initial.message.id;
+    await applyResendDeliveryWebhook(env, 'slow-original-delay', {
+      type: 'email.delivery_delayed', created_at: new Date(Date.now() - 4000).toISOString(), data: { email_id: providerId }
+    });
+    const retry = await retryWorkspaceMessageDelivery(env, session, messageId, { gateway: {
+      async send() {
+        database.query('UPDATE workspace_delivery_attempts SET started_at = ? WHERE message_id = ? AND attempt_number = 2')
+          .run(new Date(Date.now() - 16 * 60_000).toISOString(), messageId);
+        const event = await applyResendDeliveryWebhook(env, 'slow-deferred-event', {
+          type, created_at: new Date().toISOString(), data: { email_id: providerId }
+        });
+        expect(event).toMatchObject({ matched: true, ignored: true });
+        await reconcileDeferredResendEvents(env);
+        return { status: 'submitted', providerMessageId: providerId, remoteStatus: 200 };
+      }
+    } });
+    expect(retry?.message).toMatchObject({ deliveryLastEvent: type, deliveryAttempts: 2 });
+    expect(await getWorkspaceMessageDeliveryDetail(env, session, messageId)).toMatchObject({
+      status: type === 'email.sent' ? 'sent' : 'delayed', lastEvent: type
+    });
+    expect(database.query('SELECT status, provider_message_id FROM workspace_delivery_attempts WHERE message_id = ? AND attempt_number = 2').get(messageId))
+      .toEqual({ status: 'submitted', provider_message_id: providerId });
+  });
+
   test('rejects a retry if a definitive failure commits before the attempt is claimed', async () => {
     const { env, session, database } = setup();
     const sent = await sendWorkspaceMessage(env, session, { toEmail: 'alice@example.net', subject: 'Concurrent failure', body: 'Body' }, {
