@@ -765,6 +765,32 @@ describe('Owner delivery attention', () => {
     });
   });
 
+  test.each([false, true])('orders a live delay after a sent event still queued at acceptance (newer %s)', async (newer) => {
+    const { database, env } = setup();
+    const at = (minute: number) => `2027-01-15T08:0${minute}:00.000Z`;
+    database.exec(`
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      VALUES ('local:message-1:submission:1', 'message-1', 'user-1', 'resend', 're_1', 'submission', '${at(0)}');
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, status, started_at)
+      VALUES ('retry', 'message-1', 'user-1', 2, 'resend', 'submitting', '${at(1)}');
+      UPDATE workspace_delivery_statuses SET status = 'submitting', attempts = 2, last_event = 'submission';
+    `);
+    expect(await applyResendDeliveryWebhook(env, 'queued-sent', payload('email.sent', at(3)))).toMatchObject({ ignored: true });
+    database.exec(`
+      UPDATE workspace_delivery_attempts SET provider_message_id = 're_1', status = 'submitted' WHERE id = 'retry';
+      UPDATE workspace_delivery_statuses SET status = 'submitted';
+    `);
+
+    expect(await applyResendDeliveryWebhook(env, 'live-delay', payload('email.delivery_delayed', at(newer ? 4 : 2))))
+      .toMatchObject({ ignored: !newer });
+    expect(await reconcilePendingResendEvents(env, 're_1')).toBe(1);
+
+    const detail = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
+    expect(detail.status).toBe(newer ? 'delayed' : 'sent');
+    expect(detail.attention?.kind ?? null).toBe(newer ? 'delayed' : null);
+    expect(detail.events.map(({ svix_id }) => svix_id)).toContain('live-delay');
+  });
+
   test.each([true, false])('replays a sent webhook and older delay in arrival order (sent first %s)', async (sentFirst) => {
     const { database, env } = setup();
     const startedAt = '2027-01-15T08:01:00.000Z';
