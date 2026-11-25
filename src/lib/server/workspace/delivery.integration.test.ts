@@ -550,6 +550,7 @@ describe('Owner delivery attention', () => {
     expect(database.query("SELECT json_extract(payload_json, '$._flaremailDeferred') AS queued FROM workspace_outbound_events WHERE svix_id = 'legacy-failure'").get())
       .toEqual({ queued: shouldReplay ? 1 : null });
     database.exec(readFileSync(new URL('../../../../migrations/0040_recover_masked_resend_terminal_events.sql', import.meta.url), 'utf8'));
+    database.exec(readFileSync(new URL('../../../../migrations/0041_recover_terminal_outcomes_across_retries.sql', import.meta.url), 'utf8'));
     await reconcileDeferredResendEvents(env);
     const detail = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
     expect(detail.status).toBe(shouldReplay ? 'failed' : status);
@@ -603,7 +604,8 @@ describe('Owner delivery attention', () => {
     for (const migration of [
       '0038_queue_legacy_resend_events.sql',
       '0039_queue_legacy_resend_failures.sql',
-      '0040_recover_masked_resend_terminal_events.sql'
+      '0040_recover_masked_resend_terminal_events.sql',
+      '0041_recover_terminal_outcomes_across_retries.sql'
     ]) {
       database.exec(readFileSync(new URL('../../../../migrations/' + migration, import.meta.url), 'utf8'));
     }
