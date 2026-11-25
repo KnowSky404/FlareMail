@@ -515,6 +515,53 @@ describe('Owner delivery attention', () => {
     expect((await page(db, 'history')).notices.find(({ id }) => id === local?.id)?.state).toBe('superseded');
   });
 
+  test.each([
+    ['submitted', 're_1', 're_1', false, true],
+    ['sent', 're_1', 're_1', false, true],
+    ['delayed', 're_1', 're_1', false, true],
+    ['sent', 're_older', 're_1', false, false],
+    ['sent', 're_1', 're_older', false, false],
+    ['sent', 're_1', 're_1', true, false]
+  ] as const)('migrates masked failures (%s, prior %s, event %s)', async (status, priorId, eventId, competingOutcome, shouldReplay) => {
+    const { database, env } = setup();
+    const failedAt = '2026-01-01T00:01:00.000Z';
+    database.exec(`
+      UPDATE workspace_schema_metadata SET schema_version = 38;
+      INSERT INTO workspace_delivery_attempts (id, message_id, user_id, attempt_number, provider, provider_message_id, status, started_at, completed_at)
+      VALUES ('initial', 'message-1', 'user-1', 1, 'resend', '${priorId}', 'submitted', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:30.000Z'),
+        ('retry', 'message-1', 'user-1', 2, 'resend', 're_1', 'submitted', '2026-01-01T00:02:00.000Z', '2026-01-01T00:03:00.000Z');
+      UPDATE workspace_delivery_statuses SET status = '${status}', attempts = 2, last_event_at = '2026-01-01T00:03:00.000Z',
+        last_event = CASE '${status}' WHEN 'sent' THEN 'email.sent' WHEN 'delayed' THEN 'email.delivery_delayed' ELSE 'submission' END;
+    `);
+    database.query(`INSERT INTO workspace_outbound_events
+      (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at, payload_json)
+      VALUES ('legacy-failure', 'message-1', 'user-1', 'resend', ?, 'email.failed', ?, ?)`)
+      .run(eventId, failedAt, JSON.stringify(payload('email.failed', failedAt, eventId)));
+    database.exec(`
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      VALUES ('local:message-1:submission:2', 'message-1', 'user-1', 'resend', 're_1', 'submission', '2026-01-01T00:03:00.000Z');
+    `);
+    if (competingOutcome) database.exec(`
+      INSERT INTO workspace_outbound_events (svix_id, message_id, user_id, provider, provider_message_id, event_type, event_created_at)
+      VALUES ('legacy-bounce', 'message-1', 'user-1', 'resend', 're_1', 'email.bounced', '2026-01-01T00:04:00.000Z');
+    `);
+
+    database.exec(readFileSync(new URL('../../../../migrations/0039_queue_legacy_resend_failures.sql', import.meta.url), 'utf8'));
+    expect(database.query("SELECT json_extract(payload_json, '$._flaremailDeferred') AS queued FROM workspace_outbound_events WHERE svix_id = 'legacy-failure'").get())
+      .toEqual({ queued: shouldReplay ? 1 : null });
+    await reconcileDeferredResendEvents(env);
+    const detail = await findDeliveryDetailRows(env.DB, 'user-1', 'message-1');
+    expect(detail.status).toBe(shouldReplay ? 'failed' : status);
+    if (shouldReplay) {
+      expect(detail.receipt).toMatchObject({ result_kind: 'permanent_failure', last_event: 'email.failed' });
+      expect((await page(env.DB)).notices).toMatchObject([{ kind: 'failed', state: 'open' }]);
+      expect(database.query("SELECT attempt_number FROM workspace_delivery_attention WHERE kind = 'failed'").get())
+        .toEqual({ attempt_number: 2 });
+      await reconcileDeferredResendEvents(env);
+      expect((await page(env.DB)).notices).toHaveLength(1);
+    }
+  });
+
   test('opens a provider failure after acknowledgement of the local submission failure', async () => {
     const { database, env } = setup();
     const db = env.DB;
