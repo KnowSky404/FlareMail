@@ -248,13 +248,34 @@ test('bulk-removes a label from selected inbox and draft mail in WebKit', async 
 });
 
 test('logs in, navigates, searches, opens a message, and returns', async ({ page, consoleErrors }, testInfo) => {
+  const readerRequests: string[] = [];
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (/\/messages\/[^/]+\/(?:body|detail|delivery|ai)$/u.test(path)) readerRequests.push(path);
+  });
   await login(page);
   if (!projectIsMobile(testInfo.project.name)) {
     await expect(page.locator('.mail-workspace')).toHaveAttribute('data-list-width-effective', '440');
   }
   await openFolder(page, '已发送');
   await expect(page.getByRole('heading', { name: /^已发送(?:\s|$)/u })).toBeVisible();
+  await expect(page.getByRole('listitem').filter({ hasText: 'E2E Seeded Sent' })).toBeVisible();
   await openFolder(page, '收件箱');
+  if (projectIsPhone(testInfo.project.name)) {
+    const row = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
+    const geometry = await row.evaluate((element) => {
+      const checkbox = element.querySelector('input[type="checkbox"]')!;
+      const target = checkbox.closest('label')!.getBoundingClientRect();
+      const content = element.querySelector('.row-content')!.getBoundingClientRect();
+      return { width: target.width, height: target.height, gap: content.left - checkbox.getBoundingClientRect().right };
+    });
+    expect(geometry.width).toBeGreaterThanOrEqual(44);
+    expect(geometry.height).toBeGreaterThanOrEqual(44);
+    expect(geometry.gap).toBeLessThanOrEqual(65);
+    await expect(row.locator('.row-actions')).toHaveCount(0);
+    await expect(page.locator('.mail-detail-panel .fm-detail-shell')).toHaveCount(0);
+    expect(readerRequests).toEqual([]);
+  }
   const filteredMailbox = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return url.pathname === '/api/workspace/mailbox'
@@ -271,6 +292,7 @@ test('logs in, navigates, searches, opens a message, and returns', async ({ page
   await item.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click({ force: true });
   const detail = page.getByRole('region', { name: '邮件详情' });
   await expect(detail).toContainText('E2E Inbox Welcome');
+  await expect(detail.locator('.message-content')).toContainText('This message is seeded in the isolated local D1 database.');
   if (!projectIsMobile(testInfo.project.name)) {
     const trigger = detail.getByRole('button', { name: '展开专注阅读' });
     await trigger.focus();
