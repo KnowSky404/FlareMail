@@ -1194,7 +1194,7 @@ test('keeps a split reader from auto-reading a cached replacement outside the re
     await mutateLocal(page, nextFlags, 'PATCH', { read: false });
     await page.reload({ waitUntil: 'domcontentloaded' });
     await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
-    await expect(row(page, next.subject).locator('button[aria-label="标为已读"]')).toHaveCount(1);
+    await expect(row(page, next.subject).getByRole('button', { name: /^未读, /u })).toBeVisible();
     const removedElsewhere = await page.request.post('/api/workspace/mailbox/mutate', {
       headers: { origin: new URL(page.url()).origin },
       data: {

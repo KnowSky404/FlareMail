@@ -194,7 +194,7 @@
   let authRecoveryError = $state('');
   let authRecoverySaveRequired = $state(false);
   let profile = $state<UserProfile>(cloneProfile());
-  let mailbox = $state<MailboxState>(cloneMailbox());
+  let mailbox = $state.raw<MailboxState>(cloneMailbox());
   let metrics = $state<WorkspaceMetrics>({ inboxCount: 0, archiveCount: 0, sentCount: 0, draftsCount: 0, trashCount: 0, unreadCount: 0, starredCount: 0,
     queuedCount: 0, delayedCount: 0, failedCount: 0, bouncedCount: 0, complainedCount: 0, staleDeliveryCount: 0 });
   let metricsIdentity = $state<MailboxIdentityFilter | null>(null);
@@ -209,7 +209,7 @@
     workspaceSync?.publish(change);
   });
   const readActivation = new ReadActivationController();
-  let mailboxPages = $state<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
+  let mailboxPages = $state.raw<Partial<Record<MailboxSection, MailboxPage>> | null>(null);
   let mailboxPageNumber = $state(1);
   let trashPageNumber = $state(1);
   let turningPageScope: string | null = null;
@@ -284,7 +284,8 @@
   const mobileTopbar = $derived(viewportWidth > 0 && viewportWidth <= 900);
   let density = $state<DisplayDensity>('comfortable');
   let readingLayout = $state<ReadingLayout>('list');
-  const messageReaderVisible = $derived(readerOpen || mobileDetailOpen || (readingLayout === 'split' && viewportWidth >= 901));
+  const desktopSplitReader = $derived(readingLayout === 'split' && viewportWidth >= 901);
+  const messageReaderVisible = $derived(readerOpen || mobileDetailOpen || desktopSplitReader);
   let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
   let unsafeHtmlMessageId = $state<string | null>(null);
   let shortcutHelpOpen = $state(false);
@@ -1023,6 +1024,7 @@
   $effect(() => {
     if (
       !authExpired &&
+      messageReaderVisible &&
       selectedMessage &&
       isInboundMessageId(selectedMessage.id) &&
       !inboundDetails[selectedMessage.id] &&
@@ -1036,6 +1038,7 @@
   $effect(() => {
     if (
       !authExpired &&
+      messageReaderVisible &&
       selectedMessage &&
       !isInboundMessageId(selectedMessage.id) &&
       !workspaceBodies[selectedMessage.id] &&
@@ -1079,6 +1082,7 @@
   $effect(() => {
     if (
       !authExpired &&
+      messageReaderVisible &&
       selectedMessage &&
       selectedMessage.folder === 'sent' &&
       selectedMessage.source === 'workspace' &&
@@ -1137,7 +1141,7 @@
     for (const cached of Object.values(next.mailboxPages ?? {})) if (cached) mailboxController.seed(cached);
     activeSection = next.activeSection;
     activeLabelId = next.activeSection === 'label' ? urlLabelId : null;
-    selectedMessageId = readingLayout === 'list' && !options?.preferredMessageId ? null : next.selectedMessageId;
+    selectedMessageId = desktopSplitReader || options?.preferredMessageId ? next.selectedMessageId : null;
     selectedMessageIds = next.selectedMessageIds;
     searchQuery = next.searchQuery;
     mailFilter = next.mailFilter;
@@ -1334,28 +1338,6 @@
     inboxCategory = 'all';
     mobileDetailOpen = false;
 
-    if (section === 'inbox' || section === 'sent' || section === 'archive') {
-      const threads = section === 'archive'
-        ? buildMailThreads({ ...mailbox, inbox: mailboxPages?.archive?.messages ?? [] }, 'inbox')
-        : buildMailThreads(mailbox, section);
-      const currentThread = selectedMessageId
-        ? threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
-        : null;
-
-      selectedMessageId = section === 'archive'
-        ? currentThread?.sectionLatestMessage.id ?? threads[0]?.sectionLatestMessage.id ?? null
-        : selectNextMessage(
-            mailbox,
-            section,
-            currentThread?.sectionLatestMessage.id ?? selectedMessageId
-          );
-
-      if (syncUrl) {
-        updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
-      }
-      return;
-    }
-
     if (section === 'trash') {
       mailIdentityFilter = null;
       selectedMessageId = trashItems.some((item) => item.id === selectedMessageId)
@@ -1366,9 +1348,21 @@
       return;
     }
 
-    selectedMessageId = section === 'starred'
-      ? mailboxPages?.starred?.messages.find((message) => message.id === selectedMessageId)?.id ?? mailboxPages?.starred?.messages[0]?.id ?? null
-      : selectNextMessage(mailbox, section, selectedMessageId);
+    if (!messageReaderVisible) {
+      selectedMessageId = null;
+    } else if (section === 'inbox' || section === 'sent' || section === 'archive') {
+      const threads = section === 'archive'
+        ? buildMailThreads({ ...mailbox, inbox: mailboxPages?.archive?.messages ?? [] }, 'inbox')
+        : buildMailThreads(mailbox, section);
+      const currentThread = selectedMessageId
+        ? threads.find((thread) => thread.messages.some((message) => message.id === selectedMessageId))
+        : null;
+      selectedMessageId = currentThread?.sectionLatestMessage.id ?? threads[0]?.sectionLatestMessage.id ?? null;
+    } else {
+      selectedMessageId = section === 'starred'
+        ? mailboxPages?.starred?.messages.find((message) => message.id === selectedMessageId)?.id ?? mailboxPages?.starred?.messages[0]?.id ?? null
+        : selectNextMessage(mailbox, section, selectedMessageId);
+    }
     if (syncUrl) {
       updateWorkspaceUrl({ section, query: '', filter: 'all', messageId: null });
     }
@@ -2304,7 +2298,7 @@
 
       applyWorkspaceSnapshot(result.workspace, {
         section: 'inbox',
-        preferredMessageId: readingLayout === 'split' ? result.workspace.activePage.messages[0]?.id ?? null : null,
+        preferredMessageId: desktopSplitReader ? result.workspace.activePage.messages[0]?.id ?? null : null,
         clearMailView: true,
         resetUserScoped: true,
         syncUrl: true
@@ -3788,7 +3782,7 @@
                   {/if}
                   <MessageList
                     category={activeSection === 'inbox' ? inboxCategory : undefined}
-                    fullWidth={readingLayout === 'list'}
+                    fullWidth={readingLayout === 'list' && viewportWidth >= 901}
                     {pending}
                     onArchive={activeSection !== 'trash' ? handleRowArchive : undefined}
                     onToggleRead={activeSection !== 'trash' ? handleToggleRead : undefined}
@@ -3840,7 +3834,7 @@
                   onkeydown={adjustListWidth}
                 ></div>
                 <section class="mail-detail-panel" aria-label={t('mail.detail')}>
-                  {#if !readerOpen}
+                  {#if messageReaderVisible && !readerOpen}
                     <MessageDetail
                     onApplyAiCategory={activeSection === 'inbox' ? applyAiCategory : undefined}
                     message={selectedMessage}

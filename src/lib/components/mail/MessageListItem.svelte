@@ -181,7 +181,7 @@
     role="listitem"
   >
     {#if selectable}
-      <label class="fm-touch-target grid min-h-8 min-w-8 shrink-0 place-items-center">
+      <label class="row-select fm-touch-target grid min-h-8 min-w-8 shrink-0 place-items-center">
         <span class="sr-only">{t('mail.select', { subject: itemSubject })}</span>
         <input
           class="size-4 accent-[var(--fm-primary)]"
@@ -270,7 +270,7 @@
       </IconButton>
       </span>
     {/if}
-    {#if activeSection !== 'trash' && (onRemove || onArchive || onToggleRead)}
+    {#if activeSection !== 'trash' && (fullWidth || isDraft) && (onRemove || onArchive || onToggleRead)}
       <div class="row-actions" class:draft-actions={isDraft}>
         {#if itemMessage.folder === 'inbox' && onArchive}
           <span class="row-secondary-action"><IconButton ariaLabel={itemMessage.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} title={itemMessage.archivedAt ? t('mail.moveToInbox') : t('shell.archive')} size="sm" tooltipSide="top" disabled={pending} onclick={() => itemMessage && onArchive?.(itemMessage)}>
@@ -316,6 +316,11 @@
     .wide-row .row-actions.draft-actions { position: static; opacity: 1; pointer-events: auto; background: transparent; }
   }
   @media (max-width: 900px) { .row-actions.draft-actions .row-secondary-action { display: none; } }
+
+  @media (max-width: 767px) {
+    .row-select + .mail-list-item-button { padding-inline-start: 0; column-gap: 6px; }
+    .row-select + .mail-list-item-button .row-avatar :global(.fm-avatar) { width: 28px; height: 28px; }
+  }
 
   .mail-list-item.fm-selected,
   .mail-list-item.fm-selected:hover {

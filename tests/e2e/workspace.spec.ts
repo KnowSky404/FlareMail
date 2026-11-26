@@ -2577,7 +2577,7 @@ test('uses shared decorative avatars across account, mailbox, and reading views'
   const listAvatar = inboxItem.locator('.fm-avatar');
   await expect(listAvatar).toHaveText('E');
   await expect(listAvatar).toHaveAttribute('aria-hidden', 'true');
-  expect((await listAvatar.boundingBox())?.width).toBe(36);
+  expect((await listAvatar.boundingBox())?.width).toBe(testInfo.project.name === 'mobile' ? 28 : 36);
   await inboxItem.getByRole('button', { name: /E2E Inbox Welcome/u }).first().click();
 
   const detail = page.getByRole('region', { name: '邮件详情' });
