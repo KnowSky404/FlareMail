@@ -333,6 +333,47 @@ test('remembers optional split reading and can return to the full-width list', a
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('opens the split reader at a fractional desktop viewport', async ({ page, consoleErrors }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'The zoomed split preview uses desktop Chromium.');
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await login(page);
+  const [first] = await readMessages(page);
+  await page.getByRole('button', { name: '显示分栏预览', exact: true }).click();
+
+  // A zoomed same-origin frame gives Chromium a fractional layout viewport.
+  await page.route('**/e2e-fractional-viewport', (route) => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><iframe title="Fractional viewport" src="/?folder=inbox" style="width:880px;height:480px;zoom:1.75;border:0"></iframe>'
+  }));
+  await page.route('**/?folder=inbox', async (route) => {
+    const response = await route.fetch();
+    const headers = response.headers();
+    // Permit embedding only in this isolated browser fixture.
+    headers['x-frame-options'] = 'SAMEORIGIN';
+    if (headers['content-security-policy']) {
+      headers['content-security-policy'] = headers['content-security-policy'].replace(/(?:^|;\s*)frame-ancestors [^;]+/u, '');
+    }
+    await route.fulfill({ response, headers });
+  });
+  await page.goto('/e2e-fractional-viewport');
+  const frame = page.frameLocator('iframe[title="Fractional viewport"]');
+  const detail = frame.getByRole('region', { name: '邮件详情' });
+  await expect(frame.getByRole('main', { name: '邮件工作区' })).toBeVisible();
+  await expect(detail).toBeHidden();
+
+  const iframe = page.locator('iframe[title="Fractional viewport"]');
+  await iframe.evaluate((node) => { (node as HTMLIFrameElement).style.width = '900.57px'; });
+  await expect.poll(() => iframe.evaluate((node) => {
+    const view = (node as HTMLIFrameElement).contentWindow!;
+    return [view.innerWidth, view.matchMedia('(width > 900px)').matches, view.matchMedia('(width >= 901px)').matches];
+  })).toEqual([900, true, false]);
+  await expect(frame.locator('.mail-splitter')).toBeVisible();
+  await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+  await expect(frame.getByRole('searchbox')).toBeVisible();
+  await expect(frame.getByRole('button', { name: '关闭分栏预览', exact: true })).toBeVisible();
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('opens a draft directly with its saved sender and supports row trash with undo', async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const subject = `E2E Direct Draft ${testInfo.project.name} ${Date.now()}`;

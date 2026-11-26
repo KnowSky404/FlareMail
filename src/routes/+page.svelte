@@ -7,6 +7,7 @@
   import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import { Archive, Inbox, Mail, MailOpen, MoreHorizontal, Pencil, Star, Trash2, Tag } from '@lucide/svelte';
   import type { PageData } from './$types';
   import { mailInboxCategories } from '$lib/domain/mail';
@@ -280,11 +281,11 @@
   let listWidth = $state(DEFAULT_LAYOUT_PREFERENCES.listWidth);
   let workspaceElement = $state<HTMLElement>();
   let workspaceWidth = $state(Number.POSITIVE_INFINITY);
-  let viewportWidth = $state(0);
-  const mobileTopbar = $derived(viewportWidth > 0 && viewportWidth <= 900);
+  const desktopWorkspace = new MediaQuery('(width > 900px)');
+  const mobileTopbar = $derived(!desktopWorkspace.current);
   let density = $state<DisplayDensity>('comfortable');
   let readingLayout = $state<ReadingLayout>('list');
-  const desktopSplitReader = $derived(readingLayout === 'split' && viewportWidth >= 901);
+  const desktopSplitReader = $derived(readingLayout === 'split' && desktopWorkspace.current);
   const messageReaderVisible = $derived(readerOpen || mobileDetailOpen || desktopSplitReader);
   let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
   let unsafeHtmlMessageId = $state<string | null>(null);
@@ -3445,7 +3446,6 @@
   });
 </script>
 
-<svelte:window bind:innerWidth={viewportWidth} />
 
 <svelte:head>
   <title>FlareMail</title>
@@ -3782,7 +3782,7 @@
                   {/if}
                   <MessageList
                     category={activeSection === 'inbox' ? inboxCategory : undefined}
-                    fullWidth={readingLayout === 'list' && viewportWidth >= 901}
+                    fullWidth={readingLayout === 'list' && desktopWorkspace.current}
                     {pending}
                     onArchive={activeSection !== 'trash' ? handleRowArchive : undefined}
                     onToggleRead={activeSection !== 'trash' ? handleToggleRead : undefined}
@@ -3880,7 +3880,7 @@
                     bodyView={selectedBodyView}
                     onBodyViewChange={changeSelectedBodyView}
                     />
-                  {:else}
+                  {:else if readerOpen}
                     <div class="grid h-full place-items-center p-6 text-center text-sm text-[var(--fm-text-muted)]">{t('mail.readerOpen')}</div>
                   {/if}
                 </section>
@@ -4146,7 +4146,7 @@
   .list-layout .mail-splitter, .list-layout .mail-detail-panel { display: none; }
   .list-layout.detail-open .mail-list-panel { display: none; }
   .list-layout.detail-open .mail-detail-panel { display: block; }
-  @media (min-width: 901px) {
+  @media (width > 900px) {
     .mail-workspace:not(.list-layout) :global(.fm-detail-back) { display: none; }
   }
 
@@ -4259,7 +4259,7 @@
     padding-block: 0.375rem;
   }
 
-  @media (min-width: 901px) {
+  @media (width > 900px) {
     :global(.fm-app-shell[data-density='compact']) .list-layout :global(.mail-list-item),
     :global(.fm-app-shell[data-density='compact']) .list-layout :global(.mail-list-item-button) { min-height: 40px; }
   }
