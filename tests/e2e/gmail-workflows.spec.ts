@@ -362,15 +362,41 @@ test('opens the split reader at a fractional desktop viewport', async ({ page, c
   await expect(detail).toBeHidden();
 
   const iframe = page.locator('iframe[title="Fractional viewport"]');
-  await iframe.evaluate((node) => { (node as HTMLIFrameElement).style.width = '900.57px'; });
+  const resize = (width: string) => iframe.evaluate((node, width) => {
+    (node as HTMLIFrameElement).style.width = width;
+  }, width);
+  await resize('900.57px');
   await expect.poll(() => iframe.evaluate((node) => {
     const view = (node as HTMLIFrameElement).contentWindow!;
     return [view.innerWidth, view.matchMedia('(width > 900px)').matches, view.matchMedia('(width >= 901px)').matches];
   })).toEqual([900, true, false]);
   await expect(frame.locator('.mail-splitter')).toBeVisible();
-  await expect(detail.getByRole('heading', { name: first.subject, exact: true })).toBeVisible();
+  const heading = detail.getByRole('heading', { name: first.subject, exact: true });
+  await expect(heading).toBeVisible();
   await expect(frame.getByRole('searchbox')).toBeVisible();
   await expect(frame.getByRole('button', { name: '关闭分栏预览', exact: true })).toBeVisible();
+
+  await iframe.evaluate((node) => {
+    const document = (node as HTMLIFrameElement).contentDocument!;
+    const style = document.createElement('style');
+    // Isolate scroll retention from Chromium's scroll anchoring during resize.
+    style.textContent = '.message-content{min-height:1500px}.fm-detail-scroll{overflow-anchor:none}';
+    document.head.append(style);
+  });
+  const scroller = detail.locator('.fm-detail-scroll');
+  const scrollTop = await scroller.evaluate((node) => {
+    node.scrollTop = 420;
+    return node.scrollTop;
+  });
+  expect(scrollTop).toBe(420);
+  await resize('880px');
+  await expect(detail).toBeHidden();
+  // Let the media query change reach the app before expanding the frame again.
+  await iframe.evaluate(() => new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await resize('900.57px');
+  await expect(heading).toBeVisible();
+  await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBe(scrollTop);
   await assertNoConsoleErrors(consoleErrors);
 });
 
