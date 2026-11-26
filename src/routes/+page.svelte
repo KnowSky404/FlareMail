@@ -287,6 +287,7 @@
   let readingLayout = $state<ReadingLayout>('list');
   const desktopSplitReader = $derived(readingLayout === 'split' && desktopWorkspace.current);
   const messageReaderVisible = $derived(readerOpen || mobileDetailOpen || desktopSplitReader);
+  let retainedSplitMessageId = $state<string | null>(null);
   let bodyViewByMessage = $state<Record<string, 'text' | 'html'>>({});
   let unsafeHtmlMessageId = $state<string | null>(null);
   let shortcutHelpOpen = $state(false);
@@ -818,6 +819,14 @@
       thread.latestMessage
     );
   });
+  // Keep the mounted split reader's scroll position when the viewport narrows.
+  $effect(() => {
+    const messageId = selectedMessage?.id ?? null;
+    if (desktopSplitReader && !readerOpen) retainedSplitMessageId = messageId;
+    else if (readerOpen || readingLayout !== 'split' || messageId !== retainedSplitMessageId) retainedSplitMessageId = null;
+  });
+  const keepSplitReader = $derived(readingLayout === 'split' &&
+    retainedSplitMessageId !== null && retainedSplitMessageId === selectedMessage?.id);
   const selectedThreadMessages = $derived(selectedMessage && selectedThread && activeSection !== 'trash' && activeSection !== 'profile'
     ? threadDetailMessages(mailbox, activeSection, activeMessages, selectedMessage) : selectedMessage ? [selectedMessage] : []);
   const selectedReplyAllAvailable = $derived(Boolean(
@@ -3834,7 +3843,7 @@
                   onkeydown={adjustListWidth}
                 ></div>
                 <section class="mail-detail-panel" aria-label={t('mail.detail')}>
-                  {#if messageReaderVisible && !readerOpen}
+                  {#if (messageReaderVisible || keepSplitReader) && !readerOpen}
                     <MessageDetail
                     onApplyAiCategory={activeSection === 'inbox' ? applyAiCategory : undefined}
                     message={selectedMessage}
