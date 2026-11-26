@@ -48,6 +48,43 @@ test('renders inbox and focused reading without Firefox errors', async ({ page, 
   await assertNoConsoleErrors(consoleErrors);
 });
 
+test('keeps English inbox filters on one row across viewport widths', async ({ page, consoleErrors }, testInfo) => {
+  await login(page);
+  await page.getByRole('button', { name: '关闭分栏预览' }).click();
+  await page.getByRole('button', { name: '显示偏好' }).click();
+  await page.getByLabel('切换语言').getByRole('radio', { name: 'English', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await page.getByRole('heading', { name: 'Inbox', exact: true }).click();
+  await expect(page.locator('.mail-workspace')).toHaveAttribute('data-reading-layout', 'list');
+  await expect(page.locator('#mail-identity-filter')).toBeVisible();
+  const filters = page.getByRole('group', { name: 'Mail filters' });
+  await expect(filters.getByRole('button')).toHaveText(['All', 'Unread', 'Starred']);
+
+  for (const width of [1505, 1920, 901, 640, 390, 320]) {
+    await page.setViewportSize({ width, height: 850 });
+    const { rows, fits } = await filters.evaluate((group) => {
+      const header = group.closest('header')!.getBoundingClientRect();
+      const buttons = Array.from(group.querySelectorAll('button'), (button) => button.getBoundingClientRect());
+      return {
+        rows: new Set(buttons.map((button) => Math.round(button.top))).size,
+        fits: buttons.every((button) => button.left >= header.left && button.right <= header.right)
+      };
+    });
+    expect(rows, `filter rows at ${width}px`).toBe(1);
+    expect(fits, `filter buttons fit the header at ${width}px`).toBe(true);
+    await assertNoHorizontalOverflow(page);
+    if (width === 1505 || width === 320) {
+      await page.locator('.folder-header').screenshot({ path: testInfo.outputPath(`mail-filters-${width}.png`) });
+    }
+  }
+
+  const starred = filters.getByRole('button', { name: 'Starred', exact: true });
+  await starred.click();
+  await expect(starred).toHaveAttribute('aria-pressed', 'true');
+  await expect(page).toHaveURL(/filter=starred/u);
+  await assertNoConsoleErrors(consoleErrors);
+});
+
 test('navigates display preference radio groups by keyboard in Firefox', async ({ page, consoleErrors }) => {
   await login(page);
   await page.getByRole('button', { name: '显示偏好' }).click();

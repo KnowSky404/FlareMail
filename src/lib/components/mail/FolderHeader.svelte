@@ -163,6 +163,6 @@
     .folder-header.wide-layout { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 24px; }
     .wide-layout > div:first-child { flex: 1 1 220px; }
     .wide-layout .folder-search { display: flex; align-items: center; margin-top: 0; }
-    .wide-layout select { max-width: 260px; }
+    .wide-layout select { width: 260px; }
   }
 </style>
