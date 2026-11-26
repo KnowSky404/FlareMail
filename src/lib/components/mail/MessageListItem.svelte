@@ -296,7 +296,7 @@
   .row-actions { display: none; align-items: center; padding-right: 4px; }
   .row-actions.draft-actions { display: flex; }
   .row-secondary-action { display: inline-flex; }
-  @media (width > 900px) {
+  @media not all and (max-width: 900px) {
     .wide-row { position: relative; padding-inline: 12px 8px; }
     .mail-list-item.wide-row, .wide-row .mail-list-item-button { min-height: 44px; }
     .wide-row { background: var(--fm-surface-subtle); }
@@ -333,7 +333,7 @@
     min-height: 76px;
   }
 
-  @media (width > 900px) {
+  @media not all and (max-width: 900px) {
     .mail-list-item,
     .mail-list-item-button {
       min-height: 88px;

@@ -157,7 +157,7 @@
   }
   .folder-search-field { grid-column: 1 / -1; }
   .reading-layout-control { display: none; }
-  @media (width > 900px) {
+  @media not all and (max-width: 900px) {
     .reading-layout-control { display: inline-flex; }
     .folder-search select { min-height: 32px; }
     .folder-header.wide-layout { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 24px; }

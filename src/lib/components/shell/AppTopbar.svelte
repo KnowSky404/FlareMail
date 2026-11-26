@@ -59,7 +59,7 @@
     themePreference = readThemePreference();
     applyTheme(themePreference);
 
-    const layoutMedia = matchMedia('(width > 900px)');
+    const layoutMedia = matchMedia('not all and (max-width: 900px)');
     const syncDesktopSearch = () => {
       showDesktopSearch = layoutMedia.matches;
     };

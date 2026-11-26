@@ -281,7 +281,7 @@
   let listWidth = $state(DEFAULT_LAYOUT_PREFERENCES.listWidth);
   let workspaceElement = $state<HTMLElement>();
   let workspaceWidth = $state(Number.POSITIVE_INFINITY);
-  const desktopWorkspace = new MediaQuery('(width > 900px)');
+  const desktopWorkspace = new MediaQuery('not all and (max-width: 900px)');
   const mobileTopbar = $derived(!desktopWorkspace.current);
   let density = $state<DisplayDensity>('comfortable');
   let readingLayout = $state<ReadingLayout>('list');
@@ -4155,7 +4155,7 @@
   .list-layout .mail-splitter, .list-layout .mail-detail-panel { display: none; }
   .list-layout.detail-open .mail-list-panel { display: none; }
   .list-layout.detail-open .mail-detail-panel { display: block; }
-  @media (width > 900px) {
+  @media not all and (max-width: 900px) {
     .mail-workspace:not(.list-layout) :global(.fm-detail-back) { display: none; }
   }
 
@@ -4268,7 +4268,7 @@
     padding-block: 0.375rem;
   }
 
-  @media (width > 900px) {
+  @media not all and (max-width: 900px) {
     :global(.fm-app-shell[data-density='compact']) .list-layout :global(.mail-list-item),
     :global(.fm-app-shell[data-density='compact']) .list-layout :global(.mail-list-item-button) { min-height: 40px; }
   }
