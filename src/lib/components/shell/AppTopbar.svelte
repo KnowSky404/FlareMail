@@ -59,7 +59,7 @@
     themePreference = readThemePreference();
     applyTheme(themePreference);
 
-    const layoutMedia = matchMedia('(min-width: 901px)');
+    const layoutMedia = matchMedia('(width > 900px)');
     const syncDesktopSearch = () => {
       showDesktopSearch = layoutMedia.matches;
     };
