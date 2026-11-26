@@ -368,7 +368,7 @@ test('opens the split reader at a fractional desktop viewport', async ({ page, c
   await resize('900.57px');
   await expect.poll(() => iframe.evaluate((node) => {
     const view = (node as HTMLIFrameElement).contentWindow!;
-    return [view.innerWidth, view.matchMedia('(width > 900px)').matches, view.matchMedia('(width >= 901px)').matches];
+    return [view.innerWidth, view.matchMedia('not all and (max-width: 900px)').matches, view.matchMedia('(min-width: 901px)').matches];
   })).toEqual([900, true, false]);
   await expect(frame.locator('.mail-splitter')).toBeVisible();
   const heading = detail.getByRole('heading', { name: first.subject, exact: true });
