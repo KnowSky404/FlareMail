@@ -6,7 +6,7 @@
 
 ## 默认验收顺序
 
-1. 在独立 worktree 从最新 `origin/main` 开发，完成 `bun run test`、`bun run check`、`bun run build`、相关浏览器 QA、`bun run deploy:dry-run`，创建干净原子提交。
+1. 在独立 worktree 从最新 `origin/main` 开发，完成[受影响范围的本地验证](./DEVELOPMENT.md#verify-changes)和 `bun run deploy:dry-run`，创建干净原子提交。
 2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。使用现有生产 Worker 名称作为原生 Preview 的父级，沿用 `mail-ai` 的独立 D1 和 R2。发布前核对 PRE 的 D1 UUID 和 R2 桶名分别与生产不同。设置 `APP_ENV=preview`、实际 Provider/Auth 配置，关闭自动回复、通知和 Telegram，使用 `cron=[]`。资源创建、Owner 初始化和邮件规则调整各自独立授权。
    在发布之前检查 Previews Base、现有 Preview secrets 与候选目标的合并结果。当前方案尚未实施时，确认将生成的部署既不继承 Cloudflare 路由读取或写入权限，也没有可用于全量发现的身份配置。无法确认就停止发布，先按下文「当前 mail-ai 的邮箱身份验收」核对旧配置及权限。
    如果沿用 PRE D1 并更换 R2，在部署前先于授权维护窗口暂停并排空所有访问 PRE D1/R2 的入口和任务，包括只读入口和旧预览 URL。再清点原信、独立正文、草稿、附件和待处理记录依赖的对象，核对新桶上的对象和完整性。没有相关对象时记录空清单。涉及复制、修复或删除时取得相应授权。
