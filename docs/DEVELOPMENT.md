@@ -270,27 +270,43 @@ The demo/fake provider validates the UI, persistence, and mail state transitions
 
 ## Verify changes
 
-For code, tests, or runtime configuration changes, run these gates in order
-before committing. Pure documentation changes need diff, command and link
-review; changes to validation scripts or CI still require the code gates:
+Choose verification before running it. Review diffs, commands and links for
+documentation edits. For a small code or test change, start with the affected
+test case or file and include relevant callers. Run `bun run check` for
+application TypeScript, Svelte and route changes. Verify the relevant build
+when packaging, build or Worker configuration changes. For validation
+scripts and CI, exercise the affected command or workflow.
 
 ```bash
-bun run test
-bun run check
-bun run build
+bun test scripts/runtime-fixtures.test.ts -t 'supports a safe default temporary output directory'
 ```
 
-For browser interaction changes, install the Playwright browser binaries if needed, then run the relevant suites:
+Cover affected integration paths for permissions, D1 schema or migrations, and
+shared behavior. Run the full suite when the impact cannot be bounded or when
+required by the production checklist or task. Record the checks run and omitted
+scope. After a revision, rerun the checks whose results the change can affect.
+
+For a visible interaction change, select the spec, test and browser project
+that cover it. Add the affected viewports or browser engines for responsive,
+keyboard, accessibility or compatibility changes. Use a private local temporary
+directory for the test state. If the required browser is missing, install
+that engine with `bunx playwright install --with-deps chromium` or substitute
+`webkit` or `firefox` for the selected project.
 
 ```bash
-bunx playwright install --with-deps chromium webkit firefox
-bun run test:e2e
-bun run test:e2e:webkit
-bun run test:e2e:firefox
-bun run test:a11y
+task_tmp=$(mktemp -d /tmp/flaremail-qa.XXXXXXXX)
+TMPDIR="$task_tmp" TMP="$task_tmp" TEMP="$task_tmp" \
+  FLAREMAIL_E2E_STATE_DIR="$task_tmp/flaremail-e2e/desktop/state" \
+  FLAREMAIL_E2E_PROJECT=desktop bunx playwright test tests/e2e/list-settings.spec.ts --project=desktop
 ```
 
-Browser tests create isolated D1/R2 state in the operating system's temporary directory and use fake providers and signed test webhooks. Run check, typegen, build, dry-run and browser suites sequentially because they share generated output. Use separate worktrees and test state directories for concurrent verification. Linux WebKit results cover simulated viewports, rather than physical iOS/iPadOS Safari devices. Missing browser binaries are a test environment failure.
+Use `-g '<test title>'` to select one Playwright case. Browser tests seed
+isolated D1/R2 with synthetic data and use fake providers and signed test
+webhooks. Once the test process exits, retain any needed failure diagnostics
+or acceptance evidence and remove its disposable state. Run check, typegen,
+build, dry-run and browser runs sequentially within one worktree because
+they share generated output. Use separate worktrees, state directories and
+ports for concurrent runs. Linux WebKit covers simulated viewports.
 
 `bun run deploy:dry-run` builds a temporary configuration from the public development config without reading the private production config or publishing a Worker. Local checks do not establish production deployment, remote migration, or real mail/Telegram delivery.
 

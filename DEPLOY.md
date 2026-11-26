@@ -15,6 +15,9 @@ The verified local build uses cf `1.0.0-rc.1` with the Vite plugin locked at `2.
 
 ## Build and local validation
 
+For everyday changes, use the [scoped development checks](docs/DEVELOPMENT.md#verify-changes).
+Use the following pre-release commands with the [production checklist](docs/PRODUCTION_CHECKLIST.md).
+
 ```sh
 bun run test
 bun run check

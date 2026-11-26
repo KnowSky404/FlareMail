@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 import {
   RUNTIME_FIXTURE_LIMITS,
@@ -102,19 +104,29 @@ describe('runtime MIME fixtures', () => {
   });
 
   test('supports a safe default temporary output directory', async () => {
-    const child = Bun.spawn(['bun', 'scripts/runtime-fixtures.ts'], { stdout: 'pipe', stderr: 'pipe' });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited
-    ]);
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe('');
-    const report = JSON.parse(stdout) as { mode: string; reportOnly: boolean; output: string; generated: Array<{ sha256: string }> };
-    expect(report.mode).toBe('offline');
-    expect(report.reportOnly).toBe(true);
-    expect(report.output).toMatch(/\/tmp\/flaremail-runtime-[^/]+$/u);
-    expect(report.generated).toHaveLength(10);
-    expect(report.generated.every(({ sha256 }) => /^[a-f0-9]{64}$/u.test(sha256))).toBe(true);
+    const directory = await mkdtemp(join(tmpdir(), 'flaremail-fixture-test-'));
+    try {
+      const child = Bun.spawn(['bun', 'scripts/runtime-fixtures.ts'], {
+        env: { ...process.env, TMPDIR: directory, TMP: directory, TEMP: directory },
+        stdout: 'pipe',
+        stderr: 'pipe'
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited
+      ]);
+      expect(exitCode).toBe(0);
+      expect(stderr).toBe('');
+      const report = JSON.parse(stdout) as { mode: string; reportOnly: boolean; output: string; generated: Array<{ sha256: string }> };
+      expect(report.mode).toBe('offline');
+      expect(report.reportOnly).toBe(true);
+      expect(dirname(report.output)).toBe(directory);
+      expect(basename(report.output)).toMatch(/^flaremail-runtime-[^/]+$/u);
+      expect(report.generated).toHaveLength(10);
+      expect(report.generated.every(({ sha256 }) => /^[a-f0-9]{64}$/u.test(sha256))).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
