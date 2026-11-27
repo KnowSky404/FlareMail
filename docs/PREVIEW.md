@@ -152,7 +152,7 @@ Email Routing 和 Cron 触发 Worker 的生产 handler。原生 Preview 的 HTTP
 核对 PRE 的 D1、R2、OAuth KV、Owner 和 canonical URL 与生产隔离。Previews
 Base 不应继承 OAuth KV。发布 PRE 前会核对候选 KV 和活动生产绑定。生产配置
 OAuth KV 时会核对该 Worker 的所有原生 Preview 部署历史，包括仍有独立 URL 的
-旧版本。
+旧版本。生产绑定 OAuth KV 前必须确认 Worker 的版本预览 URL 已关闭。
 迁移 0043、创建 KV 和写入合成邮件分别遵循授权范围。按 [MCP 指南](MCP.md) 检验
 协议入口、Origin、Owner 同意、三种权限、邮件读取和撤销。保留同一提交的 PRE
 URL、部署 ID、版本和脱敏记录。生产流量指向仍按本指南核对。ChatGPT 的真实

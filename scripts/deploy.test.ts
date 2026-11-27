@@ -160,6 +160,17 @@ test('legacy releases enforce OAuth KV isolation against the native Preview', as
     mockPage([{ id: 'pre-id' }]);
     mockPage([deployment('pre-deploy', 'c'.repeat(32)), deployment('old-deploy')]);
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).resolves.toBeUndefined();
+    const production = { ...target, vars: { ...target.vars, APP_ENV: 'production' } };
+    for (const previews_enabled of [true, false]) {
+      mockLive('c'.repeat(32));
+      mockPage([{ id: 'pre-id' }]);
+      mockPage([deployment('pre-deploy', 'c'.repeat(32))]);
+      metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: { enabled: true, previews_enabled } }));
+      const check = expect(assertLegacyPreviewOAuthIsolation(production, projectRoot, false));
+      if (previews_enabled) await check.rejects.toThrow('INBOUND_PRODUCTION_VERSION_URLS_NOT_DISABLED');
+      else await check.resolves.toBe(true);
+      expect(metadata.mock.calls.at(-1)?.[1]).toEndWith('/workers/scripts/flaremail/subdomain');
+    }
     mockLive('c'.repeat(32));
     mockPage([{ id: 'pre-id' }]);
     mockPage([deployment('pre-deploy')], 11);

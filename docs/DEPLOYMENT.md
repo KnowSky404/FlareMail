@@ -316,12 +316,16 @@ delivery timeline before choosing any separately authorized resend workflow.
 ## Delivery attention recovery
 
 Migration 0033 adds attention storage, and 0034 backfills unresolved delays.
-The current Worker requires schema 42 exactly. Keep attention history during code
-rollback with a tested compatible build. If a database restore is required,
-review all post-bookmark mail, session and attention writes and follow the
-existing isolated restore procedure before switching production. See the
-[schema 42 cutover checklist](PRODUCTION_CHECKLIST.md#schema-42-delivery-attention-upgrade).
+Keep attention history during code rollback with a build tested against the
+actual database schema. If a restore is required, review all post-bookmark mail,
+session and attention writes and follow the isolated restore procedure before
+switching production. See the [schema 42 cutover checklist](PRODUCTION_CHECKLIST.md#schema-42-delivery-attention-upgrade).
 
-## Optional Remote MCP
+## Schema 43 and Remote MCP
 
-Follow the [MCP deployment guide](MCP.md) for optional KV, URL and Access configuration, migration 0043, PRE acceptance and rollback.
+The current Worker accepts schema 42 during the rollout and uses schema 43 after
+migration 0043. This migration advances the schema even with MCP disabled. After
+migration, a code rollback requires a build verified against schema 43. Follow
+the [schema 43 checklist](PRODUCTION_CHECKLIST.md#schema-43-mcp-upgrade) for
+migration and recovery, and the [MCP guide](MCP.md) for the optional KV, URL and
+Access settings and PRE acceptance.
