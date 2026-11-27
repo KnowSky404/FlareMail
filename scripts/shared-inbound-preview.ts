@@ -412,9 +412,15 @@ export async function assertLegacyPreviewOAuthIsolation(target: CloudflareTarget
     await assertPreviewHistoryOAuthIsolation(target.oauthKvId, path, projectRoot);
     if (target.vars.APP_ENV === 'production' && target.oauthKvId) {
       if (path) return verifyProductionWorkerDev(target, projectRoot);
-      const canonicalOrigin = target.vars.APP_BASE_URL;
-      return Boolean(canonicalOrigin && URL.canParse(canonicalOrigin) &&
-        new URL(canonicalOrigin).hostname.endsWith('.workers.dev'));
+      const canonicalUrl = URL.parse(target.vars.APP_BASE_URL ?? '');
+      if (!canonicalUrl?.hostname.replace(/\.$/u, '').endsWith('.workers.dev')) return false;
+      const errorCode = 'INBOUND_PRODUCTION_WORKERS_DEV_ORIGIN_MISMATCH';
+      const { get } = cloudflareWorkerMetadata(projectRoot, errorCode);
+      const account = await get<{ subdomain: string }>('subdomain');
+      if (!account?.subdomain || canonicalUrl.origin !== `https://${target.name}.${account.subdomain}.workers.dev`) {
+        throw new Error(errorCode);
+      }
+      return true;
     }
   }
 }
