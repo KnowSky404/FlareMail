@@ -44,7 +44,7 @@ export const load: PageServerLoad = async (event) => {
     if (event.url.search.length > 4096 || [...params.keys()].some((key) => params.getAll(key).length !== 1) ||
         (params.has('resource') && params.get('resource') !== config.resource) ||
         params.get('code_challenge_method') !== 'S256' || !/^[A-Za-z0-9_-]{43}$/u.test(params.get('code_challenge') ?? '') ||
-        !params.get('state') || !params.get('redirect_uri') || !isAllowedRedirect(params.get('redirect_uri')!, config)) {
+        !params.get('redirect_uri') || !isAllowedRedirect(params.get('redirect_uri')!, config)) {
       return { status: 'invalid' as const };
     }
     const request = await oauth.parseAuthRequest(event.request);

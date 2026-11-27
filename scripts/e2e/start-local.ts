@@ -41,7 +41,7 @@ const htmlCidBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA
 const timestamp = '2026-08-13T08:00:00.000Z';
 const identityCheckedAt = new Date().toISOString();
 const webhookSecret = `whsec_${btoa('FlareMail E2E webhook secret 2026')}`;
-const e2eEnvironment = {
+const e2eEnvironment: Record<string, string | undefined> = {
   ...createLocalCloudflareEnvironment(),
   FLAREMAIL_CF_CONFIG: join(root, 'cloudflare.local.json'),
   FLAREMAIL_STATE_DIR: persistTo,
@@ -100,6 +100,15 @@ if (performanceRunId) {
   await mkdir(persistTo);
 } else {
   await rm(persistTo, { recursive: true, force: true });
+}
+if (process.env.FLAREMAIL_E2E_MCP === 'true') {
+  await mkdir(persistTo, { recursive: true });
+  const key = join(persistTo, 'mcp-test-key.pem');
+  const cert = join(persistTo, 'mcp-test-cert.pem');
+  await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+    '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1', '-keyout', key, '-out', cert]);
+  e2eEnvironment.FLAREMAIL_E2E_TLS_KEY_FILE = key;
+  e2eEnvironment.FLAREMAIL_E2E_TLS_CERT_FILE = cert;
 }
 await run('bun', ['run', 'build']);
 await run('cf', ['d1', 'migrations', 'apply', localTarget.databaseId, '--dir', 'migrations', ...localStateArgs(persistTo)]);

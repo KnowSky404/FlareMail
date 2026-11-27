@@ -141,7 +141,7 @@ outside their UI, direct the official MCP SDK's
 
 Build and migrate the local Worker with the normal development commands. To
 exercise full OAuth and tools against isolated demo mail, run the repository
-Playwright test with the opt-in local MCP target:
+Playwright test with the opt-in local MCP target. The runner generates an isolated loopback HTTPS certificate using OpenSSL:
 
 ```sh
 FLAREMAIL_E2E_MCP=true bunx playwright test tests/e2e/mcp-integration.spec.ts --project=desktop

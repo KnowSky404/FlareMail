@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { startAuthorization } from '@modelcontextprotocol/sdk/client/auth.js';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -22,23 +23,25 @@ async function login(page: Page, origin: string) {
   expect(response.status()).toBe(200);
 }
 
-async function approveConsent(page: Page, origin: string, scopes: string, confidential = false) {
+async function approveConsent(page: Page, origin: string, scopes: string,
+  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true) {
   const redirectUri = origin + '/mcp-test-callback';
   const registration = await page.request.post('/mcp/register', { data: {
     redirect_uris: [redirectUri], client_name: 'Synthetic MCP client',
-    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: confidential ? 'client_secret_post' : 'none'
+    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: authMethod
   } });
   expect(registration.status()).toBe(201);
   const { client_id, client_secret } = await registration.json();
-  const verifier = randomBytes(32).toString('base64url');
-  const state = randomBytes(24).toString('base64url');
-  const params = {
-    response_type: 'code', client_id, code_challenge_method: 'S256',
-    code_challenge: createHash('sha256').update(verifier).digest('base64url'),
-    state, redirect_uri: redirectUri, resource: origin + '/mcp', scope: scopes
-  };
+  const state = includeState ? randomBytes(24).toString('base64url') : undefined;
+  const resource = new URL(origin + '/mcp');
+  const metadata = await (await page.request.get('/.well-known/oauth-authorization-server')).json();
+  const { authorizationUrl, codeVerifier } = await startAuthorization(new URL(origin), {
+    metadata, clientInformation: { client_id }, redirectUrl: new URL(redirectUri), resource, scope: scopes, state
+  });
+  expect(authorizationUrl.searchParams.get('code_challenge_method')).toBe('S256');
+  expect(authorizationUrl.searchParams.get('state')).toBe(state ?? null);
   await page.route('**/mcp-test-callback?*', (route) => route.fulfill({ contentType: 'text/plain', body: 'Synthetic callback' }));
-  await page.goto('/mcp/authorize?' + new URLSearchParams(params));
+  await page.goto(authorizationUrl.href);
   await expect(page.getByText('Synthetic MCP client', { exact: false })).toBeVisible();
   if (scopes.includes('mail.attachments.metadata.read')) {
     await page.locator('input[value="mail.attachments.metadata.read"]').check();
@@ -46,24 +49,29 @@ async function approveConsent(page: Page, origin: string, scopes: string, confid
   await page.getByRole('button', { name: /授权访问|Allow access/ }).click();
   await page.waitForURL('**/mcp-test-callback?*');
   const reply = new URL(page.url()).searchParams;
-  expect(reply.get('state')).toBe(state);
+  expect(reply.get('state')).toBe(state ?? null);
   expect(reply.get('iss')).toBe(origin);
   const code = reply.get('code')!;
   expect(Boolean(code)).toBe(true);
-  const paramsForToken = { grant_type: 'authorization_code', client_id, redirect_uri: redirectUri,
-    code_verifier: verifier, code, resource: origin + '/mcp',
-    ...(client_secret ? { client_secret } : {}) };
-  return paramsForToken;
+  const basic = authMethod === 'client_secret_basic';
+  const encodedClient = '%' + client_id.charCodeAt(0).toString(16) + client_id.slice(1);
+  const headers: Record<string, string> = basic
+    ? { Authorization: 'Basic  ' + btoa(encodedClient + ':' + encodeURIComponent(client_secret)) } : {};
+  const form = { grant_type: 'authorization_code', redirect_uri: redirectUri,
+    code_verifier: codeVerifier, code, resource: resource.href,
+    ...(!basic ? { client_id } : {}), ...(authMethod === 'client_secret_post' ? { client_secret } : {}) };
+  return { form, headers, client_id, client_secret };
 }
 
-async function authorize(page: Page, origin: string, scopes: string, confidential = false) {
-  const paramsForToken = await approveConsent(page, origin, scopes, confidential);
-  const wrongPkce = await page.request.post('/mcp/token', { form: { ...paramsForToken, code_verifier: 'x'.repeat(43) } });
+async function authorize(page: Page, origin: string, scopes: string,
+  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true) {
+  const authorization = await approveConsent(page, origin, scopes, authMethod, includeState);
+  const { form, headers } = authorization;
+  const wrongPkce = await page.request.post('/mcp/token', { form: { ...form, code_verifier: 'x'.repeat(43) }, headers });
   expect(wrongPkce.status()).toBe(400);
-  const exchanged = await page.request.post('/mcp/token', { form: paramsForToken });
+  const exchanged = await page.request.post('/mcp/token', { form, headers });
   expect(exchanged.status()).toBe(200);
-  const tokens = await exchanged.json();
-  return { client_id: paramsForToken.client_id, client_secret: paramsForToken.client_secret, tokens };
+  return { ...authorization, tokens: await exchanged.json() };
 }
 
 test.skip(process.env.FLAREMAIL_E2E_MCP !== 'true', 'Run with the isolated local MCP target enabled');
@@ -89,9 +97,20 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
   expect((await postMcp('invalid')).status()).toBe(401);
   expect((await page.request.post('/mcp', { headers: { ...endpointHeaders, Origin: 'https://invalid.test' }, data: init })).status()).toBe(403);
 
-  const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read', true);
+  const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read', 'client_secret_post');
   const token = grant.tokens.access_token as string;
-  const transport = new StreamableHTTPClientTransport(new URL(mcp), { requestInit: { headers: { Authorization: 'Bearer ' + token } } });
+  const transport = new StreamableHTTPClientTransport(new URL(mcp), {
+    requestInit: { headers: { Authorization: 'Bearer ' + token } },
+    // Use the isolated browser fixture's HTTPS trust for the self-signed loopback target.
+    fetch: async (target, init) => {
+      const response = await page.request.fetch(target instanceof Request ? target.url : target.toString(), {
+        method: init?.method, headers: Object.fromEntries(new Headers(init?.headers)),
+        data: typeof init?.body === 'string' ? init.body : undefined
+      });
+      const body = await response.body();
+      return new Response(body.length ? new Uint8Array(body) : null, { status: response.status(), headers: response.headers() });
+    }
+  });
   const client = new Client({ name: 'FlareMail compatible client', version: '1' });
   try {
     await client.connect(transport);
@@ -164,12 +183,20 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
   expect((await postMcp(token)).status()).toBe(404);
   expect((await page.request.post('/mcp/token', { form: refresh })).status()).toBe(404);
   await save(page.request, base, { action: 'settings', enabled: true, scopes: ['mail.read'] });
-  const pending = await approveConsent(page, base, 'mail.read');
+  const pending = await approveConsent(page, base, 'mail.read', 'none', false);
   const clients = (await (await page.request.get(settings)).json()).data.clients;
   const approval = clients.find((item: { status: string }) => item.status === 'pending');
   expect(approval).toBeDefined();
   await save(page.request, base, { action: 'revoke', id: approval.id });
-  expect((await page.request.post('/mcp/token', { form: pending })).status()).toBe(400);
+  expect((await page.request.post('/mcp/token', { form: pending.form })).status()).toBe(400);
+  const revocable = await authorize(page, base, 'mail.read', 'client_secret_basic', false);
+  const revoked = await page.request.post('/mcp/token', {
+    headers: revocable.headers, form: { grant_type: '', token: revocable.tokens.refresh_token }
+  });
+  expect(revoked.status()).toBe(200);
+  const afterRevocation = (await (await page.request.get(settings)).json()).data.clients;
+  expect(afterRevocation.some((item: { status: string }) => item.status === 'active')).toBe(false);
+  expect((await postMcp(revocable.tokens.access_token)).status()).toBe(401);
   await save(page.request, base, { action: 'settings', enabled: false, scopes: ['mail.read'] });
 });
 

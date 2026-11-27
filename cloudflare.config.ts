@@ -50,7 +50,8 @@ export default defineConfig({
         RESEND_WEBHOOK_SECRET: process.env.FLAREMAIL_E2E_WEBHOOK_SECRET ?? ''
       });
       if (process.env.FLAREMAIL_E2E_MCP === 'true') {
-        const origin = `http://127.0.0.1:${process.env.FLAREMAIL_DEV_PORT ?? 4173}`;
+        const scheme = process.env.FLAREMAIL_E2E_TLS_CERT_FILE ? 'https' : 'http';
+        const origin = `${scheme}://127.0.0.1:${process.env.FLAREMAIL_DEV_PORT ?? 4173}`;
         Object.assign(vars, {
           APP_BASE_URL: origin,
           MCP_PUBLIC_URL: `${origin}/mcp`,
