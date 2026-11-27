@@ -92,9 +92,14 @@ unless the user withholds merge or specifies another strategy.
 Inspect the PR's base branch, head SHA, commits/files, mergeability and required
 checks, and confirm the applicable [workflow gates](./WORKFLOW.md) have passed. Lock the merge to the
 verified and reviewed head using
-`gh pr merge <PR> --rebase --match-head-commit <HEAD_SHA>`. Do not bypass checks
-with `--admin`. Auto-merge or a merge queue request is not a completed merge;
-wait until the PR state is `MERGED` before cleanup.
+`gh pr merge <PR> --rebase --match-head-commit <HEAD_SHA>`. Verify the base SHA
+against the CI result immediately before submitting the command. The head lock
+does not lock the base. For unattended auto-merge, require a server-side
+up-to-date check first. On an unprotected branch, run a single checked merge,
+then verify its actual integration tree. If another merge advanced the base
+during the request, mark the changed result unverified and rerun affected
+gates before release. Do not bypass checks with `--admin`. Wait for `MERGED`
+before cleanup.
 
 Record the PR URL, original head SHA and resulting merge SHA. Fetch `origin/main`
 and verify it contains the merge SHA. Rebase rewrites commit identities: compare

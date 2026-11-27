@@ -18,10 +18,11 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   the applicable local checks, CI, review results, blocking-finding resolutions
   and final PRE business acceptance or the permitted alternative. PRE evidence
   includes candidate SHA, tree, build inputs, URL and deployment/version ID.
-- [ ] The final source and build inputs match the accepted candidate, including
-  the lockfile, deployment configuration and version label. Rebase may change
-  the commit SHA. If the final content or any relevant input changes, repeat
-  affected verification and business acceptance before publication.
+- [ ] Shared source and build inputs match the accepted candidate, including the
+  lockfile. Verify the expected PRE/PRO differences against their own targets,
+  including isolated bindings, private configuration and build labels. Rebase
+  may change the commit SHA. If a shared input or expected target setting changes,
+  repeat affected verification and business acceptance before publication.
 - [ ] Record the PR URL, original head, merge SHA, and main integration and
   cleanup results under the [merge procedure](./DEVELOPMENT.md#rebase-merge-and-cleanup).
   Verify independent production authorization before deploying.

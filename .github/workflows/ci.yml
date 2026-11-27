@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.event.action == 'edited' && github.event.changes.base == null && '-metadata' || '' }}
   cancel-in-progress: true
 
 env:
@@ -20,6 +20,7 @@ env:
 jobs:
   scope:
     name: Scope and diff
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -34,31 +35,38 @@ jobs:
         name: Select deterministic checks
         shell: bash
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.before }}
         run: |
           runtime=true
           dependencies=false
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-            git diff --check "$BASE_SHA" HEAD
-            runtime=false
-            paths=$(mktemp)
-            trap 'rm -- "$paths"' EXIT
-            git diff --no-renames --name-only -z "$BASE_SHA" HEAD > "$paths"
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                docs/WORKFLOW.md|docs/DEVELOPMENT.md|docs/PREVIEW.md|docs/PRODUCTION_CHECKLIST.md)
-                  runtime=true ;;
-                README.md|README.zh-CN.md|TODO.md|docs/*.md) ;;
-                *) runtime=true ;;
-              esac
-              case "$path" in
-                package.json|worker/package.json|bun.lock) dependencies=true ;;
-              esac
-            done < "$paths"
-          else
-            git diff --check HEAD^ HEAD
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              git rev-parse --verify HEAD^2 >/dev/null
+              BASE_SHA=$(git rev-parse HEAD^1)
+              runtime=false ;;
+            push) ;;
+            workflow_dispatch) BASE_SHA=$(git rev-parse HEAD^) ;;
+            *) exit 1 ;;
+          esac
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$BASE_SHA" == 0000000000000000000000000000000000000000 && "$GITHUB_EVENT_NAME" == push ]]; then
+            BASE_SHA=$(git hash-object -t tree /dev/null)
           fi
+          git diff --check "$BASE_SHA" HEAD
+          paths=$(mktemp)
+          trap 'rm -- "$paths"' EXIT
+          git diff --no-renames --name-only -z "$BASE_SHA" HEAD > "$paths"
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              docs/WORKFLOW.md|docs/DEVELOPMENT.md|docs/PREVIEW.md|docs/PRODUCTION_CHECKLIST.md)
+                runtime=true ;;
+              README.md|README.zh-CN.md|TODO.md|docs/*.md) ;;
+              *) runtime=true ;;
+            esac
+            case "$path" in
+              package.json|worker/package.json|bun.lock) dependencies=true ;;
+            esac
+          done < "$paths"
           printf 'runtime=%s\ndependencies=%s\n' "$runtime" "$dependencies" >> "$GITHUB_OUTPUT"
 
   tests:
@@ -131,7 +139,7 @@ jobs:
   extended:
     name: Extended browser (${{ matrix.suite }})
     needs: scope
-    if: github.event_name != 'pull_request'
+    if: needs.scope.result == 'success' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -186,8 +194,8 @@ jobs:
       - run: bun run audit:dependencies
 
   gate:
-    name: CI gate
-    if: always()
+    name: ${{ github.event.action == 'edited' && github.event.changes.base == null && 'Metadata edit' || 'CI gate' }}
+    if: always() && (github.event.action != 'edited' || github.event.changes.base != null)
     needs: [scope, tests, build, chromium, dependency-audit, extended]
     runs-on: ubuntu-latest
     timeout-minutes: 5
