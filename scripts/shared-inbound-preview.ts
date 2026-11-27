@@ -411,7 +411,10 @@ export async function assertLegacyPreviewOAuthIsolation(target: CloudflareTarget
     assertPreviewOAuthIsolation(target.oauthKvId, latest?.env?.OAUTH_KV);
     await assertPreviewHistoryOAuthIsolation(target.oauthKvId, path, projectRoot);
     if (target.vars.APP_ENV === 'production' && target.oauthKvId) {
-      return path ? verifyProductionWorkerDev(target, projectRoot) : false;
+      if (path) return verifyProductionWorkerDev(target, projectRoot);
+      const canonicalOrigin = target.vars.APP_BASE_URL;
+      return Boolean(canonicalOrigin && URL.canParse(canonicalOrigin) &&
+        new URL(canonicalOrigin).hostname.endsWith('.workers.dev'));
     }
   }
 }
