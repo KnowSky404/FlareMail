@@ -288,7 +288,7 @@ describe('Resend delivery reconciliation', () => {
     expect(await getData(failed)).toMatchObject({ pendingCount: 1, replayed: 0, replayFailed: true });
     expect((await findDeliveryDetailRows(env.DB, 'user-1', 'message-1')).status).toBe('delayed');
 
-    database.query('UPDATE workspace_schema_metadata SET schema_version = ?').run(FLAREMAIL_SCHEMA_VERSION - 1);
+    database.query('UPDATE workspace_schema_metadata SET schema_version = ?').run(FLAREMAIL_SCHEMA_VERSION - 2);
     const unsupported = await getData(await refresh());
     expect(unsupported).toMatchObject({ pendingCount: 1, replayed: 0 });
     expect(unsupported).not.toHaveProperty('replayFailed');

@@ -18,6 +18,7 @@
     "TELEGRAM_ENABLED": "false",
     "TELEGRAM_BOT_USERNAME": "replace_with_bot_username",
     "APP_BASE_URL": "https://mail.example.com",
+    "MCP_PUBLIC_URL": "",
     "TELEGRAM_TIMEOUT_MS": "5000",
     "NOTIFICATION_EMAIL": "ops@example.com",
     "NOTIFICATION_SUBJECT_PREFIX": "[FlareMail] 新入站邮件"

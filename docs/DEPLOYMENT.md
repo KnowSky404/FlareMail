@@ -321,3 +321,7 @@ rollback with a tested compatible build. If a database restore is required,
 review all post-bookmark mail, session and attention writes and follow the
 existing isolated restore procedure before switching production. See the
 [schema 42 cutover checklist](PRODUCTION_CHECKLIST.md#schema-42-delivery-attention-upgrade).
+
+## Optional Remote MCP
+
+Follow the [MCP deployment guide](MCP.md) for optional KV, URL and Access configuration, migration 0043, PRE acceptance and rollback.

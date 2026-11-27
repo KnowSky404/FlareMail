@@ -4,6 +4,15 @@ This document describes the current authenticated workspace contracts. Routes
 return the standard typed JSON envelope and reject unauthenticated or
 cross-owner requests without exposing mailbox existence.
 
+## Remote MCP
+
+`POST /mcp` serves stateless MCP with its own OAuth bearer credentials.
+The Owner manages policy, grants and tool activity through
+`GET /api/workspace/integrations/mcp` and its same-origin `POST`, using normal
+browser authentication. The supported actions are `settings` with `enabled`
+and `scopes`, `revoke` with an authorization `id`, and `revoke-all`. Page tool
+activity with the returned `time` and `id` cursor. See the [MCP contract](MCP.md).
+
 ## Workspace snapshot
 
 `GET /api/workspace/session` returns the authenticated workspace snapshot. The response

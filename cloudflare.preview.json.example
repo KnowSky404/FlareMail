@@ -13,6 +13,7 @@
     "INBOUND_NOTIFICATION_ENABLED": "false",
     "TELEGRAM_ENABLED": "false",
     "APP_BASE_URL": "https://mail-ai-flaremail.example.workers.dev",
+    "MCP_PUBLIC_URL": "",
     "APP_VERSION": "preview+replace-with-commit"
   },
   "databaseId": "replace-with-preview-database-id",

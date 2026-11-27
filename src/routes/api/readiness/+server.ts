@@ -3,7 +3,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { validateEnvironment } from '$lib/server/config/env';
 import { mailHealthState, previewCatchAllError } from '$lib/domain/mail/health';
 import { listManagedMailDomains } from '$lib/server/db/mail-identities';
-import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
+import { isWorkspaceRuntimeSchemaVersion } from '$lib/server/db/schema-version';
 import { isValidResendWebhookSecret } from '$lib/server/resend-webhook';
 import { readInboundRouting } from '$lib/server/inbound/routing-ownership';
 import { readPreInboundBindings } from '$lib/server/inbound/pre-inbound';
@@ -54,7 +54,7 @@ async function hasSupportedWorkspaceSchema(db: D1Database) {
     .bind(...REQUIRED_TABLES).all<{ name: string }>();
   const version = await db.prepare('SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?')
     .bind('flaremail').first<{ schema_version: number }>();
-  return (tables.results?.length ?? 0) === REQUIRED_TABLES.length && isSupportedWorkspaceSchemaVersion(version?.schema_version);
+  return (tables.results?.length ?? 0) === REQUIRED_TABLES.length && isWorkspaceRuntimeSchemaVersion(version?.schema_version);
 }
 
 export const GET: RequestHandler = withApiHandler(async (event) => {

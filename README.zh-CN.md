@@ -29,6 +29,10 @@ Cloudflare 操作统一使用全局 `cf`（Node.js ≥ 22.18），可用 `bun ad
 
 研发使用独立 worktree，按 [研发工作流](./docs/WORKFLOW.md) 确定 CI、Review 和 PRE 门禁。PRE 与生产部署分别授权。
 
+## Remote MCP
+
+Owner 可在 **设置 → 集成** 启用只读邮箱访问，并通过 OAuth 连接 ChatGPT 或其他 MCP 客户端。参见 [MCP 配置与验收](docs/MCP.md)。
+
 ## 文档
 
 | 指南 | 内容 |

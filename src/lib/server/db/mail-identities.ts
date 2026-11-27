@@ -199,21 +199,21 @@ export interface ManagedMailAddressRow {
   updated_at: string;
 }
 
-export async function listManagedMailDomains(db: Pick<D1Database, 'prepare'>, ownerUserId: string) {
+export async function listManagedMailDomains(db: Pick<D1Database, 'prepare'>, ownerUserId: string, page?: { afterId: string; limit: number }) {
   const result = await db.prepare(`
     SELECT * FROM mail_domains
     WHERE owner_user_id = ?
-    ORDER BY domain_name COLLATE NOCASE, id
-  `).bind(ownerUserId).all<ManagedMailDomainRow>();
+    ${page ? 'AND id > ? ORDER BY id LIMIT ?' : 'ORDER BY domain_name COLLATE NOCASE, id'}
+  `).bind(ownerUserId, ...(page ? [page.afterId, page.limit] : [])).all<ManagedMailDomainRow>();
   return result.results ?? [];
 }
 
-export async function listManagedMailAddresses(db: Pick<D1Database, 'prepare'>, ownerUserId: string) {
+export async function listManagedMailAddresses(db: Pick<D1Database, 'prepare'>, ownerUserId: string, page?: { afterId: string; limit: number }) {
   const result = await db.prepare(`
     SELECT * FROM mail_addresses
     WHERE owner_user_id = ?
-    ORDER BY domain_id, email COLLATE NOCASE, id
-  `).bind(ownerUserId).all<ManagedMailAddressRow>();
+    ${page ? "AND lifecycle_status <> 'deleted' AND id > ? ORDER BY id LIMIT ?" : 'ORDER BY domain_id, email COLLATE NOCASE, id'}
+  `).bind(ownerUserId, ...(page ? [page.afterId, page.limit] : [])).all<ManagedMailAddressRow>();
   return result.results ?? [];
 }
 

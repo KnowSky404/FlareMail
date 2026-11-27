@@ -328,13 +328,14 @@ export async function findMessageByIdempotencyKey(db: D1Database, userId: string
   `).bind(userId, idempotencyKey).first<WorkspaceMessageRow>();
 }
 
-export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, messageId: string, options: { includeBody?: boolean } = {}) {
+export async function findOwnedWorkspaceMessage(db: D1Database, userId: string, messageId: string, options: { includeBody?: boolean; includeHtml?: boolean } = {}) {
   return db.prepare(`
     SELECT id, folder, from_name, from_email, to_name, to_email, subject, preview, ${options.includeBody === false ? "''" : 'body'} AS body, sent_at,
       labels_json, is_read, is_starred, message_id, in_reply_to, "references", thread_key, cc, to_json, cc_json, bcc_json, idempotency_key, archived_at, body_object_id, deleted_at,
       sender_address_id, recipient_address_id, reply_to_json, inbox_category_v2, ai_inbox_category
+      ${options.includeHtml ? ', html_body' : ''}
     FROM workspace_messages WHERE user_id = ? AND id = ?
-  `).bind(userId, messageId).first<WorkspaceMessageRow>();
+  `).bind(userId, messageId).first<WorkspaceMessageRow & { html_body?: string }>();
 }
 
 export function updateMessageFlags(db: D1Database, userId: string, messageId: string, patch: { read?: boolean; starred?: boolean }, timestamp: string) {

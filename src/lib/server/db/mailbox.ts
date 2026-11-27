@@ -15,6 +15,7 @@ export interface MailboxRepositoryQuery {
   timestamp?: string;
   cursorId?: string;
   limit: number;
+  includeSearchTotal?: boolean;
   query: string;
   search: MailSearchQuery | null;
   filter: MailboxFilter;
@@ -214,7 +215,7 @@ export async function listWorkspaceMessagePage(
     LEFT JOIN workspace_outbound_receipts AS r
       ON r.user_id = m.user_id AND r.message_id = m.id` : ''}
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || attention || input.labelId || (input.category && input.category !== 'all'))
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.includeSearchTotal !== false && !input.timestamp && (input.search || attention || input.labelId || (input.category && input.category !== 'all'))
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.sent_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`);
@@ -295,7 +296,7 @@ export async function listDraftPage(
     FROM workspace_drafts AS d
     ${searchJoins}
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (!input.timestamp && (input.search || input.labelId)
+  const pageSql = `WITH identity_scope AS (SELECT ? AS kind, ? AS id) ` + (input.includeSearchTotal !== false && !input.timestamp && (input.search || input.labelId)
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows.updated_at DESC, search_rows.id DESC LIMIT ?`
     : `${pageSelect} ORDER BY d.updated_at DESC, d.id DESC LIMIT ?`);
@@ -305,7 +306,8 @@ export async function listDraftPage(
 export async function getMailboxMetrics(
   db: D1Database,
   userId: string,
-  identityFilter: MailboxIdentityFilter | null = null
+  identityFilter: MailboxIdentityFilter | null = null,
+  options: { includeDraftStars?: boolean } = {}
 ): Promise<WorkspaceMetrics> {
   const row = await db.prepare(`
     WITH identity_scope AS (SELECT ? AS kind, ? AS id), owner_scope AS (SELECT ? AS id),
@@ -354,7 +356,7 @@ export async function getMailboxMetrics(
       COALESCE(d.drafts_count, 0) AS drafts_count,
       COALESCE(m.trash_count, 0) + COALESCE(e.trash_count, 0) + COALESCE(d.trash_count, 0) AS trash_count,
       COALESCE(m.unread_count, 0) + COALESCE(e.unread_count, 0) AS unread_count,
-      COALESCE(m.starred_count, 0) + COALESCE(e.starred_count, 0) + COALESCE(d.starred_count, 0) AS starred_count,
+      COALESCE(m.starred_count, 0) + COALESCE(e.starred_count, 0) + ${options.includeDraftStars === false ? '0' : 'COALESCE(d.starred_count, 0)'} AS starred_count,
       ds.queued_count, ds.delayed_count, ds.failed_count, ds.bounced_count, ds.complained_count, ds.stale_delivery_count
     FROM message_counts AS m CROSS JOIN inbound_counts AS e CROSS JOIN draft_counts AS d CROSS JOIN delivery_counts AS ds
   `).bind(

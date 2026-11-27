@@ -22,6 +22,10 @@
 
 仓库不会自动执行远程 migration、生产部署或真实邮件 smoke。操作者仍需在隔离 preview 测量近上限 MIME/附件的 CPU、内存和 subrequest，再按 `docs/DEPLOYMENT.md` 完成生产检查。
 
+## MCP 接入验收
+
+- 在隔离 PRE 核对 OAuth、Owner 同意、只读工具和撤销。保留真实 ChatGPT 连接及刷新证据。具体门禁见 [MCP 接入指南](docs/MCP.md)。
+
 ## 下一阶段核心能力
 
 ### 邮箱效率

@@ -24,6 +24,7 @@ export interface CloudflareTarget {
   databaseId: string;
   databaseName: string;
   bucket: string;
+  oauthKvId?: string;
   preInbound?: PreInboundStorage;
   inboundRouting?: D1Target & { environment: 'production' | 'preview' };
   cron: string[];
@@ -65,6 +66,10 @@ export function parseCloudflareTarget(source: string): CloudflareTarget {
       !Array.isArray(value.cron) || !value.cron.every((schedule) => typeof schedule === 'string') ||
       (value.secrets !== undefined && (!Array.isArray(value.secrets) || !value.secrets.every((name) => typeof name === 'string' && /^[A-Z][A-Z0-9_]*$/u.test(name))))) {
     throw new Error('Invalid Cloudflare target configuration.');
+  }
+  if ((value.oauthKvId !== undefined && (typeof value.oauthKvId !== 'string' || !/^[a-f0-9]{32}$/u.test(value.oauthKvId))) ||
+      Object.hasOwn(value.vars, 'OAUTH_KV') || value.secrets?.includes('OAUTH_KV')) {
+    throw new Error('MCP_OAUTH_KV_CONFIGURATION_INVALID');
   }
   const { PRE_INBOUND_RECIPIENT, PRE_INBOUND_ENABLED } = value.vars;
   const pre = value.preInbound;

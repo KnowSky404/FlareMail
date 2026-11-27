@@ -39,6 +39,8 @@ declare global {
     TELEGRAM_BOT_USERNAME?: string;
     TELEGRAM_TIMEOUT_MS?: string;
     APP_BASE_URL?: string;
+    MCP_PUBLIC_URL?: string;
+    MCP_ALLOWED_REDIRECT_URIS?: string;
   }
 }
 
