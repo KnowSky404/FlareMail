@@ -51,7 +51,7 @@ CI 无法用普通 HTTP 覆盖的 Worker 事件需补本地隔离、合成事件
 
 ## CI 和仓库门禁
 
-- `CI` 对所有 PR 运行，包含 Draft PR。普通 Markdown 差异使用轻量路径。运行时或关键流程文件变更使用三组 Bun 测试、类型、生成声明、公开目标 Worker dry-run 及 Chromium 的 `@ci-core` 用例。现有测试分组覆盖断言会检查遗漏和重复。依赖定义或锁文件变化时执行依赖审计。
+- `CI` 对所有 PR 运行，包含 Draft PR。普通 Markdown 差异使用轻量路径。运行时或关键流程文件变更使用三组 Bun 测试、类型、生成声明、公开目标 Worker dry-run 及 Chromium 的 `@ci-core` 用例。现有测试分组覆盖断言会检查遗漏和重复。依赖定义或锁文件变化时执行依赖审计。直接推送 `main` 时按完整推送区间检查。PR 改目标分支会重新验证集成内容，单纯更新标题或正文不会发布新的 `CI gate` 结论。
 - 默认 PR checkout 验证 GitHub 生成的测试合并提交。每个候选记录 PR head、base 和 CI run，核对最新集成结果。合并前基线变化时，重新确认 CI 确实验证新集成结果。旧跑次和被撤销的跑次不可复用。相同 PR 的旧 CI 自动取消。
 - 主分支更新和手动运行覆盖 WebKit、Firefox 和无障碍测试。在 PR 上按风险用本地独立场景补足适用引擎与视口。仅用 mock/demo、合成数据及隔离状态。各 CI job 在不同 runner 上安装锁定依赖和工具，共享生成目录的步骤在同一 job 串行。浏览器失败的合成诊断保留五天。
 - `CI gate` 汇总所有必要结果，计划、取消、失败和非预期跳过会阻断。验证 `CI gate` 在当前 PR 的实际集成结果上成功后再合并。普通 PR job 仅给 `contents: read`，不保存 checkout token，也不使用部署凭据。远端 PRE/PRO 均不由 CI 自动触发。
