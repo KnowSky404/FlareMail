@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail, isRedirect, redirect } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { consumeLoginAttempt } from '$lib/server/auth/rate-limit';
@@ -26,7 +26,7 @@ function cookieFrom(headers: Headers) {
 export const load: PageServerLoad = async (event) => {
   const context = await consentContext(event);
   if (!context) return { status: 'unavailable' as const };
-  const { env, config, oauth, AuthorizationError } = context;
+  const { env, config, oauth, AuthorizationError, authorizationErrorRedirect } = context;
   const session = event.locals.workspaceSession;
   if (!session) {
     return event.locals.authMode === 'local'
@@ -52,7 +52,7 @@ export const load: PageServerLoad = async (event) => {
         request.scope.some((scope) => !mcpScopes.some((allowed) => allowed === scope))) return { status: 'invalid' as const };
     const requested = request.scope.length ? mcpScopeMask(request.scope) : policy.scopes;
     const scopes = scopesFromMask(policy.scopes & requested);
-    if (scopes.length === 0) return { status: 'unavailable' as const };
+    if (scopes.length === 0) redirect(303, authorizationErrorRedirect(request, 'invalid_scope'));
     const { clientName, redirectHost, redirectIsLoopback } = await oauth.describeConsent(request);
     const transaction = await oauth.beginConsent(request);
     const cookie = cookieFrom(transaction.headers);
@@ -61,6 +61,7 @@ export const load: PageServerLoad = async (event) => {
     event.cookies.set(cookie[1]!, cookie[2]!, { path: '/', secure: true, httpOnly: true, sameSite: 'lax', maxAge: 600 });
     return { status: 'consent' as const, clientName, redirectHost, redirectIsLoopback, scopes, handle: transaction.handle };
   } catch (error) {
+    if (isRedirect(error)) throw error;
     return { status: error instanceof AuthorizationError ? 'invalid' as const : 'unavailable' as const };
   }
 };

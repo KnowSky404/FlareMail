@@ -257,7 +257,8 @@ test('activation requires the active protection version to block identity writes
     { name: 'PRE_INBOUND_DB', database_id: target.preInbound.databaseId }, { name: 'PRE_INBOUND_BUCKET', bucket_name: target.preInbound.bucket },
     { name: 'INBOUND_ROUTING_DB', database_id: target.inboundRouting.databaseId },
     { name: 'APP_VERSION', text: target.vars.APP_VERSION },
-    { name: 'CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', type: 'secret_text' }
+    { name: 'CLOUDFLARE_EMAIL_ROUTING_READ_TOKEN', type: 'secret_text' },
+    { name: 'OAUTH_KV', type: 'kv_namespace', namespace_id: target.oauthKvId }
   ];
   const mockScope = (scope: { environment: string; readOnly?: boolean; workerName?: string }, enabled = false) => writeFile(join(directory, 'versions'),
     JSON.stringify({ bindings: [...bindings, { name: 'PRE_INBOUND_SETTINGS', json: { enabled } },
@@ -277,12 +278,14 @@ test('activation requires the active protection version to block identity writes
     expect(assertActiveProductionForRelease(target, resume).routingReadOnly).toBe(false);
     expect(() => assertActiveProductionForRelease({ ...target, vars: { ...target.vars, APP_VERSION: 'production+different' } }, resume))
       .toThrow('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
-    const nativePreview = { ...target, databaseId: target.preInbound.databaseId, bucket: target.preInbound.bucket };
+    const nativePreview = { ...target, databaseId: target.preInbound.databaseId, bucket: target.preInbound.bucket, oauthKvId: 'b'.repeat(32) };
     const management = { previewCommit: '', previewDeploymentId: 'pre', deploymentId: source.deploymentId, productionDb: target.databaseId,
       productionBucket: target.bucket, expectsDelivery: true, legacyFixedDelivery: false, managementEnabled: true };
     await mockScope({ environment: 'preview', workerName: target.name }, true);
     expect(() => assertActiveProductionForPreview(nativePreview, management)).toThrow('INBOUND_PREVIEW_MANAGEMENT_REQUIRES_ACTIVE_DELIVERY');
     await mockScope({ environment: 'production', workerName: target.name }, true);
+    expect(() => assertActiveProductionForPreview({ ...nativePreview, oauthKvId: target.oauthKvId }, management))
+      .toThrow('PREVIEW_OAUTH_KV_NOT_ISOLATED');
     expect(() => assertActiveProductionForPreview(nativePreview, management)).not.toThrow();
   } finally {
     for (const [key, value] of Object.entries(previous)) {

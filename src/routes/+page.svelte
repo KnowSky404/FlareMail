@@ -1856,11 +1856,14 @@
   }
 
   function refreshDeepLinkedMessage(current: MailMessage) {
-    if (!authenticated || authExpired || current.folder === 'drafts' || deepLinkedMessage?.id !== current.id) return;
+    if (!authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
     const section = activeSection;
     const flagRevision = deepLinkedFlagRevisions.get(current.id) ?? { read: 0, starred: 0 };
     const request = syncMessageRequest.begin();
-    return fetchWorkspaceMessage(current.id, request.signal).then((result) => {
+    const fetchDetail = current.folder === 'drafts'
+      ? fetchDraftDetail(current.id, request.signal, { activeOnly: true })
+      : fetchWorkspaceMessage(current.id, request.signal);
+    return fetchDetail.then((result) => {
       if (!request.isCurrent() || !authenticated || authExpired || deepLinkedMessage?.id !== current.id) return;
       if (activeSection !== section || selectedMessageId !== current.id) {
         deepLinkedMessage = null;
@@ -1948,7 +1951,7 @@
     }
     if (current) {
       if (isInboundMessageId(current.id)) void loadInboundDetail(current, true);
-      else void loadWorkspaceBody(current, true);
+      else if (current.folder !== 'drafts') void loadWorkspaceBody(current, true);
       if (current.folder === 'sent' && current.source === 'workspace') void loadDeliveryDetail(current, true);
     }
     void refreshWorkspace(false, event.delivery === true).then(() => {

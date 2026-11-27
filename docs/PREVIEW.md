@@ -1,6 +1,6 @@
 # 使用全局 cf 验收 PRE
 
-使用全局 `cf` 和原生 `cloudflare.config.ts`。本地构建使用 `cf 1.0.0-rc.1` 与锁定的 Vite 插件 `2.0.0-rc.0`，要求 Node.js ≥ 22.18。旧配置和命令见[历史记录](archive/wrangler-preview.md)。
+使用全局 `cf` 和原生 `cloudflare.config.ts`。本地构建与类型生成使用 `cf 1.0.0-rc.6` 和锁定的 Vite 插件 `2.0.0-rc.0`，要求 Node.js ≥ 22.18。旧配置和命令见[历史记录](archive/wrangler-preview.md)。
 
 当前 `mail-ai` 使用独立 D1 和 R2。独立 PRE 收信 Worker 已撤下，Cloudflare 禁用了关联的精确规则。旧测试地址仍可能命中生产 catch-all。首次切换的前置检查、规则恢复、停收探测和入箱验收按 [单 Worker 的 PRE 真实收信 SPEC](specs/single-worker-pre-inbound.md) 的完整顺序执行。
 
@@ -75,8 +75,8 @@ until a usable replacement is confirmed.
 
 The shared-inbound release checks reuse the credential store selected by `cf`,
 including the system keyring. For native Preview reads missing from the command
-surface, they use the authenticated read transport bundled with the pinned
-`cf 1.0.0-rc.1`. Check this integration before upgrading the CLI. An authorized,
+surface, they use the authenticated read transport bundled with
+`cf 1.0.0-rc.1` and `1.0.0-rc.6`. Check this integration before upgrading the CLI. An authorized,
 scoped `CLOUDFLARE_API_TOKEN` in the process environment also works.
 
 ## 邮件阅读页验收
@@ -149,8 +149,9 @@ Email Routing 和 Cron 触发 Worker 的生产 handler。原生 Preview 的 HTTP
 
 ## Remote MCP acceptance
 
-核对 PRE 的 D1、R2、OAuth KV、Owner 和 canonical URL 与生产隔离。迁移
-0043、创建 KV 和写入合成邮件分别遵循授权范围。按 [MCP 指南](MCP.md) 检验
+核对 PRE 的 D1、R2、OAuth KV、Owner 和 canonical URL 与生产隔离。Previews
+Base 不应继承 OAuth KV。发布前会核对候选 KV 和活动生产绑定。
+迁移 0043、创建 KV 和写入合成邮件分别遵循授权范围。按 [MCP 指南](MCP.md) 检验
 协议入口、Origin、Owner 同意、三种权限、邮件读取和撤销。保留同一提交的 PRE
 URL、部署 ID、版本和脱敏记录。生产流量指向仍按本指南核对。ChatGPT 的真实
 连接与过期刷新必须取得独立证据。

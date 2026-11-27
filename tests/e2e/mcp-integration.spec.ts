@@ -145,14 +145,20 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
       const draftPage = await signedOut.newPage();
       const citation = String(draft.structuredContent?.url);
       await draftPage.goto(citation);
-      await draftPage.getByLabel('管理员用户名').fill(E2E_USERNAME);
+      await draftPage.waitForLoadState('networkidle');
+      const username = draftPage.getByLabel('管理员用户名');
+      await username.fill(E2E_USERNAME);
       await draftPage.getByLabel('密码').fill(E2E_PASSWORD);
+      await expect(username).toHaveValue(E2E_USERNAME);
       await draftPage.getByRole('button', { name: '登录' }).click();
       await expect(draftPage.getByRole('heading', { name: 'E2E MCP older draft', exact: true })).toBeVisible();
-      const discarded = await draftPage.request.delete('/api/workspace/messages/e2e-mcp-older-draft', {
-        headers: { Origin: base }
-      });
-      expect(discarded.status()).toBe(200);
+      const discardPage = await signedOut.newPage();
+      await discardPage.goto(citation);
+      await discardPage.getByRole('region', { name: '邮件详情' })
+        .getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+      await discardPage.getByRole('dialog', { name: '移入垃圾箱？' })
+        .getByRole('button', { name: '移入垃圾箱', exact: true }).click();
+      await expect(draftPage.getByRole('heading', { name: 'E2E MCP older draft', exact: true })).toBeHidden();
       await draftPage.goto(citation);
       await expect(draftPage).not.toHaveURL(/message=/u);
       await expect(draftPage.getByRole('heading', { name: 'E2E MCP older draft', exact: true })).toBeHidden();
@@ -187,6 +193,17 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect(await call('unknown_tool')).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('-32602') }] });
 
     await save(page.request, base, { action: 'settings', enabled: true, scopes: ['mail.read', 'mail.metadata.read'] });
+    const unsupported = await startAuthorization(new URL(base), {
+      metadata: await discovery.json(), clientInformation: { client_id: grant.client_id },
+      redirectUrl: new URL(base + '/mcp-test-callback'), resource: new URL(mcp),
+      scope: 'mail.attachments.metadata.read', state: 'disallowed-scope'
+    });
+    const rejected = await page.request.get(unsupported.authorizationUrl.href, { maxRedirects: 0 });
+    expect(rejected.status()).toBe(303);
+    const callback = new URL(rejected.headers().location!);
+    expect(callback.origin + callback.pathname).toBe(base + '/mcp-test-callback');
+    expect(callback.searchParams.get('error')).toBe('invalid_scope');
+    expect(callback.searchParams.get('state')).toBe('disallowed-scope');
     expect(await call('list_attachments', { id: 'email:e2e-html-inbox-message' })).toMatchObject({
       isError: true, _meta: { 'mcp/www_authenticate': [expect.stringContaining('error_description=')] }
     });

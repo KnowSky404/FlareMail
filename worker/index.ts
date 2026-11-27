@@ -25,15 +25,18 @@ function scheduleExpiredRecordsCleanup(db: D1Database, ctx: ExecutionContext) {
 export default {
   async fetch(request, env, ctx) {
     const path = new URL(request.url).pathname;
+    const isMcpMachine = isMcpMachinePath(path);
     let response: Response;
-    if (isMcpMachinePath(path)) {
+    if (isMcpMachine) {
       const { handleMcpEndpoint } = await import('../src/lib/server/mcp/endpoint');
       response = await handleMcpEndpoint(request, env, ctx);
     } else {
       response = await appFetch(request, env, ctx);
     }
-    if (env.APP_ENV !== 'production' && env.DB && request.method === 'POST' &&
-        (path === '/api/workspace/session' || (path === mcpPaths.resource && response.ok)) &&
+    const canWriteRateLimit = request.method === 'POST'
+      ? path === '/api/workspace/session' || isMcpMachine
+      : request.method === 'GET' && path === mcpPaths.authorize;
+    if (env.APP_ENV !== 'production' && env.DB && canWriteRateLimit &&
         Date.now() >= nextRequestCleanupAt) {
       nextRequestCleanupAt = Date.now() + 15 * 60 * 1000;
       scheduleExpiredRecordsCleanup(env.DB, ctx);
