@@ -105,8 +105,8 @@ export const actions: Actions = {
           const id = crypto.randomUUID();
           const { clientName } = await oauth.describeConsent(auth);
           const { redirectTo } = await oauth.completeAuthorization({
-            request: auth, userId: session.userId, metadata: {}, scope: scopesFromMask(scopes),
-            props: { id, issuer: config.issuer }, revokeExistingGrants: false
+            request: auth, userId: await credentialDigest(session.userId), metadata: {}, scope: scopesFromMask(scopes),
+            props: { id, issuer: config.issuer, owner: session.userId }, revokeExistingGrants: false
           });
           const code = new URL(redirectTo).searchParams.get('code');
           if (!code || !(await addPendingGrant(env.DB, {

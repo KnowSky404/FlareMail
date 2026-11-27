@@ -681,19 +681,23 @@
       !targetId ||
       section === 'profile' ||
       section === 'trash' ||
-      (section !== 'inbox' && section !== 'archive' && section !== 'sent' && section !== 'starred' && section !== 'label')
+      (section !== 'inbox' && section !== 'archive' && section !== 'sent' && section !== 'drafts' &&
+        section !== 'starred' && section !== 'label')
     ) return;
     const currentMessages = section === 'archive'
       ? mailboxPages?.archive?.messages ?? []
       : section === 'inbox' ? mailbox.inbox
         : section === 'sent' ? mailbox.sent
+        : section === 'drafts' ? mailbox.drafts
         : mailboxPages?.[section]?.messages ?? [];
     if (currentMessages.some((message) => message.id === targetId) || deepLinkedMessage?.id === targetId) return;
 
     const request = targetMessageRequest.begin();
     void (async () => {
       try {
-        const result = await fetchWorkspaceMessage(targetId, request.signal);
+        const result = section === 'drafts'
+          ? await fetchDraftDetail(targetId, request.signal)
+          : await fetchWorkspaceMessage(targetId, request.signal);
         if (!request.isCurrent() || urlMessageId !== targetId || activeSection !== section) return;
         // An explicit older-message link is independent of the current page cursor.
         // Keep the category, search and identity scope rather than injecting a row.

@@ -10,12 +10,14 @@ import {
 export interface GrantProps {
   id: string;
   issuer: string;
+  owner: string;
 }
 
 export function isGrantProps(value: unknown): value is GrantProps {
   if (!value || typeof value !== 'object') return false;
   const props = value as Partial<GrantProps>;
-  return typeof props.id === 'string' && /^[a-f0-9-]{36}$/u.test(props.id) && typeof props.issuer === 'string';
+  return typeof props.id === 'string' && /^[a-f0-9-]{36}$/u.test(props.id) && typeof props.issuer === 'string' &&
+    typeof props.owner === 'string' && props.owner.length > 0;
 }
 
 interface Exchange {
@@ -69,12 +71,12 @@ export function createMcpAuthorizationServer(config: McpConfig, exchange?: Excha
     tokenExchangeCallback: async (options: TokenExchangeCallbackOptions<McpEnv>) => {
       const { userId, clientId, props, resource, requestedScope, env, grantType } = options;
       if (!exchange || !isGrantProps(props) || props.issuer !== config.issuer || resource !== config.resource ||
-          !isMcpOwnerConfiguration(env, userId) ||
+          !isMcpOwnerConfiguration(env, props.owner) || userId !== await credentialDigest(props.owner) ||
           (grantType === GrantType.AUTHORIZATION_CODE && exchange.kind !== 'code') ||
           (grantType === GrantType.REFRESH_TOKEN && exchange.kind !== 'refresh')) {
         throw new OAuthError('invalid_grant', { description: 'The authorization is no longer valid.' });
       }
-      const grant: GrantKey = { id: props.id, issuer: config.issuer, owner: userId, client: clientId };
+      const grant: GrantKey = { id: props.id, issuer: config.issuer, owner: props.owner, client: clientId };
       const requested = mcpScopeMask(requestedScope);
       const requireExchange = async () => {
         const current = await inspectExchange(env.DB, grant, exchange.kind, exchange.digest);

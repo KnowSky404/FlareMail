@@ -9,7 +9,7 @@ import { assertNoConsoleErrors, assertNoHorizontalOverflow, expect, login, openF
 const target = JSON.parse(readFileSync(new URL('../../cloudflare.local.json', import.meta.url), 'utf8')) as { databaseId: string };
 const primary = '00000000-0000-4000-8000-000000000021';
 const support = '00000000-0000-4000-8000-000000000022';
-const owner = 'e2e-admin-user';
+const owner = process.env.FLAREMAIL_E2E_MCP === 'true' ? 'e2e:admin-user' : 'e2e-admin-user';
 const endpoint = '/api/workspace/attention';
 const subject = 'E2E Delivery Exception';
 const notice = (page: Page) => page.getByRole('button', { name: /^(通知|Notifications)/u });

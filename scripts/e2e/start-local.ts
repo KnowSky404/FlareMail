@@ -32,7 +32,8 @@ if (
 const adminEmail = 'e2e-admin@flaremail.test';
 const adminUsername = 'flower';
 const adminPassword = 'FlareMail-E2E-password-2026!';
-const userId = 'e2e-admin-user';
+const mcpTest = process.env.FLAREMAIL_E2E_MCP === 'true';
+const userId = mcpTest ? 'e2e:admin-user' : 'e2e-admin-user';
 const inboxId = 'e2e-inbox-message';
 const htmlInboxId = 'e2e-html-inbox-message';
 const deepInboundId = 'e2e-deep-inbound-message';
@@ -88,6 +89,7 @@ const draftSubjects = [
   'E2E Conflict Overwrite',
   'E2E Mobile Existing'
 ];
+if (mcpTest) draftSubjects.push(...Array.from({ length: 40 }, (_, index) => `E2E MCP filler draft ${index + 1}`));
 const draftSeed = draftSubjects.map((subject, index) => `INSERT OR IGNORE INTO workspace_drafts (
   id, user_id, to_email, cc, subject, body, is_starred, created_at, updated_at
 ) VALUES (
@@ -101,7 +103,7 @@ if (performanceRunId) {
 } else {
   await rm(persistTo, { recursive: true, force: true });
 }
-if (process.env.FLAREMAIL_E2E_MCP === 'true') {
+if (mcpTest) {
   await mkdir(persistTo, { recursive: true });
   const key = join(persistTo, 'mcp-test-key.pem');
   const cert = join(persistTo, 'mcp-test-cert.pem');
@@ -226,6 +228,9 @@ INSERT OR IGNORE INTO workspace_outbound_receipts (
   'email.sent', ${sql(timestamp)}, ${sql(timestamp)}, ${sql(timestamp)}
 );
 ${draftSeed}
+${mcpTest ? `INSERT INTO workspace_drafts (id, user_id, to_email, subject, body, created_at, updated_at)
+  VALUES ('e2e-mcp-older-draft', ${sql(userId)}, 'draft-recipient@flaremail.test', 'E2E MCP older draft',
+    'This draft is older than the first Drafts page.', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z');` : ''}
 ${performanceRunId ? `CREATE TABLE ${performanceMarkerTable} (id TEXT NOT NULL PRIMARY KEY);
 INSERT INTO ${performanceMarkerTable} (id) VALUES (${sql(performanceRunId)});` : ''}
 `;
