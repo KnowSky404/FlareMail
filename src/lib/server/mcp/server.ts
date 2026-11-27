@@ -98,7 +98,9 @@ export async function serveMcpTools(request: Request, context: ToolContext): Pro
   const authenticate = (scope: McpScope) => ({
     isError: true,
     content: [{ type: 'text' as const, text: 'The current authorization does not allow this tool.' }],
-    _meta: { 'mcp/www_authenticate': [`Bearer error="insufficient_scope", resource_metadata="${config.issuer + mcpPaths.protectedResource}", scope="${scope}"`] }
+    _meta: { 'mcp/www_authenticate': [
+      `Bearer error="insufficient_scope", error_description="Authorize the requested scope to use this tool.", resource_metadata="${config.issuer + mcpPaths.protectedResource}", scope="${scope}"`
+    ] }
   });
 
   function register<Input extends z.ZodType, Output extends z.ZodType>(
@@ -205,15 +207,15 @@ export async function serveMcpTools(request: Request, context: ToolContext): Pro
       const domains = rows.slice(0, limit).map((row) => ({ id: row.id, domain: row.domain_name, enabled: row.enabled === 1 }));
       return { domains, nextAfterId: rows.length > limit ? domains.at(-1)!.id : null };
     });
-  register('list_mail_addresses', metadataRead, 'List owner-managed mail addresses with domain IDs and receive/send capabilities.',
+  register('list_mail_addresses', metadataRead, 'List owner-managed mail addresses, domain IDs and configured receive/send flags.',
     z.strictObject(resourcePage), z.object({ addresses: z.array(z.object({
-      id: text, domainId: text, email: text, receiveEnabled: z.boolean(), sendEnabled: z.boolean()
+      id: text, domainId: text, email: text, receiveConfigured: z.boolean(), sendConfigured: z.boolean()
     })), nextAfterId: text.nullable() }),
     async (actor, args) => {
       const limit = args.limit ?? 20;
       const rows = await listManagedMailAddresses(env.DB, actor.owner, { afterId: args.afterId ?? '', limit: limit + 1 });
       const addresses = rows.slice(0, limit).map((row) => ({
-        id: row.id, domainId: row.domain_id, email: row.email, receiveEnabled: row.receive_enabled === 1, sendEnabled: row.send_enabled === 1
+      id: row.id, domainId: row.domain_id, email: row.email, receiveConfigured: row.receive_enabled === 1, sendConfigured: row.send_enabled === 1
       }));
       return { addresses, nextAfterId: rows.length > limit ? addresses.at(-1)!.id : null };
     });

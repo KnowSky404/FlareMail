@@ -75,6 +75,11 @@ test('scopes paginated search and direct reads to visible owner mail and limits 
   workspace.run('stale-rfc', 'owner', 'inbox', ts, null, null, '<unrelated@example.test>', 'rfc:thread@example.test');
   const thread = await searchMail(env, actor, {}, 'rfc:thread@example.test');
   expect(thread.messages.map(({ id }) => id)).toEqual(['email:visible', 'Z-archive', 'A-sent']);
+  const threadFirst = await searchMail(env, actor, { limit: 1 }, 'rfc:thread@example.test');
+  expect(threadFirst.messages.map(({ id }) => id)).toEqual(['email:visible']);
+  expect(threadFirst.nextCursor).toBeString();
+  const threadNext = await searchMail(env, actor, { limit: 1, cursor: threadFirst.nextCursor! }, 'rfc:thread@example.test');
+  expect(threadNext.messages.map(({ id }) => id)).toEqual(['Z-archive']);
 
   for (const id of ['email:quarantined', 'lost', 'other-mail', 'draft']) {
     await expect(getMcpMessage(env, actor, id, { signal })).rejects.toMatchObject({ status: 404 });
