@@ -37,7 +37,7 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
       return finish(new Response(request.method === 'HEAD' ? null : JSON.stringify({
         resource: config.resource,
         authorization_servers: [config.issuer],
-        scopes_supported: scopesFromMask(policy.scopes & mcpScopeMask(['mail.read', 'mail.metadata.read'])),
+        scopes_supported: scopesFromMask(policy.scopes),
         bearer_methods_supported: ['header'],
         resource_name: 'FlareMail'
       }), { headers: { 'content-type': 'application/json' } }));
@@ -85,12 +85,12 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
     const form = new URLSearchParams(body);
     if ([...form.keys()].some((name) => form.getAll(name).length !== 1)) return error(400, 'invalid_request');
     if (form.has('resource') && form.get('resource') !== config.resource) return error(400, 'invalid_target');
-    const exchange = await exchangeFor(form);
+    const exchange = await exchangeFor(form, signal);
     const provider = exchange ? createMcpAuthorizationServer(config, exchange) : authorization;
     const response = await provider.fetch(sanitized, bindings, ctx);
     const client = requestClientId(request, form);
     if (!response.ok) {
-      if (exchange && client) {
+      if (exchange?.confirmedReplay && client) {
         await revokeReplayedExchange(env.DB, client, config.issuer, exchange.kind, exchange.digest);
       }
       return finish(response);

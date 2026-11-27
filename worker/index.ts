@@ -24,7 +24,7 @@ export default {
   },
 
   scheduled(controller, env, ctx) {
-    if (env.MCP_PUBLIC_URL && env.OAUTH_KV && new Date(controller.scheduledTime).getUTCMinutes() === 0) {
+    if (env.DB && new Date(controller.scheduledTime).getUTCMinutes() === 0) {
       ctx.waitUntil(cleanupMcpRecords(env.DB).catch(() => {
         console.error(JSON.stringify({ event: 'mcp_cleanup_failed' }));
       }));

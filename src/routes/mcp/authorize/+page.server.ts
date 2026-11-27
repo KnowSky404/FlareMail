@@ -50,7 +50,7 @@ export const load: PageServerLoad = async (event) => {
     const request = await oauth.parseAuthRequest(event.request);
     if (request.issuer !== config.issuer || request.resource !== config.resource ||
         request.scope.some((scope) => !mcpScopes.some((allowed) => allowed === scope))) return { status: 'invalid' as const };
-    const requested = request.scope.length ? mcpScopeMask(request.scope) : 3;
+    const requested = request.scope.length ? mcpScopeMask(request.scope) : policy.scopes;
     const scopes = scopesFromMask(policy.scopes & requested);
     if (scopes.length === 0) return { status: 'unavailable' as const };
     const { clientName, redirectHost, redirectIsLoopback } = await oauth.describeConsent(request);
@@ -97,7 +97,7 @@ export const actions: Actions = {
         if (cookie) event.cookies.delete(cookie[1]!, { path: '/', secure: true, sameSite: 'lax' });
         const auth = approved.request;
         if (auth.issuer !== config.issuer || auth.resource !== config.resource || !isAllowedRedirect(auth.redirectUri, config)) return fail(400, { reason: 'invalid' });
-        const requested = auth.scope.length ? mcpScopeMask(auth.scope) : 3;
+        const requested = auth.scope.length ? mcpScopeMask(auth.scope) : policy.scopes;
         const scopes = policy.scopes & requested & mcpScopeMask(selected);
         if (!scopes) {
           destination = authorizationErrorRedirect(auth, 'access_denied');

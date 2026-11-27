@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { openMcpTestDatabase } from './d1.test-fixture';
 import {
-  accessLifetime, activeAccess, addPendingGrant, consumeConsent, consumeExchange, credentialDigest, nowSeconds,
+  accessLifetime, activeAccess, addPendingGrant, auditLimit, cleanupMcpRecords, consumeConsent, consumeExchange, credentialDigest, listMcpGrants, nowSeconds, recordMcpActivity,
   ownerPolicy, recordTokenIssue, revokeIssuedCredential, revokeMcpGrants, revokeReplayedExchange, startConsent, updateMcpPolicy
 } from './store';
 
@@ -23,6 +23,7 @@ test('D1 gates OAuth grants across consent replay, token expiry, narrowing, revo
     const grant = { ...key, id: grantId };
     const revision = (await ownerPolicy(db, 'owner'))!.revision;
     expect(await addPendingGrant(db, { ...grant, name: 'Synthetic', revision, code, scopes: 7 })).toBe(true);
+    expect((await listMcpGrants(db, 'owner')).find((item) => item.id === grantId)?.status).toBe('pending');
     const digest = await credentialDigest(code);
     expect(await consumeExchange(db, { ...grant, issuer: 'https://other.example.test' }, 'code', digest)).toBe(0);
     expect(await consumeExchange(db, grant, 'code', digest)).toBe(7);
@@ -41,6 +42,7 @@ test('D1 gates OAuth grants across consent replay, token expiry, narrowing, revo
   database.query('UPDATE mcp_credentials SET expires_at = ? WHERE digest = ?').run(nowSeconds() - 1, digest);
   expect(await activeAccess(db, a, digest)).toBeNull();
   const refresh = await credentialDigest('refresh1');
+  expect(await consumeExchange(db, a, 'refresh', refresh, 4)).toBe(0);
   expect(await consumeExchange(db, a, 'refresh', refresh)).toBe(3);
   expect(await recordTokenIssue(db, a, { kind: 'refresh', access: 'access3', refresh: 'refresh3', accessTtl: accessLifetime })).toBe(true);
   await revokeReplayedExchange(db, 'client', key.issuer, 'refresh', refresh);
@@ -62,4 +64,19 @@ test('D1 gates OAuth grants across consent replay, token expiry, narrowing, revo
   await updateMcpPolicy(db, 'owner', true, 7);
   expect(await activeAccess(db, c, await credentialDigest('access4'))).toBeNull();
   expect(await addPendingGrant(db, { ...key, id: 'stale', name: 'Synthetic', code: 'stale', scopes: 1, revision: beforeDisable })).toBe(false);
+});
+
+test('caps audit size when traffic outpaces cleanup and prunes retained expired records', async () => {
+  using fixture = openMcpTestDatabase();
+  const { db, database } = fixture;
+  const now = nowSeconds();
+  database.query(`WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+    INSERT INTO mcp_activity (id, owner_id, grant_id, client_name, tool, outcome, duration_ms, called_at)
+    SELECT 'event-' || i, 'owner', 'grant', 'Synthetic', 'search', 'ok', 1, ? FROM n`)
+    .run(auditLimit, now - 31 * 24 * 60 * 60);
+  await recordMcpActivity(db, { id: 'grant', owner_id: 'owner', client_name: 'Synthetic' }, 'latest', 'search', 'ok', 3);
+  expect(database.query('SELECT COUNT(*) AS total FROM mcp_activity').get()).toEqual({ total: auditLimit });
+  expect(database.query("SELECT id FROM mcp_activity WHERE id = 'event-1'").get()).toBeNull();
+  await cleanupMcpRecords(db, now);
+  expect(database.query('SELECT id FROM mcp_activity').all()).toEqual([{ id: 'latest' }]);
 });

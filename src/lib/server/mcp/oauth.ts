@@ -4,7 +4,7 @@ import {
 import { mcpScopes, mcpScopeMask, scopesFromMask } from '$lib/domain/mail/mcp';
 import { isAllowedRedirect, isMcpOwnerConfiguration, mcpPaths, type McpConfig, type McpEnv } from './config';
 import {
-  accessLifetime, consumeExchange, credentialDigest, grantLifetime, type GrantKey
+  accessLifetime, consumeExchange, credentialDigest, grantLifetime, inspectExchange, revokeReplayedExchange, type GrantKey
 } from './store';
 
 export interface GrantProps {
@@ -22,6 +22,8 @@ interface Exchange {
   kind: 'code' | 'refresh';
   digest: string;
   redirect?: string;
+  signal: AbortSignal;
+  confirmedReplay?: boolean;
   verified?: GrantKey;
 }
 
@@ -37,6 +39,13 @@ export function createMcpAuthorizationServer(config: McpConfig, exchange?: Excha
     accessTokenTTL: accessLifetime,
     refreshTokenTTL: grantLifetime,
     clientRegistrationTTL: 90 * 24 * 60 * 60,
+    onError: ({ internal }) => {
+      // Both SDK outcomes occur after token endpoint client authentication.
+      if (exchange && ((internal.category === 'authorization-code-grant' && internal.reason === 'code_replayed') ||
+          (internal.category === 'refresh-token-grant' && internal.reason === 'refresh_token_mismatch'))) {
+        exchange.confirmedReplay = true;
+      }
+    },
     clientRegistrationCallback: ({ clientMetadata: metadata }) => {
       const redirects = metadata.redirect_uris;
       if (!Array.isArray(redirects) || redirects.length < 1 || redirects.length > 4 ||
@@ -67,23 +76,42 @@ export function createMcpAuthorizationServer(config: McpConfig, exchange?: Excha
         throw new OAuthError('invalid_grant', { description: 'The authorization is no longer valid.' });
       }
       const grant: GrantKey = { id: props.id, issuer: config.issuer, owner: userId, client: clientId };
-      const allowed = await consumeExchange(env.DB, grant, exchange.kind, exchange.digest);
-      if (!allowed) throw new OAuthError('invalid_grant', { description: 'The authorization is no longer valid.' });
-      const scope = mcpScopeMask(requestedScope) & allowed;
-      if (!scope) throw new OAuthError('invalid_grant', { description: 'The requested permissions are no longer granted.' });
+      const requested = mcpScopeMask(requestedScope);
+      const requireExchange = async () => {
+        const current = await inspectExchange(env.DB, grant, exchange.kind, exchange.digest);
+        if (current && current.consumed_at !== null) {
+          await revokeReplayedExchange(env.DB, clientId, config.issuer, exchange.kind, exchange.digest);
+          throw new OAuthError('invalid_grant', { description: 'The authorization is no longer valid.' });
+        }
+        if (!current) throw new OAuthError('invalid_grant', { description: 'The authorization is no longer valid.' });
+        if (!(current.scopes & requested)) {
+          throw new OAuthError('invalid_scope', { description: 'The requested permissions are no longer granted.' });
+        }
+        return current;
+      };
+      const current = await requireExchange();
+      // The provider writes the same KV grant key at consent and on each rotation.
+      const delay = current.issued_at_ms + 1250 - Date.now();
+      if (delay > 0) await scheduler.wait(delay, { signal: exchange.signal });
+      exchange.signal.throwIfAborted();
+      const allowed = await consumeExchange(env.DB, grant, exchange.kind, exchange.digest, requested);
+      if (!allowed) {
+        await requireExchange();
+        throw new OAuthError('temporarily_unavailable', { statusCode: 503, description: 'Retry the token request.' });
+      }
       exchange.verified = grant;
-      return { accessTokenScope: scopesFromMask(scope) };
+      return { accessTokenScope: scopesFromMask(allowed) };
     }
   });
 }
 
-export async function exchangeFor(form: URLSearchParams): Promise<Exchange | undefined> {
+export async function exchangeFor(form: URLSearchParams, signal: AbortSignal): Promise<Exchange | undefined> {
   const grantType = form.get('grant_type');
   if (grantType !== 'authorization_code' && grantType !== 'refresh_token') return;
   const kind = grantType === 'authorization_code' ? 'code' : 'refresh';
   const value = form.get(kind === 'code' ? 'code' : 'refresh_token');
   if (!value || value.length > 512) return;
-  return { kind, digest: await credentialDigest(value), redirect: form.get('redirect_uri') ?? undefined };
+  return { kind, signal, digest: await credentialDigest(value), redirect: form.get('redirect_uri') ?? undefined };
 }
 
 export { AuthorizationError, authorizationErrorRedirect } from '@cloudflare/workers-oauth-provider';

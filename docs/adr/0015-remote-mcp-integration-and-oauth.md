@@ -17,7 +17,7 @@ runtime. [Cloudflare MCP handler](https://developers.cloudflare.com/agents/model
 
 Use `@cloudflare/workers-oauth-provider` `1.4.0` for authorization server
 metadata, DCR, RFC 9207, PKCE, redirect verification, encrypted opaque tokens and
-the consent transaction. The token audience derives from the sole permitted
+the consent transaction. Code redemption and refresh wait for the KV per-key write interval before claiming a credential in D1. The token audience derives from the sole permitted
 RFC 8707 resource, the exact configured MCP URL. Deploy a dedicated
 `OAUTH_KV` namespace. CIMD introduces metadata network fetch and another
 trust boundary. DCR satisfies ChatGPT compatibility with a fixed redirect

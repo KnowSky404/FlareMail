@@ -1199,6 +1199,7 @@ CREATE TABLE mcp_credentials (
   digest TEXT PRIMARY KEY,
   grant_id TEXT NOT NULL REFERENCES mcp_grants(id) ON DELETE CASCADE,
   kind TEXT NOT NULL CHECK (kind IN ('code', 'access', 'refresh')),
+  issued_at_ms INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   consumed_at INTEGER
 );
