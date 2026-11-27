@@ -11,11 +11,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}${{ github.event.action == 'edited' && github.event.changes.base == null && '-metadata' || '' }}
-  cancel-in-progress: true
-
-env:
-  CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: 'false'
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}${{ github.event.action == 'edited' && github.event.changes.base == null && '-metadata' || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scope:
@@ -69,30 +66,29 @@ jobs:
           done < "$paths"
           printf 'runtime=%s\ndependencies=%s\n' "$runtime" "$dependencies" >> "$GITHUB_OUTPUT"
 
-  tests:
-    name: Tests (${{ matrix.group }})
+  unit:
+    name: Tests (unit)
     needs: scope
     if: needs.scope.outputs.runtime == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [unit, integration, remaining]
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: ./.github/actions/setup-flaremail
-        with:
-          cf: ${{ matrix.group == 'remaining' && 'true' || 'false' }}
-      - if: matrix.group == 'remaining'
-        run: bun run build:app
-      - name: Run test partition
-        env:
-          TEST_GROUP: ${{ matrix.group }}
-        run: bun run "test:$TEST_GROUP"
+    uses: ./.github/workflows/ci-tests.yml
+    with:
+      partition: unit
+
+  integration:
+    name: Tests (integration)
+    needs: scope
+    if: needs.scope.outputs.runtime == 'true'
+    uses: ./.github/workflows/ci-tests.yml
+    with:
+      partition: integration
+
+  remaining:
+    name: Tests (remaining)
+    needs: scope
+    if: needs.scope.outputs.runtime == 'true'
+    uses: ./.github/workflows/ci-tests.yml
+    with:
+      partition: remaining
 
   build:
     name: Types and Worker package
@@ -111,72 +107,36 @@ jobs:
       - run: bun run cf:typegen --check
 
   chromium:
-    name: Chromium core
+    name: chromium
     needs: scope
     if: needs.scope.outputs.runtime == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: ./.github/actions/setup-flaremail
-      - run: bunx --no-install playwright install --with-deps chromium
-      - name: Verify core workspace and compose flows
-        env:
-          FLAREMAIL_E2E_PROJECT: desktop
-        run: >-
-          bunx --no-install playwright test --project=desktop --grep @ci-core
-      - if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: chromium-failure
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 5
+    uses: ./.github/workflows/ci-browser.yml
+    with:
+      suite: chromium
 
-  extended:
-    name: Extended browser (${{ matrix.suite }})
+  webkit:
+    name: webkit
     needs: scope
     if: needs.scope.result == 'success' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - suite: webkit
-            browser: webkit
-          - suite: firefox
-            browser: firefox
-          - suite: a11y
-            browser: chromium
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: ./.github/actions/setup-flaremail
-      - env:
-          BROWSER: ${{ matrix.browser }}
-        run: bunx --no-install playwright install --with-deps "$BROWSER"
-      - env:
-          SUITE: ${{ matrix.suite }}
-        shell: bash
-        run: |
-          case "$SUITE" in
-            a11y) bun run test:a11y ;;
-            webkit|firefox) bun run "test:e2e:$SUITE" ;;
-            *) exit 1 ;;
-          esac
-      - if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: ${{ matrix.suite }}-failure
-          path: test-results/
-          if-no-files-found: ignore
-          retention-days: 5
+    uses: ./.github/workflows/ci-browser.yml
+    with:
+      suite: webkit
+
+  firefox:
+    name: firefox
+    needs: scope
+    if: needs.scope.result == 'success' && github.event_name != 'pull_request'
+    uses: ./.github/workflows/ci-browser.yml
+    with:
+      suite: firefox
+
+  a11y:
+    name: a11y
+    needs: scope
+    if: needs.scope.result == 'success' && github.event_name != 'pull_request'
+    uses: ./.github/workflows/ci-browser.yml
+    with:
+      suite: a11y
 
   dependency-audit:
     name: Dependency change audit
@@ -196,7 +156,7 @@ jobs:
   gate:
     name: ${{ github.event.action == 'edited' && github.event.changes.base == null && 'Metadata edit' || 'CI gate' }}
     if: always() && (github.event.action != 'edited' || github.event.changes.base != null)
-    needs: [scope, tests, build, chromium, dependency-audit, extended]
+    needs: [scope, unit, integration, remaining, build, chromium, dependency-audit, webkit, firefox, a11y]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -206,11 +166,15 @@ jobs:
           SCOPE: ${{ needs.scope.result }}
           RUNTIME: ${{ needs.scope.outputs.runtime }}
           DEPENDENCIES: ${{ needs.scope.outputs.dependencies }}
-          TESTS: ${{ needs.tests.result }}
+          UNIT: ${{ needs.unit.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          REMAINING: ${{ needs.remaining.result }}
           BUILD: ${{ needs.build.result }}
           CHROMIUM: ${{ needs.chromium.result }}
           AUDIT: ${{ needs.dependency-audit.result }}
-          EXTENDED: ${{ needs.extended.result }}
+          WEBKIT: ${{ needs.webkit.result }}
+          FIREFOX: ${{ needs.firefox.result }}
+          A11Y: ${{ needs.a11y.result }}
         run: |
           [[ "$SCOPE" == success ]]
           case "$RUNTIME" in
@@ -218,7 +182,9 @@ jobs:
             false) expected=skipped ;;
             *) exit 1 ;;
           esac
-          [[ "$TESTS" == "$expected" && "$BUILD" == "$expected" && "$CHROMIUM" == "$expected" ]]
+          for result in "$UNIT" "$INTEGRATION" "$REMAINING" "$BUILD" "$CHROMIUM"; do
+            [[ "$result" == "$expected" ]]
+          done
           case "$DEPENDENCIES" in
             true) expected=success ;;
             false) expected=skipped ;;
@@ -226,7 +192,8 @@ jobs:
           esac
           [[ "$AUDIT" == "$expected" ]]
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            [[ "$EXTENDED" == skipped ]]
+            expected=skipped
           else
-            [[ "$EXTENDED" == success ]]
+            expected=success
           fi
+          [[ "$WEBKIT" == "$expected" && "$FIREFOX" == "$expected" && "$A11Y" == "$expected" ]]

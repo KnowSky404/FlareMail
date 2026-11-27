@@ -26,3 +26,4 @@ runs:
       run: |
         bun install --global cf@1.0.0-rc.1
         printf '%s\n' "$HOME/.bun/bin" >> "$GITHUB_PATH"
+        printf '%s\n' 'CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV=false' >> "$GITHUB_ENV"
