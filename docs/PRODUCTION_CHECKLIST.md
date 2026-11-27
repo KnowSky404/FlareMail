@@ -14,33 +14,17 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
 
 ## Release identity
 
-- [ ] Development took place in a dedicated worktree and task branch. The
-  feature PR was opened after PRE business acceptance and records the accepted
-  SHA, URL, deployment/version ID and relevant checks. Later implementation
-  changes received updated local/PRE evidence. Documentation-only changes
-  record diff, command and link review with PRE marked not applicable; any
-  bypass of the feature PRE gate has explicit authorization.
-- [ ] Each task-commit push and PR creation was preceded by a completed local
-  `/review` covering the full task diff, with valid findings resolved. Commands,
-  times, base/head SHAs and results are recorded; edits and follow-up commits
-  received new local review. Documentation-only changes follow the same gate.
-- [ ] The task's push, PR and rebase merge followed the standing Git authorization
-  and any user restrictions. Any direct push to `main` and production deployment
-  have their own explicit authorizations. The final release SHA and contents
-  are compared with PRE evidence; changed contents are verified and accepted
-  again before production publication.
-- [ ] Before merge, Codex Code Review and enabled Security Review completed for
-  the final PR head, including documentation-only PRs. Review SHA, completion
-  times and result links are recorded, and findings were assessed and handled.
-  Any new commit received a new completed review. Empty Actions checks or old
-  reviews do not satisfy this gate.
-- [ ] The PR URL, original head and final merge SHA are recorded. The authorized
-  PR used rebase merge unless another strategy was requested; `MERGED` and
-  patch/content integration into main were verified. Task worktree/branch
-  cleanup and local main synchronization are recorded as complete, retained
-  by request, or blocked with a reason under the
-  [completion workflow](./DEVELOPMENT.md#rebase-merge-and-cleanup). Cleanup
-  does not establish production deployment.
+- [ ] Verify the [risk-based workflow](./WORKFLOW.md) evidence. The PR records
+  the applicable local checks, CI, review results, blocking-finding resolutions
+  and final PRE business acceptance or the permitted alternative. PRE evidence
+  includes candidate SHA, tree, build inputs, URL and deployment/version ID.
+- [ ] The final source and build inputs match the accepted candidate, including
+  the lockfile, deployment configuration and version label. Rebase may change
+  the commit SHA. If the final content or any relevant input changes, repeat
+  affected verification and business acceptance before publication.
+- [ ] Record the PR URL, original head, merge SHA, and main integration and
+  cleanup results under the [merge procedure](./DEVELOPMENT.md#rebase-merge-and-cleanup).
+  Verify independent production authorization before deploying.
 - [ ] The release is being prepared from `main`, or an explicitly approved
   immutable release commit has been selected and recorded.
 - [ ] `git status --short` is empty.
@@ -58,8 +42,8 @@ Use global cf and the native build/target workflow in [DEPLOY.md](../DEPLOY.md).
   git merge-base --is-ancestor <RELEASE_SHA> origin/main
   ```
 
-- [ ] Local tests, browser QA, build and release preflight evidence match the
-  exact SHA. Ordinary pushes and PRs do not run GitHub Actions.
+- [ ] The final commit has applicable CI, browser QA, build and local release
+  preflight evidence. Any reuse is justified by the recorded build inputs.
 - [ ] Any manually triggered or published-Release dependency scan is recorded
   with its exact SHA and final result. A published-Release scan is a
   post-publication check; the local dependency audit remains required before

@@ -46,7 +46,7 @@ export default defineConfig({
     navigationTimeout: 20_000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure'
+    video: process.env.CI ? 'off' : 'retain-on-failure'
   },
   webServer: {
     command: `bun scripts/e2e/start-local.ts --port ${port}`,

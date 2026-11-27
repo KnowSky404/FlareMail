@@ -22,7 +22,7 @@ test.afterEach(async ({ page, baseURL }, testInfo) => {
   }
 });
 
-test('keeps send shortcuts separate from recipient suggestions and IME input', async ({ page, consoleErrors }, testInfo) => {
+test('keeps send shortcuts separate from recipient suggestions and IME input', { tag: '@ci-core' }, async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop keyboard handling covers both Control and Command shortcuts.');
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();

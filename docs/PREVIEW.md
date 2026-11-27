@@ -6,6 +6,8 @@
 
 ## 默认验收顺序
 
+按 [研发工作流](./WORKFLOW.md) 在当前候选通过 CI 和必要审查、且阻断项已处理后做正式验收。提前的远程调试需有理由及授权，单独记录。共享 `mail-ai` 发布和验收串行进行，确认当前无其他候选占用。操作者记录占用起止，在业务测试前后重新核对运行中的部署 ID、SHA、代码树和构建输入。
+
 1. 在独立 worktree 从最新 `origin/main` 开发，完成[受影响范围的本地验证](./DEVELOPMENT.md#verify-changes)和 `bun run deploy:dry-run`，创建干净原子提交。
 2. 仅在已获 Preview 授权时，填写忽略的 `cloudflare.preview.json`（模板 `cloudflare.preview.json.example`），权限 `0600`。使用现有生产 Worker 名称作为原生 Preview 的父级，沿用 `mail-ai` 的独立 D1 和 R2。发布前核对 PRE 的 D1 UUID 和 R2 桶名分别与生产不同。设置 `APP_ENV=preview`、实际 Provider/Auth 配置，关闭自动回复、通知和 Telegram，使用 `cron=[]`。资源创建、Owner 初始化和邮件规则调整各自独立授权。
    在发布之前检查 Previews Base、现有 Preview secrets 与候选目标的合并结果。当前方案尚未实施时，确认将生成的部署既不继承 Cloudflare 路由读取或写入权限，也没有可用于全量发现的身份配置。无法确认就停止发布，先按下文「当前 mail-ai 的邮箱身份验收」核对旧配置及权限。
@@ -19,7 +21,7 @@
    配置。供应商请求只读，但 `/domains/:domainId/refresh` 和完整检查会写入
    当前 PRE D1 的检查元数据。默认只读验收应直接使用 GET 接口；浏览器验收若
    允许这些检查请求，须先获得域名/地址检查状态写入授权，不能视为纯只读访问。
-6. PRE 业务验收完成后，分别在 push 和创建 PR 前实际执行 `codex review --base origin/main` 并处理有效问题。等待当前 head 的 Codex Code Review 和 Security Review 完成，再按仓库默认授权 rebase 合并和收尾。实现提交追加后补做受影响本地/PRE 验收及两种 review。
+6. 记录通过的业务用例、未覆盖项和候选证据，再按 [合并流程](./DEVELOPMENT.md#rebase-merge-and-cleanup) 收尾。候选的运行时、依赖、构建或资源输入有变化时重新验证受影响场景。
 
 ### 共享归属的只读 PRE 验收
 
@@ -45,7 +47,7 @@
 
 生产建立 PRE 收信保护后，旧版本 URL 须保持关闭，原生 `mail-ai` 继续承担 HTTP 验收。需要版本 URL 的独立测试应使用另外获准的 Worker。私有目标只声明已有且验收所需 secrets，路由验收继续使用授权的只读查询。
 
-本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。Owner 明确委托验收时，按[共享收信 SPEC](specs/shared-inbound-routing.md#兼容切换)记录实际绑定、HTTP 和自动化业务验证。其他情况下，环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；不得把构建、上传或健康检查记为 PRE 验收通过，也不得提前提功能 PR。
+本地隔离替代验证使用 `bun run preview`（全局 `cf dev`）及 `.cloudflare/state`。Owner 明确委托验收时，按[共享收信 SPEC](specs/shared-inbound-routing.md#兼容切换)记录实际绑定、HTTP 和自动化业务验证。其他情况下，环境缺少 Owner 登录方式、PRE 配置或运行权限时，保留本地提交/worktree 并说明阻塞；可提前创建 PR 保留证据。只有必要的替代证据经过确认，才可按研发工作流判断是否可以合并。
 
 ## Keep one current PRE
 

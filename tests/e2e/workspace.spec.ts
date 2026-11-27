@@ -1024,7 +1024,7 @@ test('preserves an unsaved profile edit across another tab identity refresh', as
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('hydrates global metrics and paged navigation on fresh login, then purges state on logout', async ({ page, consoleErrors }, testInfo) => {
+test('hydrates global metrics and paged navigation on fresh login, then purges state on logout', { tag: '@ci-core' }, async ({ page, consoleErrors }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'Desktop navigation exposes all global metric badges and logout controls.');
   await login(page);
   const navigation = page.getByRole('navigation', { name: '主导航' });
@@ -1352,7 +1352,7 @@ test('opens a private standalone reader document without duplicating the message
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('logs in, reads the seeded message, and persists a star', async ({ page, consoleErrors }, testInfo) => {
+test('logs in, reads the seeded message, and persists a star', { tag: '@ci-core' }, async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const item = page.getByRole('listitem').filter({ hasText: 'E2E Inbox Welcome' });
   await expect(item).toBeVisible();
@@ -1451,7 +1451,7 @@ test('announces list selection, star, attachment and delivery states', async ({ 
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('runs advanced owner-scoped FTS search with highlighted persisted results', async ({ page, consoleErrors }, testInfo) => {
+test('runs advanced owner-scoped FTS search with highlighted persisted results', { tag: '@ci-core' }, async ({ page, consoleErrors }, testInfo) => {
   await login(page);
   const query = 'from:html-sender@flaremail.test subject:"E2E HTML Safety" date:2026-08-13 attachment:yes';
   await page.getByLabel('搜索邮件').fill(query);
@@ -1732,7 +1732,7 @@ test('uses global service metrics and exposes typed API errors with a request ID
   await assertNoConsoleErrors(consoleErrors.filter((message) => !message.includes('503')));
 });
 
-test('archives and restores a selected mailbox message', async ({ page, consoleErrors }) => {
+test('archives and restores a selected mailbox message', { tag: '@ci-core' }, async ({ page, consoleErrors }) => {
   await login(page);
   const label = page.getByLabel('选择E2E Inbox Welcome');
   await expect(label).toBeVisible();
@@ -2028,7 +2028,7 @@ test('keeps mobile navigation usable while the management panel downloads', asyn
   await page.unroute('**/_app/immutable/chunks/*.js');
 });
 
-test('autosaves a compose draft and restores it after refresh', async ({ page, consoleErrors }, testInfo) => {
+test('autosaves a compose draft and restores it after refresh', { tag: '@ci-core' }, async ({ page, consoleErrors }, testInfo) => {
   const isPhoneViewport = testInfo.project.name === 'mobile' || testInfo.project.name === 'narrow';
   await login(page);
   await page.getByRole('button', { name: '写邮件', exact: true }).first().click();
@@ -2374,7 +2374,7 @@ test('continues an existing draft on mobile and persists its next version', asyn
   await assertNoConsoleErrors(consoleErrors);
 });
 
-test('sends through the local fake provider and applies a signed delivered webhook', async ({ page, consoleErrors }, testInfo) => {
+test('sends through the local fake provider and applies a signed delivered webhook', { tag: '@ci-core' }, async ({ page, consoleErrors }, testInfo) => {
   const externalRequests: string[] = [];
   let outboundPayload: Record<string, unknown> | undefined;
   page.on('request', (request) => {
