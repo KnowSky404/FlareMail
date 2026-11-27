@@ -5,6 +5,11 @@ service is disabled until the Owner enables it in **Settings → Integrations**.
 Browser and REST access continue to use the configured FlareMail authentication
 mode.
 
+One Streamable HTTP endpoint serves the current MCP revision `2026-07-28`
+through `server/discover` and also supports the `2025-11-25` handshake used
+by earlier clients. Both revisions use the same tool catalog, OAuth grants
+and scope checks. [Official SDK protocol compatibility](https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions)
+
 ## Configure the Worker
 
 1. Pick one canonical HTTPS hostname for the mailbox, consent page, OAuth
