@@ -35,6 +35,19 @@ describe('D1 login rate limiter', () => {
     expect(sqlite.query('SELECT identity_hash FROM workspace_login_rate_limits').all()).toEqual([]);
   });
 
+  test('sweeps expired counters after a successful write, keeping saturated reads read-only', async () => {
+    const { db, sqlite } = database();
+    const now = Date.now();
+    const windowMs = 30 * 60 * 1000;
+    await consumeLoginAttempt(db, 'saturated', now, 1, windowMs);
+    sqlite.exec("INSERT INTO workspace_login_rate_limits VALUES ('expired', 1, 0, 1, 0)");
+    const sweepTime = now + windowMs / 2;
+    expect((await consumeLoginAttempt(db, 'saturated', sweepTime, 1, windowMs)).allowed).toBe(false);
+    expect(sqlite.query("SELECT 1 FROM workspace_login_rate_limits WHERE identity_hash = 'expired'").get()).not.toBeNull();
+    expect((await consumeLoginAttempt(db, 'different', sweepTime, 1, windowMs)).allowed).toBe(true);
+    expect(sqlite.query("SELECT 1 FROM workspace_login_rate_limits WHERE identity_hash = 'expired'").get()).toBeNull();
+  });
+
   test('stores only a normalized identity hash and can clear a successful login', async () => {
     const { db, sqlite } = database();
     await consumeLoginAttempt(db, '198.51.100.1:Owner@Example.Test', 1_000, 1, 10_000);
