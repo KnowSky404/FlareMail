@@ -81,7 +81,8 @@ async function scopedRows(env: CloudflareEnv, actor: MailActor, common: Omit<Mai
 }
 
 export async function searchMail(env: CloudflareEnv, actor: MailActor, input: SearchInput, threadKey?: string) {
-  const { cursor, envelopeRecipient, category, identity, query = '', folder = 'all', limit = 20 } = input;
+  const { cursor, category, identity, query = '', folder = 'all', limit = 20 } = input;
+  const envelopeRecipient = input.envelopeRecipient?.trim();
   const parsed = parseMailboxQuery(new URLSearchParams({ query }));
   const filters = parsed.search?.filters;
   const archivedOnly = filters?.is.includes('archived');

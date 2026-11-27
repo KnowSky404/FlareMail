@@ -50,7 +50,7 @@ const summarySchema = z.object({
 const searchInput = {
   folder: z.enum(['all', 'inbox', 'archive', 'sent', 'drafts']).optional().describe('Defaults to inbox, archive and sent together. Select drafts explicitly.'),
   identity: z.string().regex(/^(domain|address):[A-Za-z0-9:._-]{1,128}$/u).optional().describe('An owner-managed domain:<id> or address:<id>.'),
-  envelopeRecipient: z.string().max(254).refine(isValidMailboxEmail).optional().describe('Exact inbound SMTP envelope recipient.'),
+  envelopeRecipient: z.string().trim().max(254).refine(isValidMailboxEmail).optional().describe('Exact inbound SMTP envelope recipient.'),
   category: z.enum(mailInboxCategories).optional(),
   limit: z.number().int().min(1).max(30).optional(),
   cursor: z.string().min(1).max(1024).optional()
