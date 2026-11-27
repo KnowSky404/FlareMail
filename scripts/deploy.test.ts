@@ -7,7 +7,7 @@ import { createDeployInvocation, parseDeployMode, requireDeployConfig, normalize
 import { createD1Command, localDatabaseId, executeD1, normalizeD1Output, parseCloudflareTarget, projectRoot, readCloudflareTarget } from './cloudflare-target';
 import localTarget from '../cloudflare.local.json';
 import cloudflareConfig from '../cloudflare.config';
-import { assertActiveProductionForPreview, assertActiveProductionForRelease, assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, cloudflareMetadataTransport, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
+import { assertActiveProductionForPreview, assertActiveProductionForRelease, assertLegacyPreviewOAuthIsolation, assertLiveNativePreview, assertLivePreviewForPublish, assertProductionCatchAllRelease, assertProductionOwnershipCoverage, assertUnchangedProductionConfiguration, assertProductionReleaseSource, assertSharedInboundPreview, assertSharedInboundProduction, cloudflareMetadataTransport, fixedReservationHash, pinCloudflareReleaseIdentity, sharedInboundPreviewTargetHash, verifyProductionWorkerDev } from './shared-inbound-preview';
 
 test('production source must match the exact PRE acceptance tree', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'flaremail-release-source-'));
@@ -120,6 +120,41 @@ test('production requires live historical URL isolation and keeps the main URL s
     else process.env.CLOUDFLARE_API_TOKEN = token;
     if (legacyToken === undefined) delete process.env.CF_API_TOKEN;
     else process.env.CF_API_TOKEN = legacyToken;
+  }
+});
+
+test('legacy releases enforce OAuth KV isolation against the native Preview', async () => {
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const token = process.env.CLOUDFLARE_API_TOKEN;
+  process.env.CLOUDFLARE_ACCOUNT_ID = 'a'.repeat(32);
+  process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
+  const metadata = spyOn(cloudflareMetadataTransport, 'read');
+  const target = { ...localTarget, oauthKvId: 'b'.repeat(32) };
+  const mockLive = (previewKv: string, baseKv?: string) => {
+    const respond = (result: unknown) => metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result }));
+    respond({ id: 'worker-id', previews_base_config: { env: baseKv ? { OAUTH_KV: { id: baseKv } } : {} } });
+    respond([{ id: 'pre-id', slug: 'mail-ai' }]);
+    respond({ id: 'pre-deploy', env: { OAUTH_KV: { namespace_id: previewKv } } });
+  };
+  try {
+    mockLive(target.oauthKvId);
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('PREVIEW_OAUTH_KV_NOT_ISOLATED');
+    mockLive(target.oauthKvId);
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, true)).resolves.toBeUndefined();
+    mockLive('c'.repeat(32), target.oauthKvId);
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, true)).rejects.toThrow('PREVIEW_OAUTH_KV_NOT_ISOLATED');
+    mockLive('c'.repeat(32));
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).resolves.toBeUndefined();
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).resolves.toBeUndefined();
+    metadata.mockRejectedValueOnce(new Error('permission denied'));
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+  } finally {
+    metadata.mockRestore();
+    if (account === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    else process.env.CLOUDFLARE_ACCOUNT_ID = account;
+    if (token === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = token;
   }
 });
 

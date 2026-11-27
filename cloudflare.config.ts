@@ -36,6 +36,9 @@ export default defineConfig({
     } else if (release?.kind === 'preview') {
       const { assertLivePreviewForPublish } = await import('./scripts/shared-inbound-preview.ts');
       previewCatchAllCapacity = await assertLivePreviewForPublish(target, release.source, projectRoot);
+    } else if (!release && (isPreview || (remote && target.oauthKvId))) {
+      const { assertLegacyPreviewOAuthIsolation } = await import('./scripts/shared-inbound-preview.ts');
+      await assertLegacyPreviewOAuthIsolation(target, projectRoot, isPreview);
     }
     const { PRE_INBOUND_RECIPIENT: _recipient, PRE_INBOUND_ENABLED: _enabled, ...vars } = target.vars;
     const preInboundSettings = cloudflarePreInboundSettings(target);
