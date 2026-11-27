@@ -410,6 +410,9 @@ export async function assertLegacyPreviewOAuthIsolation(target: CloudflareTarget
   if (!nativePreview) {
     assertPreviewOAuthIsolation(target.oauthKvId, latest?.env?.OAUTH_KV);
     await assertPreviewHistoryOAuthIsolation(target.oauthKvId, path, projectRoot);
+    if (target.vars.APP_ENV === 'production' && target.oauthKvId) {
+      return path ? verifyProductionWorkerDev(target, projectRoot) : false;
+    }
   }
 }
 
