@@ -350,6 +350,9 @@ async function readLiveNativePreview(workerName: string, projectRoot: string, al
   const latest = await get<{ id?: string; env?: Record<string, Omit<WorkerBindingMetadata, 'name'>> }>(
     path + '/' + encodeURIComponent(preview.id) + '/deployments/latest?include=bindings'
   );
+  if (!latest?.id || !latest.env || typeof latest.env !== 'object' || Array.isArray(latest.env)) {
+    throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+  }
   return { latest, baseEnv };
 }
 

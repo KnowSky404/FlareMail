@@ -130,11 +130,11 @@ test('legacy releases enforce OAuth KV isolation against the native Preview', as
   process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
   const metadata = spyOn(cloudflareMetadataTransport, 'read');
   const target = { ...localTarget, oauthKvId: 'b'.repeat(32) };
-  const mockLive = (previewKv: string, baseKv?: string) => {
+  const mockLive = (previewKv?: string, baseKv?: string) => {
     const respond = (result: unknown) => metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result }));
     respond({ id: 'worker-id', previews_base_config: { env: baseKv ? { OAUTH_KV: { id: baseKv } } : {} } });
     respond([{ id: 'pre-id', slug: 'mail-ai' }]);
-    respond({ id: 'pre-deploy', env: { OAUTH_KV: { namespace_id: previewKv } } });
+    respond({ id: 'pre-deploy', env: previewKv ? { OAUTH_KV: { namespace_id: previewKv } } : undefined });
   };
   try {
     mockLive(target.oauthKvId);
@@ -148,6 +148,8 @@ test('legacy releases enforce OAuth KV isolation against the native Preview', as
     metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).resolves.toBeUndefined();
     metadata.mockRejectedValueOnce(new Error('permission denied'));
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+    mockLive();
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
   } finally {
     metadata.mockRestore();
