@@ -1,6 +1,7 @@
 import {
   GrantType, OAuthAuthorizationServer, OAuthError, type TokenExchangeCallbackOptions
 } from '@cloudflare/workers-oauth-provider';
+import { consumeMcpRegistration } from '$lib/server/auth/rate-limit';
 import { mcpScopes, mcpScopeMask, scopesFromMask } from '$lib/domain/mail/mcp';
 import { isAllowedRedirect, isMcpOwnerConfiguration, mcpPaths, type McpConfig, type McpEnv } from './config';
 import {
@@ -28,7 +29,7 @@ interface Exchange {
   verified?: GrantKey;
 }
 
-export function createMcpAuthorizationServer(config: McpConfig, exchange?: Exchange) {
+export function createMcpAuthorizationServer(config: McpConfig, db: D1Database, exchange?: Exchange) {
   return new OAuthAuthorizationServer<McpEnv>({
     issuer: config.issuer,
     resources: [config.resource],
@@ -47,7 +48,7 @@ export function createMcpAuthorizationServer(config: McpConfig, exchange?: Excha
         exchange.confirmedReplay = true;
       }
     },
-    clientRegistrationCallback: ({ clientMetadata: metadata }) => {
+    clientRegistrationCallback: async ({ clientMetadata: metadata }) => {
       const redirects = metadata.redirect_uris;
       if (!Array.isArray(redirects) || redirects.length < 1 || redirects.length > 4 ||
           redirects.some((uri) => typeof uri !== 'string' || !isAllowedRedirect(uri, config))) {
@@ -66,6 +67,10 @@ export function createMcpAuthorizationServer(config: McpConfig, exchange?: Excha
           (metadata.scope !== undefined && (typeof metadata.scope !== 'string' ||
             metadata.scope.split(/\s+/u).some((scope) => !mcpScopes.some((item) => item === scope))))) {
         return { code: 'invalid_client_metadata', description: 'Use supported authorization-code client metadata.' };
+      }
+      const budget = await consumeMcpRegistration(db);
+      if (!budget.allowed) {
+        return { status: 429, code: 'temporarily_unavailable', description: 'The daily client registration budget is exhausted.' };
       }
     },
     tokenExchangeCallback: async (options: TokenExchangeCallbackOptions<McpEnv>) => {

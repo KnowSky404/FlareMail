@@ -42,7 +42,7 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
         resource_name: 'FlareMail'
       }), { headers: { 'content-type': 'application/json' } }));
     }
-    const authorization = createMcpAuthorizationServer(config);
+    const authorization = createMcpAuthorizationServer(config, env.DB);
     if (isMetadata) return finish(await authorization.fetch(request, bindings, ctx));
 
     const key = request.headers.get('cf-connecting-ip') ?? 'local';
@@ -87,7 +87,7 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
     if ([...form.keys()].some((name) => form.getAll(name).length !== 1)) return error(400, 'invalid_request');
     if (form.has('resource') && form.get('resource') !== config.resource) return error(400, 'invalid_target');
     const exchange = await exchangeFor(form, signal);
-    const provider = exchange ? createMcpAuthorizationServer(config, exchange) : authorization;
+    const provider = exchange ? createMcpAuthorizationServer(config, env.DB, exchange) : authorization;
     const response = await provider.fetch(sanitized, bindings, ctx);
     const client = requestClientId(request, form);
     if (!response.ok) {

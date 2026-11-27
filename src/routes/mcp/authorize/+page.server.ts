@@ -15,7 +15,7 @@ async function consentContext(event: RequestEvent) {
   if (!env?.OAUTH_KV || !config || event.url.origin !== config.issuer || event.url.pathname !== mcpPaths.authorize) return null;
   // The provider uses WorkerEntrypoint, which is unavailable during SvelteKit's Node route analysis.
   const { AuthorizationError, authorizationErrorRedirect, createMcpAuthorizationServer } = await import('$lib/server/mcp/oauth');
-  const oauth = createMcpAuthorizationServer(config).getOAuthApi({ ...env, OAUTH_KV: env.OAUTH_KV });
+  const oauth = createMcpAuthorizationServer(config, env.DB).getOAuthApi({ ...env, OAUTH_KV: env.OAUTH_KV });
   return { env, config, oauth, AuthorizationError, authorizationErrorRedirect };
 }
 
