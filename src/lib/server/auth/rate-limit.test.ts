@@ -1,6 +1,6 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { cleanupLoginAttempts, clearLoginAttempts, consumeLoginAttempt, isValidLoginUsername, normalizeLoginUsername } from './rate-limit';
+import { cleanupLoginAttempts, clearLoginAttempts, consumeLoginAttempt, consumeMcpRegistration, isValidLoginUsername, normalizeLoginUsername } from './rate-limit';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -46,6 +46,16 @@ describe('D1 login rate limiter', () => {
     expect(sqlite.query("SELECT 1 FROM workspace_login_rate_limits WHERE identity_hash = 'expired'").get()).not.toBeNull();
     expect((await consumeLoginAttempt(db, 'different', sweepTime, 1, windowMs)).allowed).toBe(true);
     expect(sqlite.query("SELECT 1 FROM workspace_login_rate_limits WHERE identity_hash = 'expired'").get()).toBeNull();
+  });
+
+  test('caps public MCP registrations across requests without limiting token exchanges', async () => {
+    const { db } = database();
+    const now = Date.now();
+    const attempts = await Promise.all(Array.from({ length: 101 }, () => consumeMcpRegistration(db, now)));
+    expect(attempts.filter(({ allowed }) => allowed)).toHaveLength(100);
+    expect(await consumeMcpRegistration(db, now)).toEqual({ allowed: false, retryAfterSeconds: 86_400 });
+    expect(await consumeLoginAttempt(db, 'mcp:/mcp/token:192.0.2.1', now, 30, 60_000)).toMatchObject({ allowed: true });
+    expect(await consumeMcpRegistration(db, now + 86_400_000)).toMatchObject({ allowed: true });
   });
 
   test('stores only a normalized identity hash and can clear a successful login', async () => {

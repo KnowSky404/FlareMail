@@ -75,6 +75,10 @@ export async function consumeLoginAttempt(
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
+export function consumeMcpRegistration(db: D1Database, now = Date.now()) {
+  return consumeLoginAttempt(db, 'mcp:register:global', now, 100, 24 * 60 * 60 * 1000);
+}
+
 export async function cleanupLoginAttempts(db: D1Database, now = Date.now()) {
   await db.prepare(`DELETE FROM workspace_login_rate_limits
     WHERE identity_hash IN (SELECT identity_hash FROM workspace_login_rate_limits WHERE reset_at <= ? LIMIT 5000)`)
