@@ -1,6 +1,6 @@
 import { base64url } from 'jose';
 import type { MailMessage, UserProfile } from '$lib/domain/mail';
-import { fromInboundMessageId, isInboundMessageId, parseAddressJson, parseMessageIds } from '$lib/domain/mail';
+import { fromInboundMessageId, isInboundMessageId, parseAddressJson, parseAddressList, parseMessageIds } from '$lib/domain/mail';
 import { truncateUtf8 } from '$lib/domain/utf8';
 import { ApiError } from '$lib/server/http/api';
 import type { CloudflareEnv } from '$lib/server/cloudflare';
@@ -50,7 +50,9 @@ export async function mailIdentity(db: D1Database, owner: string, input?: string
 }
 
 function inboundSummary(row: WorkspaceInboundRow, profile: UserProfile): MailMessage {
-  return { ...mapInboundRow(row, profile), toAddresses: parseAddressJson(row.to_json), ccAddresses: parseAddressJson(row.cc_json) };
+  const cc = parseAddressJson(row.cc_json);
+  return { ...mapInboundRow(row, profile), toAddresses: parseAddressJson(row.to_json),
+    ccAddresses: cc.length ? cc : parseAddressList(row.cc ?? '') };
 }
 
 function newestFirst(a: MailMessage, b: MailMessage) {
@@ -112,7 +114,7 @@ export async function searchMail(env: CloudflareEnv, actor: MailActor, input: Se
     timestamp, cursorId, limit: limit + 1, includeSearchTotal: false,
     category: category as MailboxRepositoryQuery['category'], identityFilter,
     query: parsed.query, search: parsed.search, filter: 'all', deliveryStatus: null,
-    threadKeys: threadKey ? [threadKey] : undefined
+    threadKeys: threadKey ? [threadKey, `rfc:<${threadKey.slice(4)}>`] : undefined
   }, folders, envelopeRecipient);
   const page = messages.slice(0, limit);
   const visible = threadKey ? page.filter((message) => rfcThreadKey(message) === threadKey) : page;
@@ -141,7 +143,7 @@ export async function getMcpMessage(env: CloudflareEnv, actor: MailActor, id: st
     if (!state || state.quarantined_at) throw missingMessage();
     const row = await findOwnedInboundMessage(env.DB, actor.owner, entityId, { includeBody: options.readBody !== false });
     if (!row) throw missingMessage();
-    message = inboundSummary({ ...state, to_json: row.to_json, cc_json: row.cc_json }, actor.profile);
+    message = inboundSummary({ ...state, to_json: row.to_json, cc_json: row.cc_json, cc: row.cc }, actor.profile);
     bodyPointer = row.body_object_id;
     text = row.text_body;
     html = row.html_body;
@@ -194,7 +196,7 @@ export async function getMcpMessage(env: CloudflareEnv, actor: MailActor, id: st
 export function rfcThreadKey(message: MailMessage) {
   const rfc = parseMessageIds(message.references)[0] ?? parseMessageIds(message.inReplyTo)[0] ?? parseMessageIds(message.messageId)[0];
   if (!rfc || !message.threadKey?.startsWith('rfc:')) return null;
-  return parseMessageIds(message.threadKey.slice(4))[0] === rfc ? message.threadKey : null;
+  return parseMessageIds(message.threadKey.slice(4))[0] === rfc ? `rfc:${rfc}` : null;
 }
 
 export async function getMcpMetrics(env: CloudflareEnv, actor: MailActor, identity?: string) {

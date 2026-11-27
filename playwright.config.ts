@@ -10,7 +10,8 @@ const stateDirectory = process.env.FLAREMAIL_E2E_STATE_DIR ?? join(
   requestedProject ?? 'default',
   'state'
 );
-const baseURL = `http://127.0.0.1:${port}`;
+const useMcpHttps = process.env.FLAREMAIL_E2E_MCP === 'true';
+const baseURL = `${useMcpHttps ? 'https' : 'http'}://127.0.0.1:${port}`;
 const chromiumLaunchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
   ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
   : undefined;
@@ -43,6 +44,7 @@ export default defineConfig({
   ],
   use: {
     baseURL,
+    ignoreHTTPSErrors: useMcpHttps,
     actionTimeout: 10_000,
     navigationTimeout: 20_000,
     trace: 'retain-on-failure',
@@ -53,7 +55,8 @@ export default defineConfig({
     command: `bun scripts/e2e/start-local.ts --port ${port}`,
     env: { FLAREMAIL_E2E_STATE_DIR: stateDirectory },
     url: baseURL,
-    ...(process.env.CI ? { gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 5_000 } } : {}),
+    ignoreHTTPSErrors: useMcpHttps,
+    ...(process.env.CI || useMcpHttps ? { gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 5_000 } } : {}),
     timeout: 180_000,
     reuseExistingServer: false,
     stdout: 'pipe',

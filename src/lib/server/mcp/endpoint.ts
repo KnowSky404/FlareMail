@@ -95,8 +95,10 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
       }
       return finish(response);
     }
-    if (form.has('token') && !form.has('grant_type')) {
-      if (client) await revokeIssuedCredential(env.DB, config.issuer, client, await credentialDigest(form.get('token')!));
+    const revokedToken = form.get('token');
+    if (!form.get('grant_type') && revokedToken) {
+      if (!client) return error(503, 'temporarily_unavailable');
+      await revokeIssuedCredential(env.DB, config.issuer, client, await credentialDigest(revokedToken));
       return finish(response);
     }
     if (!exchange?.verified) return error(400, 'invalid_grant');
@@ -113,10 +115,11 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
 }
 
 function requestClientId(request: Request, form: URLSearchParams) {
-  const encoded = /^Basic ([A-Za-z0-9+/=]+)$/iu.exec(request.headers.get('authorization') ?? '')?.[1];
+  const encoded = /^Basic[ \t]+([^ \t]+)$/iu.exec(request.headers.get('authorization') ?? '')?.[1];
   if (!encoded) return form.get('client_id');
   try {
-    return atob(encoded).split(':', 1)[0] ?? null;
+    const [id] = atob(encoded).split(':', 1);
+    return id ? decodeURIComponent(id.replace(/\+/gu, ' ')) : null;
   } catch {
     return null;
   }

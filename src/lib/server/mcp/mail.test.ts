@@ -19,7 +19,7 @@ test('scopes paginated search and direct reads to visible owner mail and limits 
       (id, user_id, folder, from_name, from_email, to_name, to_email, subject, body, sent_at, deleted_at, archived_at, message_id, thread_key)
     VALUES (?, ?, ?, 'Sender', 'sender@example.test', 'Owner', 'owner@example.test', '续费 reminder', 'inline body', ?, ?, ?, ?, ?)`);
   workspace.run('A-sent', 'owner', 'sent', ts, null, null, '<thread@example.test>', 'rfc:thread@example.test');
-  workspace.run('Z-archive', 'owner', 'inbox', ts, null, ts, '<thread@example.test>', 'rfc:thread@example.test');
+  workspace.run('Z-archive', 'owner', 'inbox', ts, null, ts, '<thread@example.test>', 'rfc:<thread@example.test>');
   workspace.run('lost', 'owner', 'inbox', ts, ts, null, null, null);
   workspace.run('other-mail', 'other', 'inbox', ts, null, null, null, null);
 
@@ -31,6 +31,7 @@ test('scopes paginated search and direct reads to visible owner mail and limits 
       '<child@example.test>', '<thread@example.test>', 'rfc:thread@example.test')`);
   inbound.run('visible', ts, '<p>Allowed text</p><script>hiddenScript()</script><img src="https://invalid.test/example.png">');
   inbound.run('quarantined', ts, '<p>hidden</p>');
+  database.exec(`UPDATE email_messages SET cc = 'Legacy Copy <cc@example.test>', cc_json = '[]' WHERE id = 'visible'`);
   database.query(`INSERT INTO workspace_email_states (id, user_id, email_message_id, quarantined_at)
     VALUES ('state-1', 'owner', 'quarantined', ?)`).run(ts);
   database.exec(`INSERT INTO workspace_drafts (id, user_id, subject, body)
@@ -66,7 +67,8 @@ test('scopes paginated search and direct reads to visible owner mail and limits 
   expect((await searchMail(env, actor, { folder: 'drafts' })).messages.map(({ id }) => id)).toEqual(['draft']);
   expect(reads).toEqual([]);
 
-  expect(await getMcpMessage(env, actor, 'email:visible', { signal })).toMatchObject({ body: 'Allowed text', truncated: false });
+  expect(await getMcpMessage(env, actor, 'email:visible', { signal })).toMatchObject({ body: 'Allowed text', truncated: false,
+    message: { ccAddresses: [{ name: 'Legacy Copy', email: 'cc@example.test' }] } });
   expect(await getMcpMessage(env, actor, 'A-sent', { signal })).toMatchObject({ body: '安全'.repeat(4096), truncated: true });
   expect(reads).toEqual([body.key]);
   expect(rfcThreadKey(first.messages[0]!)).toBe('rfc:thread@example.test');
