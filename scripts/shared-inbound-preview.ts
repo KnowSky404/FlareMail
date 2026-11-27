@@ -318,33 +318,64 @@ function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim();
   if (!token) pinCloudflareReleaseIdentity(projectRoot, false);
-  return async <T>(path: string, missingWorkerResult?: T) => {
+  async function read<T>(path: string) {
     const resource = '/accounts/' + account + '/workers/' + path;
     try {
       const output = await cloudflareMetadataTransport.read(projectRoot, resource);
-      const envelope = JSON.parse(output) as { success: boolean; result: T; workerMissing?: boolean };
-      if (envelope.success === true) return envelope.result;
-      if (missingWorkerResult !== undefined && envelope.workerMissing === true) return missingWorkerResult;
+      return JSON.parse(output) as {
+        success: boolean;
+        result: T;
+        workerMissing?: boolean;
+        result_info?: { page: number; per_page: number; count: number; total_count: number };
+      };
     } catch {
       // The transport can include sensitive provider metadata in errors.
+      throw new Error(errorCode);
     }
-    throw new Error(errorCode);
+  }
+  return {
+    async get<T>(path: string, missingWorkerResult?: T) {
+      const envelope = await read<T>(path);
+      if (envelope.success === true) return envelope.result;
+      if (missingWorkerResult !== undefined && envelope.workerMissing === true) return missingWorkerResult;
+      throw new Error(errorCode);
+    },
+    async list<T extends { id?: string }>(path: string) {
+      const entries = new Map<string, T>();
+      const pageSize = 10;
+      let total = 0;
+      for (let page = 1; page === 1 || entries.size < total; page++) {
+        const { success, result, result_info: info } = await read<T[]>(path + `?page=${page}&per_page=${pageSize}`);
+        if (!success || !info || info.page !== page || info.per_page !== pageSize ||
+            !Number.isSafeInteger(info.total_count) || info.total_count < 0 ||
+            (page > 1 && info.total_count !== total) || !Array.isArray(result) ||
+            info.count !== result.length || result.length !== Math.min(pageSize, info.total_count - entries.size)) {
+          throw new Error(errorCode);
+        }
+        total = info.total_count;
+        for (const entry of result) {
+          if (typeof entry?.id !== 'string' || !entry.id || entries.has(entry.id)) throw new Error(errorCode);
+          entries.set(entry.id, entry);
+        }
+      }
+      return [...entries.values()];
+    }
   };
 }
 
 
 async function readLiveNativePreview(workerName: string, projectRoot: string, allowMissingWorker = false) {
-  const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+  const { get } = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
   const workers = 'workers/';
   const worker = await get<{ id?: string; previews_base_config?: { env?: Record<string, unknown> } } | null>(
     workers + encodeURIComponent(workerName), allowMissingWorker ? null : undefined
   );
-  if (worker === null && allowMissingWorker) return { latest: null, baseEnv: undefined };
+  if (worker === null && allowMissingWorker) return { latest: null, baseEnv: undefined, path: undefined };
   if (!worker?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const path = workers + encodeURIComponent(worker.id) + '/previews';
   const previews = await get<Array<{ id?: string; slug?: string }>>(path + '?slug=mail-ai');
   const baseEnv = worker.previews_base_config?.env;
-  if (Array.isArray(previews) && !previews.length) return { latest: null, baseEnv };
+  if (Array.isArray(previews) && !previews.length) return { latest: null, baseEnv, path };
   const preview = Array.isArray(previews) ? previews.find(entry => entry.slug === 'mail-ai') : null;
   if (!preview?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const latest = await get<{ id?: string; env?: Record<string, Omit<WorkerBindingMetadata, 'name'>> }>(
@@ -353,23 +384,44 @@ async function readLiveNativePreview(workerName: string, projectRoot: string, al
   if (!latest?.id || !latest.env || typeof latest.env !== 'object' || Array.isArray(latest.env)) {
     throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
   }
-  return { latest, baseEnv };
+  return { latest, baseEnv, path };
+}
+
+async function assertPreviewHistoryOAuthIsolation(targetId: string | undefined, path: string | undefined, projectRoot: string) {
+  if (!targetId || !path) return;
+  const errorCode = 'INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE';
+  const { list } = cloudflareWorkerMetadata(projectRoot, errorCode);
+  const previews = await list<{ id?: string }>(path);
+  for (const preview of previews) {
+    const deployments = await list<{ id?: string; env?: Record<string, Omit<WorkerBindingMetadata, 'name'>> }>(
+      path + '/' + encodeURIComponent(preview.id!) + '/deployments'
+    );
+    for (const deployment of deployments) {
+      const env = deployment.env;
+      if (!env || typeof env !== 'object' || Array.isArray(env)) throw new Error(errorCode);
+      assertPreviewOAuthIsolation(targetId, env.OAUTH_KV);
+    }
+  }
 }
 
 export async function assertLegacyPreviewOAuthIsolation(target: CloudflareTarget, projectRoot: string, nativePreview: boolean) {
-  const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot, !nativePreview);
+  const { latest, baseEnv, path } = await readLiveNativePreview(target.name, projectRoot, !nativePreview);
   if (baseEnv?.OAUTH_KV) throw new Error('PREVIEW_OAUTH_KV_NOT_ISOLATED');
-  if (!nativePreview) assertPreviewOAuthIsolation(target.oauthKvId, latest?.env?.OAUTH_KV);
+  if (!nativePreview) {
+    assertPreviewOAuthIsolation(target.oauthKvId, latest?.env?.OAUTH_KV);
+    await assertPreviewHistoryOAuthIsolation(target.oauthKvId, path, projectRoot);
+  }
 }
 
 export async function assertLiveNativePreview(
   target: CloudflareTarget, source: { previewDeploymentId: string; previewBuildLabel: string }, projectRoot: string,
   requireReadOnly = false
 ) {
-  const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot);
+  const { latest, baseEnv, path } = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
   if (target.oauthKvId && baseEnv?.OAUTH_KV) throw new Error('PREVIEW_OAUTH_KV_NOT_ISOLATED');
   assertPreviewOAuthIsolation(target.oauthKvId, env?.OAUTH_KV);
+  await assertPreviewHistoryOAuthIsolation(target.oauthKvId, path, projectRoot);
   const binding = env?.PRE_INBOUND_SETTINGS;
   const value = binding?.json;
   let reservationMatches = false;
@@ -425,7 +477,7 @@ export async function assertLivePreviewForPublish(
   }
   if (source.managementEnabled) {
     const errorCode = 'INBOUND_PREVIEW_PRODUCTION_OBSERVER_NOT_CONFIGURED';
-    const get = cloudflareWorkerMetadata(projectRoot, errorCode);
+    const { get } = cloudflareWorkerMetadata(projectRoot, errorCode);
     const { schedules } = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');
     if (!Array.isArray(schedules) || !schedules.every(schedule => typeof schedule?.cron === 'string')) throw new Error(errorCode);
     const capacity = catchAllRefreshCapacity(schedules.map(schedule => schedule.cron));
@@ -510,7 +562,7 @@ interface ObservabilityMetadata {
 
 export async function verifyProductionWorkerDev(target: CloudflareTarget, projectRoot: string) {
   const errorCode = 'INBOUND_PRODUCTION_VERSION_URLS_NOT_DISABLED';
-  const get = cloudflareWorkerMetadata(projectRoot, errorCode);
+  const { get } = cloudflareWorkerMetadata(projectRoot, errorCode);
   const subdomain = await get<{ enabled?: boolean; previews_enabled?: boolean }>(
     'scripts/' + encodeURIComponent(target.name) + '/subdomain'
   );
@@ -617,7 +669,7 @@ export async function assertProductionCatchAllRelease(
     }
   }
   if (!requireCurrentObservations) return;
-  const get = cloudflareWorkerMetadata(projectRoot, errorCode);
+  const { get } = cloudflareWorkerMetadata(projectRoot, errorCode);
   const scheduleResult = await get<{ schedules?: { cron: string }[] }>('scripts/' + encodeURIComponent(target.name) + '/schedules');
   if (!Array.isArray(scheduleResult.schedules) || !scheduleResult.schedules.length ||
       scheduleResult.schedules.some(schedule => typeof schedule.cron !== 'string') || !Number.isFinite(version.deployedAt)) {
@@ -635,7 +687,7 @@ export async function assertProductionCatchAllRelease(
 export async function readPauseObservability(
   target: CloudflareTarget, version: ReturnType<typeof assertActiveProductionForRelease>, projectRoot: string
 ) {
-  const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PAUSE_CONFIGURATION_UNAVAILABLE');
+  const { get } = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PAUSE_CONFIGURATION_UNAVAILABLE');
   const path = 'scripts/' + encodeURIComponent(target.name);
   const [{ schedules }, { observability }] = await Promise.all([
     get<{ schedules?: { cron: string }[] }>(path + '/schedules'),
