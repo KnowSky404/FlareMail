@@ -1,19 +1,18 @@
 # ADR 0015: Remote MCP integration and OAuth
 
-Use the existing Worker with the official MCP TypeScript SDK `1.32.2`.
-`WebStandardStreamableHTTPServerTransport` operates on Fetch APIs, with one
-stateless SDK server per POST. The selected stable wire version is
-`2025-11-25`, with earlier interoperable versions negotiated by the SDK.
-JSON responses serve bounded read-only operations. Server-initiated SSE,
-sessions and batch calls are outside the transport design.
-[Stable MCP spec](https://modelcontextprotocol.io/specification/2025-11-25).
-[TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk).
+Use the existing Worker with the official MCP TypeScript server SDK
+`@modelcontextprotocol/server` `2.4.0`. The Fetch handler serves
+`2026-07-28` requests through `server/discover` and the per-request envelope.
+The SDK's legacy Web Standard transport retains `initialize`, version
+negotiation and JSON responses for `2025-11-25` clients. Both transports use
+one tool registration and the same OAuth checks. Sessions, batch calls and
+subscriptions fall outside the bounded read-only tool interface.
 
-Cloudflare's `createMcpHandler` also supports stateless deployment with no
-Durable Objects. The current Cloudflare documentation uses the SDK v2 transport
-and a draft protocol lane, while the pinned v1 SDK directly offers the stable
-Fetch transport needed here. The existing application needs no additional Agent
-runtime. [Cloudflare MCP handler](https://developers.cloudflare.com/agents/model-context-protocol/apis/handler-api/).
+The Web Standard handler runs directly in the existing Worker. It needs no
+Agent runtime or Durable Objects. Legacy v1 and current v2 SDK clients verify
+both protocol paths in the browser acceptance suite.
+[Current MCP spec](https://modelcontextprotocol.io/specification/2026-07-28).
+[SDK protocol compatibility](https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions).
 
 Use `@cloudflare/workers-oauth-provider` `1.4.0` for authorization server
 metadata, DCR, RFC 9207, PKCE, redirect verification, encrypted opaque tokens and

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { Client as CurrentMcpClient, StreamableHTTPClientTransport as CurrentMcpTransport } from '@modelcontextprotocol/client';
 import { startAuthorization } from '@modelcontextprotocol/sdk/client/auth.js';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
@@ -103,10 +104,10 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
 
   const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read', 'client_secret_post');
   const token = grant.tokens.access_token as string;
-  const transport = new StreamableHTTPClientTransport(new URL(mcp), {
+  const transportOptions = {
     requestInit: { headers: { Authorization: 'Bearer ' + token } },
     // Use the isolated browser fixture's HTTPS trust for the self-signed loopback target.
-    fetch: async (target, init) => {
+    fetch: async (target: string | URL | Request, init?: RequestInit) => {
       const response = await page.request.fetch(target instanceof Request ? target.url : target.toString(), {
         method: init?.method, headers: Object.fromEntries(new Headers(init?.headers)),
         data: typeof init?.body === 'string' ? init.body : undefined
@@ -114,10 +115,10 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
       const body = await response.body();
       return new Response(body.length ? new Uint8Array(body) : null, { status: response.status(), headers: response.headers() });
     }
-  });
+  };
   const client = new Client({ name: 'FlareMail compatible client', version: '1' });
   try {
-    await client.connect(transport);
+    await client.connect(new StreamableHTTPClientTransport(new URL(mcp), transportOptions));
     const wireTools = await postMcp(token, { jsonrpc: '2.0', id: 9, method: 'tools/list' });
     expect(await wireTools.json()).toMatchObject({ result: { tools: expect.arrayContaining([
       expect.objectContaining({ name: 'fetch', securitySchemes: [{ type: 'oauth2', scopes: ['mail.read'] }] })
@@ -136,6 +137,19 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect(found.structuredContent).toMatchObject({ results: [{ id: 'e2e-inbox-message' }] });
     const fetched = await call('fetch', { id: 'e2e-inbox-message' });
     expect(fetched.structuredContent).toMatchObject({ text: 'This message is seeded in the isolated local D1 database.', metadata: { isRead: false } });
+    const current = new CurrentMcpClient({ name: 'FlareMail current MCP client', version: '1' },
+      { versionNegotiation: { mode: 'auto' } });
+    try {
+      await current.connect(new CurrentMcpTransport(new URL(mcp), transportOptions));
+      expect(current.getProtocolEra()).toBe('modern');
+      expect((await current.listTools()).tools.map((tool) => tool.name)).toEqual(listed.tools.map((tool) => tool.name));
+      expect((await current.callTool({ name: 'search', arguments: { query: 'subject:"E2E Inbox Welcome"' } })).structuredContent)
+        .toEqual(found.structuredContent);
+      expect((await current.callTool({ name: 'fetch', arguments: { id: 'e2e-inbox-message' } })).structuredContent)
+        .toEqual(fetched.structuredContent);
+    } finally {
+      await current.close();
+    }
     const draft = await call('get_message', { id: 'e2e-mcp-older-draft', includeDraft: true });
     expect(draft.structuredContent).toMatchObject({ subject: 'E2E MCP older draft', folder: 'drafts', url: expect.any(String) });
     const signedOut = await page.context().browser()!.newContext({
@@ -190,7 +204,7 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect((await call('get_message', { id: 'missing' })).isError).toBe(true);
     expect((await call('search_messages', { query: 'is:trash' })).isError).toBe(true);
     expect((await call('list_messages', { limit: 31 })).isError).toBe(true);
-    expect(await call('unknown_tool')).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('-32602') }] });
+    await expect(call('unknown_tool')).rejects.toMatchObject({ code: -32602 });
 
     await save(page.request, base, { action: 'settings', enabled: true, scopes: ['mail.read', 'mail.metadata.read'] });
     const unsupported = await startAuthorization(new URL(base), {
