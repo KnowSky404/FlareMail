@@ -28,13 +28,17 @@ async function login(page: Page, origin: string) {
 
 async function approveConsent(page: Page, origin: string, scopes: string,
   authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true,
-  redirectUri = origin + '/mcp-test-callback') {
-  const registration = await page.request.post('/mcp/register', { data: {
+  redirectUri = origin + '/mcp-test-callback', ownerRegistration = false) {
+  const registration = ownerRegistration ? await page.request.post(settings, {
+    headers: { Origin: origin },
+    data: { action: 'register-client', name: 'Synthetic MCP client', redirectUri }
+  }) : await page.request.post('/mcp/register', { data: {
     redirect_uris: [redirectUri], client_name: 'Synthetic MCP client',
     grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: authMethod
   } });
   expect(registration.status()).toBe(201);
-  const { client_id, client_secret } = await registration.json();
+  const clientInfo = await registration.json();
+  const { client_id, client_secret } = ownerRegistration ? clientInfo.data : clientInfo;
   const state = includeState ? randomBytes(24).toString('base64url') : undefined;
   const resource = new URL(origin + '/mcp');
   const metadata = await (await page.request.get('/.well-known/oauth-authorization-server')).json();
@@ -68,8 +72,9 @@ async function approveConsent(page: Page, origin: string, scopes: string,
 }
 
 async function authorize(page: Page, origin: string, scopes: string,
-  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true, redirectUri?: string) {
-  const authorization = await approveConsent(page, origin, scopes, authMethod, includeState, redirectUri);
+  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true,
+  redirectUri?: string, ownerRegistration = false) {
+  const authorization = await approveConsent(page, origin, scopes, authMethod, includeState, redirectUri, ownerRegistration);
   const { form, headers } = authorization;
   const wrongPkce = await page.request.post('/mcp/token', { form: { ...form, code_verifier: 'x'.repeat(43) }, headers });
   expect(wrongPkce.status()).toBe(400);
@@ -105,7 +110,7 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
   expect((await page.request.post('/mcp', { headers: { ...endpointHeaders, Origin: 'https://invalid.test' }, data: init })).status()).toBe(403);
 
   const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read',
-    'client_secret_post', true, chatGptCallback);
+    'client_secret_post', true, chatGptCallback, true);
   const token = grant.tokens.access_token as string;
   const transportOptions = {
     requestInit: { headers: { Authorization: 'Bearer ' + token } },
@@ -140,6 +145,13 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect(found.structuredContent).toMatchObject({ results: [{ id: 'e2e-inbox-message' }] });
     const fetched = await call('fetch', { id: 'e2e-inbox-message' });
     expect(fetched.structuredContent).toMatchObject({ text: 'This message is seeded in the isolated local D1 database.', metadata: { isRead: false } });
+    const escapedId = 'email:e2e-mcp-escaped-body';
+    const escapedFetch = (await call('fetch', { id: escapedId })).structuredContent;
+    expect(escapedFetch).toMatchObject({ text: expect.stringMatching(/^Escaped body: /u), metadata: { textTruncated: true } });
+    const escapedDetail = (await call('get_message', { id: escapedId })).structuredContent;
+    expect(escapedDetail).toMatchObject({ textBody: expect.stringMatching(/^Escaped body: /u), textTruncated: true });
+    expect(Buffer.byteLength(JSON.stringify(escapedFetch))).toBeLessThanOrEqual(64 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(escapedDetail))).toBeLessThanOrEqual(64 * 1024);
     const current = new CurrentMcpClient({ name: 'FlareMail current MCP client', version: '1' },
       { versionNegotiation: { mode: 'auto' } });
     try {
@@ -260,6 +272,13 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
   expect(approval).toBeDefined();
   await save(page.request, base, { action: 'revoke', id: approval.id });
   expect((await page.request.post('/mcp/token', { form: pending.form })).status()).toBe(400);
+  const proof = await authorize(page, base, 'mail.read', 'none');
+  for (const incorrect of [{ code_verifier: 'x'.repeat(43) }, { redirect_uri: base + '/wrong' }]) {
+    expect((await page.request.post('/mcp/token', { form: { ...proof.form, ...incorrect } })).status()).toBe(400);
+    expect((await postMcp(proof.tokens.access_token)).status()).toBe(200);
+  }
+  expect((await page.request.post('/mcp/token', { form: proof.form })).status()).toBe(400);
+  expect((await postMcp(proof.tokens.access_token)).status()).toBe(401);
   const revocable = await authorize(page, base, 'mail.read', 'client_secret_basic', false);
   const revoked = await page.request.post('/mcp/token', {
     headers: revocable.headers, form: { grant_type: '', token: revocable.tokens.refresh_token }

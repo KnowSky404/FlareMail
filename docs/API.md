@@ -10,8 +10,11 @@ cross-owner requests without exposing mailbox existence.
 The Owner manages policy, grants and tool activity through
 `GET /api/workspace/integrations/mcp` and its same-origin `POST`, using normal
 browser authentication. The supported actions are `settings` with `enabled`
-and `scopes`, `revoke` with an authorization `id`, and `revoke-all`. Page tool
-activity with the returned `time` and `id` cursor. See the [MCP contract](MCP.md).
+and `scopes`, `revoke` with an authorization `id`, `revoke-all`, and
+`register-client` with `name` and an allowlisted `redirectUri`. Client creation
+requires enabled MCP on the canonical host and returns the OAuth registration
+as a private HTTP 201 response. Page tool activity with the returned `time`
+and `id` cursor. See the [MCP contract](MCP.md).
 
 ## Workspace snapshot
 

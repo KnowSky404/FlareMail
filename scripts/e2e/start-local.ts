@@ -183,6 +183,11 @@ INSERT OR IGNORE INTO email_messages (
   ${sql(`legacy:${htmlInboxId}`)}, ${sql(userId)}, ${sql(timestamp)},
   '00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000021', 'managed'
 );
+${process.env.FLAREMAIL_E2E_MCP === 'true' ? `
+INSERT OR IGNORE INTO email_messages (id, "from", "to", subject, "timestamp", raw_key, text_body, owner_user_id)
+VALUES ('e2e-mcp-escaped-body', 'sender@flaremail.test', ${sql(adminEmail)}, 'E2E MCP escaped body',
+  ${sql(timestamp)}, 'e2e/mcp-escaped-body.eml', 'Escaped body: ' || replace(hex(zeroblob(6000)), '0', char(1)), ${sql(userId)});
+` : ''}
 INSERT OR IGNORE INTO email_messages (
   id, message_id, "from", "to", subject, "timestamp", snippet, raw_key, raw_size,
   direction, text_body, html_body, dedupe_key, owner_user_id, created_at

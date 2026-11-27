@@ -4,11 +4,12 @@ import { mcpScopeMask, scopesFromMask } from '$lib/domain/mail/mcp';
 import { isMcpOwnerConfiguration, mcpConfig, mcpPaths } from './config';
 import { boundedMcpBody, McpHttpError, privateMcpResponse, requireContentType } from './http';
 import { createMcpAuthorizationServer, exchangeFor, isGrantProps, type GrantProps } from './oauth';
-import { activeAccess, credentialDigest, ownerPolicy, recordTokenIssue, revokeIssuedCredential, revokeReplayedExchange } from './store';
+import { activeAccess, credentialDigest, findLiveCredential, ownerPolicy, recordTokenIssue, revokeIssuedCredential, revokeReplayedExchange } from './store';
 import { serveMcpTools } from './server';
 
 const readMethods = ['GET', 'HEAD'];
 const timeoutMs = 10_000;
+const kvVisibilityWindowMs = 120_000;
 
 export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
@@ -87,10 +88,22 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
     if ([...form.keys()].some((name) => form.getAll(name).length !== 1)) return error(400, 'invalid_request');
     if (form.has('resource') && form.get('resource') !== config.resource) return error(400, 'invalid_target');
     const exchange = await exchangeFor(form, signal);
+    const client = requestClientId(request, form);
+    if (form.get('grant_type') === 'authorization_code') {
+      // The provider can revoke a spent code before checking its PKCE verifier.
+      const proof = client && exchange && await findLiveCredential(env.DB, config.issuer, client, 'code', exchange.digest);
+      if (!proof || !exchange) return error(400, 'invalid_grant');
+      exchange.digest = proof.digest;
+    }
     const provider = exchange ? createMcpAuthorizationServer(config, env.DB, exchange) : authorization;
     const response = await provider.fetch(sanitized, bindings, ctx);
-    const client = requestClientId(request, form);
     if (!response.ok) {
+      if (exchange?.possiblyStale && client) {
+        const credential = await findLiveCredential(env.DB, config.issuer, client, exchange.kind, exchange.digest);
+        if (credential?.consumed_at === null && Date.now() - credential.issued_at_ms < kvVisibilityWindowMs) {
+          return error(503, 'temporarily_unavailable', { 'retry-after': '2' });
+        }
+      }
       if (exchange?.confirmedReplay && client) {
         await revokeReplayedExchange(env.DB, client, config.issuer, exchange.kind, exchange.digest);
       }

@@ -7,7 +7,7 @@ import { mcpScopes, mcpScopeMask, scopesFromMask } from '$lib/domain/mail/mcp';
 import { getRequestEnv } from '$lib/server/workspace-api';
 import { isAllowedRedirect, isMcpOwnerConfiguration, mcpConfig, mcpPaths, type McpConfig } from '$lib/server/mcp/config';
 import { boundedMcpBody, requireContentType } from '$lib/server/mcp/http';
-import { addPendingGrant, consumeConsent, credentialDigest, ownerPolicy, startConsent } from '$lib/server/mcp/store';
+import { addPendingGrant, authorizationCodeKey, consumeConsent, credentialDigest, ownerPolicy, startConsent } from '$lib/server/mcp/store';
 
 async function consentContext(event: RequestEvent) {
   const env = getRequestEnv(event);
@@ -114,9 +114,10 @@ export const actions: Actions = {
             props: { id, issuer: config.issuer, owner: session.userId }, revokeExistingGrants: false
           });
           const code = new URL(redirectTo).searchParams.get('code');
-          if (!code || !(await addPendingGrant(env.DB, {
+          if (!code || !auth.codeChallenge || !(await addPendingGrant(env.DB, {
             id, owner: session.userId, issuer: config.issuer, client: auth.clientId,
-            name: clientName, scopes, revision: policy.revision, code
+            name: clientName, scopes, revision: policy.revision,
+            codeDigest: await authorizationCodeKey(code, auth.codeChallenge, auth.redirectUri)
           }))) return fail(409, { reason: 'invalid' });
           destination = redirectTo;
         }
