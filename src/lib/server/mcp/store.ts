@@ -131,10 +131,12 @@ export interface GrantKey {
 
 const grantArgs = (grant: GrantKey, now: number) => [grant.id, grant.owner, grant.issuer, grant.client, now] as const;
 
-export async function activeAccess(db: D1Database, grant: GrantKey, digest: string) {
-  return db.prepare(`SELECT g.id, g.owner_id, g.client_name, (g.scopes & p.scopes) AS scopes ${activeGrantSql()}
+const activeAccessSql = `${activeGrantSql()}
     AND g.activated_at IS NOT NULL AND EXISTS (SELECT 1 FROM mcp_credentials
-      WHERE digest = ? AND grant_id = g.id AND kind = 'access' AND consumed_at IS NULL AND expires_at > ?)`)
+      WHERE digest = ? AND grant_id = g.id AND kind = 'access' AND consumed_at IS NULL AND expires_at > ?)`;
+
+export async function activeAccess(db: D1Database, grant: GrantKey, digest: string) {
+  return db.prepare(`SELECT g.id, g.owner_id, g.client_name, (g.scopes & p.scopes) AS scopes ${activeAccessSql}`)
     .bind(...grantArgs(grant, nowSeconds()), digest, nowSeconds()).first<Pick<Grant, 'id' | 'owner_id' | 'client_name' | 'scopes'>>();
 }
 
@@ -182,6 +184,11 @@ export async function recordTokenIssue(db: D1Database, grant: GrantKey, input: {
     db.prepare(`UPDATE mcp_grants SET activated_at = ?, expires_at = ?
       WHERE activated_at IS NULL AND ? = 'code' AND id IN (SELECT g.id ${activeGrantSql()})`)
       .bind(now, now + grantLifetime, input.kind, ...grantArgs(grant, now)),
+    // Keep the spent digest to reconcile provider replay revocation for the grant lifetime.
+    db.prepare(`UPDATE mcp_credentials SET expires_at = ?
+      WHERE grant_id = ? AND kind = 'code' AND consumed_at IS NOT NULL AND ? = 'code'
+      AND EXISTS (SELECT 1 ${activeGrantSql()} AND g.activated_at = ?)`)
+      .bind(now + grantLifetime, grant.id, input.kind, ...grantArgs(grant, now), now),
     db.prepare(`INSERT INTO mcp_credentials (digest, grant_id, kind, issued_at_ms, expires_at)
       SELECT ?, g.id, 'access', ?, MIN(?, g.expires_at) ${activeGrantSql()} AND g.activated_at IS NOT NULL`)
       .bind(access, issuedAt, now + input.accessTtl, ...grantArgs(grant, now)),
@@ -189,7 +196,7 @@ export async function recordTokenIssue(db: D1Database, grant: GrantKey, input: {
       SELECT ?, g.id, 'refresh', ?, g.expires_at ${activeGrantSql()} AND g.activated_at IS NOT NULL`)
       .bind(refresh, issuedAt, ...grantArgs(grant, now))
   ]);
-  return ops[1]?.meta.changes === 1 && ops[2]?.meta.changes === 1;
+  return ops[2]?.meta.changes === 1 && ops[3]?.meta.changes === 1;
 }
 
 export async function revokeIssuedCredential(db: D1Database, issuer: string, client: string, digest: string) {
@@ -206,20 +213,32 @@ export async function revokeIssuedCredential(db: D1Database, issuer: string, cli
   ]);
 }
 
-export async function recordMcpActivity(db: D1Database, grant: Pick<Grant, 'id' | 'owner_id' | 'client_name'>, requestId: string, tool: string, outcome: AuditOutcome, elapsedMs: number) {
+export async function recordMcpActivity(db: D1Database, grant: Pick<Grant, 'id' | 'owner_id' | 'client_name'>,
+  requestId: string, tool: string, outcome: AuditOutcome, elapsedMs: number,
+  access?: { key: GrantKey; digest: string; scopeBit: number }) {
   const now = nowSeconds();
-  await db.batch([
+  const resolvedOutcome = access
+    ? `CASE WHEN EXISTS (SELECT 1 ${activeAccessSql} AND (g.scopes & p.scopes & ?) <> 0) THEN ? ELSE 'denied' END`
+    : '?';
+  const rows = await db.batch<{ outcome: AuditOutcome }>([
+    db.prepare('DELETE FROM mcp_activity WHERE rowid <= (SELECT MAX(rowid) - ? FROM mcp_activity)').bind(auditLimit - 1),
     db.prepare(`UPDATE mcp_grants SET last_used_at = MAX(COALESCE(last_used_at, 0), ?) WHERE id = ?`).bind(now, grant.id),
     db.prepare(`INSERT INTO mcp_activity (id, owner_id, grant_id, client_name, tool, outcome, duration_ms, called_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(requestId, grant.owner_id, grant.id, grant.client_name, tool, outcome, Math.round(elapsedMs), now),
-    db.prepare('DELETE FROM mcp_activity WHERE rowid <= (SELECT MAX(rowid) - ? FROM mcp_activity)').bind(auditLimit)
+      VALUES (?, ?, ?, ?, ?, ${resolvedOutcome}, ?, ?) RETURNING outcome`)
+      .bind(requestId, grant.owner_id, grant.id, grant.client_name, tool,
+        ...(access ? [...grantArgs(access.key, now), access.digest, now, access.scopeBit] : []),
+        outcome, Math.round(elapsedMs), now)
   ]);
+  return rows[2]?.results[0]?.outcome;
+}
+
+export function hasMcpTables(db: D1Database) {
+  return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_policies'").first();
 }
 
 export async function cleanupMcpRecords(db: D1Database, now = nowSeconds()) {
   // The compatible schema-42 runtime can be deployed before optional MCP tables exist.
-  if (!(await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mcp_activity'").first())) return;
+  if (!(await hasMcpTables(db))) return;
   await db.batch([
     db.prepare('DELETE FROM mcp_activity WHERE called_at < ?').bind(now - auditLifetime),
     db.prepare('DELETE FROM mcp_consent_nonces WHERE digest IN (SELECT digest FROM mcp_consent_nonces WHERE expires_at <= ? LIMIT 5000)').bind(now),

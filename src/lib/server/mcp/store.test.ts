@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { openMcpTestDatabase } from './d1.test-fixture';
 import {
-  accessLifetime, activeAccess, addPendingGrant, auditLimit, cleanupMcpRecords, consumeConsent, consumeExchange, credentialDigest, listMcpGrants, nowSeconds, recordMcpActivity,
+  accessLifetime, activeAccess, addPendingGrant, auditLimit, cleanupMcpRecords, codeLifetime, consumeConsent, consumeExchange, credentialDigest, listMcpGrants, nowSeconds, recordMcpActivity,
   ownerPolicy, recordTokenIssue, revokeIssuedCredential, revokeMcpGrants, revokeReplayedExchange, startConsent, updateMcpPolicy
 } from './store';
 
@@ -39,6 +39,10 @@ test('D1 gates OAuth grants across consent replay, token expiry, narrowing, revo
   await updateMcpPolicy(db, 'owner', true, 3);
   await updateMcpPolicy(db, 'owner', true, 7);
   expect((await activeAccess(db, a, digest))?.scopes).toBe(3);
+  expect(await recordMcpActivity(db, { id: a.id, owner_id: 'owner', client_name: 'Synthetic' },
+    'audit-denied', 'list_attachments', 'ok', 1, { key: a, digest, scopeBit: 4 })).toBe('denied');
+  expect(await recordMcpActivity(db, { id: a.id, owner_id: 'owner', client_name: 'Synthetic' },
+    'audit-allowed', 'search', 'ok', 1, { key: a, digest, scopeBit: 1 })).toBe('ok');
   database.query('UPDATE mcp_credentials SET expires_at = ? WHERE digest = ?').run(nowSeconds() - 1, digest);
   expect(await activeAccess(db, a, digest)).toBeNull();
   const refresh = await credentialDigest('refresh1');
@@ -64,6 +68,11 @@ test('D1 gates OAuth grants across consent replay, token expiry, narrowing, revo
   await updateMcpPolicy(db, 'owner', true, 7);
   expect(await activeAccess(db, c, await credentialDigest('access4'))).toBeNull();
   expect(await addPendingGrant(db, { ...key, id: 'stale', name: 'Synthetic', code: 'stale', scopes: 1, revision: beforeDisable })).toBe(false);
+
+  const d = await issue('grant4', 'code4', 'access5', 'refresh5');
+  await cleanupMcpRecords(db, nowSeconds() + codeLifetime + 1);
+  await revokeReplayedExchange(db, 'client', key.issuer, 'code', await credentialDigest('code4'));
+  expect((await listMcpGrants(db, 'owner')).find(({ id }) => id === d.id)?.status).toBe('revoked');
 });
 
 test('caps audit size when traffic outpaces cleanup and prunes retained expired records', async () => {

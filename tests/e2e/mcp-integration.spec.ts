@@ -69,7 +69,10 @@ async function authorize(page: Page, origin: string, scopes: string,
   const { form, headers } = authorization;
   const wrongPkce = await page.request.post('/mcp/token', { form: { ...form, code_verifier: 'x'.repeat(43) }, headers });
   expect(wrongPkce.status()).toBe(400);
-  const exchanged = await page.request.post('/mcp/token', { form, headers });
+  const mismatchedRedirect = await page.request.post('/mcp/token', { form: { ...form, redirect_uri: origin + '/wrong' }, headers });
+  expect(mismatchedRedirect.status()).toBe(400);
+  const { redirect_uri, ...exchange } = form;
+  const exchanged = await page.request.post('/mcp/token', { form: includeState ? form : exchange, headers });
   expect(exchanged.status()).toBe(200);
   return { ...authorization, tokens: await exchanged.json() };
 }
@@ -138,7 +141,8 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect((await call('list_messages', { limit: 1, cursor: (pageOne.structuredContent as { nextCursor: string }).nextCursor })).structuredContent).not.toEqual(pageOne.structuredContent);
     expect((await call('search_messages', { query: 'from:html-sender', envelopeRecipient: 'e2e-admin@flaremail.test' })).structuredContent)
       .toMatchObject({ messages: [{ id: 'email:e2e-html-inbox-message', envelopeRecipient: 'e2e-admin@flaremail.test' }] });
-    expect((await call('get_thread', { id: 'e2e-inbox-message' })).structuredContent).toMatchObject({ rfcThread: false, messages: [{ id: 'e2e-inbox-message' }] });
+    expect((await call('get_thread', { id: 'e2e-inbox-message' })).structuredContent)
+      .toMatchObject({ coverage: 'anchor_only', messages: [{ id: 'e2e-inbox-message' }] });
     expect((await call('list_domains')).structuredContent).toMatchObject({ domains: expect.arrayContaining([{ id: expect.any(String), domain: 'flaremail.test', enabled: true }]) });
     expect((await call('list_mail_addresses')).structuredContent).toHaveProperty('addresses');
     expect((await call('get_mailbox_metrics')).structuredContent).toMatchObject({ sentCount: 1 });
@@ -215,7 +219,10 @@ test('integration settings are accessible across languages and themes @mcp', asy
   await expect(page.getByText(/已启用|^Enabled$/)).toBeVisible();
   await expect(page.getByRole('button', { name: /复制 MCP 地址|Copy MCP endpoint/ })).toBeVisible();
   const panel = page.locator('#settings-panel-integrations');
-  expect((await new AxeBuilder({ page }).include('#settings-panel-integrations').analyze()).violations.map(({ id }) => id)).toEqual([]);
+  await expect.poll(async () => {
+    const { violations } = await new AxeBuilder({ page }).include('#settings-panel-integrations').analyze();
+    return violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) }));
+  }).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await testInfo.attach('mcp-settings-light', { body: await panel.screenshot(), contentType: 'image/png' });
   await page.emulateMedia({ colorScheme: 'dark' });
