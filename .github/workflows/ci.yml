@@ -1,0 +1,224 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: 'false'
+
+jobs:
+  scope:
+    name: Scope and diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      runtime: ${{ steps.scope.outputs.runtime }}
+      dependencies: ${{ steps.scope.outputs.dependencies }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        name: Select deterministic checks
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          runtime=true
+          dependencies=false
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+            git diff --check "$BASE_SHA" HEAD
+            runtime=false
+            paths=$(mktemp)
+            trap 'rm -- "$paths"' EXIT
+            git diff --no-renames --name-only -z "$BASE_SHA" HEAD > "$paths"
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                docs/WORKFLOW.md|docs/DEVELOPMENT.md|docs/PREVIEW.md|docs/PRODUCTION_CHECKLIST.md)
+                  runtime=true ;;
+                README.md|README.zh-CN.md|TODO.md|docs/*.md) ;;
+                *) runtime=true ;;
+              esac
+              case "$path" in
+                package.json|worker/package.json|bun.lock) dependencies=true ;;
+              esac
+            done < "$paths"
+          else
+            git diff --check HEAD^ HEAD
+          fi
+          printf 'runtime=%s\ndependencies=%s\n' "$runtime" "$dependencies" >> "$GITHUB_OUTPUT"
+
+  tests:
+    name: Tests (${{ matrix.group }})
+    needs: scope
+    if: needs.scope.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [unit, integration, remaining]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flaremail
+        with:
+          cf: ${{ matrix.group == 'remaining' && 'true' || 'false' }}
+      - if: matrix.group == 'remaining'
+        run: bun run build:app
+      - name: Run test partition
+        env:
+          TEST_GROUP: ${{ matrix.group }}
+        run: bun run "test:$TEST_GROUP"
+
+  build:
+    name: Types and Worker package
+    needs: scope
+    if: needs.scope.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flaremail
+      - run: bun run deploy:dry-run
+      - run: bun run check
+      - run: bun run cf:typegen --check
+
+  chromium:
+    name: Chromium core
+    needs: scope
+    if: needs.scope.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flaremail
+      - run: bunx --no-install playwright install --with-deps chromium
+      - name: Verify core workspace and compose flows
+        env:
+          FLAREMAIL_E2E_PROJECT: desktop
+        run: >-
+          bunx --no-install playwright test --project=desktop --grep @ci-core
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: chromium-failure
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 5
+
+  extended:
+    name: Extended browser (${{ matrix.suite }})
+    needs: scope
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: webkit
+            browser: webkit
+          - suite: firefox
+            browser: firefox
+          - suite: a11y
+            browser: chromium
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flaremail
+      - env:
+          BROWSER: ${{ matrix.browser }}
+        run: bunx --no-install playwright install --with-deps "$BROWSER"
+      - env:
+          SUITE: ${{ matrix.suite }}
+        shell: bash
+        run: |
+          case "$SUITE" in
+            a11y) bun run test:a11y ;;
+            webkit|firefox) bun run "test:e2e:$SUITE" ;;
+            *) exit 1 ;;
+          esac
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.suite }}-failure
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 5
+
+  dependency-audit:
+    name: Dependency change audit
+    needs: scope
+    if: needs.scope.outputs.dependencies == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: package.json
+      - run: bun run audit:dependencies
+
+  gate:
+    name: CI gate
+    if: always()
+    needs: [scope, tests, build, chromium, dependency-audit, extended]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the exact expected job results
+        shell: bash
+        env:
+          SCOPE: ${{ needs.scope.result }}
+          RUNTIME: ${{ needs.scope.outputs.runtime }}
+          DEPENDENCIES: ${{ needs.scope.outputs.dependencies }}
+          TESTS: ${{ needs.tests.result }}
+          BUILD: ${{ needs.build.result }}
+          CHROMIUM: ${{ needs.chromium.result }}
+          AUDIT: ${{ needs.dependency-audit.result }}
+          EXTENDED: ${{ needs.extended.result }}
+        run: |
+          [[ "$SCOPE" == success ]]
+          case "$RUNTIME" in
+            true) expected=success ;;
+            false) expected=skipped ;;
+            *) exit 1 ;;
+          esac
+          [[ "$TESTS" == "$expected" && "$BUILD" == "$expected" && "$CHROMIUM" == "$expected" ]]
+          case "$DEPENDENCIES" in
+            true) expected=success ;;
+            false) expected=skipped ;;
+            *) exit 1 ;;
+          esac
+          [[ "$AUDIT" == "$expected" ]]
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            [[ "$EXTENDED" == skipped ]]
+          else
+            [[ "$EXTENDED" == success ]]
+          fi

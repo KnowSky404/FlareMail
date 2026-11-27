@@ -23,17 +23,11 @@ Cloudflare 操作统一使用全局 `cf`（Node.js ≥ 22.18），可用 `bun ad
 
 自托管请按[部署指南](./DEPLOY.md)操作。需要 Cloudflare 账号、已配置 Email Routing 的域名，以及用于发件的 Resend。
 
-本地开发请参阅[开发指南](./docs/DEVELOPMENT.md)。默认使用本机最新已安装的 Bun 稳定版（最低 **1.4.0**）。测试和部署在本机执行；GitHub 仅在发布 Release 或手动触发时扫描依赖安全，使用 `package.json` 记录的 Bun 版本。项目提供本地演示邮件服务。
+本地 Bun、测试数据和演示服务见[开发指南](./docs/DEVELOPMENT.md)。GitHub Actions 使用项目锁定的 CI 基准。
 
 邮件地址是由同一工作区 Owner 管理的收发资源；登录凭据和资料邮箱单独配置。
 
-所有改动使用独立 worktree 和新分支。每次推送任务提交和每次创建 PR 前分别
-执行本地 `/review`，解决所有有效问题后再继续；功能改动还需先完成远程 PRE
-验收。所有 PR 合并前等待当前提交的 Codex Code Review 和 Security Review
-完成并处理反馈，随后 rebase 合并到 `main`，核对并同步主分支，再清理本任务
-已合并的 worktree 和本地/远端分支。这些 Git 步骤默认连续完成，用户明确
-限制时遵从；Preview 和生产部署仍需单独授权。详见
-[开发流程](./docs/DEVELOPMENT.md#worktree-and-pr-workflow)。
+研发使用独立 worktree，按 [研发工作流](./docs/WORKFLOW.md) 确定 CI、Review 和 PRE 门禁。PRE 与生产部署分别授权。
 
 ## 文档
 

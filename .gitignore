@@ -25,3 +25,5 @@ worker/dist/
 cloudflare.deploy.json
 cloudflare.preview.json
 cloudflare.*.private.json
+
+/.task/

@@ -9,6 +9,7 @@ The project overview is available in both languages. Detailed guides currently u
 | Document | Language | Purpose |
 | --- | --- | --- |
 | [User guide](./USER_GUIDE.md) | English | Domains, addresses, daily mail actions, search, compose, and settings |
+| [Development workflow](./WORKFLOW.md) | 中文 | Risk, CI, reviews and release evidence |
 | [Local development](./DEVELOPMENT.md) | English | Local setup, Owner bootstrap, Worker preview, tests, and repository structure |
 | [Deployment](../DEPLOY.md) | English | Authoritative first production deployment, upgrades, Custom Domains, Resend, Email Routing, and rollback |
 | [Preview and domain setup](./PREVIEW.md) | 中文 | Isolated Preview storage, provider credentials, and identity acceptance |

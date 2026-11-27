@@ -23,19 +23,14 @@ Cloudflare commands use the globally installed `cf` CLI (Node.js ≥ 22.18). Ins
 
 For self-hosting, follow the [deployment guide](./DEPLOY.md). You will need a Cloudflare account, a domain configured for Email Routing, and Resend for outbound mail.
 
-For local development, use the [development guide](./docs/DEVELOPMENT.md). Use the newest stable Bun already installed locally (minimum **1.4.0**). Tests and deployments run locally; GitHub scans dependencies when a Release is published or the workflow is run manually, using the Bun version in `package.json`. A local demo mail provider is included.
+See the [development guide](./docs/DEVELOPMENT.md) for Bun, local fixtures and
+a demo mail provider. GitHub Actions runs checks from the pinned CI baseline.
 
 Mail addresses are managed resources under one workspace Owner; login credentials and profile email are configured separately.
 
-Develop every change in a dedicated worktree and new branch. Before each task
-push and again before PR creation, run local `/review` and resolve all valid
-findings. Feature changes also require remote PRE acceptance before a PR to
-`main`. All PRs wait for Code Review and Security Review of the current head and
-resolution of findings, then use rebase merge, main synchronization and merged
-task worktree/branch cleanup. These Git steps proceed by default unless the user
-restricts the task; Preview and production deployment need separate authorization.
-See the
-[development workflow](./docs/DEVELOPMENT.md#worktree-and-pr-workflow).
+Use a dedicated worktree and the [development workflow](./docs/WORKFLOW.md)
+to choose CI, review and Preview gates by risk. Preview and production
+deployments require separate authorization.
 
 ## Documentation
 
