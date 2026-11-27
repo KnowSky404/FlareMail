@@ -301,8 +301,15 @@ function runCloudflareCliModule(projectRoot: string, name: 'context' | 'raw', op
 
 export const cloudflareMetadataTransport = {
   async read(projectRoot: string, resource: string) {
-    return runCloudflareCliModule(projectRoot, 'raw',
-      'process.stdout.write(await command.t(process.argv[2]));', [resource]);
+    return runCloudflareCliModule(projectRoot, 'raw', `
+      try {
+        process.stdout.write(await command.t(process.argv[2]));
+      } catch (error) {
+        if (error.statusCode !== 404 || !Array.isArray(error.body?.errors) ||
+            !error.body.errors.some(item => item.code === 10007)) throw error;
+        process.stdout.write(JSON.stringify({ success: false, workerMissing: true }));
+      }
+    `, [resource]);
   }
 };
 
@@ -311,12 +318,13 @@ function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
   if (!account || !/^[a-f0-9]{32}$/u.test(account)) throw new Error('INBOUND_PRODUCTION_ACCOUNT_NOT_VERIFIED');
   const token = process.env.CLOUDFLARE_API_TOKEN?.trim() || process.env.CF_API_TOKEN?.trim();
   if (!token) pinCloudflareReleaseIdentity(projectRoot, false);
-  return async <T>(path: string) => {
+  return async <T>(path: string, missingWorkerResult?: T) => {
     const resource = '/accounts/' + account + '/workers/' + path;
     try {
       const output = await cloudflareMetadataTransport.read(projectRoot, resource);
-      const envelope = JSON.parse(output) as { success: boolean; result: T };
+      const envelope = JSON.parse(output) as { success: boolean; result: T; workerMissing?: boolean };
       if (envelope.success === true) return envelope.result;
+      if (missingWorkerResult !== undefined && envelope.workerMissing === true) return missingWorkerResult;
     } catch {
       // The transport can include sensitive provider metadata in errors.
     }
@@ -325,12 +333,13 @@ function cloudflareWorkerMetadata(projectRoot: string, errorCode: string) {
 }
 
 
-async function readLiveNativePreview(workerName: string, projectRoot: string) {
+async function readLiveNativePreview(workerName: string, projectRoot: string, allowMissingWorker = false) {
   const get = cloudflareWorkerMetadata(projectRoot, 'INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
   const workers = 'workers/';
-  const worker = await get<{ id?: string; previews_base_config?: { env?: Record<string, unknown> } }>(
-    workers + encodeURIComponent(workerName)
+  const worker = await get<{ id?: string; previews_base_config?: { env?: Record<string, unknown> } } | null>(
+    workers + encodeURIComponent(workerName), allowMissingWorker ? null : undefined
   );
+  if (worker === null && allowMissingWorker) return { latest: null, baseEnv: undefined };
   if (!worker?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
   const path = workers + encodeURIComponent(worker.id) + '/previews';
   const previews = await get<Array<{ id?: string; slug?: string }>>(path + '?slug=mail-ai');
@@ -344,12 +353,19 @@ async function readLiveNativePreview(workerName: string, projectRoot: string) {
   return { latest, baseEnv };
 }
 
+export async function assertLegacyPreviewOAuthIsolation(target: CloudflareTarget, projectRoot: string, nativePreview: boolean) {
+  const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot, !nativePreview);
+  if (baseEnv?.OAUTH_KV) throw new Error('PREVIEW_OAUTH_KV_NOT_ISOLATED');
+  if (!nativePreview) assertPreviewOAuthIsolation(target.oauthKvId, latest?.env?.OAUTH_KV);
+}
+
 export async function assertLiveNativePreview(
   target: CloudflareTarget, source: { previewDeploymentId: string; previewBuildLabel: string }, projectRoot: string,
   requireReadOnly = false
 ) {
   const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
+  if (target.oauthKvId && baseEnv?.OAUTH_KV) throw new Error('PREVIEW_OAUTH_KV_NOT_ISOLATED');
   assertPreviewOAuthIsolation(target.oauthKvId, env?.OAUTH_KV);
   const binding = env?.PRE_INBOUND_SETTINGS;
   const value = binding?.json;
