@@ -106,7 +106,7 @@ test('settings tabs preserve drafts, save only the active fields, and support de
   await page.goto('/?folder=settings#settings-notifications');
   await expect(page).toHaveURL(/tab=notifications/u);
   const tabs = page.getByRole('tablist', { name: '设置分区' });
-  await expect(tabs.getByRole('tab')).toHaveText(['个人资料', '通知', 'Telegram 通知', '黑名单', 'AI 设置', '诊断']);
+  await expect(tabs.getByRole('tab')).toHaveText(['个人资料', '通知', 'Telegram 通知', '黑名单', 'AI 设置', '集成', '诊断']);
   await expect(page.getByRole('tabpanel')).toHaveCount(1);
   await tabs.getByRole('tab', { name: '个人资料', exact: true }).click();
   const original = await (await page.request.get('/api/workspace/profile')).json();

@@ -10,7 +10,7 @@ mode.
 1. Pick one canonical HTTPS hostname for the mailbox, consent page, OAuth
    issuer, and MCP endpoint. Set `APP_BASE_URL` to its origin and
    `MCP_PUBLIC_URL` to the exact same origin followed by `/mcp`. Production and
-   PRE require HTTPS. Local development permits exact HTTP loopback origins.
+   PRE require HTTPS. Local development permits exact HTTP loopback origins. Use HTTPS for local WebKit consent testing so the browser sends the Secure cookie.
 2. Provision a dedicated Workers KV namespace per environment with separate
    authorization. Set the top-level `oauthKvId` in that environment's private
    Cloudflare target JSON to its namespace ID. Configuration binds it as
@@ -51,9 +51,12 @@ public machine paths need to reach the Worker without an Access login:
 | `/mcp` | POST | OAuth bearer, exact audience, and current Owner grant/scopes |
 | `/mcp/authorize` | GET, POST | Existing Browser Owner login, session-bound consent, CSRF |
 
-Configure the Access applications so **`/mcp/authorize` stays protected** even
-if the provider's path matching applies a parent rule recursively. Test Access
-policy specificity from an anonymous client. The Worker recognizes machine paths
+Add exact `public` path overrides to the existing Access destination for
+the six machine URLs above. Destination `overrides[].path_pattern` entries
+match without implicitly covering subpaths. Keep `/mcp/authorize` protected
+by the existing Owner application and its existing audience. Verify the Edge
+policy with an anonymous client.
+[Access application destination overrides](https://developers.cloudflare.com/api/resources/zero_trust/subresources/access/subresources/applications/methods/update/). The Worker recognizes machine paths
 by exact pathname and checks the canonical hostname. Keep the remaining Web and
 API paths covered by the existing Access application and keep alternate Worker
 hostnames closed according to the normal release checklist. Local auth also
@@ -182,8 +185,7 @@ KV supplies provider storage and adds read/write operations to discovery and
 OAuth flows. Tool requests use existing Worker/D1 capacity and R2 only when
 reading a small canonical body. DCR is limited to 10 requests per minute per IP,
 token operations to 30, and MCP to 120 per IP and 60 per grant. At most 100 live or pending grants are accepted. Existing Cron prunes expired state and
-tool audit rows in bounded hourly batches. The audit keeps client name, tool
-name, result class, timing and request ID for 30 days. Review actual plan quotas
+tool audit rows in bounded hourly batches. The audit keeps at most 20,000 tool calls. Hourly cleanup removes entries older than 30 days. Entries contain client name, tool name, result class, timing and request ID. Review actual plan quotas
 before deployment. See [Workers limits](https://developers.cloudflare.com/workers/platform/limits/),
 [D1 limits](https://developers.cloudflare.com/d1/platform/limits/), and
 [KV pricing](https://developers.cloudflare.com/kv/platform/pricing/).

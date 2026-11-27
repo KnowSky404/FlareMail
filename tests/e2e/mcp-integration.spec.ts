@@ -22,14 +22,14 @@ async function login(page: Page, origin: string) {
   expect(response.status()).toBe(200);
 }
 
-async function authorize(page: Page, origin: string, scopes = 'mail.read mail.metadata.read') {
+async function approveConsent(page: Page, origin: string, scopes: string, confidential = false) {
   const redirectUri = origin + '/mcp-test-callback';
   const registration = await page.request.post('/mcp/register', { data: {
     redirect_uris: [redirectUri], client_name: 'Synthetic MCP client',
-    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none'
+    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: confidential ? 'client_secret_post' : 'none'
   } });
   expect(registration.status()).toBe(201);
-  const { client_id } = await registration.json();
+  const { client_id, client_secret } = await registration.json();
   const verifier = randomBytes(32).toString('base64url');
   const state = randomBytes(24).toString('base64url');
   const params = {
@@ -51,13 +51,19 @@ async function authorize(page: Page, origin: string, scopes = 'mail.read mail.me
   const code = reply.get('code')!;
   expect(Boolean(code)).toBe(true);
   const paramsForToken = { grant_type: 'authorization_code', client_id, redirect_uri: redirectUri,
-    code_verifier: verifier, code, resource: origin + '/mcp' };
+    code_verifier: verifier, code, resource: origin + '/mcp',
+    ...(client_secret ? { client_secret } : {}) };
+  return paramsForToken;
+}
+
+async function authorize(page: Page, origin: string, scopes: string, confidential = false) {
+  const paramsForToken = await approveConsent(page, origin, scopes, confidential);
   const wrongPkce = await page.request.post('/mcp/token', { form: { ...paramsForToken, code_verifier: 'x'.repeat(43) } });
   expect(wrongPkce.status()).toBe(400);
   const exchanged = await page.request.post('/mcp/token', { form: paramsForToken });
   expect(exchanged.status()).toBe(200);
   const tokens = await exchanged.json();
-  return { client_id, tokens, paramsForToken };
+  return { client_id: paramsForToken.client_id, client_secret: paramsForToken.client_secret, tokens };
 }
 
 test.skip(process.env.FLAREMAIL_E2E_MCP !== 'true', 'Run with the isolated local MCP target enabled');
@@ -83,7 +89,7 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
   expect((await postMcp('invalid')).status()).toBe(401);
   expect((await page.request.post('/mcp', { headers: { ...endpointHeaders, Origin: 'https://invalid.test' }, data: init })).status()).toBe(403);
 
-  const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read');
+  const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read', true);
   const token = grant.tokens.access_token as string;
   const transport = new StreamableHTTPClientTransport(new URL(mcp), { requestInit: { headers: { Authorization: 'Bearer ' + token } } });
   const client = new Client({ name: 'FlareMail compatible client', version: '1' });
@@ -139,18 +145,32 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     await client.close();
   }
 
-  const refresh = { grant_type: 'refresh_token', client_id: grant.client_id, refresh_token: grant.tokens.refresh_token };
+  const refresh = { grant_type: 'refresh_token', client_id: grant.client_id,
+    client_secret: grant.client_secret, refresh_token: grant.tokens.refresh_token };
+  const removedScope = await page.request.post('/mcp/token', { form: { ...refresh, scope: 'mail.attachments.metadata.read' } });
+  expect((await removedScope.json()).error).toBe('invalid_scope');
   expect((await page.request.post('/mcp/token', { form: { ...refresh, resource: base + '/api' } })).status()).toBe(400);
   const renewed = await page.request.post('/mcp/token', { form: refresh });
   expect(renewed.status()).toBe(200);
   const next = await renewed.json();
   expect(next.refresh_token).not.toBe(grant.tokens.refresh_token);
   expect((await postMcp(next.access_token)).status()).toBe(200);
+  const invalidClient = await page.request.post('/mcp/token', { form: { ...refresh, client_secret: 'wrong' } });
+  expect((await invalidClient.json()).error).toBe('invalid_client');
+  expect((await postMcp(next.access_token)).status()).toBe(200);
   expect((await page.request.post('/mcp/token', { form: refresh })).status()).toBe(400);
   expect((await postMcp(next.access_token)).status()).toBe(401);
   await save(page.request, base, { action: 'settings', enabled: false, scopes: ['mail.read', 'mail.metadata.read'] });
   expect((await postMcp(token)).status()).toBe(404);
   expect((await page.request.post('/mcp/token', { form: refresh })).status()).toBe(404);
+  await save(page.request, base, { action: 'settings', enabled: true, scopes: ['mail.read'] });
+  const pending = await approveConsent(page, base, 'mail.read');
+  const clients = (await (await page.request.get(settings)).json()).data.clients;
+  const approval = clients.find((item: { status: string }) => item.status === 'pending');
+  expect(approval).toBeDefined();
+  await save(page.request, base, { action: 'revoke', id: approval.id });
+  expect((await page.request.post('/mcp/token', { form: pending })).status()).toBe(400);
+  await save(page.request, base, { action: 'settings', enabled: false, scopes: ['mail.read'] });
 });
 
 test('integration settings are accessible across languages and themes @mcp', async ({ page, baseURL: origin }, testInfo) => {

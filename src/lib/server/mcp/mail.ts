@@ -114,9 +114,10 @@ export async function searchMail(env: CloudflareEnv, actor: MailActor, input: Se
     query: parsed.query, search: parsed.search, filter: 'all', deliveryStatus: null,
     threadKeys: threadKey ? [threadKey] : undefined
   }, folders, envelopeRecipient);
-  const visible = messages.slice(0, limit);
+  const page = messages.slice(0, limit);
+  const visible = threadKey ? page.filter((message) => rfcThreadKey(message) === threadKey) : page;
   await attachMailLabels(env.DB, actor.owner, visible);
-  const last = visible.at(-1);
+  const last = page.at(-1);
   return {
     messages: visible,
     nextCursor: messages.length > limit && last ? base64url.encode(JSON.stringify([context, last.sentAt, last.id])) : null

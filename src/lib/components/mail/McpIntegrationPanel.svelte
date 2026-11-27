@@ -15,7 +15,7 @@
   type Client = {
     id: string; clientId: string; name: string; scopes: McpScope[];
     authorizedAt: number; expiresAt: number; lastUsedAt: number | null;
-    status: 'active' | 'revoked' | 'expired';
+    status: 'active' | 'pending' | 'revoked' | 'expired';
   };
   type Activity = {
     id: string; client: string; tool: string; durationMs: number; time: number;
@@ -42,6 +42,7 @@
   let copied = $state(false);
   let confirm = $state<Mutation | null>(null);
   let abort: AbortController | undefined;
+  const canRevoke = (client: Client) => client.status === 'active' || client.status === 'pending';
   const dirty = $derived(summary && (enabled !== summary.enabled || scopes.join() !== summary.scopes.join()));
 
   onMount(() => {
@@ -165,7 +166,7 @@
   {#if summary}
     <Panel title={t('mcp.clients')}>
       {#snippet header()}
-        <Button variant="secondary" size="sm" disabled={!summary?.activeCount || pending} onclick={() => confirm = { action: 'revoke-all' }}>
+        <Button variant="secondary" size="sm" disabled={!summary?.clients.some(canRevoke) || pending} onclick={() => confirm = { action: 'revoke-all' }}>
           {t('mcp.revokeAll')}
         </Button>
       {/snippet}
@@ -184,7 +185,7 @@
                 <dt>{t('mcp.policy')}</dt><dd>{client.scopes.map((scope) => t(`mcp.scope.${scope}`)).join(' · ') || '—'}</dd>
               </dl>
             </details>
-            {#if client.status === 'active'}
+            {#if canRevoke(client)}
               <Button variant="ghost" size="sm" disabled={pending} onclick={() => confirm = { action: 'revoke', id: client.id }}>{t('mcp.revoke')}</Button>
             {/if}
           </li>

@@ -125,6 +125,7 @@ export async function serveMcpTools(request: Request, context: ToolContext): Pro
         const result = outputSchema.parse(await run({ owner: user.id, profile: mapUserRowToProfile(user) }, args as z.output<Input>, signal));
         signal.throwIfAborted();
         const stillActive = await activeAccess(env.DB, grantKey, digest);
+        signal.throwIfAborted();
         if (!stillActive || !(stillActive.scopes & scopeBit)) {
           outcome = 'denied';
           return authenticate(scope);
@@ -148,6 +149,7 @@ export async function serveMcpTools(request: Request, context: ToolContext): Pro
       } finally {
         try { await recordMcpActivity(env.DB, grant, requestId, name, outcome, performance.now() - start); }
         catch { throw toolUnavailable(); }
+        if (signal.aborted) throw new ApiError(504, 'MCP_TIMEOUT', 'The tool request exceeded its time budget.');
       }
     });
   }
