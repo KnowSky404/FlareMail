@@ -136,6 +136,12 @@ test('legacy releases enforce OAuth KV isolation against the native Preview', as
     respond([{ id: 'pre-id', slug: 'mail-ai' }]);
     respond({ id: 'pre-deploy', env: previewKv ? { OAUTH_KV: { namespace_id: previewKv } } : undefined });
   };
+  const mockPage = (result: unknown[], total_count = result.length, page = 1) => {
+    metadata.mockResolvedValueOnce(JSON.stringify({
+      success: true, result, result_info: { page, per_page: 10, count: result.length, total_count }
+    }));
+  };
+  const deployment = (id: string, kv?: string) => ({ id, env: kv ? { OAUTH_KV: { namespace_id: kv } } : {} });
   try {
     mockLive(target.oauthKvId);
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('PREVIEW_OAUTH_KV_NOT_ISOLATED');
@@ -144,7 +150,20 @@ test('legacy releases enforce OAuth KV isolation against the native Preview', as
     mockLive('c'.repeat(32), target.oauthKvId);
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, true)).rejects.toThrow('PREVIEW_OAUTH_KV_NOT_ISOLATED');
     mockLive('c'.repeat(32));
+    mockPage([{ id: 'pre-id' }, { id: 'older-preview' }]);
+    mockPage([deployment('pre-deploy', 'c'.repeat(32))]);
+    mockPage(Array.from({ length: 10 }, (_, index) => deployment('previous-' + index)), 11);
+    mockPage([deployment('old-deploy', target.oauthKvId)], 11, 2);
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('PREVIEW_OAUTH_KV_NOT_ISOLATED');
+    expect(metadata.mock.calls.at(-1)?.[1]).toEndWith('/previews/older-preview/deployments?page=2&per_page=10');
+    mockLive('c'.repeat(32));
+    mockPage([{ id: 'pre-id' }]);
+    mockPage([deployment('pre-deploy', 'c'.repeat(32)), deployment('old-deploy')]);
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).resolves.toBeUndefined();
+    mockLive('c'.repeat(32));
+    mockPage([{ id: 'pre-id' }]);
+    mockPage([deployment('pre-deploy')], 11);
+    await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
     metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).resolves.toBeUndefined();
     metadata.mockRejectedValueOnce(new Error('permission denied'));
@@ -168,7 +187,7 @@ test('production verifies the live PRE address reservation as well as its bindin
   process.env.CLOUDFLARE_ACCOUNT_ID = 'a'.repeat(32);
   process.env.CLOUDFLARE_API_TOKEN = 'fixture-token';
   const target = {
-    ...localTarget, vars: { PRE_INBOUND_RECIPIENT: 'expected@example.test' },
+    ...localTarget, oauthKvId: undefined, vars: { PRE_INBOUND_RECIPIENT: 'expected@example.test' },
     preInbound: { databaseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', databaseName: 'pre', bucket: 'pre-bucket' },
     inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
   };
@@ -601,7 +620,7 @@ test('read-only recovery requires a missing Preview, a safe Base and the live ow
     await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
     mock({ id: 'worker-id' });
     mock([{ id: 'pre-id', slug: 'mail-ai' }]);
-    mock({ id: 'its-current-deployment' });
+    mock({ id: 'its-current-deployment', env: {} });
     await expect(assertLivePreviewForPublish(target, recovery, projectRoot)).rejects.toThrow('INBOUND_PREVIEW_DEPLOYMENT_CHANGED');
     const cf = join(directory, 'cf');
     await writeFile(cf, '#!/bin/sh\nexit 1\n', { mode: 0o700 });
