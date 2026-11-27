@@ -181,14 +181,19 @@ test('legacy releases enforce OAuth KV isolation against the native Preview', as
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
     mockLive();
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
-    metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
-    await expect(assertLegacyPreviewOAuthIsolation({ ...production, vars: { ...production.vars,
-      APP_BASE_URL: 'https://flaremail.example.workers.dev'
-    } }, projectRoot, false)).resolves.toBe(true);
-    metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
-    await expect(assertLegacyPreviewOAuthIsolation({ ...production, vars: { ...production.vars,
-      APP_BASE_URL: 'https://mail.example.test'
-    } }, projectRoot, false)).resolves.toBe(false);
+    const firstDeploy = (APP_BASE_URL: string) => {
+      metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
+      if (!APP_BASE_URL.endsWith('.test')) {
+        metadata.mockResolvedValueOnce(JSON.stringify({ success: true, result: { subdomain: 'example' } }));
+      }
+      return assertLegacyPreviewOAuthIsolation({ ...production, vars: { ...production.vars, APP_BASE_URL } }, projectRoot, false);
+    };
+    await expect(firstDeploy('https://flaremail.example.workers.dev')).resolves.toBe(true);
+    expect(metadata.mock.calls.at(-1)?.[1]).toEndWith('/workers/subdomain');
+    await expect(firstDeploy('https://older-flaremail.example.workers.dev')).rejects.toThrow('INBOUND_PRODUCTION_WORKERS_DEV_ORIGIN_MISMATCH');
+    await expect(firstDeploy('https://flaremail.other-account.workers.dev')).rejects.toThrow('INBOUND_PRODUCTION_WORKERS_DEV_ORIGIN_MISMATCH');
+    await expect(firstDeploy('http://flaremail.example.workers.dev')).rejects.toThrow('INBOUND_PRODUCTION_WORKERS_DEV_ORIGIN_MISMATCH');
+    await expect(firstDeploy('https://mail.example.test')).resolves.toBe(false);
   } finally {
     metadata.mockRestore();
     if (account === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
