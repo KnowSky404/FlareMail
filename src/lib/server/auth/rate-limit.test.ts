@@ -1,6 +1,6 @@
 import { Database, type SQLQueryBindings } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { clearLoginAttempts, consumeLoginAttempt, isValidLoginUsername, normalizeLoginUsername } from './rate-limit';
+import { cleanupLoginAttempts, clearLoginAttempts, consumeLoginAttempt, isValidLoginUsername, normalizeLoginUsername } from './rate-limit';
 
 class TestStatement {
   private values: SQLQueryBindings[] = [];
@@ -28,8 +28,11 @@ describe('D1 login rate limiter', () => {
     expect((await consumeLoginAttempt(db, 'IP:USER', 1_000, 2, 10_000)).allowed).toBe(true);
     expect((await consumeLoginAttempt(db, 'ip:user', 1_001, 2, 10_000)).allowed).toBe(true);
     expect(await consumeLoginAttempt(db, 'ip:user', 1_002, 2, 10_000)).toEqual({ allowed: false, retryAfterSeconds: 10 });
-    expect(sqlite.query('SELECT COUNT(*) AS count FROM workspace_login_rate_limits').get()).toEqual({ count: 1 });
+    expect(sqlite.query('SELECT attempt_count, updated_at FROM workspace_login_rate_limits').all())
+      .toEqual([{ attempt_count: 2, updated_at: 1_001 }]);
     expect((await consumeLoginAttempt(db, 'ip:user', 11_000, 2, 10_000)).allowed).toBe(true);
+    await cleanupLoginAttempts(db, 21_000);
+    expect(sqlite.query('SELECT identity_hash FROM workspace_login_rate_limits').all()).toEqual([]);
   });
 
   test('stores only a normalized identity hash and can clear a successful login', async () => {

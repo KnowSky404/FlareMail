@@ -21,7 +21,6 @@ export function isGrantProps(value: unknown): value is GrantProps {
 interface Exchange {
   kind: 'code' | 'refresh';
   digest: string;
-  redirect?: string;
   signal: AbortSignal;
   confirmedReplay?: boolean;
   verified?: GrantKey;
@@ -71,7 +70,7 @@ export function createMcpAuthorizationServer(config: McpConfig, exchange?: Excha
       const { userId, clientId, props, resource, requestedScope, env, grantType } = options;
       if (!exchange || !isGrantProps(props) || props.issuer !== config.issuer || resource !== config.resource ||
           !isMcpOwnerConfiguration(env, userId) ||
-          (grantType === GrantType.AUTHORIZATION_CODE && (exchange.kind !== 'code' || !exchange.redirect)) ||
+          (grantType === GrantType.AUTHORIZATION_CODE && exchange.kind !== 'code') ||
           (grantType === GrantType.REFRESH_TOKEN && exchange.kind !== 'refresh')) {
         throw new OAuthError('invalid_grant', { description: 'The authorization is no longer valid.' });
       }
@@ -111,7 +110,7 @@ export async function exchangeFor(form: URLSearchParams, signal: AbortSignal): P
   const kind = grantType === 'authorization_code' ? 'code' : 'refresh';
   const value = form.get(kind === 'code' ? 'code' : 'refresh_token');
   if (!value || value.length > 512) return;
-  return { kind, signal, digest: await credentialDigest(value), redirect: form.get('redirect_uri') ?? undefined };
+  return { kind, signal, digest: await credentialDigest(value) };
 }
 
 export { AuthorizationError, authorizationErrorRedirect } from '@cloudflare/workers-oauth-provider';

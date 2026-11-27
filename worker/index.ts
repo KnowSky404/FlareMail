@@ -3,6 +3,7 @@
 import app from '../build/_worker.js';
 import type { CloudflareEnv } from '../src/lib/server/cloudflare';
 import { handleInboundEmail } from '../src/lib/server/email';
+import { cleanupLoginAttempts } from '../src/lib/server/auth/rate-limit';
 import { isMcpMachinePath } from '../src/lib/server/mcp/config';
 import { cleanupMcpRecords } from '../src/lib/server/mcp/store';
 import { scheduleMaintenance } from '../src/lib/server/scheduled';
@@ -25,6 +26,9 @@ export default {
 
   scheduled(controller, env, ctx) {
     if (env.DB && new Date(controller.scheduledTime).getUTCMinutes() === 0) {
+      ctx.waitUntil(cleanupLoginAttempts(env.DB).catch(() => {
+        console.error(JSON.stringify({ event: 'login_rate_limit_cleanup_failed' }));
+      }));
       ctx.waitUntil(cleanupMcpRecords(env.DB).catch(() => {
         console.error(JSON.stringify({ event: 'mcp_cleanup_failed' }));
       }));

@@ -11,6 +11,9 @@ const stateDirectory = process.env.FLAREMAIL_E2E_STATE_DIR ?? join(
   'state'
 );
 const useMcpHttps = process.env.FLAREMAIL_E2E_MCP === 'true';
+if (useMcpHttps && !requestedProject) {
+  throw new Error('Set FLAREMAIL_E2E_PROJECT to run each MCP browser project with an isolated Worker and state.');
+}
 const baseURL = `${useMcpHttps ? 'https' : 'http'}://127.0.0.1:${port}`;
 const chromiumLaunchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
   ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }

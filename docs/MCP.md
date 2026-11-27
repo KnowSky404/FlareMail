@@ -89,8 +89,9 @@ and incompatible combinations. `status:` applies to Sent by default and to
 explicit draft queries where applicable. Mail queries exclude trash and
 quarantine, including direct ID lookups.
 
-`get_thread` accepts a visible anchor message. It follows verifiable stored RFC
-thread keys and paginates message summaries. A message without that context
+`get_thread` accepts a visible anchor message. It paginates the summaries with
+the same verified stored RFC key and reports `coverage: same_rfc_key`. Older
+replies that store a different parent key can be outside this result. An anchor without an RFC key
 returns as a one-message result. Mail links use the normal authenticated reader.
 Mail queries leave read, star, archive, and deletion state unchanged.
 
@@ -144,10 +145,11 @@ exercise full OAuth and tools against isolated demo mail, run the repository
 Playwright test with the opt-in local MCP target. The runner generates an isolated loopback HTTPS certificate using OpenSSL:
 
 ```sh
-FLAREMAIL_E2E_MCP=true bunx playwright test tests/e2e/mcp-integration.spec.ts --project=desktop
+FLAREMAIL_E2E_MCP=true FLAREMAIL_E2E_PROJECT=desktop bunx playwright test tests/e2e/mcp-integration.spec.ts --project=desktop
 ```
 
-The test uses the official SDK as a compatible Streamable HTTP client.
+Run each project separately for isolated rate limits. The test uses the official
+SDK as a compatible Streamable HTTP client.
 Alternatively, run the [official Inspector](https://github.com/modelcontextprotocol/inspector)
 and choose Streamable HTTP. Configure the Inspector client's exact callback URI,
 start OAuth, log in as the local Owner, and approve. Test initialization, tools

@@ -30,14 +30,21 @@ export async function consumeLoginAttempt(
 ): Promise<RateLimitResult> {
   const hash = await identityHash(key);
   const resetAt = now + windowMs;
-  await db.prepare('DELETE FROM workspace_login_rate_limits WHERE reset_at <= ?').bind(now).run();
+  const saturated = () => db.prepare(`SELECT reset_at FROM workspace_login_rate_limits
+    WHERE identity_hash = ? AND reset_at > ? AND attempt_count >= ?`)
+    .bind(hash, now, limit).first<{ reset_at: number }>();
+  const retry = (until: number): RateLimitResult => ({
+    allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((until - now) / 1000))
+  });
+  const blocked = await saturated();
+  if (blocked) return retry(blocked.reset_at);
   const row = await db.prepare(`
     INSERT INTO workspace_login_rate_limits (identity_hash, attempt_count, window_started_at, reset_at, updated_at)
     VALUES (?, 1, ?, ?, ?)
     ON CONFLICT(identity_hash) DO UPDATE SET
       attempt_count = CASE
         WHEN workspace_login_rate_limits.reset_at <= excluded.window_started_at THEN 1
-        ELSE MIN(workspace_login_rate_limits.attempt_count + 1, ?)
+        ELSE workspace_login_rate_limits.attempt_count + 1
       END,
       window_started_at = CASE
         WHEN workspace_login_rate_limits.reset_at <= excluded.window_started_at THEN excluded.window_started_at
@@ -48,12 +55,18 @@ export async function consumeLoginAttempt(
         ELSE workspace_login_rate_limits.reset_at
       END,
       updated_at = excluded.updated_at
+    WHERE workspace_login_rate_limits.reset_at <= excluded.window_started_at
+      OR workspace_login_rate_limits.attempt_count < ?
     RETURNING attempt_count, reset_at
-  `).bind(hash, now, resetAt, now, limit + 1).first<{ attempt_count: number; reset_at: number }>();
-  if (!row) throw new Error('Login rate limit state was not persisted.');
-  return row.attempt_count <= limit
-    ? { allowed: true, retryAfterSeconds: 0 }
-    : { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((row.reset_at - now) / 1000)) };
+  `).bind(hash, now, resetAt, now, limit).first<{ attempt_count: number; reset_at: number }>();
+  if (!row) return retry((await saturated())?.reset_at ?? resetAt);
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+export async function cleanupLoginAttempts(db: D1Database, now = Date.now()) {
+  await db.prepare(`DELETE FROM workspace_login_rate_limits
+    WHERE identity_hash IN (SELECT identity_hash FROM workspace_login_rate_limits WHERE reset_at <= ? LIMIT 5000)`)
+    .bind(now).run();
 }
 
 export async function clearLoginAttempts(db: D1Database, key: string) {
