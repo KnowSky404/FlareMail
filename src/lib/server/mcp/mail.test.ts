@@ -61,7 +61,7 @@ test('scopes paginated search and direct reads to visible owner mail and limits 
   const next = await searchMail(env, actor, { query: '续费', limit: 2, cursor: first.nextCursor! });
   expect(next.messages.map((item) => item.id)).toEqual(['Z-archive', 'A-sent']);
   expect(next.nextCursor).toBeNull();
-  expect(await searchMail(env, actor, { query: 'from:sender', envelopeRecipient: 'delivery@example.test' }))
+  expect(await searchMail(env, actor, { query: 'from:sender', envelopeRecipient: '  delivery@example.test ' }))
     .toMatchObject({ messages: [{ id: 'email:visible' }] });
   await expect(searchMail(env, actor, { query: 'other', cursor: first.nextCursor! })).rejects.toMatchObject({ status: 400 });
   expect((await searchMail(env, actor, { folder: 'drafts' })).messages.map(({ id }) => id)).toEqual(['draft']);
