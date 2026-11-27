@@ -38,7 +38,7 @@ test('production source must match the exact PRE acceptance tree', async () => {
 test('emergency pause keeps the same authentication variables, secrets and production cron', () => {
   const target = {
     ...localTarget, vars: { AUTH_MODE: 'access', PRE_INBOUND_ENABLED: 'false' },
-    secrets: ['RESEND_API_KEY'], cron: ['* * * * *']
+    secrets: ['RESEND_API_KEY'], cron: ['* * * * *'], oauthKvId: undefined
   };
   const active = {
     bindings: [{ name: 'AUTH_MODE', type: 'plain_text', text: 'access' }, { name: 'RESEND_API_KEY', type: 'secret_text' }],
@@ -48,6 +48,15 @@ test('emergency pause keeps the same authentication variables, secrets and produ
   expect(() => assertUnchangedProductionConfiguration({ ...target, vars: { ...target.vars, AUTH_MODE: 'local' } }, active))
     .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
   expect(() => assertUnchangedProductionConfiguration({ ...target, cron: [] }, active))
+    .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
+  const oauthKvId = 'a'.repeat(32);
+  const withOAuth = { ...active, bindings: [...active.bindings,
+    { name: 'OAUTH_KV', type: 'kv_namespace', namespace_id: oauthKvId }
+  ] };
+  expect(() => assertUnchangedProductionConfiguration({ ...target, oauthKvId }, withOAuth)).not.toThrow();
+  expect(() => assertUnchangedProductionConfiguration(target, withOAuth))
+    .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
+  expect(() => assertUnchangedProductionConfiguration({ ...target, oauthKvId: 'b'.repeat(32) }, withOAuth))
     .toThrow('INBOUND_PRODUCTION_CUTOVER_CONFIGURATION_CHANGED');
 });
 
@@ -299,7 +308,10 @@ test('activation requires PRE catch-all observations produced after the protecti
     inboundRouting: { databaseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', databaseName: 'routing', environment: 'production' as const }
   };
   const active = {
-    id: 'version', percentage: 100, bindings: [{ name: 'CLOUDFLARE_EMAIL_ROUTING_TOKEN', type: 'secret_text' }],
+    id: 'version', percentage: 100, bindings: [
+      { name: 'CLOUDFLARE_EMAIL_ROUTING_TOKEN', type: 'secret_text' },
+      { name: 'OAUTH_KV', type: 'kv_namespace', namespace_id: target.oauthKvId }
+    ],
     routingReadOnly: true, deployedAt: Date.now() - 60_000,
     compatibilityDate: target.compatibilityDate, compatibilityFlags: target.compatibilityFlags
   };

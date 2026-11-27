@@ -696,7 +696,7 @@
     void (async () => {
       try {
         const result = section === 'drafts'
-          ? await fetchDraftDetail(targetId, request.signal)
+          ? await fetchDraftDetail(targetId, request.signal, { activeOnly: true })
           : await fetchWorkspaceMessage(targetId, request.signal);
         if (!request.isCurrent() || urlMessageId !== targetId || activeSection !== section) return;
         // An explicit older-message link is independent of the current page cursor.
@@ -2310,12 +2310,13 @@
         throw new LocalizedError(t('notify.loginMissingWorkspace'));
       }
 
+      const draftTarget = urlSection === 'drafts' ? urlMessageId : null;
       applyWorkspaceSnapshot(result.workspace, {
-        section: 'inbox',
-        preferredMessageId: desktopSplitReader ? result.workspace.activePage.messages[0]?.id ?? null : null,
+        section: draftTarget ? 'drafts' : 'inbox',
+        preferredMessageId: draftTarget ?? (desktopSplitReader ? result.workspace.activePage.messages[0]?.id ?? null : null),
         clearMailView: true,
         resetUserScoped: true,
-        syncUrl: true
+        syncUrl: !draftTarget
       });
       clearClientAuthExpired();
       authExpired = false;

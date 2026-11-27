@@ -137,12 +137,26 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect(fetched.structuredContent).toMatchObject({ text: 'This message is seeded in the isolated local D1 database.', metadata: { isRead: false } });
     const draft = await call('get_message', { id: 'e2e-mcp-older-draft', includeDraft: true });
     expect(draft.structuredContent).toMatchObject({ subject: 'E2E MCP older draft', folder: 'drafts', url: expect.any(String) });
-    const draftPage = await page.context().newPage();
+    const signedOut = await page.context().browser()!.newContext({
+      ignoreHTTPSErrors: true, locale: 'zh-CN', viewport: page.viewportSize() ?? undefined
+    });
     try {
-      await draftPage.goto(String(draft.structuredContent?.url));
+      const draftPage = await signedOut.newPage();
+      const citation = String(draft.structuredContent?.url);
+      await draftPage.goto(citation);
+      await draftPage.getByLabel('管理员用户名').fill('flower');
+      await draftPage.getByLabel('密码', { exact: true }).fill('FlareMail-E2E-password-2026!');
+      await draftPage.getByRole('button', { name: '登录', exact: true }).click();
       await expect(draftPage.getByRole('heading', { name: 'E2E MCP older draft', exact: true })).toBeVisible();
+      const discarded = await draftPage.request.delete('/api/workspace/messages/e2e-mcp-older-draft', {
+        headers: { Origin: base }
+      });
+      expect(discarded.status()).toBe(200);
+      await draftPage.goto(citation);
+      await expect(draftPage).not.toHaveURL(/message=/u);
+      await expect(draftPage.getByRole('heading', { name: 'E2E MCP older draft', exact: true })).toBeHidden();
     } finally {
-      await draftPage.close();
+      await signedOut.close();
     }
     const emptyPolicy = await page.request.post(settings, {
       headers: { Origin: base }, data: { action: 'settings', enabled: true, scopes: [] }

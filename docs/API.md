@@ -586,7 +586,8 @@ dedicated mailbox and must not send secrets or personal data in fixtures.
 `GET /api/workspace/drafts/:id` returns the current owned draft with its full
 text body, server-owned `senderAddressId` and From snapshot, an opaque
 `bodyRevision`, visible attachment lifecycle summaries, and an integer
-`attachmentRevision`. Draft writes include `senderAddressId` when changing the
+`attachmentRevision`. Use `?active=1` to return HTTP `404` for drafts in Trash.
+Draft writes include `senderAddressId` when changing the
 selected identity and `expectedUpdatedAt`,
 the version observed by the editor, and echo `bodyRevision` after a canonical
 body write. A client must present that revision before changing a tiered body;

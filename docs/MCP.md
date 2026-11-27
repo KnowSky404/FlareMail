@@ -91,8 +91,10 @@ quarantine, including direct ID lookups.
 
 `get_thread` accepts a visible anchor message. It paginates the summaries with
 the same verified stored RFC key and reports `coverage: same_rfc_key`. Older
-replies that store a different parent key can be outside this result. An anchor without an RFC key
-returns as a one-message result. Mail links use the normal authenticated reader.
+replies that store a different parent key can be outside this result. An anchor
+without an RFC key returns as a one-message result. Mail links use the normal
+authenticated reader. A draft link resumes after Owner sign-in and opens only
+while the draft remains active.
 Mail queries leave read, star, archive, and deletion state unchanged.
 Continue pagination when a page returns a cursor. A bounded scan can return a
 short page when stored keys disagree with RFC headers.
