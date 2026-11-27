@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { E2E_PASSWORD, E2E_USERNAME } from './fixtures';
 
 const settings = '/api/workspace/integrations/mcp';
+const chatGptCallback = 'https://chatgpt.com/connector_platform_oauth_redirect';
 const endpointHeaders = { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
 const init = { jsonrpc: '2.0', id: 1, method: 'initialize', params: {
   protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'FlareMail test', version: '1' }
@@ -26,8 +27,8 @@ async function login(page: Page, origin: string) {
 }
 
 async function approveConsent(page: Page, origin: string, scopes: string,
-  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true) {
-  const redirectUri = origin + '/mcp-test-callback';
+  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true,
+  redirectUri = origin + '/mcp-test-callback') {
   const registration = await page.request.post('/mcp/register', { data: {
     redirect_uris: [redirectUri], client_name: 'Synthetic MCP client',
     grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: authMethod
@@ -42,14 +43,15 @@ async function approveConsent(page: Page, origin: string, scopes: string,
   });
   expect(authorizationUrl.searchParams.get('code_challenge_method')).toBe('S256');
   expect(authorizationUrl.searchParams.get('state')).toBe(state ?? null);
-  await page.route('**/mcp-test-callback?*', (route) => route.fulfill({ contentType: 'text/plain', body: 'Synthetic callback' }));
+  const isCallback = (url: URL) => url.origin + url.pathname === redirectUri;
+  await page.route(isCallback, (route) => route.fulfill({ contentType: 'text/plain', body: 'Synthetic callback' }));
   await page.goto(authorizationUrl.href);
   await expect(page.getByText('Synthetic MCP client', { exact: false })).toBeVisible();
   if (scopes.includes('mail.attachments.metadata.read')) {
     await page.locator('input[value="mail.attachments.metadata.read"]').check();
   }
   await page.getByRole('button', { name: /授权访问|Allow access/ }).click();
-  await page.waitForURL('**/mcp-test-callback?*');
+  await page.waitForURL(isCallback);
   const reply = new URL(page.url()).searchParams;
   expect(reply.get('state')).toBe(state ?? null);
   expect(reply.get('iss')).toBe(origin);
@@ -66,8 +68,8 @@ async function approveConsent(page: Page, origin: string, scopes: string,
 }
 
 async function authorize(page: Page, origin: string, scopes: string,
-  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true) {
-  const authorization = await approveConsent(page, origin, scopes, authMethod, includeState);
+  authMethod: 'none' | 'client_secret_post' | 'client_secret_basic' = 'none', includeState = true, redirectUri?: string) {
+  const authorization = await approveConsent(page, origin, scopes, authMethod, includeState, redirectUri);
   const { form, headers } = authorization;
   const wrongPkce = await page.request.post('/mcp/token', { form: { ...form, code_verifier: 'x'.repeat(43) }, headers });
   expect(wrongPkce.status()).toBe(400);
@@ -102,7 +104,8 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
   expect((await postMcp('invalid')).status()).toBe(401);
   expect((await page.request.post('/mcp', { headers: { ...endpointHeaders, Origin: 'https://invalid.test' }, data: init })).status()).toBe(403);
 
-  const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read', 'client_secret_post');
+  const grant = await authorize(page, base, 'mail.read mail.metadata.read mail.attachments.metadata.read',
+    'client_secret_post', true, chatGptCallback);
   const token = grant.tokens.access_token as string;
   const transportOptions = {
     requestInit: { headers: { Authorization: 'Bearer ' + token } },
@@ -209,13 +212,13 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     await save(page.request, base, { action: 'settings', enabled: true, scopes: ['mail.read', 'mail.metadata.read'] });
     const unsupported = await startAuthorization(new URL(base), {
       metadata: await discovery.json(), clientInformation: { client_id: grant.client_id },
-      redirectUrl: new URL(base + '/mcp-test-callback'), resource: new URL(mcp),
+      redirectUrl: new URL(chatGptCallback), resource: new URL(mcp),
       scope: 'mail.attachments.metadata.read', state: 'disallowed-scope'
     });
     const rejected = await page.request.get(unsupported.authorizationUrl.href, { maxRedirects: 0 });
     expect(rejected.status()).toBe(303);
     const callback = new URL(rejected.headers().location!);
-    expect(callback.origin + callback.pathname).toBe(base + '/mcp-test-callback');
+    expect(callback.origin + callback.pathname).toBe(chatGptCallback);
     expect(callback.searchParams.get('error')).toBe('invalid_scope');
     expect(callback.searchParams.get('state')).toBe('disallowed-scope');
     expect(await call('list_attachments', { id: 'email:e2e-html-inbox-message' })).toMatchObject({

@@ -36,7 +36,10 @@ export function mcpConfig(env: CloudflareEnv): McpConfig | null {
     const issuer = parseTrustedAppBaseUrl(url.origin, appEnv);
     if (!issuer || env.MCP_PUBLIC_URL !== issuer + mcpPaths.resource ||
         issuer !== runtime.config.appBaseUrl) return null;
-    const redirects = new Set(env.MCP_ALLOWED_REDIRECT_URIS?.split(',').map((uri) => uri.trim()).filter(Boolean));
+    const redirects = new Set([
+      'https://chatgpt.com/connector_platform_oauth_redirect',
+      ...(env.MCP_ALLOWED_REDIRECT_URIS?.split(',').map((uri) => uri.trim()).filter(Boolean) ?? [])
+    ]);
     if ([...redirects].some((uri) => !isSafeRedirect(uri, allowLoopback))) return null;
     return { issuer, resource: url.href, allowLoopback, redirects };
   } catch {
@@ -56,8 +59,7 @@ function isSafeRedirect(uri: string, allowLoopback: boolean) {
 }
 
 export function isAllowedRedirect(uri: string, config: McpConfig) {
-  if (!isSafeRedirect(uri, config.allowLoopback)) return false;
-  return config.redirects.has(uri) || uri === 'https://chatgpt.com/connector_platform_oauth_redirect';
+  return config.redirects.has(uri) && isSafeRedirect(uri, config.allowLoopback);
 }
 
 export function isMcpOwnerConfiguration(env: CloudflareEnv, owner: string) {

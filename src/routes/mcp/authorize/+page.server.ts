@@ -5,7 +5,7 @@ import { consumeLoginAttempt } from '$lib/server/auth/rate-limit';
 import { validateCsrfOrigin } from '$lib/server/auth/csrf';
 import { mcpScopes, mcpScopeMask, scopesFromMask } from '$lib/domain/mail/mcp';
 import { getRequestEnv } from '$lib/server/workspace-api';
-import { isAllowedRedirect, isMcpOwnerConfiguration, mcpConfig, mcpPaths } from '$lib/server/mcp/config';
+import { isAllowedRedirect, isMcpOwnerConfiguration, mcpConfig, mcpPaths, type McpConfig } from '$lib/server/mcp/config';
 import { boundedMcpBody, requireContentType } from '$lib/server/mcp/http';
 import { addPendingGrant, consumeConsent, credentialDigest, ownerPolicy, startConsent } from '$lib/server/mcp/store';
 
@@ -17,6 +17,10 @@ async function consentContext(event: RequestEvent) {
   const { AuthorizationError, authorizationErrorRedirect, createMcpAuthorizationServer } = await import('$lib/server/mcp/oauth');
   const oauth = createMcpAuthorizationServer(config, env.DB).getOAuthApi({ ...env, OAUTH_KV: env.OAUTH_KV });
   return { env, config, oauth, AuthorizationError, authorizationErrorRedirect };
+}
+
+function redirectFromConsent(destination: string, config: McpConfig) {
+  redirect(303, destination, { external: [...config.redirects].map((uri) => new URL(uri).origin) });
 }
 
 function cookieFrom(headers: Headers) {
@@ -52,7 +56,7 @@ export const load: PageServerLoad = async (event) => {
         request.scope.some((scope) => !mcpScopes.some((allowed) => allowed === scope))) return { status: 'invalid' as const };
     const requested = request.scope.length ? mcpScopeMask(request.scope) : policy.scopes;
     const scopes = scopesFromMask(policy.scopes & requested);
-    if (scopes.length === 0) redirect(303, authorizationErrorRedirect(request, 'invalid_scope'));
+    if (scopes.length === 0) redirectFromConsent(authorizationErrorRedirect(request, 'invalid_scope'), config);
     const { clientName, redirectHost, redirectIsLoopback } = await oauth.describeConsent(request);
     const transaction = await oauth.beginConsent(request);
     const cookie = cookieFrom(transaction.headers);
@@ -120,6 +124,6 @@ export const actions: Actions = {
     } catch (error) {
       return error instanceof AuthorizationError ? fail(400, { reason: 'invalid' }) : fail(503, { reason: 'unavailable' });
     }
-    redirect(303, destination);
+    redirectFromConsent(destination, config);
   }
 };
