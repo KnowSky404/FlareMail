@@ -13,6 +13,11 @@ export async function credentialDigest(token: string) {
   return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export async function authorizationCodeKey(code: string, challenge: string, redirectUri: string | null) {
+  const proof = await credentialDigest(JSON.stringify([code, challenge]));
+  return proof + ':' + (redirectUri === null ? '*' : await credentialDigest(redirectUri));
+}
+
 interface Policy {
   enabled: number;
   scopes: number;
@@ -96,7 +101,7 @@ export async function addPendingGrant(db: D1Database, input: {
   name: string;
   scopes: number;
   revision: number;
-  code: string;
+  codeDigest: string;
 }) {
   const now = nowSeconds();
   const result = await db.batch([
@@ -109,7 +114,7 @@ export async function addPendingGrant(db: D1Database, input: {
         input.owner, input.revision, input.scopes, input.scopes, now),
     db.prepare(`INSERT INTO mcp_credentials (digest, grant_id, kind, issued_at_ms, expires_at)
       SELECT ?, id, 'code', ?, expires_at FROM mcp_grants WHERE id = ?`)
-      .bind(await credentialDigest(input.code), Date.now(), input.id)
+      .bind(input.codeDigest, Date.now(), input.id)
   ]);
   return result[0]?.meta.changes === 1;
 }
@@ -138,6 +143,18 @@ const activeAccessSql = `${activeGrantSql()}
 export async function activeAccess(db: D1Database, grant: GrantKey, digest: string) {
   return db.prepare(`SELECT g.id, g.owner_id, g.client_name, (g.scopes & p.scopes) AS scopes ${activeAccessSql}`)
     .bind(...grantArgs(grant, nowSeconds()), digest, nowSeconds()).first<Pick<Grant, 'id' | 'owner_id' | 'client_name' | 'scopes'>>();
+}
+
+export function findLiveCredential(db: D1Database, issuer: string, client: string, kind: 'code' | 'refresh', digest: string) {
+  const now = nowSeconds();
+  return db.prepare(`SELECT c.digest, c.issued_at_ms, c.consumed_at
+    FROM mcp_credentials AS c JOIN mcp_grants AS g ON g.id = c.grant_id
+    JOIN workspace_owner AS o ON o.user_id = g.owner_id AND o.singleton = 1
+    JOIN mcp_policies AS p ON p.owner_id = g.owner_id AND p.enabled = 1
+    WHERE c.digest GLOB ? AND c.kind = ? AND c.expires_at > ?
+      AND g.issuer = ? AND g.client_id = ? AND g.revoked_at IS NULL AND g.expires_at > ? AND (g.scopes & p.scopes) > 0`)
+    .bind(digest, kind, now, issuer, client, now)
+    .first<{ digest: string; issued_at_ms: number; consumed_at: number | null }>();
 }
 
 export function inspectExchange(db: D1Database, grant: GrantKey, kind: 'code' | 'refresh', digest: string) {

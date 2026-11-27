@@ -1,11 +1,12 @@
 import {
   GrantType, OAuthAuthorizationServer, OAuthError, type TokenExchangeCallbackOptions
 } from '@cloudflare/workers-oauth-provider';
+import { base64url } from 'jose';
 import { consumeMcpRegistration } from '$lib/server/auth/rate-limit';
 import { mcpScopes, mcpScopeMask, scopesFromMask } from '$lib/domain/mail/mcp';
 import { isAllowedRedirect, isMcpOwnerConfiguration, mcpPaths, type McpConfig, type McpEnv } from './config';
 import {
-  accessLifetime, consumeExchange, credentialDigest, grantLifetime, inspectExchange, revokeReplayedExchange, type GrantKey
+  accessLifetime, authorizationCodeKey, consumeExchange, credentialDigest, grantLifetime, inspectExchange, revokeReplayedExchange, type GrantKey
 } from './store';
 
 export interface GrantProps {
@@ -26,10 +27,13 @@ interface Exchange {
   digest: string;
   signal: AbortSignal;
   confirmedReplay?: boolean;
+  possiblyStale?: boolean;
   verified?: GrantKey;
 }
 
-export function createMcpAuthorizationServer(config: McpConfig, db: D1Database, exchange?: Exchange) {
+export function createMcpAuthorizationServer(
+  config: McpConfig, db: D1Database, exchange?: Exchange, registrationOwner?: string
+) {
   return new OAuthAuthorizationServer<McpEnv>({
     issuer: config.issuer,
     resources: [config.resource],
@@ -46,6 +50,12 @@ export function createMcpAuthorizationServer(config: McpConfig, db: D1Database, 
       if (exchange && ((internal.category === 'authorization-code-grant' && internal.reason === 'code_replayed') ||
           (internal.category === 'refresh-token-grant' && internal.reason === 'refresh_token_mismatch'))) {
         exchange.confirmedReplay = true;
+      }
+      if (exchange && ((internal.category === 'authorization-code-grant' &&
+          (internal.reason === 'grant_not_found' || internal.reason === 'code_mismatch')) ||
+          (internal.category === 'refresh-token-grant' &&
+          (internal.reason === 'grant_not_found' || internal.reason === 'refresh_token_mismatch')))) {
+        exchange.possiblyStale = true;
       }
     },
     clientRegistrationCallback: async ({ clientMetadata: metadata }) => {
@@ -68,7 +78,7 @@ export function createMcpAuthorizationServer(config: McpConfig, db: D1Database, 
             metadata.scope.split(/\s+/u).some((scope) => !mcpScopes.some((item) => item === scope))))) {
         return { code: 'invalid_client_metadata', description: 'Use supported authorization-code client metadata.' };
       }
-      const budget = await consumeMcpRegistration(db);
+      const budget = await consumeMcpRegistration(db, Date.now(), registrationOwner);
       if (!budget.allowed) {
         return { status: 429, code: 'temporarily_unavailable', description: 'The daily client registration budget is exhausted.' };
       }
@@ -117,7 +127,12 @@ export async function exchangeFor(form: URLSearchParams, signal: AbortSignal): P
   const kind = grantType === 'authorization_code' ? 'code' : 'refresh';
   const value = form.get(kind === 'code' ? 'code' : 'refresh_token');
   if (!value || value.length > 512) return;
-  return { kind, signal, digest: await credentialDigest(value) };
+  if (kind === 'refresh') return { kind, digest: await credentialDigest(value), signal };
+  const verifier = form.get('code_verifier');
+  if (!verifier || !/^[A-Za-z0-9._~-]{43,128}$/u.test(verifier)) return;
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  const challenge = base64url.encode(new Uint8Array(hash));
+  return { kind, digest: await authorizationCodeKey(value, challenge, form.get('redirect_uri') || null), signal };
 }
 
 export { AuthorizationError, authorizationErrorRedirect } from '@cloudflare/workers-oauth-provider';

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { openMcpTestDatabase } from './d1.test-fixture';
 import {
-  accessLifetime, activeAccess, addPendingGrant, auditLimit, cleanupMcpRecords, codeLifetime, consumeConsent, consumeExchange, credentialDigest, listMcpGrants, nowSeconds, recordMcpActivity,
+  accessLifetime, activeAccess, addPendingGrant, authorizationCodeKey, auditLimit, cleanupMcpRecords, codeLifetime, consumeConsent, consumeExchange, credentialDigest, findLiveCredential, listMcpGrants, nowSeconds, recordMcpActivity,
   ownerPolicy, recordTokenIssue, revokeIssuedCredential, revokeMcpGrants, revokeReplayedExchange, startConsent, updateMcpPolicy
 } from './store';
 
@@ -19,12 +19,20 @@ test('D1 gates OAuth grants across consent replay, token expiry, narrowing, revo
   expect(await consumeConsent(db, 'nonce', 'owner', policy.revision)).toBe(true);
   expect(await consumeConsent(db, 'nonce', 'owner', policy.revision)).toBe(false);
 
+  const redirect = 'https://client.example.test/callback';
+  const challenge = 'synthetic-challenge';
   async function issue(grantId: string, code: string, access: string, refresh: string) {
     const grant = { ...key, id: grantId };
     const revision = (await ownerPolicy(db, 'owner'))!.revision;
-    expect(await addPendingGrant(db, { ...grant, name: 'Synthetic', revision, code, scopes: 7 })).toBe(true);
+    const digest = await authorizationCodeKey(code, challenge, redirect);
+    expect(await addPendingGrant(db, { ...grant, name: 'Synthetic', revision, codeDigest: digest, scopes: 7 })).toBe(true);
     expect((await listMcpGrants(db, 'owner')).find((item) => item.id === grantId)?.status).toBe('pending');
-    const digest = await credentialDigest(code);
+    const check = async (challengeValue: string, redirectValue: string | null, client = grant.client) =>
+      findLiveCredential(db, grant.issuer, client, 'code', await authorizationCodeKey(code, challengeValue, redirectValue));
+    expect(await check(challenge, null)).toMatchObject({ digest, consumed_at: null });
+    expect(await check(challenge, redirect, 'other')).toBeNull();
+    expect(await check(challenge, redirect + '/other')).toBeNull();
+    expect(await check('wrong', redirect)).toBeNull();
     expect(await consumeExchange(db, { ...grant, issuer: 'https://other.example.test' }, 'code', digest)).toBe(0);
     expect(await consumeExchange(db, grant, 'code', digest)).toBe(7);
     expect(await consumeExchange(db, grant, 'code', digest)).toBe(0);
@@ -67,11 +75,11 @@ test('D1 gates OAuth grants across consent replay, token expiry, narrowing, revo
   await updateMcpPolicy(db, 'owner', false, 7);
   await updateMcpPolicy(db, 'owner', true, 7);
   expect(await activeAccess(db, c, await credentialDigest('access4'))).toBeNull();
-  expect(await addPendingGrant(db, { ...key, id: 'stale', name: 'Synthetic', code: 'stale', scopes: 1, revision: beforeDisable })).toBe(false);
+  expect(await addPendingGrant(db, { ...key, id: 'stale', name: 'Synthetic', codeDigest: 'stale', scopes: 1, revision: beforeDisable })).toBe(false);
 
   const d = await issue('grant4', 'code4', 'access5', 'refresh5');
   await cleanupMcpRecords(db, nowSeconds() + codeLifetime + 1);
-  await revokeReplayedExchange(db, 'client', key.issuer, 'code', await credentialDigest('code4'));
+  await revokeReplayedExchange(db, 'client', key.issuer, 'code', await authorizationCodeKey('code4', challenge, redirect));
   expect((await listMcpGrants(db, 'owner')).find(({ id }) => id === d.id)?.status).toBe('revoked');
 });
 

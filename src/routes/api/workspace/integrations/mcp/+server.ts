@@ -5,7 +5,7 @@ import { defaultMcpScopes, mcpScopeMask, mcpScopes, scopesFromMask } from '$lib/
 import { findWorkspaceOwnerId } from '$lib/server/db/users';
 import { apiSuccess, ApiError, readJsonBody, withApiHandler } from '$lib/server/http/api';
 import { getRequestEnv, requireWorkspaceMailboxSession } from '$lib/server/workspace-api';
-import { isMcpOwnerConfiguration, mcpConfig } from '$lib/server/mcp/config';
+import { isMcpOwnerConfiguration, mcpConfig, mcpPaths } from '$lib/server/mcp/config';
 import { hasMcpTables, listMcpActivity, listMcpGrants, ownerPolicy, revokeMcpGrants, updateMcpPolicy } from '$lib/server/mcp/store';
 
 async function owner(event: RequestEvent) {
@@ -20,7 +20,12 @@ async function owner(event: RequestEvent) {
 const mutations = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('settings'), enabled: z.boolean(), scopes: z.array(z.enum(mcpScopes)).max(mcpScopes.length) }),
   z.strictObject({ action: z.literal('revoke'), id: z.uuid() }),
-  z.strictObject({ action: z.literal('revoke-all') })
+  z.strictObject({ action: z.literal('revoke-all') }),
+  z.strictObject({
+    action: z.literal('register-client'),
+    name: z.string().trim().min(1).max(100),
+    redirectUri: z.string().max(512)
+  })
 ]);
 
 export const GET: RequestHandler = withApiHandler(async (event) => {
@@ -63,6 +68,29 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   if (!parsed.success) throw new ApiError(400, 'INVALID_MCP_SETTINGS', '无效的集成操作。');
   if (!(await hasMcpTables(env.DB))) throw new ApiError(503, 'MCP_UNAVAILABLE', 'MCP 暂不可用。');
   const input = parsed.data;
+  if (input.action === 'register-client') {
+    const context = event.platform?.context ?? event.platform?.ctx;
+    if (!config || !env.OAUTH_KV || config.issuer !== event.url.origin || !context ||
+        !(await ownerPolicy(env.DB, id))?.enabled) {
+      throw new ApiError(409, 'MCP_CONFIGURATION_INCOMPLETE', '请先在主域名上启用 MCP。');
+    }
+    const { createMcpAuthorizationServer } = await import('$lib/server/mcp/oauth');
+    const provider = createMcpAuthorizationServer(config, env.DB, undefined, id);
+    // DCR only uses the provider context on resource routes.
+    const registration = await provider.fetch(new Request(config.issuer + mcpPaths.register, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: input.name, redirect_uris: [input.redirectUri],
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'], token_endpoint_auth_method: 'client_secret_post'
+      })
+    }), { ...env, OAUTH_KV: env.OAUTH_KV }, context as ExecutionContext);
+    if (registration.status === 429) throw new ApiError(429, 'RATE_LIMITED', '已达到 Owner 客户端注册额度。');
+    if (registration.status === 400) throw new ApiError(400, 'INVALID_MCP_SETTINGS', '客户端名称或回调地址无效。');
+    if (!registration.ok) throw new ApiError(503, 'MCP_UNAVAILABLE', 'MCP 暂不可用。');
+    return apiSuccess(event, await registration.json(), { status: 201 });
+  }
   if (input.action === 'settings') {
     if (input.enabled) {
       if (!input.scopes.length) throw new ApiError(400, 'INVALID_MCP_SETTINGS', '启用 MCP 至少需要一个权限。');

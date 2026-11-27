@@ -54,6 +54,9 @@ describe('D1 login rate limiter', () => {
     const attempts = await Promise.all(Array.from({ length: 101 }, () => consumeMcpRegistration(db, now)));
     expect(attempts.filter(({ allowed }) => allowed)).toHaveLength(100);
     expect(await consumeMcpRegistration(db, now)).toEqual({ allowed: false, retryAfterSeconds: 86_400 });
+    const reserved = await Promise.all(Array.from({ length: 6 }, () => consumeMcpRegistration(db, now, 'owner')));
+    expect(reserved.filter(({ allowed }) => allowed)).toHaveLength(5);
+    expect((await consumeMcpRegistration(db, now)).allowed).toBe(false);
     expect(await consumeLoginAttempt(db, 'mcp:/mcp/token:192.0.2.1', now, 30, 60_000)).toMatchObject({ allowed: true });
     expect(await consumeMcpRegistration(db, now + 86_400_000)).toMatchObject({ allowed: true });
   });

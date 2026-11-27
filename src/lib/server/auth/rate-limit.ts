@@ -75,8 +75,9 @@ export async function consumeLoginAttempt(
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
-export function consumeMcpRegistration(db: D1Database, now = Date.now()) {
-  return consumeLoginAttempt(db, 'mcp:register:global', now, 100, 24 * 60 * 60 * 1000);
+export function consumeMcpRegistration(db: D1Database, now = Date.now(), owner?: string) {
+  const key = owner ? `mcp:register:owner:${owner}` : 'mcp:register:global';
+  return consumeLoginAttempt(db, key, now, owner ? 5 : 100, 24 * 60 * 60 * 1000);
 }
 
 export async function cleanupLoginAttempts(db: D1Database, now = Date.now()) {

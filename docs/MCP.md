@@ -78,8 +78,9 @@ form origin and session checks. See [Cloudflare Access application paths](https:
 
 `search` accepts a query and returns up to 20 IDs, titles, snippets, and links.
 `fetch` accepts one ID and returns plain-text content, citation URL and safe
-metadata. Domain-specific results include structured JSON and a compatible JSON
-text result. Full mail and metadata tools accept only their declared parameters.
+metadata. Single-message results shorten the text when needed to fit the
+64 KiB structured result limit and report `textTruncated`. Domain-specific
+results include structured JSON and a compatible JSON text result. Full mail and metadata tools accept only their declared parameters.
 
 `search_messages` and `list_messages` default to inbox, archive and sent,
 descending by timestamp and ID. Use `folder: drafts` or
@@ -200,7 +201,12 @@ KV supplies provider storage and adds read/write operations to discovery and
 OAuth flows. Tool requests use existing Worker/D1 capacity and R2 only when
 reading a small canonical body. DCR is limited to 10 requests per minute per IP
 and 100 validated registrations per 24-hour window per deployment database.
-This leaves KV write capacity for consent and token exchanges. Token operations
+The authenticated Owner can pre-register up to five clients per 24 hours using
+the [workspace registration action](API.md#remote-mcp) if the public quota is
+full. Supply the returned client ID and secret to a client that accepts
+provided OAuth credentials with `client_secret_post`. The OAuth consent and
+scope checks still apply. These limits leave KV write capacity for consent
+and token exchanges. Token operations
 are limited to 30 requests per minute per IP, and MCP to 120 per IP and 60 per grant. At most 100 live or pending grants are accepted. Existing Cron prunes expired state and
 tool audit rows in bounded hourly batches. The audit keeps at most 20,000 tool calls. Hourly cleanup removes entries older than 30 days. Entries contain client name, tool name, result class, timing and request ID. Review actual plan quotas
 before deployment. See [Workers limits](https://developers.cloudflare.com/workers/platform/limits/),
