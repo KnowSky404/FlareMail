@@ -58,11 +58,12 @@ export async function handleMcpEndpoint(request: Request, env: CloudflareEnv, ct
       if (!token) return challenge();
       const validated = await authorization.validateToken<GrantProps>(config.resource, token, bindings);
       if (!validated || validated.audience !== config.resource || !isGrantProps(validated.props) ||
-          validated.props.issuer !== config.issuer || !isMcpOwnerConfiguration(env, validated.userId)) {
+          validated.props.issuer !== config.issuer || !isMcpOwnerConfiguration(env, validated.props.owner) ||
+          validated.userId !== await credentialDigest(validated.props.owner)) {
         return challenge('invalid_token');
       }
       const digest = await credentialDigest(token);
-      const grantKey = { id: validated.props.id, owner: validated.userId, issuer: config.issuer, client: validated.clientId };
+      const grantKey = { id: validated.props.id, owner: validated.props.owner, issuer: config.issuer, client: validated.clientId };
       const grant = await activeAccess(env.DB, grantKey, digest);
       if (!grant) return challenge('invalid_token');
       const grantRate = await consumeLoginAttempt(env.DB, `mcp:grant:${grant.id}`, Date.now(), 60, 60_000);

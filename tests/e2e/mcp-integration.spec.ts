@@ -135,6 +135,19 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect(found.structuredContent).toMatchObject({ results: [{ id: 'e2e-inbox-message' }] });
     const fetched = await call('fetch', { id: 'e2e-inbox-message' });
     expect(fetched.structuredContent).toMatchObject({ text: 'This message is seeded in the isolated local D1 database.', metadata: { isRead: false } });
+    const draft = await call('get_message', { id: 'e2e-mcp-older-draft', includeDraft: true });
+    expect(draft.structuredContent).toMatchObject({ subject: 'E2E MCP older draft', folder: 'drafts', url: expect.any(String) });
+    const draftPage = await page.context().newPage();
+    try {
+      await draftPage.goto(String(draft.structuredContent?.url));
+      await expect(draftPage.getByRole('heading', { name: 'E2E MCP older draft', exact: true })).toBeVisible();
+    } finally {
+      await draftPage.close();
+    }
+    const emptyPolicy = await page.request.post(settings, {
+      headers: { Origin: base }, data: { action: 'settings', enabled: true, scopes: [] }
+    });
+    expect(emptyPolicy.status()).toBe(400);
     expect((await call('get_message', { id: 'e2e-inbox-message' })).structuredContent).toMatchObject({ isRead: false });
     const pageOne = await call('list_messages', { limit: 1 });
     expect(pageOne.structuredContent).toMatchObject({ nextCursor: expect.any(String) });
@@ -224,6 +237,14 @@ test('integration settings are accessible across languages and themes @mcp', asy
   await expect(page.getByText(/已启用|^Enabled$/)).toBeVisible();
   await expect(page.getByRole('button', { name: /复制 MCP 地址|Copy MCP endpoint/ })).toBeVisible();
   const panel = page.locator('#settings-panel-integrations');
+  const readScope = panel.locator('input[value="mail.read"]');
+  const metadataScope = panel.locator('input[value="mail.metadata.read"]');
+  await readScope.uncheck();
+  await metadataScope.uncheck();
+  await expect(saveButton).toBeDisabled();
+  await expect(panel.getByText('启用 MCP 至少需要一个权限。')).toBeVisible();
+  await readScope.check();
+  await metadataScope.check();
   await expect.poll(async () => {
     const { violations } = await new AxeBuilder({ page }).include('#settings-panel-integrations').analyze();
     return violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) }));

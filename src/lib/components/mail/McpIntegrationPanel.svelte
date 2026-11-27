@@ -99,6 +99,7 @@
 
   function save(event: SubmitEvent) {
     event.preventDefault();
+    if (enabled && !scopes.length) return;
     const input = { action: 'settings' as const, enabled, scopes };
     if (summary?.enabled && !enabled) confirm = input;
     else void mutate(input);
@@ -154,8 +155,9 @@
               {t(`mcp.scope.${scope}`)}
             </label>
           {/each}
+          {#if enabled && !scopes.length}<p role="status">{t('mcp.scopeRequired')}</p>{/if}
         </fieldset>
-        <Button type="submit" disabled={!dirty || loading || (enabled && ['incomplete', 'unavailable'].includes(summary.status))}
+        <Button type="submit" disabled={!dirty || loading || (enabled && (!scopes.length || ['incomplete', 'unavailable'].includes(summary.status)))}
           loading={pending && !confirm}>{t('settings.save')}</Button>
       </form>
     {:else if loading}

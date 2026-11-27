@@ -65,6 +65,7 @@ export const POST: RequestHandler = withApiHandler(async (event) => {
   const input = parsed.data;
   if (input.action === 'settings') {
     if (input.enabled) {
+      if (!input.scopes.length) throw new ApiError(400, 'INVALID_MCP_SETTINGS', '启用 MCP 至少需要一个权限。');
       if (!config || !env.OAUTH_KV) throw new ApiError(409, 'MCP_CONFIGURATION_INCOMPLETE', 'MCP 配置尚未完成。');
       try { await env.OAUTH_KV.get('flaremail:health'); }
       catch { throw new ApiError(503, 'MCP_UNAVAILABLE', 'MCP 暂不可用。'); }
