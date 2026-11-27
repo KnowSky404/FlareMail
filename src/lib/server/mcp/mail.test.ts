@@ -13,7 +13,7 @@ const actor = {
 test('scopes paginated search and direct reads to visible owner mail and limits exported text', async () => {
   using fixture = openMcpTestDatabase();
   const { db, database } = fixture;
-  const ts = '2026-11-26T10:00:00.000Z';
+  const ts = '2026-11-26T10:00:00Z';
   const workspace = database.query(`
     INSERT INTO workspace_messages
       (id, user_id, folder, from_name, from_email, to_name, to_email, subject, body, sent_at, deleted_at, archived_at, message_id, thread_key)

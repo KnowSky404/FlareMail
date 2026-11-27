@@ -229,7 +229,7 @@ export function fetchMessageBody(messageId: string, signal?: AbortSignal) {
   );
 }
 
-export function fetchDraftDetail(draftId: string, signal?: AbortSignal) {
+export function fetchDraftDetail(draftId: string, signal?: AbortSignal, { activeOnly = false } = {}) {
   return requestJson<{
     message: MailMessage;
     html?: string;
@@ -237,7 +237,7 @@ export function fetchDraftDetail(draftId: string, signal?: AbortSignal) {
     attachments: NonNullable<ComposeInput['attachments']>;
     attachmentRevision: number;
   }>(
-    `/api/workspace/drafts/${encodeURIComponent(draftId)}`,
+    `/api/workspace/drafts/${encodeURIComponent(draftId)}${activeOnly ? '?active=1' : ''}`,
     { signal }
   );
 }

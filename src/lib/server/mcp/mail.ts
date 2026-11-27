@@ -99,7 +99,8 @@ export async function searchMail(env: CloudflareEnv, actor: MailActor, input: Se
     try {
       const parsed: unknown = JSON.parse(new TextDecoder().decode(base64url.decode(cursor)));
       if (!Array.isArray(parsed) || parsed.length !== 3 || parsed[0] !== context ||
-          typeof parsed[1] !== 'string' || new Date(parsed[1]).toISOString() !== parsed[1] ||
+          typeof parsed[1] !== 'string' || parsed[1].length > 64 || !/^\d{4}-\d{2}-\d{2}[T ]/u.test(parsed[1]) ||
+          !Number.isFinite(Date.parse(parsed[1])) ||
           typeof parsed[2] !== 'string' || !/^[A-Za-z0-9:._-]{1,256}$/u.test(parsed[2])) throw invalidSearch();
       [, timestamp, cursorId] = parsed as [string, string, string];
     } catch {

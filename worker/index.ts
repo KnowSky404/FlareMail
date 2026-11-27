@@ -11,6 +11,7 @@ import { scheduleMaintenance } from '../src/lib/server/scheduled';
 // The adapter emits its own runtime types; use this wrapper's generated contract.
 const appFetch = app.fetch as unknown as NonNullable<ExportedHandler<CloudflareEnv>['fetch']>;
 let nextRequestCleanupAt = 0;
+let nextScheduledCleanupAt = 0;
 
 function scheduleExpiredRecordsCleanup(db: D1Database, ctx: ExecutionContext) {
   ctx.waitUntil(cleanupLoginAttempts(db).catch(() => {
@@ -31,8 +32,9 @@ export default {
     } else {
       response = await appFetch(request, env, ctx);
     }
-    if (env.APP_ENV !== 'production' && env.DB && request.method === 'POST' && response.ok &&
-        (path === '/api/workspace/session' || path === mcpPaths.resource) && Date.now() >= nextRequestCleanupAt) {
+    if (env.APP_ENV !== 'production' && env.DB && request.method === 'POST' &&
+        (path === '/api/workspace/session' || (path === mcpPaths.resource && response.ok)) &&
+        Date.now() >= nextRequestCleanupAt) {
       nextRequestCleanupAt = Date.now() + 15 * 60 * 1000;
       scheduleExpiredRecordsCleanup(env.DB, ctx);
     }
@@ -44,7 +46,8 @@ export default {
   },
 
   scheduled(controller, env, ctx) {
-    if (env.DB && new Date(controller.scheduledTime).getUTCMinutes() === 0) {
+    if (env.DB && controller.scheduledTime >= nextScheduledCleanupAt) {
+      nextScheduledCleanupAt = controller.scheduledTime + 60 * 60 * 1000;
       scheduleExpiredRecordsCleanup(env.DB, ctx);
     }
     scheduleMaintenance(env, ctx);

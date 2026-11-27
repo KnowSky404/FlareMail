@@ -13,7 +13,7 @@ export const GET: RequestHandler = withApiHandler(async (event) => {
   if (!env?.DB) throw new ApiError(503, 'DRAFT_STORAGE_UNAVAILABLE', '草稿存储服务暂不可用。');
 
   const id = requirePathParam(event, 'id');
-  const row = await findOwnedDraft(env.DB, session.userId, id);
+  const row = await findOwnedDraft(env.DB, session.userId, id, { activeOnly: event.url.searchParams.get('active') === '1' });
   if (!row) throw new ApiError(404, 'DRAFT_NOT_FOUND', '草稿不存在或已被删除。');
 
   const message = mapDraftRow(row, session.profile);

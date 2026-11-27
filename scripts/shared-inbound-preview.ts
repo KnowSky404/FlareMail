@@ -137,6 +137,7 @@ interface WorkerBindingMetadata {
   database_id?: string;
   id?: string;
   bucket_name?: string;
+  namespace_id?: string;
   text?: string;
   json?: { recipient?: string | null; enabled?: boolean; readOnly?: boolean; environment?: string; workerName?: string; previewCatchAllCapacity?: number } | string;
 }
@@ -443,8 +444,14 @@ export function assertUnchangedProductionConfiguration(
   const { PRE_INBOUND_ENABLED: _enabled, PRE_INBOUND_RECIPIENT: _recipient, ...vars } = target.vars;
   const activeVars = active.bindings.filter(binding => binding.type === 'plain_text');
   const activeSecrets = active.bindings.filter(binding => binding.type === 'secret_text').map(binding => binding.name);
+  const activeOAuth = active.bindings.find(binding => binding.name === 'OAUTH_KV');
+  const preservedOAuth = activeOAuth
+    ? activeOAuth.type === 'kv_namespace' && Boolean(target.oauthKvId) &&
+      target.oauthKvId === (activeOAuth.namespace_id ?? activeOAuth.id)
+    : target.oauthKvId === undefined;
   if (Object.keys(vars).length !== activeVars.length ||
       activeVars.some(binding => !Object.hasOwn(vars, binding.name) || vars[binding.name] !== binding.text) ||
+      !preservedOAuth ||
       !sameStrings(target.secrets ?? [], activeSecrets) ||
       target.compatibilityDate !== active.compatibilityDate ||
       !sameStrings(target.compatibilityFlags, active.compatibilityFlags) || !sameStrings(target.cron, active.cron)) {
