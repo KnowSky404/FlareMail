@@ -49,6 +49,14 @@ export default defineConfig({
         OUTBOUND_FROM_EMAIL: 'e2e@flaremail.test', OUTBOUND_FROM_NAME: 'FlareMail E2E',
         RESEND_WEBHOOK_SECRET: process.env.FLAREMAIL_E2E_WEBHOOK_SECRET ?? ''
       });
+      if (process.env.FLAREMAIL_E2E_MCP === 'true') {
+        const origin = `http://127.0.0.1:${process.env.FLAREMAIL_DEV_PORT ?? 4173}`;
+        Object.assign(vars, {
+          APP_BASE_URL: origin,
+          MCP_PUBLIC_URL: `${origin}/mcp`,
+          MCP_ALLOWED_REDIRECT_URIS: `${origin}/mcp-test-callback`
+        });
+      }
     }
     const env = Object.fromEntries(Object.entries(vars).map(([key, value]) => [key, bindings.text(value)])) as { [Key in keyof typeof localTarget.vars]: TextBinding };
     return {
@@ -64,6 +72,7 @@ export default defineConfig({
         ...Object.fromEntries((target.secrets ?? []).map((name) => [name, bindings.secret()])),
         DB: bindings.d1({ name: target.databaseName, id: target.databaseId }),
         BUCKET: bindings.r2({ name: target.bucket }),
+        ...(target.oauthKvId ? { OAUTH_KV: bindings.kv({ id: target.oauthKvId }) } : {}),
         ...(preInboundSettings ? { PRE_INBOUND_SETTINGS: bindings.json(preInboundSettings) } : {}),
         ...(target.preInbound ? {
           PRE_INBOUND_DB: bindings.d1({ name: target.preInbound.databaseName, id: target.preInbound.databaseId }),

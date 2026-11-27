@@ -1,6 +1,6 @@
 import type { CloudflareEnv } from '$lib/server/cloudflare';
 import type { WorkspaceCapabilities } from '$lib/server/workspace/shared';
-import { isSupportedWorkspaceSchemaVersion } from '$lib/server/db/schema-version';
+import { isWorkspaceRuntimeSchemaVersion } from '$lib/server/db/schema-version';
 
 async function isCurrentSchema(env?: CloudflareEnv, throwOnProbeError = false): Promise<boolean> {
   if (!env?.DB) return false;
@@ -8,7 +8,7 @@ async function isCurrentSchema(env?: CloudflareEnv, throwOnProbeError = false): 
     const row = await env.DB.prepare(
       'SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?'
     ).bind('flaremail').first<{ schema_version: number }>();
-    return isSupportedWorkspaceSchemaVersion(row?.schema_version);
+    return isWorkspaceRuntimeSchemaVersion(row?.schema_version);
   } catch (error) {
     if (throwOnProbeError) throw error;
     return false;

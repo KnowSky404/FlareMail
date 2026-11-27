@@ -32,6 +32,10 @@ Use a dedicated worktree and the [development workflow](./docs/WORKFLOW.md)
 to choose CI, review and Preview gates by risk. Preview and production
 deployments require separate authorization.
 
+## Remote MCP
+
+The Owner can enable read-only mailbox access for ChatGPT or other OAuth MCP clients in **Settings → Integrations**. See [MCP setup and acceptance](docs/MCP.md).
+
 ## Documentation
 
 | Guide | What it covers |

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { hasReliableThreadContext } from '$lib/server/workspace/shared';
+import { isWorkspaceRuntimeSchemaVersion } from './schema-version';
 
 const repositoryRoot = resolve(import.meta.dir, '../../../..');
 const migrationsDirectory = join(repositoryRoot, 'migrations');
@@ -67,6 +68,26 @@ describe('versioned D1 migrations', () => {
   test('keeps migration 0029 identical to the reviewed bridge compatibility fixture', () => {
     expect(readFileSync(join(migrationsDirectory, '0029_blocked_senders.sql'), 'utf8'))
       .toBe(readFileSync(join(repositoryRoot, 'tests/fixtures/schema-29-bridge.sql'), 'utf8'));
+  });
+
+  test('migrates schema 42 to 43 with MCP default-off and preserves email ownership and content', () => {
+    using database = createDatabase();
+    applyMigrationsThrough(database, '0042_correct_stale_legacy_failure_receipts.sql');
+    database.exec(`
+      INSERT INTO workspace_users (id, name, role, email)
+      VALUES ('owner', 'Owner', 'Owner', 'owner@example.test'), ('other', 'Other', 'User', 'other@example.test');
+      INSERT INTO workspace_owner (singleton, user_id) VALUES (1, 'owner');
+      INSERT INTO email_messages (id, owner_user_id, "from", "to", subject, "timestamp", raw_key, text_body)
+      VALUES ('message', 'owner', 'sender@example.test', 'owner@example.test', 'Synthetic', '2026-11-26T00:00:00.000Z', 'raw/legacy', 'Existing body');
+    `);
+    expect(isWorkspaceRuntimeSchemaVersion(42)).toBe(true);
+    expect(isWorkspaceRuntimeSchemaVersion(41)).toBe(false);
+    applyMigrations(database);
+    expect(database.query('SELECT schema_version FROM workspace_schema_metadata').get()).toEqual({ schema_version: 43 });
+    expect(database.query('SELECT id, owner_user_id, text_body FROM email_messages').all())
+      .toEqual([{ id: 'message', owner_user_id: 'owner', text_body: 'Existing body' }]);
+    expect(tableCount(database, 'mcp_policies')).toBe(0);
+    expect(tableCount(database, 'mcp_grants')).toBe(0);
   });
 
   test('keeps schema.sql aligned with the versioned migration result', () => {
@@ -600,7 +621,8 @@ describe('versioned D1 migrations', () => {
       '0039_queue_legacy_resend_failures.sql',
       '0040_recover_masked_resend_terminal_events.sql',
       '0041_recover_terminal_outcomes_across_retries.sql',
-      '0042_correct_stale_legacy_failure_receipts.sql'
+      '0042_correct_stale_legacy_failure_receipts.sql',
+      '0043_mcp_integration.sql'
     ]);
 
     expect(tableColumns(db, 'email_messages')).toEqual(
@@ -735,7 +757,7 @@ describe('versioned D1 migrations', () => {
       new Set(['id', 'user_id', 'email_message_id', 'is_read', 'is_starred', 'deleted_at', 'archived_at', 'quarantined_at', 'created_at', 'updated_at'])
     );
     expect(db.query('SELECT schema_name, schema_version FROM workspace_schema_metadata').all()).toEqual([
-      { schema_name: 'flaremail', schema_version: 42 }
+      { schema_name: 'flaremail', schema_version: 43 }
     ]);
 
     expect(db.query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'workspace_users_telegram_delete_cleanup'`).get())

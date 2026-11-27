@@ -147,6 +147,14 @@ Email Routing 和 Cron 触发 Worker 的生产 handler。原生 Preview 的 HTTP
 [资源隔离](https://developers.cloudflare.com/workers/previews/resources/)、
 [Version URLs](https://developers.cloudflare.com/workers/versions-and-deployments/version-urls/)。
 
+## Remote MCP acceptance
+
+核对 PRE 的 D1、R2、OAuth KV、Owner 和 canonical URL 与生产隔离。迁移
+0043、创建 KV 和写入合成邮件分别遵循授权范围。按 [MCP 指南](MCP.md) 检验
+协议入口、Origin、Owner 同意、三种权限、邮件读取和撤销。保留同一提交的 PRE
+URL、部署 ID、版本和脱敏记录。生产流量指向仍按本指南核对。ChatGPT 的真实
+连接与过期刷新必须取得独立证据。
+
 ## Optional AI acceptance
 
 AI is disabled by default. Current `mail-ai` uses dedicated D1 and R2 with its own saved AI settings. AI generation sends selected email text to an external service. AI processing and migration 0030 require separate authorization. Real-provider acceptance uses authorized provider requests. See [AI setup](AI.md).

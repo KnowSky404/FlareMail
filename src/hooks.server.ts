@@ -16,6 +16,7 @@ import type { CloudflareEnv } from '$lib/server/cloudflare';
 import { ApiError, apiFailure, classifyRuntimeError, getRequestId, runtimeUnavailableState } from '$lib/server/http/api';
 import { resolveLocale } from '$lib/client/locale-preferences';
 import { verifyCloudflareAccessAssertion } from '$lib/server/auth/cloudflare-access';
+import { mcpPaths } from '$lib/server/mcp/config';
 import { findWorkspaceOwnerId, hasWorkspaceOwnerCredential } from '$lib/server/db/users';
 
 const setSecurityHeaders = (response: Response, secure: boolean, requestId?: string) => {
@@ -202,7 +203,10 @@ export const handle: Handle = async ({ event, resolve }) => {
     if (isPrivateReaderPath(event.url.pathname) || !isAccessExempt) {
       response.headers.set('cache-control', 'private, no-store');
     }
-    return setSecurityHeaders(response, secure, requestId);
+    const secured = setSecurityHeaders(response, secure, requestId);
+    // Native consent submissions need a non-opaque Origin. Keep request URLs private.
+    if (event.url.pathname === mcpPaths.authorize) secured.headers.set('referrer-policy', 'strict-origin');
+    return secured;
   } catch (error) {
     if (error instanceof ApiError) {
       return failApi(error);

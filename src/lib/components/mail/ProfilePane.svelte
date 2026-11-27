@@ -2,7 +2,7 @@
   import { systemHealthLabel } from '$lib/client/delivery-attention-labels';
   import type { SystemHealth } from '$lib/domain/runtime-state';
   import { onMount, tick, untrack } from 'svelte';
-  import { Activity, Ban, Bell, ChevronRight, Send, Sparkles, UserRound } from '@lucide/svelte';
+  import { Activity, Ban, Bell, ChevronRight, Plug, Send, Sparkles, UserRound } from '@lucide/svelte';
   import { nextRadioIndex } from '$lib/components/ui/radio-navigation';
   import Button from '$lib/components/ui/Button.svelte';
   import Badge from '$lib/components/ui/Badge.svelte';
@@ -10,6 +10,7 @@
   import Switch from '$lib/components/ui/Switch.svelte';
   import TextArea from '$lib/components/ui/TextArea.svelte';
   import TextField from '$lib/components/ui/TextField.svelte';
+  import McpIntegrationPanel from '$lib/components/mail/McpIntegrationPanel.svelte';
   import MailAiSettingsPanel from '$lib/components/mail/MailAiSettingsPanel.svelte';
   import BlockedSendersPanel from '$lib/components/mail/BlockedSendersPanel.svelte';
   import TelegramNotificationPanel from '$lib/components/mail/TelegramNotificationPanel.svelte';
@@ -90,7 +91,7 @@
   let telegramVisited = $state(false);
   let blockedVisited = $state(false);
   let verticalNav = $state(false);
-  const tabIcons = { profile: UserRound, notifications: Bell, telegram: Send, blocked: Ban, ai: Sparkles, diagnostics: Activity };
+  const tabIcons = { profile: UserRound, notifications: Bell, telegram: Send, blocked: Ban, ai: Sparkles, integrations: Plug, diagnostics: Activity };
   onMount(() => {
     const layout = matchMedia('(min-width: 1024px)');
     const syncLayout = () => verticalNav = layout.matches;
@@ -109,7 +110,7 @@
       if (tab === current) document.getElementById(`settings-tab-${current}`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     });
   });
-  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title'), blocked: t('blocked.title'), ai: t('aiSettings.title') });
+  const tabLabels = $derived<Record<SettingsTab, string>>({ profile: t('settings.profile'), notifications: t('settings.notifications'), diagnostics: t('settings.diagnostics'), telegram: t('telegram.title'), blocked: t('blocked.title'), ai: t('aiSettings.title'), integrations: t('mcp.title') });
 
   function moveTab(event: KeyboardEvent, index: number) {
     if (verticalNav ? ['ArrowLeft', 'ArrowRight'].includes(event.key) : ['ArrowUp', 'ArrowDown'].includes(event.key)) return;
@@ -175,7 +176,7 @@
     {/each}
   </div>
 
-  <div id={tab === 'telegram' || tab === 'blocked' || tab === 'ai' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram' || tab === 'blocked' || tab === 'ai'}>
+  <div id={tab === 'telegram' || tab === 'blocked' || tab === 'ai' || tab === 'integrations' ? undefined : `settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} hidden={tab === 'telegram' || tab === 'blocked' || tab === 'ai' || tab === 'integrations'}>
   <form onsubmit={submit}>
     {#if tab === 'profile'}
     <Panel id="settings-profile" contentClass="profile-fields">
@@ -300,6 +301,9 @@
     {/if}
   </form>
   </div>
+  {#if tab === 'integrations' && !authExpired}
+    <div id="settings-panel-integrations" role="tabpanel" aria-labelledby="settings-tab-integrations"><McpIntegrationPanel /></div>
+  {/if}
   {#if tab === 'ai' && !authExpired}
     <div id="settings-panel-ai" role="tabpanel" aria-labelledby="settings-tab-ai"><MailAiSettingsPanel /></div>
   {/if}

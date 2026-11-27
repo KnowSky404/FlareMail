@@ -116,15 +116,16 @@ export async function listAttachmentsForEntity(
   userId: string,
   relationType: AttachmentRelationType,
   entityId: string,
-  options: { includeNonReady?: boolean } = {}
+  options: { includeNonReady?: boolean; limit?: number; afterId?: string } = {}
 ) {
   const stateFilter = options.includeNonReady ? '' : ` AND state = 'ready'`;
   const result = await db.prepare(`
     SELECT ${attachmentColumns}
     FROM workspace_attachments
     WHERE user_id = ? AND relation_type = ? AND message_id = ?${stateFilter}
-    ORDER BY created_at ASC, id ASC
-  `).bind(userId, relationType, entityId).all<StoredAttachmentRow>();
+    ${options.limit === undefined ? 'ORDER BY created_at ASC, id ASC' : 'AND id > ? ORDER BY id LIMIT ?'}
+  `).bind(userId, relationType, entityId, ...(options.limit === undefined ? [] : [options.afterId ?? '', options.limit]))
+    .all<StoredAttachmentRow>();
   return result.results ?? [];
 }
 

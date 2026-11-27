@@ -524,6 +524,9 @@ interface MailboxSummaryQuery {
   timestamp?: string;
   cursorId?: string;
   limit: number;
+  includeSearchTotal?: boolean;
+  envelopeRecipient?: string;
+  includeMimeRecipients?: boolean;
   query: string;
   search: MailSearchQuery | null;
   filter: MailboxFilter;
@@ -534,7 +537,7 @@ interface MailboxSummaryQuery {
   threadKeys?: string[];
 }
 
-async function listInboundMessageSummaryPage(
+export async function listInboundMessageSummaryPage(
   db: D1Database,
   userId: string,
   input: MailboxSummaryQuery
@@ -575,6 +578,10 @@ async function listInboundMessageSummaryPage(
   if (labelSearch) {
     conditions.push(labelSearch.sql);
     bindings.push(...labelSearch.bindings);
+  }
+  if (input.envelopeRecipient) {
+    conditions.push('e."to" = ? COLLATE NOCASE');
+    bindings.push(input.envelopeRecipient);
   }
   if (input.deliveryStatus) conditions.push('1 = 0');
   if (input.search) {
@@ -624,6 +631,7 @@ async function listInboundMessageSummaryPage(
   const pageSelect = `
     SELECT e.id AS email_id, e."from", e."to", e.mail_address_id, e.mail_domain_id, e.recipient_status,
       e.subject, e."timestamp", e.snippet, e.inbox_category_v2, e.ai_inbox_category,
+      ${input.includeMimeRecipients ? 'e.to_json, e.cc_json,' : ''}
       e.message_id, e.in_reply_to, e."references", e.thread_key, s.archived_at,
       COALESCE(s.is_read, 0) AS is_read, COALESCE(s.is_starred, 0) AS is_starred,
       EXISTS (SELECT 1 FROM workspace_attachments AS attachment WHERE attachment.user_id = e.owner_user_id AND attachment.message_id = e.id AND attachment.relation_type = 'inbound') AS has_attachments,
@@ -633,7 +641,7 @@ async function listInboundMessageSummaryPage(
     LEFT JOIN workspace_email_states AS s
       ON s.user_id = ? AND s.email_message_id = e.id
     WHERE ${conditions.join(' AND ')}`;
-  const pageSql = !input.timestamp && (input.search || input.labelId || (input.category && input.category !== 'all'))
+  const pageSql = input.includeSearchTotal !== false && !input.timestamp && (input.search || input.labelId || (input.category && input.category !== 'all'))
     ? `SELECT search_rows.*, COUNT(*) OVER() AS search_total FROM (${pageSelect}) AS search_rows
        ORDER BY search_rows."timestamp" DESC, ('email:' || search_rows.email_id) DESC LIMIT ?`
     : `${pageSelect} ORDER BY e."timestamp" DESC, ('email:' || e.id) DESC LIMIT ?`;

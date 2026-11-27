@@ -107,3 +107,7 @@ With single-Worker PRE inbound configured, verify the running production email h
 本地与远程迁移脚本均支持 `-- --dry-run`，会透传给 cf，仅预检而不应用迁移；未知选项直接报错，避免拼错参数后意外执行写入。
 
 The [archived Wrangler guide](docs/archive/wrangler-deployment.md) preserves the former workflow for historical reference only. Current command authority is this guide and the [official cf documentation](https://developers.cloudflare.com/cf/).
+
+## Optional Remote MCP
+
+Follow the [MCP deployment guide](docs/MCP.md) for optional KV, URL and Access configuration, migration 0043, PRE acceptance and rollback.

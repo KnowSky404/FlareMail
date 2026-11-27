@@ -9,12 +9,12 @@ export async function listDrafts(db: D1Database, userId: string) {
   `).bind(userId).all<WorkspaceDraftRow>();
 }
 
-export async function findOwnedDraft(db: D1Database, userId: string, draftId: string) {
+export async function findOwnedDraft(db: D1Database, userId: string, draftId: string, options: { activeOnly?: boolean } = {}) {
   return db.prepare(`
     SELECT id, to_email, cc, to_json, cc_json, bcc_json, subject, body, is_starred, created_at, updated_at,
       message_id, in_reply_to, "references", thread_key, idempotency_key, body_object_id, attachment_revision,
       sender_address_id, from_name, from_email, reply_to_json
-    FROM workspace_drafts WHERE user_id = ? AND id = ?
+    FROM workspace_drafts WHERE user_id = ? AND id = ?${options.activeOnly ? ' AND deleted_at IS NULL' : ''}
   `).bind(userId, draftId).first<WorkspaceDraftRow>();
 }
 

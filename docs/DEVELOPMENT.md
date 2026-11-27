@@ -313,6 +313,10 @@ Use `bun run preview` for the complete local Worker. Set `FLAREMAIL_DEV_HOST` (d
 
 `bun run dev` remains the Svelte HMR server; its adapter proxy mirrors the selected local target and shares the same isolated state directory. Use `bun run preview` for acceptance of the complete fetch/email/scheduled wrapper. SvelteKit 3 keeps the existing `$lib` imports through its documented compatibility alias. TypeScript 6 is intentional: TypeScript 7 no longer provides the compiler API used by SvelteKit.
 
+## Local Remote MCP verification
+
+Use the opt-in Playwright suite against the local Worker with synthetic seed data. See [MCP verification](MCP.md#local-and-pre-verification) for the command, Inspector setup and scope tests.
+
 ## Optional mail AI
 
 See [AI setup and fake-provider testing](AI.md). AI tests do not need provider credentials. Use isolated local D1/R2; never analyze shared real email as a fixture.

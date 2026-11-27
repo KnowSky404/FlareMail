@@ -138,13 +138,14 @@ export function insertInboundMessage(db: D1Database, message: InboundMessageInse
 export async function findOwnedInboundMessage(
   db: D1Database,
   userId: string,
-  messageId: string
+  messageId: string,
+  options: { includeBody?: boolean } = {}
 ) {
   return db.prepare(`
     SELECT id, message_id, "from", "to", cc, to_json, cc_json, reply_to_json,
       mail_domain_id, mail_address_id, recipient_status,
       return_path, delivered_to, headers_json, authentication_results_json, subject, "timestamp", snippet,
-      text_body, html_body, in_reply_to, "references", thread_key,
+      ${options.includeBody === false ? "'' AS text_body, '' AS html_body" : 'text_body, html_body'}, in_reply_to, "references", thread_key,
       raw_key, raw_size, body_object_id, created_at
     FROM email_messages
     WHERE id = ? AND owner_user_id = ?

@@ -29,6 +29,7 @@
   "databaseId": "00000000-0000-4000-8000-000000000001",
   "databaseName": "flaremail-db",
   "bucket": "flaremail-bucket",
+  "oauthKvId": "00000000000000000000000000000001",
   "cron": [
     "* * * * *"
   ],

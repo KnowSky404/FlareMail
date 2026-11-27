@@ -164,6 +164,8 @@ export interface WorkspaceDraftRow {
 }
 
 export interface WorkspaceInboundRow {
+  to_json?: string;
+  cc_json?: string;
   inbox_category_v2?: MailInboxCategory | null;
   ai_inbox_category?: MailInboxCategory | null;
   email_id: string;

@@ -1,6 +1,6 @@
 import { decodeListCursor, encodeListCursor } from '$lib/server/workspace/list-cursor';
 import { nowIso } from '$lib/server/workspace/shared';
-import { isSupportedWorkspaceSchemaVersion } from './schema-version';
+import { isWorkspaceRuntimeSchemaVersion } from './schema-version';
 
 export type TelegramBindingState = 'candidate' | 'active' | 'revoked';
 export type TelegramDeliveryStatus = 'pending' | 'processing' | 'retryable' | 'sent' | 'failed' | 'unknown_delivery' | 'cancelled';
@@ -164,7 +164,7 @@ export async function hasTelegramTables(db: D1Database) {
     const metadata = await db.prepare(
       'SELECT schema_version FROM workspace_schema_metadata WHERE schema_name = ?'
     ).bind('flaremail').first<{ schema_version: number }>();
-    if (!isSupportedWorkspaceSchemaVersion(metadata?.schema_version)) return false;
+    if (!isWorkspaceRuntimeSchemaVersion(metadata?.schema_version)) return false;
     return await hasRequiredTelegramColumns(db);
   } catch {
     return false;
