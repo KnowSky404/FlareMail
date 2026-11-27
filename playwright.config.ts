@@ -52,6 +52,7 @@ export default defineConfig({
     command: `bun scripts/e2e/start-local.ts --port ${port}`,
     env: { FLAREMAIL_E2E_STATE_DIR: stateDirectory },
     url: baseURL,
+    ...(process.env.CI ? { gracefulShutdown: { signal: 'SIGTERM' as const, timeout: 5_000 } } : {}),
     timeout: 180_000,
     reuseExistingServer: false,
     stdout: 'pipe',

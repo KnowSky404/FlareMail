@@ -1,0 +1,51 @@
+name: CI browser suite
+
+on:
+  workflow_call:
+    inputs:
+      suite:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: ${{ inputs.suite }} browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.suite == 'chromium' && 25 || 45 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-flaremail
+      - env:
+          SUITE: ${{ inputs.suite }}
+        shell: bash
+        run: |
+          case "$SUITE" in
+            chromium|a11y) browser=chromium ;;
+            webkit|firefox) browser="$SUITE" ;;
+            *) exit 1 ;;
+          esac
+          bunx --no-install playwright install --with-deps "$browser"
+      - env:
+          SUITE: ${{ inputs.suite }}
+        shell: bash
+        run: |
+          case "$SUITE" in
+            chromium)
+              FLAREMAIL_E2E_PROJECT=desktop bunx --no-install playwright test --project=desktop --grep @ci-core ;;
+            a11y) bun run test:a11y ;;
+            webkit|firefox) bun run "test:e2e:$SUITE" ;;
+            *) exit 1 ;;
+          esac
+      - if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ inputs.suite }}-failure
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 5

@@ -94,8 +94,8 @@ checks, and confirm the applicable [workflow gates](./WORKFLOW.md) have passed. 
 verified and reviewed head using
 `gh pr merge <PR> --rebase --match-head-commit <HEAD_SHA>`. Verify the base SHA
 against the CI result immediately before submitting the command. The head lock
-does not lock the base. For unattended auto-merge, require a server-side
-up-to-date check first. On an unprotected branch, run a single checked merge,
+does not lock the base. Keep auto-merge disabled when review or PRE gates
+depend on manual verification. On an unprotected branch, run a single checked merge,
 then verify its actual integration tree. If another merge advanced the base
 during the request, mark the changed result unverified and rerun affected
 gates before release. Do not bypass checks with `--admin`. Wait for `MERGED`
