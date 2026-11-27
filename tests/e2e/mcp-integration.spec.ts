@@ -4,6 +4,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 import AxeBuilder from '@axe-core/playwright';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { E2E_PASSWORD, E2E_USERNAME } from './fixtures';
 
 const settings = '/api/workspace/integrations/mcp';
 const endpointHeaders = { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
@@ -18,7 +19,7 @@ async function save(request: APIRequestContext, origin: string, data: unknown) {
 async function login(page: Page, origin: string) {
   const response = await page.request.post('/api/workspace/session', {
     headers: { Origin: origin },
-    data: { username: 'flower', password: 'FlareMail-E2E-password-2026!', remember: true }
+    data: { username: E2E_USERNAME, password: E2E_PASSWORD, remember: true }
   });
   expect(response.status()).toBe(200);
 }
@@ -144,9 +145,9 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
       const draftPage = await signedOut.newPage();
       const citation = String(draft.structuredContent?.url);
       await draftPage.goto(citation);
-      await draftPage.getByLabel('管理员用户名').fill('flower');
-      await draftPage.getByLabel('密码', { exact: true }).fill('FlareMail-E2E-password-2026!');
-      await draftPage.getByRole('button', { name: '登录', exact: true }).click();
+      await draftPage.getByLabel('管理员用户名').fill(E2E_USERNAME);
+      await draftPage.getByLabel('密码').fill(E2E_PASSWORD);
+      await draftPage.getByRole('button', { name: '登录' }).click();
       await expect(draftPage.getByRole('heading', { name: 'E2E MCP older draft', exact: true })).toBeVisible();
       const discarded = await draftPage.request.delete('/api/workspace/messages/e2e-mcp-older-draft', {
         headers: { Origin: base }
