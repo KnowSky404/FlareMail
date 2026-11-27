@@ -1,3 +1,5 @@
+import { cleanupMcpRecords } from '$lib/server/mcp/store';
+
 export interface RateLimitResult {
   allowed: boolean;
   retryAfterSeconds: number;
@@ -5,6 +7,7 @@ export interface RateLimitResult {
 
 const DEFAULT_LIMIT = 5;
 const DEFAULT_WINDOW_MS = 15 * 60 * 1000;
+let nextCleanupAt = 0;
 
 export function normalizeLoginUsername(value: string) {
   return value.trim().normalize('NFKC').toLowerCase();
@@ -60,6 +63,15 @@ export async function consumeLoginAttempt(
     RETURNING attempt_count, reset_at
   `).bind(hash, now, resetAt, now, limit).first<{ attempt_count: number; reset_at: number }>();
   if (!row) return retry((await saturated())?.reset_at ?? resetAt);
+
+  // Cron-less deployments sweep expired records after a request has written its counter.
+  if (now >= nextCleanupAt) {
+    nextCleanupAt = now + DEFAULT_WINDOW_MS;
+    await Promise.all([
+      cleanupLoginAttempts(db, now).catch(() => console.error(JSON.stringify({ event: 'login_rate_limit_cleanup_failed' }))),
+      cleanupMcpRecords(db, Math.floor(now / 1000)).catch(() => console.error(JSON.stringify({ event: 'mcp_cleanup_failed' })))
+    ]);
+  }
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
