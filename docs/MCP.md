@@ -192,6 +192,11 @@ ChatGPT OAuth and refresh acceptance.
   Cloudflare regions. Retry a transient validation failure briefly before
   starting a new authorization. If refresh was interrupted after consumption,
   sign in and authorize again.
+- **Upgrading an enabled integration**. Pause new Owner approvals during the
+  switch to the release that binds authorization codes to PKCE. Allow pending
+  exchanges to complete or wait ten minutes for them to expire. Codes issued
+  by an older build before this change need fresh consent if they reach the new
+  build. Existing access and refresh credentials keep their previous format.
 - **Rollback**. Disable in Settings to atomically revoke all grants and reject
   further OAuth requests. Single and all-client revocation also work while
   configuration is incomplete. Keep the migrated schema and follow the release

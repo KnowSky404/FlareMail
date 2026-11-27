@@ -181,6 +181,14 @@ test('legacy releases enforce OAuth KV isolation against the native Preview', as
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
     mockLive();
     await expect(assertLegacyPreviewOAuthIsolation(target, projectRoot, false)).rejects.toThrow('INBOUND_PRODUCTION_PREVIEW_METADATA_UNAVAILABLE');
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
+    await expect(assertLegacyPreviewOAuthIsolation({ ...production, vars: { ...production.vars,
+      APP_BASE_URL: 'https://flaremail.example.workers.dev'
+    } }, projectRoot, false)).resolves.toBe(true);
+    metadata.mockResolvedValueOnce(JSON.stringify({ success: false, workerMissing: true }));
+    await expect(assertLegacyPreviewOAuthIsolation({ ...production, vars: { ...production.vars,
+      APP_BASE_URL: 'https://mail.example.test'
+    } }, projectRoot, false)).resolves.toBe(false);
   } finally {
     metadata.mockRestore();
     if (account === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
