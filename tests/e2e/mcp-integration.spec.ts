@@ -144,7 +144,10 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect((await call('get_thread', { id: 'e2e-inbox-message' })).structuredContent)
       .toMatchObject({ coverage: 'anchor_only', messages: [{ id: 'e2e-inbox-message' }] });
     expect((await call('list_domains')).structuredContent).toMatchObject({ domains: expect.arrayContaining([{ id: expect.any(String), domain: 'flaremail.test', enabled: true }]) });
-    expect((await call('list_mail_addresses')).structuredContent).toHaveProperty('addresses');
+    expect((await call('list_mail_addresses')).structuredContent).toMatchObject({ addresses: expect.arrayContaining([
+      { id: expect.any(String), domainId: expect.any(String), email: 'e2e-admin@flaremail.test',
+        receiveConfigured: expect.any(Boolean), sendConfigured: expect.any(Boolean) }
+    ]) });
     expect((await call('get_mailbox_metrics')).structuredContent).toMatchObject({ sentCount: 1 });
     expect((await call('list_labels')).structuredContent).toEqual({ labels: [] });
     expect((await call('get_delivery_status', { id: 'e2e-sent-message' })).structuredContent).toMatchObject({ status: 'sent' });
@@ -156,7 +159,9 @@ test('authorizes and queries read-only tools with the official MCP SDK @mcp', as
     expect(await call('unknown_tool')).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('-32602') }] });
 
     await save(page.request, base, { action: 'settings', enabled: true, scopes: ['mail.read', 'mail.metadata.read'] });
-    expect((await call('list_attachments', { id: 'email:e2e-html-inbox-message' })).isError).toBe(true);
+    expect(await call('list_attachments', { id: 'email:e2e-html-inbox-message' })).toMatchObject({
+      isError: true, _meta: { 'mcp/www_authenticate': [expect.stringContaining('error_description=')] }
+    });
     await save(page.request, base, { action: 'settings', enabled: true, scopes: ['mail.read', 'mail.metadata.read', 'mail.attachments.metadata.read'] });
     expect((await call('list_attachments', { id: 'email:e2e-html-inbox-message' })).isError).toBe(true);
     expect((await postMcp(token, 'x'.repeat(17_000))).status()).toBe(413);

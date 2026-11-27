@@ -94,6 +94,12 @@ the same verified stored RFC key and reports `coverage: same_rfc_key`. Older
 replies that store a different parent key can be outside this result. An anchor without an RFC key
 returns as a one-message result. Mail links use the normal authenticated reader.
 Mail queries leave read, star, archive, and deletion state unchanged.
+Continue pagination when a page returns a cursor. A bounded scan can return a
+short page when stored keys disagree with RFC headers.
+
+For addresses, `sendConfigured` and `receiveConfigured` reflect saved address
+flags. Use `list_domains` to inspect domain enablement. Provider delivery and
+routing readiness are separate checks.
 
 The page size defaults to 20 and tops out at 30 for mail and 40 for domain,
 address and attachment metadata. Search fans out to at most five indexed source

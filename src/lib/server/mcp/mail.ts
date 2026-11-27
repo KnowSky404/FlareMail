@@ -110,19 +110,21 @@ export async function searchMail(env: CloudflareEnv, actor: MailActor, input: Se
     : archivedOnly ? ['archive']
     : filters?.status.length ? ['sent']
     : category || envelopeRecipient ? ['inbox', 'archive'] : ['inbox', 'archive', 'sent'];
+  const scanLimit = threadKey ? 3 * (limit + 1) : limit + 1;
   const messages = await scopedRows(env, actor, {
-    timestamp, cursorId, limit: limit + 1, includeSearchTotal: false,
+    timestamp, cursorId, limit: scanLimit, includeSearchTotal: false,
     category: category as MailboxRepositoryQuery['category'], identityFilter,
     query: parsed.query, search: parsed.search, filter: 'all', deliveryStatus: null,
     threadKeys: threadKey ? [threadKey, `rfc:<${threadKey.slice(4)}>`] : undefined
   }, folders, envelopeRecipient);
-  const page = messages.slice(0, limit);
-  const visible = threadKey ? page.filter((message) => rfcThreadKey(message) === threadKey) : page;
-  await attachMailLabels(env.DB, actor.owner, visible);
-  const last = page.at(-1);
+  const scanned = messages.slice(0, scanLimit - 1);
+  const verified = threadKey ? scanned.filter((message) => rfcThreadKey(message) === threadKey) : scanned;
+  const page = verified.slice(0, limit);
+  await attachMailLabels(env.DB, actor.owner, page);
+  const last = verified.length > limit ? page.at(-1) : messages.length >= scanLimit ? scanned.at(-1) : undefined;
   return {
-    messages: visible,
-    nextCursor: messages.length > limit && last ? base64url.encode(JSON.stringify([context, last.sentAt, last.id])) : null
+    messages: page,
+    nextCursor: last ? base64url.encode(JSON.stringify([context, last.sentAt, last.id])) : null
   };
 }
 
