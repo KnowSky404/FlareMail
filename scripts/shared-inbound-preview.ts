@@ -198,8 +198,20 @@ function readActiveProduction(worker: string) {
   }
 }
 
-export function assertLegacyProductionHasNoActiveInboundProtection(worker: string) {
-  if (readActiveProduction(worker)?.versions.some(version => version.bindings.some(binding =>
+function assertPreviewOAuthIsolation(targetId: string | undefined, existing: { id?: string; namespace_id?: string } | undefined) {
+  if (!targetId || !existing) return;
+  const activeId = existing.namespace_id ?? existing.id;
+  if (!activeId || !/^[a-f0-9]{32}$/iu.test(activeId) || activeId.toLowerCase() === targetId) {
+    throw new Error('PREVIEW_OAUTH_KV_NOT_ISOLATED');
+  }
+}
+
+export function assertLegacyProductionHasNoActiveInboundProtection(worker: string, previewOAuthKvId?: string) {
+  const active = readActiveProduction(worker);
+  for (const version of active?.versions ?? []) {
+    assertPreviewOAuthIsolation(previewOAuthKvId, version.bindings.find(binding => binding.name === 'OAUTH_KV'));
+  }
+  if (active?.versions.some(version => version.bindings.some(binding =>
     ['INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE', 'PRE_INBOUND_SETTINGS'].includes(binding.name)))) {
     throw new Error('INBOUND_PRODUCTION_ACTIVE_PROTECTION_REQUIRED');
   }
@@ -234,7 +246,7 @@ export function pinCloudflareReleaseIdentity(projectRoot: string, discoverAccoun
   if (discoverAccount && !process.env.CLOUDFLARE_ACCOUNT_ID) {
     let selected: string | undefined;
     try {
-      selected = runCloudflareCliModule(projectRoot, cloudflareCliModule('context-BiFPu-hE.mjs'),
+      selected = runCloudflareCliModule(projectRoot, 'context',
         "process.stdout.write(await command.a() || '');").trim();
     } catch {
       // Fall back only when cf reports a single accessible account.
@@ -245,7 +257,12 @@ export function pinCloudflareReleaseIdentity(projectRoot: string, discoverAccoun
   }
 }
 
-function cloudflareCliModule(name: string) {
+const cfMetadataModules = {
+  '1.0.0-rc.1': { context: 'context-BiFPu-hE.mjs', raw: 'raw-fetch-g83RSAGp.mjs', auth: 'oauth-DOqdE0PG.mjs', profile: 'm' },
+  '1.0.0-rc.6': { context: 'context-9knj92hc.mjs', raw: 'raw-fetch-DH9-qubV.mjs', auth: 'oauth-BKBS8qd5.mjs', profile: 'h' }
+} as const;
+
+function cloudflareCliModule(name: 'context' | 'raw') {
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     const cli = join(dir, 'cf');
     try {
@@ -257,9 +274,10 @@ function cloudflareCliModule(name: string) {
     try {
       const root = dirname(dirname(realpathSync(cli)));
       const { name: packageName, version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-      if (packageName === 'cf' && version === '1.0.0-rc.1') {
+      if (packageName === 'cf' && Object.hasOwn(cfMetadataModules, version)) {
         // shortcut: use the pinned CLI's modules until account selection and generic reads have public commands.
-        return join(root, 'dist', name);
+        const modules = cfMetadataModules[version as keyof typeof cfMetadataModules];
+        return { scriptPath: join(root, 'dist', modules[name]), authModule: modules.auth, profileExport: modules.profile };
       }
     } catch {
       // An unrecognized executable cannot provide the pinned metadata transport.
@@ -269,12 +287,13 @@ function cloudflareCliModule(name: string) {
   throw new Error('INBOUND_PRODUCTION_PREVIEW_METADATA_AUTH_UNAVAILABLE');
 }
 
-function runCloudflareCliModule(projectRoot: string, scriptPath: string, operation: string, args: string[] = []) {
+function runCloudflareCliModule(projectRoot: string, name: 'context' | 'raw', operation: string, args: string[] = []) {
+  const { scriptPath, authModule, profileExport } = cloudflareCliModule(name);
   return execFileSync('node', ['--input-type=module', '-e', `
     import { pathToFileURL } from 'node:url';
     const script = pathToFileURL(process.argv[1]);
-    const { m: selectProfile } = await import(new URL('./oauth-DOqdE0PG.mjs', script));
-    selectProfile();
+    const selectProfile = (await import(new URL(${JSON.stringify(authModule)}, script)))[${JSON.stringify(profileExport)}];
+    ${profileExport === 'm' ? 'selectProfile();' : 'selectProfile(process.env.CLOUDFLARE_AUTH_PROFILE);'}
     const command = await import(script);
     ${operation}
   `, scriptPath, ...args], { cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 12_000 });
@@ -282,7 +301,7 @@ function runCloudflareCliModule(projectRoot: string, scriptPath: string, operati
 
 export const cloudflareMetadataTransport = {
   async read(projectRoot: string, resource: string) {
-    return runCloudflareCliModule(projectRoot, cloudflareCliModule('raw-fetch-g83RSAGp.mjs'),
+    return runCloudflareCliModule(projectRoot, 'raw',
       'process.stdout.write(await command.t(process.argv[2]));', [resource]);
   }
 };
@@ -319,7 +338,7 @@ async function readLiveNativePreview(workerName: string, projectRoot: string) {
   if (Array.isArray(previews) && !previews.length) return { latest: null, baseEnv };
   const preview = Array.isArray(previews) ? previews.find(entry => entry.slug === 'mail-ai') : null;
   if (!preview?.id) throw new Error('INBOUND_PRODUCTION_PREVIEW_DEPLOYMENT_CHANGED');
-  const latest = await get<{ id?: string; env?: Record<string, { text?: string; database_id?: string; id?: string; bucket_name?: string; json?: WorkerBindingMetadata['json'] }> }>(
+  const latest = await get<{ id?: string; env?: Record<string, Omit<WorkerBindingMetadata, 'name'>> }>(
     path + '/' + encodeURIComponent(preview.id) + '/deployments/latest?include=bindings'
   );
   return { latest, baseEnv };
@@ -331,6 +350,7 @@ export async function assertLiveNativePreview(
 ) {
   const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot);
   const env = latest?.env;
+  assertPreviewOAuthIsolation(target.oauthKvId, env?.OAUTH_KV);
   const binding = env?.PRE_INBOUND_SETTINGS;
   const value = binding?.json;
   let reservationMatches = false;
@@ -367,6 +387,7 @@ export async function assertLivePreviewForPublish(
   target: CloudflareTarget, source: { previewDeploymentId: string | null; managementEnabled: boolean }, projectRoot: string
 ) {
   const { latest, baseEnv } = await readLiveNativePreview(target.name, projectRoot);
+  if (baseEnv?.OAUTH_KV) throw new Error('PREVIEW_OAUTH_KV_NOT_ISOLATED');
   if (source.previewDeploymentId === null) {
     if (latest || source.managementEnabled || ['CLOUDFLARE_EMAIL_ROUTING_TOKEN', 'DB', 'BUCKET',
       'INBOUND_ROUTING_DB', 'INBOUND_ROUTING_SCOPE', 'PRE_INBOUND_DB', 'PRE_INBOUND_BUCKET', 'PRE_INBOUND_SETTINGS']
@@ -406,6 +427,7 @@ export async function assertLivePreviewForPublish(
 
 export function assertActiveProductionForPreview(target: CloudflareTarget, source: ReturnType<typeof assertSharedInboundPreview>) {
   const { version, binding, db, bucket, settings } = requireActiveProductionVersion(target.name, source.deploymentId);
+  assertPreviewOAuthIsolation(target.oauthKvId, binding('OAUTH_KV'));
   if (db('DB') !== source.productionDb || bucket('BUCKET') !== source.productionBucket) {
     throw new Error('INBOUND_PREVIEW_PREFLIGHT_INVALID');
   }

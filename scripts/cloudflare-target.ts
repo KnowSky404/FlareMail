@@ -122,7 +122,7 @@ export function checkPreInboundRelease(target: CloudflareTarget, nativePreview =
   if (target.vars.PRE_INBOUND_RECIPIENT === undefined && !target.inboundRouting) {
     if (target.vars.APP_ENV === 'production' || target.vars.APP_ENV === 'preview') {
       if (!process.env.CLOUDFLARE_ACCOUNT_ID) pinCloudflareReleaseIdentity(resolve(projectRoot, 'worker'), true);
-      assertLegacyProductionHasNoActiveInboundProtection(target.name);
+      assertLegacyProductionHasNoActiveInboundProtection(target.name, target.vars.APP_ENV === 'preview' ? target.oauthKvId : undefined);
     }
     return;
   }
