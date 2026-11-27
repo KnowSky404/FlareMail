@@ -53,9 +53,11 @@ CI 无法用普通 HTTP 覆盖的 Worker 事件需补本地隔离、合成事件
 
 - `CI` 对所有 PR 运行，包含 Draft PR。普通 Markdown 差异使用轻量路径。运行时或关键流程文件变更使用三组 Bun 测试、类型、生成声明、公开目标 Worker dry-run 及 Chromium 的 `@ci-core` 用例。现有测试分组覆盖断言会检查遗漏和重复。依赖定义或锁文件变化时执行依赖审计。直接推送 `main` 时按完整推送区间检查。PR 改目标分支会重新验证集成内容，单纯更新标题或正文不会发布新的 `CI gate` 结论。
 - 默认 PR checkout 验证 GitHub 生成的测试合并提交。每个候选记录 PR head、base 和 CI run，核对最新集成结果。合并前基线变化时，重新确认 CI 确实验证新集成结果。旧跑次和被撤销的跑次不可复用。相同 PR 的旧 CI 自动取消。每次 main 推送保留独立跑次，以便该范围的依赖审计完成。
-- 主分支更新和手动运行覆盖 WebKit、Firefox 和无障碍测试。在 PR 上按风险用本地独立场景补足适用引擎与视口。仅用 mock/demo、合成数据及隔离状态。各 CI job 在不同 runner 上安装锁定依赖和工具，共享生成目录的步骤在同一 job 串行。浏览器失败的合成诊断保留五天。
-- `CI gate` 汇总所有必要结果，计划、取消、失败和非预期跳过会阻断。验证 `CI gate` 在当前 PR 的实际集成结果上成功后再合并。普通 PR job 仅给 `contents: read`，不保存 checkout token，也不使用部署凭据。远端 PRE/PRO 均不由 CI 自动触发。
+- 主分支更新和手动运行覆盖 WebKit、Firefox 和无障碍测试。在 PR 上按风险用本地独立场景补足适用引擎与视口。仅用 mock/demo、合成数据及隔离状态。各 CI job 在不同 runner 上安装锁定依赖和工具，共享生成目录的步骤在同一 job 串行。浏览器失败的合成诊断保留五天。需要重跑时重启整个 CI job，让 Worker 从独立的 D1/R2 fixture 开始。
+- PR 的 `CI gate` 汇总所有必要结果，计划、取消、失败和非预期跳过会阻断。合并前验证当前 PR 的实际集成结果。主分支及手动跑次分别使用 `Main CI gate` 和 `Manual CI gate`。普通 PR job 仅给 `contents: read`，不保存 checkout token，也不使用部署凭据。远端 PRE/PRO 均不由 CI 自动触发。
 - `Release security` 每周、手动或 Release 发布时验证锁定依赖。PR 的依赖变化审计用于该候选，发布扫描和本地发布前审计各记录对应版本。GitHub App 安全审查独立于这些检查。
+
+PR 可以修改它所运行的 CI 定义和脚本。GitHub Actions 来源与同名状态只能证明有对应结果。涉及 `.github/workflows/`、`.github/actions/`、测试分组或验证入口脚本的门禁改动均为 R3，合并前由 Owner 独立核对当前 head 的门禁差异并记录明确批准。未获批准时保留 PR。若计划和权限支持，可以另外由 Owner 选用独立受保护来源提供的必需工作流。
 
 需要 Owner 启用仓库级强制执行时，在 GitHub **Settings → Rules → Rulesets → New branch ruleset** 建立针对默认分支的规则，要求通过 PR 和 GitHub Actions 的唯一 `CI gate`，开启最新基线要求，在可用时选定 GitHub Actions 来源。避免添加单人仓库无法满足的人工审批。核对该检查在合并基线变化后重新出现。若采用 merge queue，先补 `merge_group` 触发再启用。操作见 [GitHub rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository)。不要用管理员参数绕过门禁。在 [Codex Code review 设置](https://chatgpt.com/codex/cloud/settings/general) 选择 FlareMail，核对 **Review code → Automatic review** 与 **Review security vulnerabilities → Auto security review**。选择适用的 PR 和触发条件，以真实 PR 的两类记录和 SHA 为准。若需要两类自动并发，可选择 **Trigger → Whenever code review runs**。如果 GitHub 未提供对应强制检查，保留合并前的人工或代理核对。
 

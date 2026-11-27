@@ -154,7 +154,11 @@ jobs:
       - run: bun run audit:dependencies
 
   gate:
-    name: ${{ github.event.action == 'edited' && github.event.changes.base == null && 'Metadata edit' || 'CI gate' }}
+    name: >-
+      ${{ github.event_name == 'push' && 'Main CI gate'
+        || github.event_name == 'workflow_dispatch' && 'Manual CI gate'
+        || github.event.action == 'edited' && github.event.changes.base == null && 'Metadata edit'
+        || 'CI gate' }}
     if: always() && (github.event.action != 'edited' || github.event.changes.base != null)
     needs: [scope, unit, integration, remaining, build, chromium, dependency-audit, webkit, firefox, a11y]
     runs-on: ubuntu-latest
